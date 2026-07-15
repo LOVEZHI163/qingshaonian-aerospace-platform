@@ -1,0 +1,16 @@
+{
+  "name": "@qingshaonian/api",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch src/server.js",
+    "start": "node src/server.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "adm-zip": "^0.5.16",
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "multer": "^2.0.2"
+  }
+}

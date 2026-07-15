@@ -1,0 +1,9 @@
+node_modules/
+dist/
+
+*.log
+dev-server*.log
+
+.env
+.env.*
+
