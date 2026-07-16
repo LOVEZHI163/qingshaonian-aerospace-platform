@@ -7,3 +7,4 @@ dev-server*.log
 .env
 .env.*
 
+.worktrees/
