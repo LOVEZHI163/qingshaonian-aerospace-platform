@@ -52,7 +52,7 @@ Require-NoMatch $nginx '(?m)^\s*auth_basic(?:_user_file)?\b' "Nginx must not req
 Require-NoMatch $compose '\.htpasswd' "Compose must not mount a Basic Auth password file"
 Require-NoMatch $webDockerfile 'entrypoint-web\.sh|check-aerogp-auth' "Web image must not require the Basic Auth entrypoint"
 Require-NoMatch $bootstrapSecrets 'htpasswd|aerogp-test-credentials|BASIC_AUTH_USER' "Secret bootstrap must only manage database credentials"
-Require-NoMatch $remoteSmoke 'CREDENTIALS_FILE|PASSWORD|\s-u\s' "Remote smoke tests must use unauthenticated HTTP requests"
+Require-NoMatch $remoteSmoke 'CREDENTIALS_FILE|(?m)^\s*auth=|\s-u\s' "Remote smoke tests must use unauthenticated HTTP requests"
 Require-NoMatch $envExample '(?m)^BASIC_AUTH_' ".env.example must not document removed Basic Auth variables"
 ```
 

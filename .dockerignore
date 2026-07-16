@@ -1,0 +1,12 @@
+.git
+.gitignore
+.worktrees
+node_modules
+**/node_modules
+**/dist
+.env*
+**/uploads
+apps/api/data
+backups
+qa-*.png
+*.log

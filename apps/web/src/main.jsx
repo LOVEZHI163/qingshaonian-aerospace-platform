@@ -3,7 +3,7 @@ import { createRoot } from "react-dom/client";
 import { animated, useInView, useSpring, useTrail } from "@react-spring/web";
 import "./styles.css";
 
-const API = import.meta.env.VITE_API_URL || "http://localhost:4300";
+const API = import.meta.env.VITE_API_URL || "";
 
 function Reveal({ children, className = "", delay = 0, y = 34, ...props }) {
   const [ref, springs] = useInView(
@@ -87,7 +87,7 @@ function App() {
           <a href="#projects">赛项组别</a>
           <a href="#news">新闻动态</a>
         </nav>
-        <a className="header-action" href="http://localhost:5174">报名入口</a>
+        <a className="header-action" href="/admin/">报名入口</a>
       </header>
 
       <section id="top" className="hero">
@@ -107,7 +107,7 @@ function App() {
               <span>温州市文成县东方职业技术学院</span>
             </div>
             <div className="hero-actions">
-              <a className="primary" href="http://localhost:5174">立即报名</a>
+              <a className="primary" href="/admin/">立即报名</a>
               <a className="secondary" href="#rules">查看规程</a>
             </div>
           </animated.div>

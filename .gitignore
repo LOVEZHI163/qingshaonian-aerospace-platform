@@ -6,5 +6,8 @@ dev-server*.log
 
 .env
 .env.*
+!.env.example
 
 .worktrees/
+auth/
+backups/

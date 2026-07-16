@@ -5,94 +5,16 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import multer from "multer";
 import AdmZip from "adm-zip";
+import { createDataStore } from "./data/index.js";
+import { EVENT, GRADES, PROJECTS } from "./data/seed.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const dbPath = process.env.DB_PATH ? path.resolve(process.env.DB_PATH) : path.resolve(__dirname, "../data/db.json");
 const uploadRoot = process.env.UPLOAD_ROOT ? path.resolve(process.env.UPLOAD_ROOT) : path.resolve(__dirname, "../uploads");
 const certificateUploadDir = path.join(uploadRoot, "certificates");
 const PORT = Number(process.env.PORT || 4300);
-
-const EVENT = {
-  id: "wz-aerospace-2026",
-  name: "2026年温州市青少年航空航天创新比赛",
-  theme: "瓯越少年、星耀未来",
-  date: "2026年11月21-22日",
-  venue: "温州市文成县东方职业技术学院",
-  registrationDeadline: "2026-11-01",
-  contact: "吴琛琛 88968723 / 15858799111"
-};
-
-const PROJECTS = [
-  { id: "paper-plane-gate", name: "遥控纸飞机穿龙门飞行比赛", type: "individual", category: "青少年航模比赛" },
-  { id: "rocket-duration", name: "带降航天火箭留空比赛", type: "individual", category: "青少年航模比赛" },
-  { id: "rotor-race", name: "个人旋翼机竞速赛", type: "individual", category: "青少年旋翼机操控比赛" },
-  { id: "thunder-route", name: "雷霆飞途比赛", type: "individual", category: "青少年旋翼机操控比赛" },
-  { id: "fpv", name: "FPV穿越机比赛", type: "individual", category: "青少年旋翼机操控比赛" },
-  { id: "drone-relay", name: "无人机竞速接力比赛", type: "team", category: "青少年旋翼机操控比赛" },
-  { id: "air-robot-patrol", name: "空中机器人定点巡查比赛", type: "team", category: "青少年旋翼机编程比赛" },
-  { id: "rotor-programming", name: "旋翼机编程任务比赛", type: "team", category: "青少年旋翼机编程比赛" },
-  { id: "ai-short-film", name: "“航天梦·强国梦”青少年AI短片创意创作比赛", type: "individual", category: "青少年航空航天创意创作比赛" },
-  { id: "aviation-painting", name: "青少年航空绘画比赛", type: "individual", category: "青少年航空航天创意创作比赛" },
-  { id: "drone-football", name: "多轴无人机足球比赛", type: "team", category: "多轴无人机足球比赛" }
-];
-
-const GRADES = ["小学低组（1-3年级）", "小学中高组（4-6年级）", "中学组（初中、高中、职高）"];
-
-const seedDb = {
-  users: [
-    { id: "U1001", name: "陈宇航家长", phone: "13800000001", password: "123456", type: "ordinary", status: "active", createdAt: "2026-06-27T06:30:00.000Z" },
-    { id: "U2001", name: "林老师", phone: "13800000011", password: "123456", type: "organization", status: "active", createdAt: "2026-06-27T06:31:00.000Z" },
-    { id: "U9001", name: "赛事管理员", phone: "13900000000", password: "admin123", type: "admin", status: "active", createdAt: "2026-06-27T06:32:00.000Z" }
-  ],
-  organizations: [
-    { id: "O1001", name: "温州市实验小学", code: "WZ-SYXX", ownerUserId: "U2001", contactName: "林老师", contactPhone: "13800000011", status: "active", createdAt: "2026-06-27T06:31:00.000Z" },
-    { id: "O1002", name: "鹿城区青少年活动中心", code: "LC-QSNG", ownerUserId: "U2001", contactName: "王老师", contactPhone: "13800000012", status: "active", createdAt: "2026-06-27T06:31:30.000Z" }
-  ],
-  memberships: [
-    { id: "M1001", userId: "U2001", organizationId: "O1001", role: "owner", status: "active", direction: "system", note: "组织创建人", createdAt: "2026-06-27T06:31:00.000Z", updatedAt: "2026-06-27T06:31:00.000Z" },
-    { id: "M1002", userId: "U1001", organizationId: "O1001", role: "member", status: "active", direction: "user_request", note: "参加校队报名", createdAt: "2026-06-27T06:40:00.000Z", updatedAt: "2026-06-27T06:42:00.000Z" },
-    { id: "M1003", userId: null, invitedPhone: "13700000003", invitedName: "王梓涵家长", organizationId: "O1002", role: "member", status: "invited", direction: "org_invite", note: "邀请加入无人机队伍", createdAt: "2026-06-27T06:45:00.000Z", updatedAt: "2026-06-27T06:45:00.000Z" }
-  ],
-  registrations: [
-    {
-      id: "R20260627001",
-      source: "普通用户",
-      userId: "U1001",
-      organizationId: "O1001",
-      organization: "温州市实验小学",
-      athlete: { name: "陈宇航", school: "温州市实验小学", grade: "五年级", phone: "13800000001" },
-      athleteKey: "陈宇航|温州市实验小学|五年级|13800000001",
-      group: "小学中高组（4-6年级）",
-      projectId: "paper-plane-gate",
-      projectName: "遥控纸飞机穿龙门飞行比赛",
-      projectType: "individual",
-      instructor: "林老师",
-      status: "pending",
-      rejectReason: "",
-      createdAt: "2026-06-27T06:30:00.000Z",
-      updatedAt: "2026-06-27T06:30:00.000Z"
-    },
-    {
-      id: "R20260627002",
-      source: "组织用户",
-      userId: "U2001",
-      organizationId: "O1002",
-      organization: "鹿城区青少年活动中心",
-      athlete: { name: "周星言", school: "温州市第二实验中学", grade: "初二", phone: "13900000002" },
-      athleteKey: "周星言|温州市第二实验中学|初二|13900000002",
-      group: "中学组（初中、高中、职高）",
-      projectId: "drone-relay",
-      projectName: "无人机竞速接力比赛",
-      projectType: "team",
-      instructor: "王老师",
-      status: "approved",
-      rejectReason: "",
-      createdAt: "2026-06-27T06:34:00.000Z",
-      updatedAt: "2026-06-27T06:34:00.000Z"
-    }
-  ],
-  certificates: []
-};
+const dataStore = createDataStore();
+const readDb = () => dataStore.readDb();
+const writeDb = (db) => dataStore.writeDb(db);
 
 function id(prefix) {
   return `${prefix}${Date.now()}${Math.floor(Math.random() * 1000)}`;
@@ -121,36 +43,6 @@ function athleteKey(athlete) {
 
 function projectType(projectId) {
   return PROJECTS.find((item) => item.id === projectId)?.type || "individual";
-}
-
-function ensureDbShape(db) {
-  db.users ||= [];
-  db.organizations ||= [];
-  db.memberships ||= [];
-  db.registrations ||= [];
-  db.certificates ||= [];
-  for (const row of db.registrations) {
-    row.awardName ||= "";
-    row.rank ||= "";
-    row.score ||= "";
-    row.resultRecordedAt ||= "";
-  }
-  return db;
-}
-
-async function readDb() {
-  try {
-    return ensureDbShape(JSON.parse(await fs.readFile(dbPath, "utf8")));
-  } catch (error) {
-    if (error.code !== "ENOENT") throw error;
-    await writeDb(seedDb);
-    return ensureDbShape(structuredClone(seedDb));
-  }
-}
-
-async function writeDb(db) {
-  await fs.mkdir(path.dirname(dbPath), { recursive: true });
-  await fs.writeFile(dbPath, JSON.stringify(db, null, 2), "utf8");
 }
 
 function publicUser(user) {
@@ -859,6 +751,17 @@ app.get("/api/registrations/export.csv", async (_req, res) => {
   res.send(`\uFEFF${csv}`);
 });
 
-app.listen(PORT, () => {
+await dataStore.initialize();
+
+const server = app.listen(PORT, () => {
   console.log(`API listening on http://localhost:${PORT}`);
 });
+
+async function shutdown() {
+  server.close(async () => {
+    await dataStore.close();
+  });
+}
+
+process.once("SIGTERM", shutdown);
+process.once("SIGINT", shutdown);

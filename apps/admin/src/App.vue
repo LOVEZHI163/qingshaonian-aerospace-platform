@@ -1,7 +1,7 @@
 ﻿<script setup>
 import { computed, onMounted, reactive, ref, watch } from "vue";
 
-const API = import.meta.env.VITE_API_URL || "http://localhost:4300";
+const API = import.meta.env.VITE_API_URL || "";
 
 const statusText = {
   pending: "待审核",
