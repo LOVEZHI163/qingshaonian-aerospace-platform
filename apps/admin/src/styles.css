@@ -925,3 +925,17 @@ em.invited {
     grid-template-columns: 1fr;
   }
 }
+
+.registration-filter-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(160px, 1fr));
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.registration-management .form-actions { margin-top: 12px; }
+.registration-management .pagination { display: flex; justify-content: flex-end; align-items: center; gap: 12px; }
+
+@media (max-width: 800px) {
+  .registration-filter-grid { grid-template-columns: 1fr; }
+}

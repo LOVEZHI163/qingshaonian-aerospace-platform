@@ -7,6 +7,8 @@ import { loadAdminRegistrations } from "./lib/admin-registrations.js";
 import AuthPage from "./pages/AuthPage.vue";
 import EventManagementPage from "./pages/EventManagementPage.vue";
 import OrganizationManagementPage from "./pages/OrganizationManagementPage.vue";
+import RegistrationManagementPage from "./pages/RegistrationManagementPage.vue";
+import RegistrationPage from "./pages/RegistrationPage.vue";
 import { useSession } from "./state/session.js";
 
 const API = import.meta.env.VITE_API_URL || "";
@@ -380,6 +382,11 @@ function navigateAdmin(key) {
   currentView.value = key === "registrations" ? "registration" : key;
 }
 
+async function registrationCreated() {
+  message.value = "报名已提交，等待审核";
+  await loadData();
+}
+
 async function checkDuplicate() {
   const athlete = registrationForm.athlete;
   if (!athlete.name || !athlete.school || !athlete.grade || !athlete.phone) {
@@ -559,10 +566,6 @@ function downloadCertificate(certificate) {
   window.open(`${API}/api/certificates/${certificate.id}/download`, "_blank");
 }
 
-function exportCsv() {
-  window.open(`${API}/api/registrations/export.csv`, "_blank");
-}
-
 async function resetTemporaryPassword(user) {
   const password = window.prompt(`请输入 ${user.name} 的临时密码（至少 8 位，含字母和数字）`, "");
   if (!password) return;
@@ -668,7 +671,6 @@ onMounted(async () => {
           <h2>{{ eventData.event.name || "2026年温州市青少年航空航天创新比赛" }}</h2>
           <p>{{ eventData.event.date }} · {{ eventData.event.venue }} · 报名截止 {{ eventData.event.registrationDeadline }}</p>
         </div>
-        <button v-if="currentUser?.type === 'admin'" class="dark" @click="exportCsv">导出名单</button>
       </header>
 
       <p v-if="message" class="message">{{ message }}</p>
@@ -704,6 +706,10 @@ onMounted(async () => {
           @error="message = $event"
         />
       </section>
+
+      <RegistrationPage v-else-if="currentView === 'registration' && currentUser.type !== 'admin'" :fallback-context="{ projects }" @registered="registrationCreated" @error="message = $event" />
+
+      <RegistrationManagementPage v-else-if="currentView === 'registration' && currentUser.type === 'admin'" @open-certificates="currentView = 'certificates'" />
 
       <section v-else-if="currentView === 'registration' && currentUser.type !== 'admin'" class="content-grid">
         <form class="panel form-panel" @submit.prevent="submitRegistration">

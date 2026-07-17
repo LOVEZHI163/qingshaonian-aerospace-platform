@@ -1,7 +1,10 @@
 import express from "express";
 
+import { buildRegistrationWorkbook } from "../exports/registration-workbook.js";
+
 import {
   findSchools,
+  filterAdminRegistrations,
   listAdminRegistrations,
   prepareAdminRegistrationUpdate,
   prepareOrdinaryRegistrationUpdate,
@@ -29,6 +32,33 @@ export function createRegistrationsRouter({ store, requireUser, requireAdmin, re
   router.get("/admin/registrations", ...admin, asyncRoute(async (req, res) => {
     const db = await store.readDb();
     res.json(listAdminRegistrations(db, req.query, clock));
+  }));
+
+  router.get("/admin/registrations/export.xlsx", ...admin, asyncRoute(async (req, res) => {
+    const scope = req.query.scope || "filtered";
+    if (!new Set(["filtered", "all"]).has(scope)) return res.status(422).json({ error: "导出范围不合法" });
+    const db = await store.readDb();
+    const query = scope === "all" ? { eventId: req.query.eventId } : req.query;
+    const workbook = buildRegistrationWorkbook(filterAdminRegistrations(db, query));
+    const suffix = scope === "all" ? "全部名单" : "筛选名单";
+    const fileName = `报名${suffix}.xlsx`;
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent(fileName)}`);
+    await workbook.xlsx.write(res);
+    res.end();
+  }));
+
+  router.get("/admin/events/:eventId/certificate-template.xlsx", ...admin, asyncRoute(async (req, res) => {
+    const db = await store.readDb();
+    const event = db.events.find((item) => item.id === req.params.eventId);
+    if (!event) return res.status(404).json({ error: "赛事不存在" });
+    const rows = filterAdminRegistrations(db, { eventId: event.id, status: "approved" });
+    const workbook = buildRegistrationWorkbook(rows, { mode: "certificate-template" });
+    const fileName = `${event.name}-证书模板.xlsx`;
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent(fileName)}`);
+    await workbook.xlsx.write(res);
+    res.end();
   }));
 
   router.get("/registrations", ...admin, asyncRoute(async (req, res) => {

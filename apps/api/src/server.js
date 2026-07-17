@@ -884,31 +884,6 @@ app.get("/api/certificates/:id/download", requireUser, requirePasswordReady, asy
   res.download(certificate.filePath, certificate.fileName);
 }));
 
-app.get("/api/registrations/export.csv", requireAdmin, requirePasswordReady, asyncRoute(async (_req, res) => {
-  const db = await readDb();
-  const header = ["编号", "来源", "组织", "姓名", "学校", "年级", "手机号", "组别", "赛项", "类别", "指导老师", "状态"];
-  const lines = db.registrations.map((row) => [
-    row.id,
-    row.source,
-    row.organization,
-    row.athlete.name,
-    row.athlete.school,
-    row.athlete.grade,
-    row.athlete.phone,
-    row.group,
-    row.projectName,
-    row.projectType === "individual" ? "个人赛" : "团体赛",
-    row.instructor,
-    row.status
-  ]);
-  const csv = [header, ...lines]
-    .map((line) => line.map((cell) => `"${String(cell ?? "").replace(/"/g, '""')}"`).join(","))
-    .join("\n");
-  res.setHeader("Content-Type", "text/csv; charset=utf-8");
-  res.setHeader("Content-Disposition", "attachment; filename=registrations.csv");
-  res.send(`\uFEFF${csv}`);
-}));
-
 app.use((error, _req, res, next) => {
   if (res.headersSent) return next(error);
   const status = Number.isInteger(error.status) ? error.status : 500;

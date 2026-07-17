@@ -217,10 +217,7 @@ export function updateRegistrationStatus(db, row, input, user) {
   return row;
 }
 
-export function listAdminRegistrations(db, query, clock = () => new Date()) {
-  const page = Math.max(1, Number.parseInt(query.page, 10) || 1);
-  const requestedSize = Number.parseInt(query.pageSize, 10);
-  const pageSize = Math.min(100, Math.max(10, requestedSize || 25));
+export function filterAdminRegistrations(db, query = {}) {
   const q = normalizeText(query.q);
   let rows = db.registrations.filter((row) => {
     if (query.eventId && row.eventId !== query.eventId) return false;
@@ -232,7 +229,14 @@ export function listAdminRegistrations(db, query, clock = () => new Date()) {
     return [row.id, row.athlete?.name, row.athlete?.school, row.athlete?.phone, row.organization, row.projectName, row.instructor]
       .some((value) => normalizeText(value).includes(q));
   });
-  rows = rows.sort((left, right) => String(right.createdAt).localeCompare(String(left.createdAt)) || right.id.localeCompare(left.id));
+  return rows.sort((left, right) => String(right.createdAt).localeCompare(String(left.createdAt)) || right.id.localeCompare(left.id));
+}
+
+export function listAdminRegistrations(db, query, clock = () => new Date()) {
+  const page = Math.max(1, Number.parseInt(query.page, 10) || 1);
+  const requestedSize = Number.parseInt(query.pageSize, 10);
+  const pageSize = Math.min(100, Math.max(10, requestedSize || 25));
+  let rows = filterAdminRegistrations(db, query);
   const total = rows.length;
   rows = rows.slice((page - 1) * pageSize, page * pageSize).map((row) => ({
     ...row,

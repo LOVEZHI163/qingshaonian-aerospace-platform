@@ -21,7 +21,7 @@ test("every business API requires a session and every administrator API rejects 
     const protectedGets = [
       "/api/users",
       "/api/registrations",
-      "/api/registrations/export.csv",
+      "/api/admin/registrations/export.xlsx?eventId=wz-aerospace-2026&scope=all",
       "/api/organizations",
       "/api/me/registrations",
       "/api/me/certificates",
@@ -46,7 +46,7 @@ test("every business API requires a session and every administrator API rejects 
     const adminRequests = [
       ["GET", "/api/users"],
       ["GET", "/api/registrations"],
-      ["GET", "/api/registrations/export.csv"],
+      ["GET", "/api/admin/registrations/export.xlsx?eventId=wz-aerospace-2026&scope=all"],
       ["GET", "/api/admin/certificates"],
       ["POST", "/api/admin/users", {}],
       ["POST", "/api/admin/users/U1001/reset-password", { password: "TempPass9" }],
