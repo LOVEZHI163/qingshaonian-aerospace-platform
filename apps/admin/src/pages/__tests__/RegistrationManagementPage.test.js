@@ -53,6 +53,15 @@ describe("RegistrationManagementPage", () => {
     expect(wrapper.text()).not.toContain("证书编号");
   });
 
+  it("opens certificate management for the selected registration", async () => {
+    const wrapper = mount(RegistrationManagementPage);
+    await flushPromises();
+
+    await wrapper.get('[data-action="manage-certificates"]').trigger("click");
+
+    expect(wrapper.emitted("open-certificates")?.[0]).toEqual([registration]);
+  });
+
   it("releases successful Blob downloads on unmount and does not create a URL for failures", async () => {
     vi.useFakeTimers();
     URL.createObjectURL = vi.fn(() => "blob:download"); URL.revokeObjectURL = vi.fn();

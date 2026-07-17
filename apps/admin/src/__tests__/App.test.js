@@ -83,6 +83,20 @@ describe("App session integration", () => {
     expect(wrapper.find(".event-management").exists()).toBe(true);
   });
 
+  it("opens the complete certificate management page from administrator navigation", async () => {
+    sessionUser.value = { id: "A1", type: "admin", name: "管理员", mustChangePassword: false };
+    const wrapper = mount(App);
+    await flushPromises();
+
+    await wrapper.get('[data-nav="certificates"]').trigger("click");
+    await flushPromises();
+
+    expect(wrapper.find(".certificate-management-page").exists()).toBe(true);
+    expect(wrapper.text()).toContain("Excel 导入证书");
+    expect(wrapper.text()).not.toContain("证书编号");
+    expect(wrapper.text()).not.toContain("ZIP");
+  });
+
   it("switches an active user to the non-skippable password screen", async () => {
     sessionUser.value = { id: "A1", type: "admin", name: "管理员", mustChangePassword: false };
     const wrapper = mount(App);
@@ -152,6 +166,35 @@ describe("App session integration", () => {
     expect(wrapper.text()).toContain("注册成功，请登录");
     expect(session.setUser).not.toHaveBeenCalled();
     expect(wrapper.get('[data-auth-form="login"]').exists()).toBe(true);
+  });
+
+  it("downloads a published user certificate through its returned download URL", async () => {
+    sessionUser.value = { id: "U1", type: "ordinary", name: "用户", mustChangePassword: false };
+    apiBlobMock.mockResolvedValue(new Blob(["certificate"]));
+    URL.createObjectURL = vi.fn(() => "blob:certificate");
+    URL.revokeObjectURL = vi.fn();
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/public/event") return publicData();
+      if (path === "/api/public/features") return { smsPasswordResetEnabled: false };
+      if (path === "/api/organizations") return { rows: [], memberships: [] };
+      if (path === "/api/me/U1") return { memberships: [] };
+      if (path === "/api/me/registrations") return { rows: [] };
+      if (path === "/api/me/certificates") return { rows: [{
+        id: "C1", userId: "U1", title: "飞行之星", status: "published", fileName: "star.pdf",
+        downloadUrl: "/returned/user-certificate", athlete: { name: "用户" }
+      }] };
+      return { rows: [] };
+    });
+    const wrapper = mount(App);
+    await flushPromises();
+    const certificateNav = wrapper.findAll("aside button").find((button) => button.text() === "证书查询");
+    await certificateNav.trigger("click");
+    await wrapper.get('[data-action="download-user-certificate"]').trigger("click");
+    await flushPromises();
+
+    expect(apiBlobMock).toHaveBeenCalledWith("/returned/user-certificate");
+    expect(wrapper.text()).not.toContain("证书编号");
   });
 
   it("uses the current event group and project in duplicate checks", async () => {

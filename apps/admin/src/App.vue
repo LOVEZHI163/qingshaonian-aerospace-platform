@@ -1,10 +1,12 @@
 ﻿<script setup>
-import { computed, onMounted, reactive, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import AdminShell from "./components/AdminShell.vue";
 import OrganizationRegistrationForm from "./components/OrganizationRegistrationForm.vue";
-import { api } from "./lib/api.js";
+import { api, apiBlob } from "./lib/api.js";
 import { loadAdminRegistrations } from "./lib/admin-registrations.js";
+import { createBlobDownloadManager } from "./lib/download.js";
 import AuthPage from "./pages/AuthPage.vue";
+import CertificateManagementPage from "./pages/CertificateManagementPage.vue";
 import EventManagementPage from "./pages/EventManagementPage.vue";
 import OrganizationManagementPage from "./pages/OrganizationManagementPage.vue";
 import RegistrationManagementPage from "./pages/RegistrationManagementPage.vue";
@@ -39,6 +41,7 @@ const roleText = {
 
 const eventData = ref({ event: {}, projects: [], grades: [] });
 const currentView = ref("login");
+const certificateRegistrationId = ref("");
 const message = ref("");
 const rows = ref([]);
 const users = ref([]);
@@ -52,6 +55,7 @@ const registrationSearch = ref("");
 const userFilter = ref("all");
 const userSearch = ref("");
 const orgSearch = ref("");
+const certificateDownloads = createBlobDownloadManager();
 
 const passwordChangeForm = reactive({ currentPassword: "", newPassword: "" });
 const resubmitOrganizationOpen = ref(false);
@@ -379,7 +383,13 @@ async function organizationResubmitted() {
 }
 
 function navigateAdmin(key) {
+  if (key === "certificates") certificateRegistrationId.value = "";
   currentView.value = key === "registrations" ? "registration" : key;
+}
+
+function openCertificateManagement(registration) {
+  certificateRegistrationId.value = registration?.id || "";
+  currentView.value = "certificates";
 }
 
 async function registrationCreated() {
@@ -482,7 +492,7 @@ function resultDraft(row) {
 
 function certificateDraft(row) {
   if (!certificateForm[row.id]) {
-    certificateForm[row.id] = { certificateNo: certificateByRegistration.value[row.id]?.certificateNo || `CERT-${row.id}`, file: null };
+    certificateForm[row.id] = { title: certificateByRegistration.value[row.id]?.title || "获奖证书", file: null };
   }
   return certificateForm[row.id];
 }
@@ -518,9 +528,9 @@ async function uploadCertificate(row) {
   }
   try {
     const formData = new FormData();
-    formData.append("certificateNo", draft.certificateNo);
+    formData.append("title", draft.title);
     formData.append("certificate", draft.file);
-    await api(`/api/admin/registrations/${row.id}/certificate`, { method: "POST", body: formData });
+    await api(`/api/admin/registrations/${row.id}/certificates/1`, { method: "POST", body: formData });
     draft.file = null;
     await loadData();
     message.value = "证书已上传，当前为未发布";
@@ -532,9 +542,9 @@ async function uploadCertificate(row) {
 async function publishCertificate(certificate, status) {
   message.value = "";
   try {
-    await api(`/api/admin/certificates/${certificate.id}/publish`, {
-      method: "PATCH",
-      body: JSON.stringify({ status })
+    await api("/api/admin/certificates/bulk-status", {
+      method: "POST",
+      body: JSON.stringify({ ids: [certificate.id], status })
     });
     await loadData();
     message.value = status === "published" ? "证书已发布" : "证书已撤回";
@@ -547,13 +557,13 @@ async function uploadCertificateBatch() {
   message.value = "";
   batchResult.value = null;
   if (!batchUploadForm.file) {
-    message.value = "请先选择 ZIP 文件";
+    message.value = "请先选择 Excel 文件";
     return;
   }
   try {
     const formData = new FormData();
-    formData.append("zip", batchUploadForm.file);
-    batchResult.value = await api("/api/admin/certificates/batch", { method: "POST", body: formData });
+    formData.append("workbook", batchUploadForm.file);
+    batchResult.value = await api("/api/admin/certificate-imports/preview", { method: "POST", body: formData });
     batchUploadForm.file = null;
     await loadData();
     message.value = "批量导入已完成，请查看匹配结果";
@@ -562,8 +572,17 @@ async function uploadCertificateBatch() {
   }
 }
 
-function downloadCertificate(certificate) {
-  window.open(`${API}/api/certificates/${certificate.id}/download`, "_blank");
+async function downloadCertificate(certificate) {
+  if (!certificate.downloadUrl || certificate.cleanedAt) {
+    message.value = "当前证书文件不可下载";
+    return;
+  }
+  try {
+    const blob = await apiBlob(certificate.downloadUrl);
+    certificateDownloads.save(blob, certificate.fileName || certificate.title || "证书");
+  } catch (error) {
+    message.value = error.message || "证书下载失败，请稍后重试";
+  }
 }
 
 async function resetTemporaryPassword(user) {
@@ -621,6 +640,7 @@ onMounted(async () => {
     }
   }
 });
+onBeforeUnmount(() => certificateDownloads.dispose());
 </script>
 
 <template>
@@ -709,7 +729,12 @@ onMounted(async () => {
 
       <RegistrationPage v-else-if="currentView === 'registration' && currentUser.type !== 'admin'" :fallback-context="{ projects }" @registered="registrationCreated" @error="message = $event" />
 
-      <RegistrationManagementPage v-else-if="currentView === 'registration' && currentUser.type === 'admin'" @open-certificates="currentView = 'certificates'" />
+      <RegistrationManagementPage v-else-if="currentView === 'registration' && currentUser.type === 'admin'" @open-certificates="openCertificateManagement" />
+
+      <CertificateManagementPage
+        v-else-if="currentView === 'certificates' && currentUser.type === 'admin'"
+        :initial-registration-id="certificateRegistrationId"
+      />
 
       <section v-else-if="currentView === 'registration' && currentUser.type !== 'admin'" class="content-grid">
         <form class="panel form-panel" @submit.prevent="submitRegistration">
@@ -858,11 +883,10 @@ onMounted(async () => {
         <div class="table-wrap">
           <table class="certificate-table">
             <thead>
-              <tr><th>证书编号</th><th>姓名</th><th>学校/年级</th><th>赛项</th><th>奖项/成绩</th><th>状态</th><th>操作</th></tr>
+              <tr><th>姓名</th><th>学校/年级</th><th>赛项</th><th>奖项/成绩</th><th>状态</th><th>操作</th></tr>
             </thead>
             <tbody>
               <tr v-for="certificate in certificateQueryRows" :key="certificate.id">
-                <td>{{ certificate.certificateNo }}</td>
                 <td>{{ certificate.athlete?.name || "-" }}</td>
                 <td>{{ certificate.athlete?.school || "-" }}<br /><span>{{ certificate.athlete?.grade || "-" }}</span></td>
                 <td>{{ certificate.projectName }}<br /><span>{{ certificate.organization || "个人报名" }}</span></td>
@@ -873,7 +897,7 @@ onMounted(async () => {
                   <span>{{ certificate.publishedAt ? certificate.publishedAt.slice(0, 10) : "未发布" }}</span>
                 </td>
                 <td>
-                  <button class="mini" @click="downloadCertificate(certificate)">下载 PDF</button>
+                  <button class="mini" data-action="download-user-certificate" @click="downloadCertificate(certificate)">下载</button>
                 </td>
               </tr>
             </tbody>
@@ -1001,10 +1025,10 @@ onMounted(async () => {
         <form class="batch-panel" @submit.prevent="uploadCertificateBatch">
           <div>
             <strong>批量导入证书 PDF</strong>
-            <p class="hint">上传 ZIP，文件名格式：姓名_学校_赛项关键字.pdf。匹配成功后生成未发布证书。</p>
+            <p class="hint">此旧区域已由证书管理页面的 Excel 预检查流程替代。</p>
           </div>
-          <input type="file" accept=".zip,application/zip" @change="setBatchFile" />
-          <button class="dark">导入 ZIP</button>
+          <input type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" @change="setBatchFile" />
+          <button class="dark">预检查 Excel</button>
         </form>
         <div v-if="batchResult" class="batch-result">
           <span>成功 {{ batchResult.matched.length }} 个</span>
@@ -1039,12 +1063,12 @@ onMounted(async () => {
                     <button class="mini" @click="saveResult(row)">保存成绩</button>
                   </div>
                   <div class="mini-form certificate-upload">
-                    <input v-model="certificateDraft(row).certificateNo" placeholder="证书编号" />
+                    <input v-model="certificateDraft(row).title" placeholder="证书标题" />
                     <input type="file" accept="application/pdf,.pdf" @change="setCertificateFile(row, $event)" />
                     <button class="mini" @click="uploadCertificate(row)">上传证书</button>
                   </div>
                   <div v-if="certificateByRegistration[row.id]" class="certificate-state">
-                    <span>{{ certificateByRegistration[row.id].certificateNo }} · {{ certificateStatusText[certificateByRegistration[row.id].status] }}</span>
+                    <span>{{ certificateByRegistration[row.id].title }} · {{ certificateStatusText[certificateByRegistration[row.id].status] }}</span>
                     <button v-if="certificateByRegistration[row.id].status !== 'published'" class="mini" @click="publishCertificate(certificateByRegistration[row.id], 'published')">发布</button>
                     <button v-else class="mini reject" @click="publishCertificate(certificateByRegistration[row.id], 'draft')">撤回</button>
                     <button class="mini" @click="downloadCertificate(certificateByRegistration[row.id])">下载</button>
