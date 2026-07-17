@@ -129,12 +129,28 @@ CREATE TABLE IF NOT EXISTS results (
   recorded_at TIMESTAMPTZ
 );
 
+CREATE TABLE IF NOT EXISTS certificate_import_batches (
+  id TEXT PRIMARY KEY,
+  event_id TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+  created_by TEXT NOT NULL REFERENCES users(id),
+  original_name TEXT NOT NULL,
+  status TEXT NOT NULL,
+  preview_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+  valid_count INTEGER NOT NULL DEFAULT 0,
+  error_count INTEGER NOT NULL DEFAULT 0,
+  replace_count INTEGER NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL,
+  committed_at TIMESTAMPTZ
+);
+
 CREATE TABLE IF NOT EXISTS certificates (
   id TEXT PRIMARY KEY,
-  registration_id TEXT NOT NULL UNIQUE REFERENCES registrations(id) ON DELETE CASCADE,
+  registration_id TEXT NOT NULL REFERENCES registrations(id) ON DELETE CASCADE,
   user_id TEXT REFERENCES users(id),
   organization_id TEXT REFERENCES organizations(id),
-  certificate_no TEXT NOT NULL,
+  certificate_no TEXT,
+  slot SMALLINT NOT NULL DEFAULT 1,
+  title TEXT NOT NULL DEFAULT '获奖证书',
   file_name TEXT NOT NULL,
   stored_name TEXT NOT NULL,
   file_path TEXT NOT NULL,
@@ -142,8 +158,20 @@ CREATE TABLE IF NOT EXISTS certificates (
   rank TEXT NOT NULL DEFAULT '',
   score TEXT NOT NULL DEFAULT '',
   status TEXT NOT NULL,
+  source TEXT NOT NULL DEFAULT 'manual',
+  import_batch_id TEXT REFERENCES certificate_import_batches(id) ON DELETE SET NULL,
   uploaded_at TIMESTAMPTZ NOT NULL,
-  published_at TIMESTAMPTZ
+  published_at TIMESTAMPTZ,
+  cleaned_at TIMESTAMPTZ,
+  UNIQUE (registration_id, slot)
+);
+
+CREATE TABLE IF NOT EXISTS certificate_import_errors (
+  id TEXT PRIMARY KEY,
+  batch_id TEXT NOT NULL REFERENCES certificate_import_batches(id) ON DELETE CASCADE,
+  row_number INTEGER NOT NULL,
+  registration_id TEXT,
+  message TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS auth_rate_buckets (

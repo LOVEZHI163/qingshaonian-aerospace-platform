@@ -27,7 +27,7 @@ test("PostgreSQL store creates normalized tables and seeds an empty database", a
       WHERE table_schema = 'public'
     `);
     const tables = new Set(tableRows.rows.map((row) => row.table_name));
-    for (const name of ["users", "organizations", "memberships", "events", "projects", "project_groups", "registrations", "results", "certificates", "auth_rate_buckets", "password_reset_challenges"]) {
+    for (const name of ["users", "organizations", "memberships", "events", "projects", "project_groups", "registrations", "results", "certificates", "certificate_import_batches", "certificate_import_errors", "auth_rate_buckets", "password_reset_challenges"]) {
       assert.equal(tables.has(name), true, `missing table ${name}`);
     }
 
@@ -285,6 +285,7 @@ test("PostgreSQL store upgrades a legacy schema without losing existing records"
     const legacyEvent = data.events.find((event) => event.id === "legacy-event");
     const legacyProject = data.projects.find((project) => project.id === "legacy-project");
     const legacyRegistration = data.registrations.find((registration) => registration.id === "RLEGACY");
+    const legacyCertificate = data.certificates.find((certificate) => certificate.id === "CLEGACY");
 
     assert.equal(data.users.some((user) => user.id === "ULEGACY"), true);
     assert.equal(data.organizations.some((organization) => organization.id === "OLEGACY"), true);
@@ -294,7 +295,9 @@ test("PostgreSQL store upgrades a legacy schema without losing existing records"
     assert.equal(legacyProject.allowedGroups.length, 4);
     assert.equal(legacyRegistration.eventId, "legacy-event");
     assert.equal(legacyRegistration.awardName, "一等奖");
-    assert.equal(data.certificates.some((certificate) => certificate.id === "CLEGACY"), true);
+    assert.equal(legacyCertificate.slot, 1);
+    assert.equal(legacyCertificate.title, "获奖证书");
+    assert.equal("certificateNo" in legacyCertificate, false);
     assert.equal(data.events.filter((event) => event.isCurrent).length, 1);
   } finally {
     await store.close();

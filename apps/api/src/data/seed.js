@@ -118,7 +118,9 @@ export const seedDb = {
       updatedAt: "2026-06-27T06:34:00.000Z"
     }
   ],
-  certificates: []
+  certificates: [],
+  certificateImportBatches: [],
+  certificateImportErrors: []
 };
 
 Object.assign(seedDb, {
@@ -178,6 +180,8 @@ export function ensureDbShape(db) {
   );
   db.registrations ||= [];
   db.certificates ||= [];
+  db.certificateImportBatches ||= [];
+  db.certificateImportErrors ||= [];
   for (const event of db.events) {
     event.dateLabel ||= event.date;
     event.registrationStartAt ||= event.createdAt || REGISTRATION_START_AT;
@@ -216,6 +220,14 @@ export function ensureDbShape(db) {
     row.rank ||= "";
     row.score ||= "";
     row.resultRecordedAt ||= "";
+  }
+  for (const certificate of db.certificates) {
+    certificate.slot ||= 1;
+    certificate.title ||= certificate.awardName || "获奖证书";
+    certificate.source ||= "manual";
+    certificate.importBatchId ||= null;
+    certificate.cleanedAt ||= "";
+    delete certificate.certificateNo;
   }
   return db;
 }

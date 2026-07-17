@@ -90,7 +90,7 @@ async function runMigrations(pool) {
       } else {
         migration = migration.replace("CREATE TABLE IF NOT EXISTS organization_documents", "CREATE TABLE organization_documents");
       }
-      for (const tableName of ["auth_rate_buckets", "password_reset_challenges", "file_cleanup_journal"]) {
+      for (const tableName of ["auth_rate_buckets", "password_reset_challenges", "file_cleanup_journal", "certificate_import_batches", "certificate_import_errors"]) {
         const existing = await client.query(`
           SELECT 1 FROM information_schema.tables
           WHERE table_schema = 'public' AND table_name = $1
@@ -304,7 +304,7 @@ export function createPostgresStore(pool) {
     },
     async readDb() {
       const executor = activeContext()?.client || pool;
-      const [events, projects, projectGroups, users, organizations, memberships, registrations, certificates, organizationDocuments, fileCleanupJournal] = await Promise.all([
+      const [events, projects, projectGroups, users, organizations, memberships, registrations, certificates, certificateImportBatches, certificateImportErrors, organizationDocuments, fileCleanupJournal] = await Promise.all([
         executor.query("SELECT * FROM events ORDER BY created_at, id"),
         executor.query("SELECT * FROM projects ORDER BY display_order, id"),
         executor.query("SELECT * FROM project_groups ORDER BY project_id, group_name"),
@@ -318,6 +318,8 @@ export function createPostgresStore(pool) {
           ORDER BY r.created_at, r.id
         `),
         executor.query("SELECT * FROM certificates ORDER BY uploaded_at DESC, id"),
+        executor.query("SELECT * FROM certificate_import_batches ORDER BY created_at, id"),
+        executor.query("SELECT * FROM certificate_import_errors ORDER BY batch_id, row_number, id"),
         executor.query("SELECT * FROM organization_documents ORDER BY uploaded_at DESC, id"),
         executor.query("SELECT * FROM file_cleanup_journal ORDER BY created_at, id")
       ]);
@@ -429,7 +431,8 @@ export function createPostgresStore(pool) {
           registrationId: row.registration_id,
           userId: row.user_id,
           organizationId: row.organization_id,
-          certificateNo: row.certificate_no,
+          slot: row.slot,
+          title: row.title,
           fileName: row.file_name,
           storedName: row.stored_name,
           filePath: row.file_path,
@@ -437,8 +440,31 @@ export function createPostgresStore(pool) {
           rank: row.rank,
           score: row.score,
           status: row.status,
+          source: row.source,
+          importBatchId: row.import_batch_id,
           uploadedAt: iso(row.uploaded_at),
-          publishedAt: iso(row.published_at)
+          publishedAt: iso(row.published_at),
+          cleanedAt: iso(row.cleaned_at)
+        })),
+        certificateImportBatches: certificateImportBatches.rows.map((row) => ({
+          id: row.id,
+          eventId: row.event_id,
+          createdBy: row.created_by,
+          originalName: row.original_name,
+          status: row.status,
+          previewJson: row.preview_json || [],
+          validCount: row.valid_count,
+          errorCount: row.error_count,
+          replaceCount: row.replace_count,
+          createdAt: iso(row.created_at),
+          committedAt: iso(row.committed_at)
+        })),
+        certificateImportErrors: certificateImportErrors.rows.map((row) => ({
+          id: row.id,
+          batchId: row.batch_id,
+          rowNumber: row.row_number,
+          registrationId: row.registration_id,
+          message: row.message
         })),
         organizationDocuments: organizationDocuments.rows.map((row) => ({
           id: row.id,
@@ -662,17 +688,38 @@ export function createPostgresStore(pool) {
           }
         }
 
+        for (const row of db.certificateImportBatches) {
+          await client.query(
+            `INSERT INTO certificate_import_batches
+              (id, event_id, created_by, original_name, status, preview_json, valid_count, error_count, replace_count, created_at, committed_at)
+             VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10, $11)
+             ON CONFLICT (id) DO UPDATE SET
+               event_id = EXCLUDED.event_id,
+               created_by = EXCLUDED.created_by,
+               original_name = EXCLUDED.original_name,
+               status = EXCLUDED.status,
+               preview_json = EXCLUDED.preview_json,
+               valid_count = EXCLUDED.valid_count,
+               error_count = EXCLUDED.error_count,
+               replace_count = EXCLUDED.replace_count,
+               created_at = EXCLUDED.created_at,
+               committed_at = EXCLUDED.committed_at`,
+            [row.id, row.eventId, row.createdBy, row.originalName, row.status, JSON.stringify(row.previewJson || []), row.validCount || 0, row.errorCount || 0, row.replaceCount || 0, row.createdAt, row.committedAt || null]
+          );
+        }
+
         for (const row of db.certificates) {
           await client.query(
             `INSERT INTO certificates
-              (id, registration_id, user_id, organization_id, certificate_no, file_name, stored_name, file_path,
-               award_name, rank, score, status, uploaded_at, published_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+              (id, registration_id, slot, title, user_id, organization_id, file_name, stored_name, file_path,
+               award_name, rank, score, status, source, import_batch_id, uploaded_at, published_at, cleaned_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
              ON CONFLICT (id) DO UPDATE SET
                registration_id = EXCLUDED.registration_id,
+               slot = EXCLUDED.slot,
+               title = EXCLUDED.title,
                user_id = EXCLUDED.user_id,
                organization_id = EXCLUDED.organization_id,
-               certificate_no = EXCLUDED.certificate_no,
                file_name = EXCLUDED.file_name,
                stored_name = EXCLUDED.stored_name,
                file_path = EXCLUDED.file_path,
@@ -680,15 +727,33 @@ export function createPostgresStore(pool) {
                rank = EXCLUDED.rank,
                score = EXCLUDED.score,
                status = EXCLUDED.status,
+               source = EXCLUDED.source,
+               import_batch_id = EXCLUDED.import_batch_id,
                uploaded_at = EXCLUDED.uploaded_at,
-               published_at = EXCLUDED.published_at`,
-            [row.id, row.registrationId, row.userId || null, row.organizationId || null, row.certificateNo, row.fileName, row.storedName, row.filePath, row.awardName || "", row.rank || "", row.score || "", row.status, row.uploadedAt, row.publishedAt || null]
+               published_at = EXCLUDED.published_at,
+               cleaned_at = EXCLUDED.cleaned_at`,
+            [row.id, row.registrationId, row.slot, row.title, row.userId || null, row.organizationId || null, row.fileName, row.storedName, row.filePath, row.awardName || "", row.rank || "", row.score || "", row.status, row.source, row.importBatchId || null, row.uploadedAt, row.publishedAt || null, row.cleanedAt || null]
+          );
+        }
+
+        for (const row of db.certificateImportErrors) {
+          await client.query(
+            `INSERT INTO certificate_import_errors (id, batch_id, row_number, registration_id, message)
+             VALUES ($1, $2, $3, $4, $5)
+             ON CONFLICT (id) DO UPDATE SET
+               batch_id = EXCLUDED.batch_id,
+               row_number = EXCLUDED.row_number,
+               registration_id = EXCLUDED.registration_id,
+               message = EXCLUDED.message`,
+            [row.id, row.batchId, row.rowNumber, row.registrationId || null, row.message]
           );
         }
 
         await deleteMissing(client, "organization_documents", "id", db.organizationDocuments.map((row) => row.id));
         await deleteMissing(client, "file_cleanup_journal", "id", (db.fileCleanupJournal || []).map((row) => row.id));
+        await deleteMissing(client, "certificate_import_errors", "id", db.certificateImportErrors.map((row) => row.id));
         await deleteMissing(client, "certificates", "id", db.certificates.map((row) => row.id));
+        await deleteMissing(client, "certificate_import_batches", "id", db.certificateImportBatches.map((row) => row.id));
         await deleteMissing(client, "registrations", "id", db.registrations.map((row) => row.id));
         await deleteMissing(client, "projects", "id", db.projects.map((row) => row.id));
         await deleteMissing(client, "memberships", "id", db.memberships.map((row) => row.id));

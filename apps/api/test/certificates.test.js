@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import AdmZip from "adm-zip";
 import { withTestServer } from "../test-support/server.js";
 import { loginAs, withSession } from "./helpers/api-client.js";
 
@@ -42,7 +41,8 @@ test("published certificates are visible to the owner but drafts are hidden", as
     const visibleRes = await fetch(`${baseUrl}/api/me/certificates`, withSession(owner.cookie));
     const visible = await json(visibleRes);
     assert.equal(visible.rows.length, 1);
-    assert.equal(visible.rows[0].certificateNo, "CERT-001");
+    assert.equal(visible.rows[0].slot, 1);
+    assert.equal(visible.rows[0].title, "获奖证书");
     assert.equal("filePath" in visible.rows[0], false);
     assert.equal("storedName" in visible.rows[0], false);
   });
@@ -84,48 +84,29 @@ test("organization certificate query includes active members and excludes pendin
     const orgRes = await fetch(`${baseUrl}/api/organizations/O1001/certificates`, withSession(owner.cookie));
     assert.equal(orgRes.status, 200);
     const rows = (await json(orgRes)).rows;
-    assert.deepEqual(rows.map((row) => row.certificateNo), ["CERT-ACTIVE"]);
+    assert.deepEqual(rows.map((row) => ({ slot: row.slot, title: row.title })), [{ slot: 1, title: "获奖证书" }]);
     assert.equal(rows.every((row) => !("filePath" in row) && !("storedName" in row)), true);
   });
 });
 
-test("batch certificate upload reports matched, unmatched, and ambiguous files", async () => {
+test("certificate upload persists the first slot and a title", async () => {
   await withServer(async (baseUrl) => {
     const admin = await loginAs(baseUrl, "13900000000", "admin123");
-    const ordinary = await loginAs(baseUrl, "13800000001", "123456");
-    assert.equal((await fetch(`${baseUrl}/api/admin/events/wz-aerospace-2026`, withSession(admin.cookie, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ registrationMode: "force_open" })
-    }))).status, 200);
-    const duplicateRegistration = {
-      userId: "U1001",
-      organizationId: "O1001",
-      source: "普通用户",
-      athlete: { name: "陈宇航", school: "温州市实验小学", grade: "五年级", phone: "13800000099" },
-      group: "小学高段",
-      projectId: "rocket-duration",
-      instructor: "林老师"
-    };
-    const createRes = await fetch(`${baseUrl}/api/registrations`, withSession(ordinary.cookie, {
+    const uploadRes = await fetch(`${baseUrl}/api/admin/registrations/R20260627001/certificate`, withSession(admin.cookie, {
       method: "POST",
-      body: JSON.stringify(duplicateRegistration),
+      body: JSON.stringify({
+        fileName: "slot-one.pdf",
+        fileContentBase64: Buffer.from("%PDF-1.4 slot one").toString("base64")
+      }),
       headers: { "Content-Type": "application/json" }
     }));
-    assert.equal(createRes.status, 201);
+    assert.equal(uploadRes.status, 201);
 
-    const zip = new AdmZip();
-    zip.addFile("周星言_温州市第二实验中学_无人机竞速接力比赛.pdf", Buffer.from("%PDF matched"));
-    zip.addFile("不存在_未知学校_无人机竞速接力比赛.pdf", Buffer.from("%PDF unmatched"));
-    zip.addFile("陈宇航_温州市实验小学_比赛.pdf", Buffer.from("%PDF ambiguous"));
-    const form = new FormData();
-    form.append("zip", new Blob([zip.toBuffer()], { type: "application/zip" }), "certificates.zip");
-
-    const batchRes = await fetch(`${baseUrl}/api/admin/certificates/batch`, withSession(admin.cookie, { method: "POST", body: form }));
-    assert.equal(batchRes.status, 200);
-    const result = await json(batchRes);
-    assert.equal(result.matched.length, 1);
-    assert.equal(result.unmatched.length, 1);
-    assert.equal(result.ambiguous.length, 1);
+    const certificates = await fetch(`${baseUrl}/api/admin/certificates`, withSession(admin.cookie));
+    assert.equal(certificates.status, 200);
+    assert.deepEqual((await json(certificates)).rows.map((row) => ({ slot: row.slot, title: row.title })), [{
+      slot: 1,
+      title: "获奖证书"
+    }]);
   });
 });
