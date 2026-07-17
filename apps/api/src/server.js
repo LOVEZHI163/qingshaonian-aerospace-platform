@@ -14,6 +14,7 @@ import { createMutationAsyncRoute } from "./data/mutation-lock.js";
 import { createEventsRouter } from "./routes/events.js";
 import { createOrganizationsRouter } from "./routes/organizations.js";
 import { createRegistrationsRouter } from "./routes/registrations.js";
+import { createCertificateImportsRouter } from "./routes/certificate-imports.js";
 import { projectForHistoricalRegistration, registrationContext } from "./services/events.js";
 import { replayFileCleanupJournal } from "./services/organizations.js";
 
@@ -264,6 +265,15 @@ app.use("/api", createEventsRouter({
 app.use("/api", createRegistrationsRouter({
   store: dataStore,
   requireUser,
+  requireAdmin,
+  requirePasswordReady,
+  asyncRoute: mutationAsyncRoute,
+  makeId: id,
+  now
+}));
+
+app.use("/api", createCertificateImportsRouter({
+  store: dataStore,
   requireAdmin,
   requirePasswordReady,
   asyncRoute: mutationAsyncRoute,
