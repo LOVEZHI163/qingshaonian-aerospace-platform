@@ -4,6 +4,7 @@ import path from "node:path";
 
 const fileLocks = new Map();
 const MAX_RATE_WINDOW_MS = 60 * 60 * 1000;
+const MAX_AUTH_STATE_RETRIES = 100;
 
 function sameDigest(left, right) {
   const expected = Buffer.from(String(left || ""), "hex");
@@ -133,7 +134,7 @@ export function createPostgresAuthState(pool) {
 
   return {
     async consumeRateLimits(rules, now = Date.now()) {
-      for (let attempt = 0; attempt < 10; attempt += 1) {
+      for (let attempt = 0; attempt < MAX_AUTH_STATE_RETRIES; attempt += 1) {
         const client = await pool.connect();
         try {
           await client.query("BEGIN");
@@ -145,12 +146,14 @@ export function createPostgresAuthState(pool) {
               "INSERT INTO auth_rate_buckets (key, events, updated_at) VALUES ($1, '[]'::jsonb, $2) ON CONFLICT (key) DO NOTHING",
               [rule.key, new Date(now)]
             );
-            const result = await client.query("SELECT events, version FROM auth_rate_buckets WHERE key = $1", [rule.key]);
-            const events = (result.rows[0]?.events || []).map(Number).filter((time) => time > now - rule.windowMs);
+            const result = await client.query("SELECT events, version FROM auth_rate_buckets WHERE key = $1 FOR UPDATE", [rule.key]);
+            const originalEvents = (result.rows[0]?.events || []).map(Number);
+            const events = originalEvents.filter((time) => time > now - rule.windowMs);
             if (events.length >= rule.limit || (rule.cooldownMs && events.at(-1) > now - rule.cooldownMs)) allowed = false;
-            prepared.push({ rule, events, version: result.rows[0].version });
+            prepared.push({ rule, events, version: result.rows[0].version, needsCleanup: events.length !== originalEvents.length });
           }
-          for (const { rule, events, version } of prepared) {
+          for (const { rule, events, version, needsCleanup } of prepared) {
+            if (!allowed && !needsCleanup) continue;
             if (allowed) events.push(now);
             const updated = await client.query(
               "UPDATE auth_rate_buckets SET events = $2::jsonb, updated_at = $3, version = version + 1 WHERE key = $1 AND version = $4 RETURNING key",
@@ -162,7 +165,10 @@ export function createPostgresAuthState(pool) {
           return allowed;
         } catch (error) {
           await client.query("ROLLBACK");
-          if (error.code === "AUTH_STATE_CONFLICT" && attempt < 9) continue;
+          if (error.code === "AUTH_STATE_CONFLICT" && attempt < MAX_AUTH_STATE_RETRIES - 1) {
+            continue;
+          }
+          if (error.code === "AUTH_STATE_CONFLICT") return false;
           throw error;
         } finally {
           client.release();
@@ -174,12 +180,12 @@ export function createPostgresAuthState(pool) {
       await pool.query("DELETE FROM auth_rate_buckets WHERE key = $1", [key]);
     },
     async releaseRateLimits(keys, eventTime) {
-      for (let attempt = 0; attempt < 10; attempt += 1) {
+      for (let attempt = 0; attempt < MAX_AUTH_STATE_RETRIES; attempt += 1) {
         const client = await pool.connect();
         try {
           await client.query("BEGIN");
           for (const key of [...keys].sort()) {
-            const result = await client.query("SELECT events, version FROM auth_rate_buckets WHERE key = $1", [key]);
+            const result = await client.query("SELECT events, version FROM auth_rate_buckets WHERE key = $1 FOR UPDATE", [key]);
             if (result.rowCount === 0) continue;
             const events = (result.rows[0]?.events || []).map(Number);
             const index = events.lastIndexOf(eventTime);
@@ -196,7 +202,10 @@ export function createPostgresAuthState(pool) {
           return;
         } catch (error) {
           await client.query("ROLLBACK");
-          if (error.code === "AUTH_STATE_CONFLICT" && attempt < 9) continue;
+          if (error.code === "AUTH_STATE_CONFLICT" && attempt < MAX_AUTH_STATE_RETRIES - 1) {
+            continue;
+          }
+          if (error.code === "AUTH_STATE_CONFLICT") return;
           throw error;
         } finally {
           client.release();
@@ -233,11 +242,11 @@ export function createPostgresAuthState(pool) {
     },
     async consumeChallenge({ phone, digest, now = Date.now(), maxAttempts }) {
       await pool.query("DELETE FROM password_reset_challenges WHERE expires_at <= $1", [new Date(now)]);
-      for (let attempt = 0; attempt < 10; attempt += 1) {
+      for (let attempt = 0; attempt < MAX_AUTH_STATE_RETRIES; attempt += 1) {
         const client = await pool.connect();
         try {
           await client.query("BEGIN");
-          const result = await client.query("SELECT digest, expires_at, attempts, version FROM password_reset_challenges WHERE phone = $1", [phone]);
+          const result = await client.query("SELECT digest, expires_at, attempts, version FROM password_reset_challenges WHERE phone = $1 FOR UPDATE", [phone]);
           const challenge = result.rows[0];
           if (!challenge) {
             await client.query("COMMIT");
@@ -263,7 +272,10 @@ export function createPostgresAuthState(pool) {
           return true;
         } catch (error) {
           await client.query("ROLLBACK");
-          if (error.code === "AUTH_STATE_CONFLICT" && attempt < 9) continue;
+          if (error.code === "AUTH_STATE_CONFLICT" && attempt < MAX_AUTH_STATE_RETRIES - 1) {
+            continue;
+          }
+          if (error.code === "AUTH_STATE_CONFLICT") return false;
           throw error;
         } finally {
           client.release();

@@ -118,6 +118,18 @@ test("PostgreSQL auth state atomically enforces limits and consumes challenges o
   });
 });
 
+test("PostgreSQL auth state handles burst contention without surfacing storage conflicts", async () => {
+  await withStore(async (_store, pool) => {
+    const now = Date.parse("2026-07-17T00:00:00.000Z");
+    const states = Array.from({ length: 10 }, () => createPostgresAuthState(pool));
+    const settled = await Promise.allSettled(Array.from({ length: 50 }, (_, index) => states[index % states.length].consumeRateLimits([
+      { key: "login:ip:burst", limit: 20, windowMs: 60_000 }
+    ], now)));
+    assert.equal(settled.every((result) => result.status === "fulfilled"), true);
+    assert.equal(settled.filter((result) => result.status === "fulfilled" && result.value).length, 20);
+  });
+});
+
 test("PostgreSQL store rejects invalid registration modes and project groups", async () => {
   await withStore(async (store) => {
     const invalidMode = await store.readDb();
