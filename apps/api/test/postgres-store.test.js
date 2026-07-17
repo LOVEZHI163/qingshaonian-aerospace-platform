@@ -174,6 +174,12 @@ test("PostgreSQL schema enforces unique phone and registration foreign keys", as
         ('duplicate-current', '重复当前赛事', '主题', '2027年', '场馆', '2027-01-01', '联系人',
          '2026-12-01T00:00:00.000Z', '2027-01-01T00:00:00.000Z', 'automatic', 'published', TRUE)
     `));
+
+    await assert.rejects(pool.query(`
+      INSERT INTO certificates
+        (id, registration_id, slot, title, file_name, stored_name, file_path, status, source, uploaded_at)
+      VALUES ('C-INVALID-SLOT', 'R20260627001', 3, '非法槽位', 'invalid.pdf', 'invalid.pdf', '/tmp/invalid.pdf', 'draft', 'manual', NOW())
+    `), /check/i);
   });
 });
 
@@ -281,6 +287,19 @@ test("PostgreSQL store upgrades a legacy schema without losing existing records"
     `);
 
     await store.initialize();
+    await pool.query(`
+      INSERT INTO certificates
+        (id, registration_id, slot, title, file_name, stored_name, file_path, source, uploaded_at)
+      VALUES ('CLEGACY-DEFAULT-STATUS', 'RLEGACY', 2, '迁移后默认状态', 'default.pdf', 'default.pdf', '/default.pdf', 'manual', NOW())
+    `);
+    const defaultStatus = await pool.query("SELECT status FROM certificates WHERE id = 'CLEGACY-DEFAULT-STATUS'");
+    assert.equal(defaultStatus.rows[0].status, "draft");
+    await assert.rejects(pool.query(`
+      INSERT INTO certificates
+        (id, registration_id, slot, title, file_name, stored_name, file_path, status, source, uploaded_at)
+      VALUES ('CLEGACY-INVALID-SLOT', 'RLEGACY', 3, '迁移后非法槽位', 'invalid.pdf', 'invalid.pdf', '/invalid.pdf', 'draft', 'manual', NOW())
+    `), /check/i);
+
     const data = await store.readDb();
     const legacyEvent = data.events.find((event) => event.id === "legacy-event");
     const legacyProject = data.projects.find((project) => project.id === "legacy-project");

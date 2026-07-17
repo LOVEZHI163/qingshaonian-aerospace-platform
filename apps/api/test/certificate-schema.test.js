@@ -3,6 +3,19 @@ import test from "node:test";
 import { newDb } from "pg-mem";
 
 import { createPostgresStore } from "../src/data/postgres-store.js";
+import { ensureDbShape } from "../src/data/seed.js";
+
+test("certificate JSON migration keeps slot 2 and safely normalizes invalid legacy slots to 1", () => {
+  const db = ensureDbShape({
+    certificates: [
+      { id: "C-LEGACY-EMPTY", awardName: "", slot: 0 },
+      { id: "C-LEGACY-TWO", awardName: "二等奖", slot: 2 },
+      { id: "C-LEGACY-INVALID", awardName: "", slot: 3 }
+    ]
+  });
+
+  assert.deepEqual(db.certificates.map((certificate) => certificate.slot), [1, 2, 1]);
+});
 
 test("certificate schema migrates legacy certificates to slot 1 and permits one second slot", async () => {
   const memory = newDb({ autoCreateForeignKeyIndices: true });
@@ -12,6 +25,20 @@ test("certificate schema migrates legacy certificates to slot 1 and permits one 
 
   try {
     await store.initialize();
+    await pool.query(`
+      INSERT INTO certificates
+        (id, registration_id, slot, title, file_name, stored_name, file_path, source, uploaded_at)
+      VALUES ('C-STATUS-DEFAULT', 'R20260627002', 1, '默认状态', 'default.png', 'default.png', '/tmp/default.png', 'manual', NOW())
+    `);
+    const status = await pool.query("SELECT status FROM certificates WHERE id = 'C-STATUS-DEFAULT'");
+    assert.equal(status.rows[0].status, "draft");
+
+    await assert.rejects(pool.query(`
+      INSERT INTO certificates
+        (id, registration_id, slot, title, file_name, stored_name, file_path, status, source, uploaded_at)
+      VALUES ('C-INVALID-SLOT', 'R20260627002', 3, '非法槽位', 'invalid.png', 'invalid.png', '/tmp/invalid.png', 'draft', 'manual', NOW())
+    `));
+
     const legacy = await store.readDb();
     legacy.certificates.push({
       id: "C-SLOT-1",

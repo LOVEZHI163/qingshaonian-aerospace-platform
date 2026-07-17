@@ -20,7 +20,7 @@ test("published certificates are visible to the owner but drafts are hidden", as
       body: JSON.stringify({
         fileName: "zhou.pdf",
         fileContentBase64: Buffer.from("%PDF-1.4 draft").toString("base64"),
-        certificateNo: "CERT-001"
+        slot: 1
       }),
       headers: { "Content-Type": "application/json" }
     }));
@@ -70,7 +70,7 @@ test("organization certificate query includes active members and excludes pendin
       body: JSON.stringify({
         fileName: "chen.pdf",
         fileContentBase64: Buffer.from("%PDF-1.4 active").toString("base64"),
-        certificateNo: "CERT-ACTIVE"
+        slot: 1
       }),
       headers: { "Content-Type": "application/json" }
     }));
@@ -96,7 +96,8 @@ test("certificate upload persists the first slot and a title", async () => {
       method: "POST",
       body: JSON.stringify({
         fileName: "slot-one.pdf",
-        fileContentBase64: Buffer.from("%PDF-1.4 slot one").toString("base64")
+        fileContentBase64: Buffer.from("%PDF-1.4 slot one").toString("base64"),
+        slot: 1
       }),
       headers: { "Content-Type": "application/json" }
     }));
@@ -108,5 +109,34 @@ test("certificate upload persists the first slot and a title", async () => {
       slot: 1,
       title: "获奖证书"
     }]);
+  });
+});
+
+test("certificate upload saves slots 1 and 2 separately, rejects invalid slots, and never exposes certificateNo", async () => {
+  await withServer(async (baseUrl) => {
+    const admin = await loginAs(baseUrl, "13900000000", "admin123");
+    const upload = async (slot) => fetch(`${baseUrl}/api/admin/registrations/R20260627001/certificate`, withSession(admin.cookie, {
+      method: "POST",
+      body: JSON.stringify({
+        fileName: `slot-${slot}.pdf`,
+        fileContentBase64: Buffer.from(`%PDF-1.4 slot ${slot}`).toString("base64"),
+        slot
+      }),
+      headers: { "Content-Type": "application/json" }
+    }));
+
+    const first = await upload(1);
+    const second = await upload(2);
+    const invalid = await upload(3);
+    assert.equal(first.status, 201);
+    assert.equal(second.status, 201);
+    assert.equal(invalid.status, 422);
+    assert.equal("certificateNo" in (await json(first)).row, false);
+    assert.equal("certificateNo" in (await json(second)).row, false);
+
+    const certificates = await fetch(`${baseUrl}/api/admin/certificates`, withSession(admin.cookie));
+    const rows = (await json(certificates)).rows.filter((row) => row.registrationId === "R20260627001");
+    assert.deepEqual(rows.map((row) => row.slot).sort(), [1, 2]);
+    assert.equal(rows.every((row) => !("certificateNo" in row)), true);
   });
 });

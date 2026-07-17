@@ -1,10 +1,14 @@
 ALTER TABLE certificates DROP CONSTRAINT IF EXISTS certificates_registration_id_key;
 ALTER TABLE certificates ALTER COLUMN certificate_no DROP NOT NULL;
+ALTER TABLE certificates ALTER COLUMN status SET DEFAULT 'draft';
 ALTER TABLE certificates ADD COLUMN IF NOT EXISTS slot SMALLINT NOT NULL DEFAULT 1;
 ALTER TABLE certificates ADD COLUMN IF NOT EXISTS title TEXT NOT NULL DEFAULT '获奖证书';
 ALTER TABLE certificates ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'manual';
 ALTER TABLE certificates ADD COLUMN IF NOT EXISTS import_batch_id TEXT;
 ALTER TABLE certificates ADD COLUMN IF NOT EXISTS cleaned_at TIMESTAMPTZ;
+
+ALTER TABLE certificates
+  ADD CONSTRAINT certificates_slot_check CHECK (slot IN (1, 2));
 
 CREATE UNIQUE INDEX IF NOT EXISTS certificates_registration_slot_key
   ON certificates(registration_id, slot);

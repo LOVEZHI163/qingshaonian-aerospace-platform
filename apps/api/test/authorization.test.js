@@ -244,7 +244,8 @@ test("certificate downloads enforce ownership, publication, and organization man
     }, admin.cookie))).status, 200);
     const upload = await fetch(`${baseUrl}/api/admin/registrations/R20260627001/certificate`, jsonOptions("POST", {
       fileName: "draft.pdf",
-      fileContentBase64: Buffer.from("%PDF-1.4 draft").toString("base64")
+      fileContentBase64: Buffer.from("%PDF-1.4 draft").toString("base64"),
+      slot: 1
     }, admin.cookie));
     assert.equal(upload.status, 201);
     const certificate = (await upload.json()).row;
@@ -260,7 +261,8 @@ test("certificate downloads enforce ownership, publication, and organization man
 
     const foreign = await fetch(`${baseUrl}/api/admin/registrations/R20260627002/certificate`, jsonOptions("POST", {
       fileName: "foreign.pdf",
-      fileContentBase64: Buffer.from("%PDF-1.4 foreign").toString("base64")
+      fileContentBase64: Buffer.from("%PDF-1.4 foreign").toString("base64"),
+      slot: 1
     }, admin.cookie));
     const foreignCertificate = (await foreign.json()).row;
     await fetch(`${baseUrl}/api/admin/certificates/${foreignCertificate.id}/publish`, jsonOptions("PATCH", { status: "published" }, admin.cookie));
@@ -275,7 +277,8 @@ test("certificate downloads enforce ownership, publication, and organization man
     const privateRow = (await privateRegistration.json()).row;
     const privateUpload = await fetch(`${baseUrl}/api/admin/registrations/${privateRow.id}/certificate`, jsonOptions("POST", {
       fileName: "private.pdf",
-      fileContentBase64: Buffer.from("%PDF-1.4 private").toString("base64")
+      fileContentBase64: Buffer.from("%PDF-1.4 private").toString("base64"),
+      slot: 1
     }, admin.cookie));
     const privateCertificate = (await privateUpload.json()).row;
     await fetch(`${baseUrl}/api/admin/certificates/${privateCertificate.id}/publish`, jsonOptions("PATCH", { status: "published" }, admin.cookie));

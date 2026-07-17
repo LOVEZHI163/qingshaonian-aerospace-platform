@@ -169,8 +169,8 @@ function updateCertificateFromRegistration(certificate, registration) {
   certificate.score = registration.score || certificate.score || "";
 }
 
-function findCertificateByRegistration(db, registrationId) {
-  return db.certificates.find((item) => item.registrationId === registrationId);
+function findCertificateByRegistration(db, registrationId, slot) {
+  return db.certificates.find((item) => item.registrationId === registrationId && (slot === undefined || item.slot === slot));
 }
 
 function organizationForOwner(db, userId) {
@@ -746,19 +746,23 @@ app.post("/api/admin/registrations/:id/certificate", requireAdmin, requirePasswo
   const registration = db.registrations.find((item) => item.id === req.params.id);
   if (!registration) return res.status(404).json({ error: "报名记录不存在" });
 
+  const slot = Number(req.body.slot);
+  if (![1, 2].includes(slot)) return res.status(422).json({ error: "证书位置只能为 1 或 2" });
+
   const incomingBuffer = req.file?.buffer || (req.body.fileContentBase64 ? Buffer.from(req.body.fileContentBase64, "base64") : null);
   if (!incomingBuffer) return res.status(422).json({ error: "请上传证书 PDF 文件" });
   const originalName = req.file?.originalname || req.body.fileName || `${registration.id}.pdf`;
   const { storedName, filePath } = await saveCertificateFile({ fileName: originalName, buffer: incomingBuffer });
 
-  let certificate = findCertificateByRegistration(db, registration.id);
+  let certificate = findCertificateByRegistration(db, registration.id, slot);
   if (!certificate) {
     certificate = {
       id: id("C"),
       registrationId: registration.id,
+      slot,
+      title: req.body.title || registration.awardName || "获奖证书",
       userId: registration.userId || null,
       organizationId: registration.organizationId || null,
-      certificateNo: req.body.certificateNo || `CERT-${registration.id}`,
       fileName: originalName,
       storedName,
       filePath,
@@ -766,13 +770,16 @@ app.post("/api/admin/registrations/:id/certificate", requireAdmin, requirePasswo
       rank: registration.rank || "",
       score: registration.score || "",
       status: "draft",
+      source: "manual",
+      importBatchId: null,
       uploadedAt: now(),
-      publishedAt: ""
+      publishedAt: "",
+      cleanedAt: ""
     };
     db.certificates.unshift(certificate);
   } else {
     Object.assign(certificate, {
-      certificateNo: req.body.certificateNo || certificate.certificateNo,
+      title: req.body.title || certificate.title,
       fileName: originalName,
       storedName,
       filePath,
@@ -826,14 +833,15 @@ app.post("/api/admin/certificates/batch", requireAdmin, requirePasswordReady, up
 
     const registration = matches[0];
     const { storedName, filePath } = await saveCertificateFile({ fileName: entry.entryName, buffer: entry.getData() });
-    let certificate = findCertificateByRegistration(db, registration.id);
+    let certificate = findCertificateByRegistration(db, registration.id, 1);
     if (!certificate) {
       certificate = {
         id: id("C"),
         registrationId: registration.id,
+        slot: 1,
+        title: registration.awardName || "获奖证书",
         userId: registration.userId || null,
         organizationId: registration.organizationId || null,
-        certificateNo: `CERT-${registration.id}`,
         fileName: path.basename(entry.entryName),
         storedName,
         filePath,
@@ -841,8 +849,11 @@ app.post("/api/admin/certificates/batch", requireAdmin, requirePasswordReady, up
         rank: registration.rank || "",
         score: registration.score || "",
         status: "draft",
+        source: "manual",
+        importBatchId: null,
         uploadedAt: now(),
-        publishedAt: ""
+        publishedAt: "",
+        cleanedAt: ""
       };
       db.certificates.unshift(certificate);
     } else {

@@ -222,7 +222,7 @@ export function ensureDbShape(db) {
     row.resultRecordedAt ||= "";
   }
   for (const certificate of db.certificates) {
-    certificate.slot ||= 1;
+    certificate.slot = certificate.slot === 2 ? 2 : 1;
     certificate.title ||= certificate.awardName || "获奖证书";
     certificate.source ||= "manual";
     certificate.importBatchId ||= null;
