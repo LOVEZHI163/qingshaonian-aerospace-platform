@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 
 import { api, apiBlob } from "../lib/api.js";
+import { loadAdminRegistrations } from "../lib/admin-registrations.js";
 
 const organizations = ref([]);
 const users = ref([]);
@@ -70,10 +71,10 @@ async function openPreview(row) {
 async function loadOrganizations() {
   loading.value = true; error.value = "";
   try {
-    const [organizationPayload, userPayload, registrationPayload] = await Promise.all([api("/api/admin/organizations"), api("/api/users"), api("/api/admin/registrations?pageSize=100")]);
+    const [organizationPayload, userPayload, registrationRows] = await Promise.all([api("/api/admin/organizations"), api("/api/users"), loadAdminRegistrations()]);
     organizations.value = organizationPayload.rows || [];
     users.value = userPayload.rows || [];
-    registrations.value = registrationPayload.rows || [];
+    registrations.value = registrationRows;
     if (selected.value) selected.value = organizations.value.find((row) => row.id === selected.value.id) || null;
   } catch (cause) { error.value = cause.message || "组织列表加载失败"; } finally { loading.value = false; }
 }

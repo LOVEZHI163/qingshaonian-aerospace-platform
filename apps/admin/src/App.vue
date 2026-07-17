@@ -3,6 +3,7 @@ import { computed, onMounted, reactive, ref, watch } from "vue";
 import AdminShell from "./components/AdminShell.vue";
 import OrganizationRegistrationForm from "./components/OrganizationRegistrationForm.vue";
 import { api } from "./lib/api.js";
+import { loadAdminRegistrations } from "./lib/admin-registrations.js";
 import AuthPage from "./pages/AuthPage.vue";
 import EventManagementPage from "./pages/EventManagementPage.vue";
 import OrganizationManagementPage from "./pages/OrganizationManagementPage.vue";
@@ -209,10 +210,10 @@ async function loadData() {
     certificates.value = [];
   } else if (currentUser.value.type === "admin") {
     const [registrationRes, certificateRes] = await Promise.all([
-      api("/api/admin/registrations?pageSize=100"),
+      loadAdminRegistrations(),
       api("/api/admin/certificates")
     ]);
-    rows.value = registrationRes.rows;
+    rows.value = registrationRes;
     certificates.value = certificateRes.rows;
   } else if (currentUser.value.type === "organization") {
     const orgIds = manageableOrganizations.value.map((org) => org.id);

@@ -2,6 +2,7 @@
 import { computed, onMounted, reactive, ref } from "vue";
 
 import { ApiError, api } from "../lib/api.js";
+import { loadAdminRegistrations } from "../lib/admin-registrations.js";
 
 const emit = defineEmits(["event-changed"]);
 const GROUPS = ["小学低段", "小学高段", "中学组", "职高/高中组"];
@@ -88,11 +89,11 @@ async function loadEvents({ preserveSelection = true } = {}) {
   try {
     const [eventPayload, registrationPayload] = await Promise.all([
       api("/api/admin/events"),
-      api("/api/admin/registrations?pageSize=100")
+      loadAdminRegistrations()
     ]);
     events.value = eventPayload.rows || [];
     projects.value = eventPayload.projects || [];
-    registrations.value = registrationPayload.rows || [];
+    registrations.value = registrationPayload;
     const nextId = preserveSelection && events.value.some((row) => row.id === selectedId.value)
       ? selectedId.value
       : events.value.find((row) => row.isCurrent)?.id || events.value[0]?.id || "";

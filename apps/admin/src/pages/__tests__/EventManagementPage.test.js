@@ -96,6 +96,22 @@ describe("EventManagementPage", () => {
     expect(wrapper.get('[data-action="disable-project"]').text()).toContain("停用");
   });
 
+  it("loads every registration page before determining project history", async () => {
+    const firstPage = Array.from({ length: 100 }, (_, index) => ({ id: `R${index + 1}`, projectId: "P1" }));
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/admin/events") return { rows: [event], projects: [project] };
+      if (path === "/api/admin/registrations?pageSize=100") return { rows: firstPage, total: 101, page: 1, pageSize: 100 };
+      if (path === "/api/admin/registrations?page=2&pageSize=100") return { rows: [{ id: "R101", projectId: "P1" }], total: 101, page: 2, pageSize: 100 };
+      return { row: event };
+    });
+    const wrapper = mount(EventManagementPage);
+    await flushPromises();
+
+    expect(apiMock).toHaveBeenCalledWith("/api/admin/registrations?page=2&pageSize=100");
+    expect(wrapper.find('[data-action="delete-project"]').exists()).toBe(false);
+    expect(wrapper.get('[data-action="disable-project"]').text()).toContain("停用");
+  });
+
   it("opens the form and creates the first event from an empty state", async () => {
     const rows = [];
     apiMock.mockImplementation(async (path, options = {}) => {
