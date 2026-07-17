@@ -94,6 +94,15 @@ export function setCertificateStatuses(db, ids, status, now) {
   if (!new Set(["draft", "published"]).has(status)) throw invalid("证书状态只能为 draft 或 published");
   const uniqueIds = [...new Set(ids)];
   const rows = uniqueIds.map((certificateId) => certificateOrError(db, certificateId));
+  if (status === "published") {
+    const invalidTarget = rows.find((certificate) => certificate.cleanedAt
+      || !String(certificate.filePath || "").trim()
+      || !String(certificate.storedName || "").trim()
+      || !String(certificate.fileName || "").trim());
+    if (invalidTarget) {
+      throw new CertificateError(409, "已清理或缺少文件的证书不能发布");
+    }
+  }
   for (const certificate of rows) {
     certificate.status = status;
     certificate.publishedAt = status === "published" ? now : "";

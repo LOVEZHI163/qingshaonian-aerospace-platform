@@ -4,13 +4,22 @@ import multer from "multer";
 import { buildCertificateErrorReport } from "../certificates/error-report.js";
 import {
   cancelCertificateImport,
+  listActiveCertificateImportPreviews,
   commitCertificateImport,
   loadCertificateImportErrors,
   loadCertificateImportPreview,
   previewCertificateImport
 } from "../services/certificate-imports.js";
 
-export function createCertificateImportsRouter({ store, requireAdmin, requirePasswordReady, asyncRoute, makeId, now }) {
+export function createCertificateImportsRouter({
+  store,
+  requireAdmin,
+  requirePasswordReady,
+  asyncRoute,
+  mutationAsyncRoute = asyncRoute,
+  makeId,
+  now
+}) {
   const router = express.Router();
   const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
   const admin = [requireAdmin, requirePasswordReady];
@@ -23,16 +32,23 @@ export function createCertificateImportsRouter({ store, requireAdmin, requirePas
   });
   const deps = { store, makeId, now };
 
-  router.post("/admin/certificate-imports/preview", ...admin, uploadWorkbook, asyncRoute(async (req, res) => {
-    const preview = await previewCertificateImport({ ...deps, file: req.file, userId: req.user.id });
+  router.post("/admin/certificate-imports/preview", ...admin, uploadWorkbook, mutationAsyncRoute(async (req, res) => {
+    const eventId = String(req.body?.eventId || "").trim();
+    if (!eventId) throw new CertificateImportError(422, "请选择赛事后再导入证书");
+    const preview = await previewCertificateImport({ ...deps, file: req.file, eventId, userId: req.user.id });
     res.status(201).json(preview);
   }));
 
-  router.post("/admin/certificate-imports/:id/commit", ...admin, asyncRoute(async (req, res) => {
+  router.get("/admin/certificate-imports", ...admin, mutationAsyncRoute(async (req, res) => {
+    const rows = await listActiveCertificateImportPreviews({ ...deps, eventId: req.query.eventId });
+    res.json({ rows });
+  }));
+
+  router.post("/admin/certificate-imports/:id/commit", ...admin, mutationAsyncRoute(async (req, res) => {
     res.json(await commitCertificateImport({ ...deps, batchId: req.params.id }));
   }));
 
-  router.delete("/admin/certificate-imports/:id", ...admin, asyncRoute(async (req, res) => {
+  router.delete("/admin/certificate-imports/:id", ...admin, mutationAsyncRoute(async (req, res) => {
     await cancelCertificateImport({ ...deps, batchId: req.params.id });
     res.status(204).end();
   }));

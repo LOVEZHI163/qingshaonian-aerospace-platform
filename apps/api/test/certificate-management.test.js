@@ -86,6 +86,27 @@ function manualDb() {
   };
 }
 
+function paginationDb() {
+  const registrations = [
+    { id: "R1", eventId: "E1", group: "G1", projectId: "P1", projectName: "Project one", athlete: { name: "Alice", school: "A" } },
+    { id: "R2", eventId: "E1", group: "G1", projectId: "P1", projectName: "Project one", athlete: { name: "Alice", school: "B" } },
+    { id: "R3", eventId: "E1", group: "G2", projectId: "P2", projectName: "Project two", athlete: { name: "Bob", school: "C" } },
+    { id: "R4", eventId: "E2", group: "G1", projectId: "P1", projectName: "Project one", athlete: { name: "Alice", school: "D" } }
+  ];
+  return {
+    registrations,
+    certificates: [
+      { id: "C1", registrationId: "R1", slot: 1, title: "First", fileName: "first.png", storedName: "first.png", filePath: "/safe/first.png", status: "draft", source: "manual", importBatchId: null, uploadedAt: "2026-07-17T00:00:00.000Z", publishedAt: "", cleanedAt: "" },
+      { id: "C2", registrationId: "R2", slot: 1, title: "Second", fileName: "second.png", storedName: "second.png", filePath: "/safe/second.png", status: "draft", source: "manual", importBatchId: null, uploadedAt: "2026-07-18T00:00:00.000Z", publishedAt: "", cleanedAt: "" },
+      { id: "C3", registrationId: "R3", slot: 1, title: "Third", fileName: "third.png", storedName: "third.png", filePath: "/safe/third.png", status: "published", source: "manual", importBatchId: null, uploadedAt: "2026-07-18T00:00:00.000Z", publishedAt: "2026-07-18T00:00:00.000Z", cleanedAt: "" },
+      { id: "C4", registrationId: "R4", slot: 1, title: "Fourth", fileName: "fourth.png", storedName: "fourth.png", filePath: "/safe/fourth.png", status: "draft", source: "manual", importBatchId: null, uploadedAt: "2026-07-18T00:00:00.000Z", publishedAt: "", cleanedAt: "" }
+    ],
+    organizations: [],
+    memberships: [],
+    fileCleanupJournal: []
+  };
+}
+
 async function withCertificateRouter({ store, storage }, fn) {
   const app = express();
   const allow = (req, _res, next) => {
@@ -115,6 +136,30 @@ async function withCertificateRouter({ store, storage }, fn) {
   }
 }
 
+test("admin certificate list filters, sorts stably, and returns bounded paging metadata", async () => {
+  let persisted = paginationDb();
+  const store = {
+    readDb: async () => structuredClone(persisted),
+    writeDb: async (next) => { persisted = structuredClone(next); }
+  };
+  const storage = { saveFile: async () => ({}), deleteFile: async () => {}, readFile: async () => ONE_PIXEL_PNG };
+
+  await withCertificateRouter({ store, storage }, async (baseUrl) => {
+    const first = await fetch(`${baseUrl}/api/admin/certificates?eventId=E1&status=draft&group=G1&projectId=P1&name=Alice&sort=name&direction=asc&page=1&pageSize=1`);
+    assert.equal(first.status, 200);
+    const firstPayload = await responseJson(first);
+    assert.deepEqual({ total: firstPayload.total, page: firstPayload.page, pageSize: firstPayload.pageSize }, { total: 2, page: 1, pageSize: 1 });
+    assert.deepEqual(firstPayload.rows.map((row) => row.id), ["C1"]);
+
+    const second = await fetch(`${baseUrl}/api/admin/certificates?eventId=E1&status=draft&group=G1&projectId=P1&name=Alice&sort=name&direction=asc&page=2&pageSize=1`);
+    assert.equal(second.status, 200);
+    assert.deepEqual((await responseJson(second)).rows.map((row) => row.id), ["C2"]);
+
+    const tooLarge = await fetch(`${baseUrl}/api/admin/certificates?pageSize=101`);
+    assert.equal(tooLarge.status, 422);
+  });
+});
+
 test("manual certificate management uploads both slots, edits, replaces, deletes, and changes status in bulk", async () => {
   await withTestServer(async ({ baseUrl, dbPath }) => {
     const admin = await loginAs(baseUrl, "13900000000", "admin123");
@@ -135,8 +180,11 @@ test("manual certificate management uploads both slots, edits, replaces, deletes
     assert.deepEqual([first.status, second.status], ["draft", "draft"]);
     assert.equal(first.title, "一等奖图片");
     assert.equal(second.title, "二等奖文件");
-    assert.deepEqual(await fs.readFile(first.filePath), ONE_PIXEL_PNG);
-    assert.deepEqual(await fs.readFile(second.filePath), PDF);
+    let persistedDb = JSON.parse(await fs.readFile(dbPath, "utf8"));
+    const firstFilePath = persistedDb.certificates.find((row) => row.id === first.id).filePath;
+    const secondFilePath = persistedDb.certificates.find((row) => row.id === second.id).filePath;
+    assert.deepEqual(await fs.readFile(firstFilePath), ONE_PIXEL_PNG);
+    assert.deepEqual(await fs.readFile(secondFilePath), PDF);
 
     const resultUpdate = await fetch(`${baseUrl}/api/admin/registrations/R20260627001/result`, jsonRequest("POST", {
       awardName: "特等奖",
@@ -170,6 +218,7 @@ test("manual certificate management uploads both slots, edits, replaces, deletes
       assert.equal(payload.certificates.every((row) => (
         row.awardName === expected.awardName && row.rank === expected.rank && row.score === expected.score
       )), true);
+      assert.equal(payload.certificates.every((row) => !("filePath" in row) && !("storedName" in row)), true);
       const persisted = (await responseJson(await fetch(`${baseUrl}/api/admin/certificates`, withSession(admin.cookie)))).rows
         .filter((row) => row.registrationId === "R20260627001");
       assert.equal(persisted.length, 2);
@@ -203,8 +252,10 @@ test("manual certificate management uploads both slots, edits, replaces, deletes
     assert.equal(replaced.id, first.id);
     assert.equal(replaced.title, "替换后的金奖");
     assert.equal(replaced.status, "draft");
-    assert.notEqual(replaced.filePath, first.filePath);
-    await assert.rejects(fs.access(first.filePath), { code: "ENOENT" });
+    persistedDb = JSON.parse(await fs.readFile(dbPath, "utf8"));
+    const replacedFilePath = persistedDb.certificates.find((row) => row.id === first.id).filePath;
+    assert.notEqual(replacedFilePath, firstFilePath);
+    await assert.rejects(fs.access(firstFilePath), { code: "ENOENT" });
 
     const published = await fetch(`${baseUrl}/api/admin/certificates/bulk-status`, jsonRequest("POST", {
       ids: [first.id, second.id],
@@ -223,9 +274,9 @@ test("manual certificate management uploads both slots, edits, replaces, deletes
 
     const removed = await fetch(`${baseUrl}/api/admin/certificates/${second.id}`, withSession(admin.cookie, { method: "DELETE" }));
     assert.equal(removed.status, 204);
-    await assert.rejects(fs.access(second.filePath), { code: "ENOENT" });
-    const db = JSON.parse(await fs.readFile(dbPath, "utf8"));
-    assert.equal(db.certificates.some((row) => row.id === second.id), false);
+    await assert.rejects(fs.access(secondFilePath), { code: "ENOENT" });
+    persistedDb = JSON.parse(await fs.readFile(dbPath, "utf8"));
+    assert.equal(persistedDb.certificates.some((row) => row.id === second.id), false);
   }, { prefix: "manual-certificate-management-crud-" });
 });
 
@@ -460,6 +511,8 @@ test("manual certificate management whitelists certificate fields in admin, owne
       assert.ok(row);
       assert.equal(Object.hasOwn(row, legacyKey), false);
       assert.equal(Object.hasOwn(row, unknownKey), false);
+      assert.equal(Object.hasOwn(row, "filePath"), false);
+      assert.equal(Object.hasOwn(row, "storedName"), false);
     }
 
     const single = await fetch(`${baseUrl}/api/admin/certificates/${certificate.id}`, jsonRequest("PATCH", {
@@ -469,5 +522,7 @@ test("manual certificate management whitelists certificate fields in admin, owne
     const row = (await responseJson(single)).row;
     assert.equal(Object.hasOwn(row, legacyKey), false);
     assert.equal(Object.hasOwn(row, unknownKey), false);
+    assert.equal(Object.hasOwn(row, "filePath"), false);
+    assert.equal(Object.hasOwn(row, "storedName"), false);
   }, { prefix: "manual-certificate-management-whitelist-" });
 });

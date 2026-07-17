@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import fs from "node:fs/promises";
 import test from "node:test";
 
 import ExcelJS from "exceljs";
@@ -75,4 +76,26 @@ test("attachment filenames include an RFC5987 value and safe ASCII fallback", ()
   assert.match(value, /filename="download\.xlsx"/);
   assert.match(value, /filename\*=UTF-8''/);
   assert.match(value, /%28.*%29.*%27.*%2A/);
+});
+
+test("certificate template rejects more than 5000 approved rows before workbook generation", async () => {
+  await withTestServer(async ({ baseUrl, dbPath }) => {
+    const db = JSON.parse(await fs.readFile(dbPath, "utf8"));
+    const source = db.registrations.find((row) => row.status === "approved");
+    db.registrations = Array.from({ length: 5_001 }, (_, index) => ({
+      ...structuredClone(source),
+      id: `R-TEMPLATE-${index + 1}`,
+      athlete: { ...source.athlete, name: `Template athlete ${index + 1}` },
+      athleteKey: `template-${index + 1}`
+    }));
+    await fs.writeFile(dbPath, JSON.stringify(db), "utf8");
+    const admin = await loginAs(baseUrl, "13900000000", "admin123");
+
+    const response = await fetch(
+      `${baseUrl}/api/admin/events/wz-aerospace-2026/certificate-template.xlsx`,
+      withSession(admin.cookie)
+    );
+    assert.equal(response.status, 413);
+    assert.match((await response.json()).error, /5,000|5000/);
+  }, { prefix: "certificate-template-limit-" });
 });

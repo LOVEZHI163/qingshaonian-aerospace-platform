@@ -1,5 +1,5 @@
 <script setup>
-import { onBeforeUnmount, ref } from "vue";
+import { onBeforeUnmount, ref, watch } from "vue";
 
 import { api, apiBlob, apiUrl } from "../lib/api.js";
 import { createBlobDownloadManager } from "../lib/download.js";
@@ -12,12 +12,48 @@ const emit = defineEmits(["committed"]);
 const fileInput = ref(null);
 const selectedFile = ref(null);
 const preview = ref(null);
+const recoverablePreviews = ref([]);
 const loading = ref(false);
 const action = ref("");
 const error = ref("");
 const success = ref("");
 const downloads = createBlobDownloadManager();
 const xlsxAccept = ".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+let recoveryRequestGeneration = 0;
+
+function clearSelectedFile() {
+  selectedFile.value = null;
+  if (fileInput.value) fileInput.value.value = "";
+}
+
+async function loadRecoverablePreviews(eventId = props.eventId) {
+  const generation = ++recoveryRequestGeneration;
+  if (!eventId) {
+    recoverablePreviews.value = [];
+    return;
+  }
+  try {
+    const payload = await api(`/api/admin/certificate-imports?eventId=${encodeURIComponent(eventId)}`);
+    if (generation !== recoveryRequestGeneration || eventId !== props.eventId) return;
+    recoverablePreviews.value = Array.isArray(payload?.rows) ? payload.rows : [];
+  } catch (cause) {
+    if (generation !== recoveryRequestGeneration || eventId !== props.eventId) return;
+    recoverablePreviews.value = [];
+    error.value = cause.message || "未能加载可恢复的证书预检查，请稍后刷新页面。";
+  }
+}
+
+function removeRecoverablePreview(batchId) {
+  recoverablePreviews.value = recoverablePreviews.value.filter((row) => row.id !== batchId);
+}
+
+function resumeImport(batch) {
+  if (!batch?.id || action.value) return;
+  preview.value = batch;
+  clearSelectedFile();
+  error.value = "";
+  success.value = "已恢复未完成的预检查批次。";
+}
 
 function chooseFile(event) {
   if (preview.value) return;
@@ -51,6 +87,10 @@ async function downloadTemplate() {
 }
 
 async function previewImport() {
+  if (!props.eventId) {
+    error.value = "请先选择赛事，再导入证书。";
+    return;
+  }
   if (!selectedFile.value) {
     error.value = "请先选择 .xlsx 文件。";
     return;
@@ -62,7 +102,9 @@ async function previewImport() {
   try {
     const body = new FormData();
     body.append("workbook", selectedFile.value);
+    body.append("eventId", props.eventId);
     preview.value = await api("/api/admin/certificate-imports/preview", { method: "POST", body });
+    removeRecoverablePreview(preview.value?.id);
   } catch (cause) {
     error.value = cause.message || "预检查失败，请核对文件后重试。";
   } finally {
@@ -91,9 +133,9 @@ async function commitImport() {
   error.value = "";
   try {
     const committed = await api(`/api/admin/certificate-imports/${preview.value.id}/commit`, { method: "POST" });
+    removeRecoverablePreview(preview.value.id);
     preview.value = null;
-    selectedFile.value = null;
-    if (fileInput.value) fileInput.value.value = "";
+    clearSelectedFile();
     emit("committed", committed);
   } catch (cause) {
     error.value = cause.message || "确认导入失败，请稍后重试。";
@@ -104,11 +146,17 @@ async function commitImport() {
 
 async function cancelImport() {
   if (!preview.value?.id) return;
+  await cancelPreview(preview.value);
+}
+
+async function cancelPreview(batch) {
+  if (!batch?.id) return;
   action.value = "cancel";
   error.value = "";
   try {
-    await api(`/api/admin/certificate-imports/${preview.value.id}`, { method: "DELETE" });
-    preview.value = null;
+    await api(`/api/admin/certificate-imports/${batch.id}`, { method: "DELETE" });
+    if (preview.value?.id === batch.id) preview.value = null;
+    removeRecoverablePreview(batch.id);
     success.value = "已取消本次预检查，正式数据未发生变化。";
   } catch (cause) {
     error.value = cause.message || "取消预检查失败，请稍后重试。";
@@ -116,6 +164,16 @@ async function cancelImport() {
     action.value = "";
   }
 }
+
+watch(() => props.eventId, (eventId, previousEventId) => {
+  if (eventId !== previousEventId) {
+    preview.value = null;
+    clearSelectedFile();
+    error.value = "";
+    success.value = "";
+  }
+  loadRecoverablePreviews(eventId);
+}, { immediate: true });
 
 onBeforeUnmount(() => downloads.dispose());
 </script>
@@ -139,6 +197,18 @@ onBeforeUnmount(() => downloads.dispose());
     </div>
     <p v-if="error" class="message" role="alert">{{ error }}</p>
     <p v-if="success" class="success-message">{{ success }}</p>
+
+    <section v-if="!preview && recoverablePreviews.length" class="import-recovery-list" aria-label="可恢复的证书预检查">
+      <p class="hint">发现同一赛事尚未完成的预检查，可恢复查看或取消。</p>
+      <article v-for="batch in recoverablePreviews" :key="batch.id" class="import-recovery-row">
+        <strong>{{ batch.originalName }}</strong>
+        <span>有效 {{ batch.validCount }} · 错误 {{ batch.errorCount }}</span>
+        <div class="form-actions">
+          <button type="button" class="mini" :data-action="`resume-import-${batch.id}`" :disabled="Boolean(action)" @click="resumeImport(batch)">恢复预检查</button>
+          <button type="button" class="mini reject" :data-action="`cancel-recoverable-import-${batch.id}`" :disabled="Boolean(action)" @click="cancelPreview(batch)">取消批次</button>
+        </div>
+      </article>
+    </section>
 
     <template v-if="preview">
       <div class="import-summary" aria-label="导入摘要">

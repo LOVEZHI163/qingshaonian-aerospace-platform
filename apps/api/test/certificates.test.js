@@ -139,3 +139,28 @@ test("certificate service validates metadata, bulk status, and removal atomicall
   assert.deepEqual(db.certificates, []);
   assert.throws(() => removeCertificate(db, certificate.id), (error) => error.status === 404);
 });
+
+test("certificate service rejects publishing any cleaned or fileless certificate without partially changing a bulk request", () => {
+  const db = {
+    certificates: [
+      {
+        id: "C-READY", registrationId: "R1", slot: 1, title: "ready", fileName: "ready.png", storedName: "ready.png",
+        filePath: "/safe/ready.png", status: "draft", cleanedAt: ""
+      },
+      {
+        id: "C-CLEANED", registrationId: "R2", slot: 1, title: "cleaned", fileName: "cleaned.png", storedName: "cleaned.png",
+        filePath: "/safe/cleaned.png", status: "draft", cleanedAt: "2026-07-18T00:00:00.000Z"
+      },
+      {
+        id: "C-FILELESS", registrationId: "R3", slot: 1, title: "fileless", fileName: "", storedName: "",
+        filePath: "", status: "draft", cleanedAt: ""
+      }
+    ]
+  };
+  const before = structuredClone(db.certificates);
+
+  for (const invalidId of ["C-CLEANED", "C-FILELESS"]) {
+    assert.throws(() => setCertificateStatuses(db, ["C-READY", invalidId], "published", "2026-07-18T01:00:00.000Z"), (error) => error.status === 409);
+    assert.deepEqual(db.certificates, before);
+  }
+});

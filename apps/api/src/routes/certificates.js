@@ -80,7 +80,7 @@ async function finishCommittedCleanup({ store, db, marker, file, storage, now })
   try { await store.writeDb(db); } catch { /* the committed marker remains safe to replay */ }
 }
 
-function certificatePayload(certificate, registration, { includePrivate = false } = {}) {
+function certificatePayload(certificate, registration) {
   const payload = {
     id: certificate.id,
     registrationId: certificate.registrationId,
@@ -89,8 +89,6 @@ function certificatePayload(certificate, registration, { includePrivate = false 
     userId: certificate.userId,
     organizationId: certificate.organizationId,
     fileName: certificate.fileName,
-    storedName: certificate.storedName,
-    filePath: certificate.filePath,
     awardName: certificate.awardName,
     rank: certificate.rank,
     score: certificate.score,
@@ -110,9 +108,7 @@ function certificatePayload(certificate, registration, { includePrivate = false 
     payload.previewUrl = `/api/certificates/${certificate.id}/file`;
     payload.downloadUrl = `/api/certificates/${certificate.id}/file?download=1`;
   }
-  if (includePrivate) return payload;
-  const { filePath, storedName, ...safe } = payload;
-  return safe;
+  return payload;
 }
 
 function isOperationalOrganization(db, organizationId) {
@@ -174,6 +170,75 @@ function fileNotFoundError(error) {
   return error?.code === "ENOENT" || /escapes upload root|symbolic link|changed during validation/i.test(String(error?.message || ""));
 }
 
+function queryText(value) {
+  return String(value || "").trim();
+}
+
+function queryPositiveInteger(value, fallback, name, maximum = Number.POSITIVE_INFINITY) {
+  if (value === undefined || value === "") return fallback;
+  const number = Number(value);
+  if (!Number.isInteger(number) || number < 1 || number > maximum) {
+    throw new CertificateError(422, `${name} is invalid`);
+  }
+  return number;
+}
+
+function certificateSortValue(certificate, registration, sort) {
+  if (sort === "name") return queryText(registration?.athlete?.name).toLocaleLowerCase();
+  if (sort === "title") return queryText(certificate.title).toLocaleLowerCase();
+  if (sort === "status") return queryText(certificate.status);
+  return queryText(certificate.uploadedAt);
+}
+
+function listAdminCertificateRows(db, query) {
+  const pageSize = queryPositiveInteger(query.pageSize, 50, "pageSize", 100);
+  const requestedPage = queryPositiveInteger(query.page, 1, "page");
+  const eventId = queryText(query.eventId);
+  const registrationId = queryText(query.registrationId);
+  const status = queryText(query.status);
+  const group = queryText(query.group);
+  const projectId = queryText(query.projectId);
+  const name = queryText(query.name || query.q).toLocaleLowerCase();
+  const sort = queryText(query.sort || "uploadedAt");
+  const direction = queryText(query.direction || "desc").toLowerCase();
+  if (!["uploadedAt", "name", "title", "status"].includes(sort)) throw new CertificateError(422, "sort is invalid");
+  if (!["asc", "desc"].includes(direction)) throw new CertificateError(422, "direction is invalid");
+
+  const entries = db.certificates
+    .map((certificate) => ({ certificate, registration: db.registrations.find((row) => row.id === certificate.registrationId) }))
+    .filter(({ certificate, registration }) => {
+      if (eventId && registration?.eventId !== eventId) return false;
+      if (registrationId && certificate.registrationId !== registrationId) return false;
+      if (status && certificate.status !== status) return false;
+      if (group && registration?.group !== group) return false;
+      if (projectId && registration?.projectId !== projectId) return false;
+      if (name && ![
+        registration?.id,
+        registration?.athlete?.name,
+        registration?.athlete?.school,
+        registration?.group,
+        registration?.projectName
+      ].some((value) => queryText(value).toLocaleLowerCase().includes(name))) return false;
+      return true;
+    })
+    .sort((left, right) => {
+      const primary = certificateSortValue(left.certificate, left.registration, sort)
+        .localeCompare(certificateSortValue(right.certificate, right.registration, sort));
+      if (primary) return direction === "asc" ? primary : -primary;
+      return String(left.certificate.id).localeCompare(String(right.certificate.id));
+    });
+  const total = entries.length;
+  const pageCount = Math.max(1, Math.ceil(total / pageSize));
+  const page = Math.min(requestedPage, pageCount);
+  const start = (page - 1) * pageSize;
+  return {
+    total,
+    page,
+    pageSize,
+    rows: entries.slice(start, start + pageSize)
+  };
+}
+
 export function createCertificatesRouter({
   store,
   requireUser,
@@ -226,7 +291,7 @@ export function createCertificatesRouter({
       }
       await store.writeDb(db);
       await finishCommittedCleanup({ store, db, marker, file: previousFile, storage, now });
-      res.status(201).json({ row: certificatePayload(certificate, registration, { includePrivate: true }) });
+      res.status(201).json({ row: certificatePayload(certificate, registration) });
     } catch (error) {
       const orphan = stored || error.cleanupTarget;
       if (orphan?.filePath) {
@@ -257,7 +322,7 @@ export function createCertificatesRouter({
     });
     await store.writeDb(db);
     const registration = db.registrations.find((row) => row.id === certificate.registrationId);
-    res.json({ row: certificatePayload(certificate, registration, { includePrivate: true }) });
+    res.json({ row: certificatePayload(certificate, registration) });
   }));
 
   router.delete("/admin/certificates/:id", ...admin, mutationAsyncRoute(async (req, res) => {
@@ -277,21 +342,17 @@ export function createCertificatesRouter({
     res.json({
       rows: rows.map((certificate) => certificatePayload(
         certificate,
-        db.registrations.find((row) => row.id === certificate.registrationId),
-        { includePrivate: true }
+        db.registrations.find((row) => row.id === certificate.registrationId)
       ))
     });
   }));
 
-  router.get("/admin/certificates", ...admin, asyncRoute(async (_req, res) => {
+  router.get("/admin/certificates", ...admin, asyncRoute(async (req, res) => {
     const db = await store.readDb();
-    const rows = db.certificates
-      .map((certificate) => certificatePayload(
-        certificate,
-        db.registrations.find((row) => row.id === certificate.registrationId),
-        { includePrivate: true }
-      ));
-    res.json({ rows });
+    const page = listAdminCertificateRows(db, req.query);
+    const rows = page.rows
+      .map(({ certificate, registration }) => certificatePayload(certificate, registration));
+    res.json({ ...page, rows });
   }));
 
   router.get("/me/certificates", ...user, asyncRoute(async (req, res) => {

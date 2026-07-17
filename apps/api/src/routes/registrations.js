@@ -1,5 +1,6 @@
 import express from "express";
 
+import { MAX_CERTIFICATE_ROWS } from "../certificates/workbook-parser.js";
 import { buildCertificateTemplate } from "../certificates/template.js";
 import { buildBoundRegistrationWorkbook, contentDisposition } from "../exports/registration-workbook.js";
 
@@ -56,6 +57,11 @@ export function createRegistrationsRouter({ store, requireUser, requireAdmin, re
     const event = db.events.find((item) => item.id === req.params.eventId);
     if (!event) return res.status(404).json({ error: "赛事不存在" });
     const rows = filterAdminRegistrations(db, { eventId: event.id, status: "approved" });
+    if (rows.length > MAX_CERTIFICATE_ROWS) {
+      const error = new Error(`证书模板最多支持 ${MAX_CERTIFICATE_ROWS.toLocaleString("en-US")} 条已审核报名`);
+      error.status = 413;
+      throw error;
+    }
     const workbook = await buildCertificateTemplate(rows);
     const fileName = `${event.name}_证书导入模板.xlsx`;
     res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");

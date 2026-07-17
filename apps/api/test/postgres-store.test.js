@@ -273,7 +273,7 @@ test("PostgreSQL store upgrades a legacy schema without losing existing records"
       CREATE TABLE projects (id TEXT PRIMARY KEY, event_id TEXT NOT NULL REFERENCES events(id), name TEXT NOT NULL, type TEXT NOT NULL, category TEXT NOT NULL);
       CREATE TABLE registrations (id TEXT PRIMARY KEY, event_id TEXT NOT NULL REFERENCES events(id), source TEXT NOT NULL, user_id TEXT REFERENCES users(id), organization_id TEXT REFERENCES organizations(id), organization_name TEXT NOT NULL DEFAULT '', athlete JSONB NOT NULL, athlete_key TEXT NOT NULL, group_name TEXT NOT NULL, project_id TEXT NOT NULL REFERENCES projects(id), project_name TEXT NOT NULL, project_type TEXT NOT NULL, instructor TEXT NOT NULL DEFAULT '', status TEXT NOT NULL, reject_reason TEXT NOT NULL DEFAULT '', created_at TIMESTAMPTZ NOT NULL, updated_at TIMESTAMPTZ NOT NULL);
       CREATE TABLE results (registration_id TEXT PRIMARY KEY REFERENCES registrations(id) ON DELETE CASCADE, award_name TEXT NOT NULL DEFAULT '', rank TEXT NOT NULL DEFAULT '', score TEXT NOT NULL DEFAULT '', recorded_at TIMESTAMPTZ);
-      CREATE TABLE certificates (id TEXT PRIMARY KEY, registration_id TEXT NOT NULL UNIQUE REFERENCES registrations(id) ON DELETE CASCADE, user_id TEXT REFERENCES users(id), organization_id TEXT REFERENCES organizations(id), certificate_no TEXT NOT NULL, file_name TEXT NOT NULL, stored_name TEXT NOT NULL, file_path TEXT NOT NULL, award_name TEXT NOT NULL DEFAULT '', rank TEXT NOT NULL DEFAULT '', score TEXT NOT NULL DEFAULT '', status TEXT NOT NULL, uploaded_at TIMESTAMPTZ NOT NULL, published_at TIMESTAMPTZ);
+      CREATE TABLE certificates (id TEXT PRIMARY KEY, registration_id TEXT NOT NULL UNIQUE REFERENCES registrations(id) ON DELETE CASCADE, user_id TEXT REFERENCES users(id), organization_id TEXT REFERENCES organizations(id), certificate_no TEXT NOT NULL, slot SMALLINT NOT NULL DEFAULT 1, file_name TEXT NOT NULL, stored_name TEXT NOT NULL, file_path TEXT NOT NULL, award_name TEXT NOT NULL DEFAULT '', rank TEXT NOT NULL DEFAULT '', score TEXT NOT NULL DEFAULT '', status TEXT NOT NULL, uploaded_at TIMESTAMPTZ NOT NULL, published_at TIMESTAMPTZ);
     `);
     await pool.query(`
       INSERT INTO users VALUES ('ULEGACY', 'Legacy User', '13000000000', 'secret', 'ordinary', 'active', '2026-01-01T00:00:00.000Z');
@@ -283,7 +283,7 @@ test("PostgreSQL store upgrades a legacy schema without losing existing records"
       INSERT INTO projects VALUES ('legacy-project', 'legacy-event', 'Administrator Edited Project', 'individual', 'legacy');
       INSERT INTO registrations VALUES ('RLEGACY', 'legacy-event', 'legacy', 'ULEGACY', 'OLEGACY', 'Legacy Org', '{"name":"Legacy Athlete"}', 'legacy-key', '小学低段', 'legacy-project', 'Administrator Edited Project', 'individual', '', 'approved', '', '2026-01-02T00:00:00.000Z', '2026-01-02T00:00:00.000Z');
       INSERT INTO results VALUES ('RLEGACY', '一等奖', '1', '99', '2026-01-03T00:00:00.000Z');
-      INSERT INTO certificates VALUES ('CLEGACY', 'RLEGACY', 'ULEGACY', 'OLEGACY', 'LEGACY-001', 'legacy.pdf', 'legacy.pdf', '/legacy.pdf', '一等奖', '1', '99', 'published', '2026-01-03T00:00:00.000Z', '2026-01-03T00:00:00.000Z');
+      INSERT INTO certificates VALUES ('CLEGACY', 'RLEGACY', 'ULEGACY', 'OLEGACY', 'LEGACY-001', 1, 'legacy.pdf', 'legacy.pdf', '/legacy.pdf', '一等奖', '1', '99', 'published', '2026-01-03T00:00:00.000Z', '2026-01-03T00:00:00.000Z');
     `);
 
     await store.initialize();

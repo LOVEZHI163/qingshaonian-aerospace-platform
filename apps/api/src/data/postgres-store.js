@@ -74,13 +74,6 @@ async function runMigrations(pool) {
       if (applied.rowCount > 0) continue;
 
       let migration = await fs.readFile(new URL(name, migrationsUrl), "utf8");
-      const certificateSlot = await client.query(`
-        SELECT 1 FROM information_schema.columns
-        WHERE table_schema = 'public' AND table_name = 'certificates' AND column_name = 'slot'
-      `);
-      if (certificateSlot.rowCount > 0) {
-        migration = migration.replace(/ALTER TABLE certificates\s+ADD CONSTRAINT certificates_slot_check CHECK \(slot IN \(1, 2\)\);\s*/g, "");
-      }
       const projectGroups = await client.query(`
         SELECT 1 FROM information_schema.tables
         WHERE table_schema = 'public' AND table_name = 'project_groups'

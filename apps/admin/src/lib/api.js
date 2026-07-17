@@ -36,6 +36,29 @@ function apiFailure(response, payload) {
   return new ApiError(message, { status: response.status, code, payload });
 }
 
+function safeDownloadFileName(value) {
+  const name = String(value || "").trim();
+  if (!name || name === "." || name === ".." || /[\\/\x00-\x1f\x7f]/.test(name)) return "";
+  return name.slice(0, 255);
+}
+
+export function filenameFromContentDisposition(value) {
+  const header = String(value || "");
+  const encoded = header.match(/(?:^|;)\s*filename\*\s*=\s*(?:"([^"]*)"|([^;]*))/i);
+  const encodedValue = (encoded?.[1] ?? encoded?.[2] ?? "").trim();
+  if (encodedValue) {
+    const match = encodedValue.match(/^utf-8''(.+)$/i);
+    if (match) {
+      try {
+        const fileName = safeDownloadFileName(decodeURIComponent(match[1]));
+        if (fileName) return fileName;
+      } catch { /* fall through to the ASCII value */ }
+    }
+  }
+  const fallback = header.match(/(?:^|;)\s*filename\s*=\s*(?:"([^"]*)"|([^;]*))/i);
+  return safeDownloadFileName((fallback?.[1] ?? fallback?.[2] ?? "").trim()) || undefined;
+}
+
 export async function api(path, options = {}) {
   const formData = typeof FormData !== "undefined" && options.body instanceof FormData;
   const headers = formData ? { ...(options.headers || {}) } : { "Content-Type": "application/json", ...(options.headers || {}) };
@@ -48,7 +71,10 @@ export async function api(path, options = {}) {
 export async function apiBlob(path, options = {}) {
   const response = await fetch(`${API_BASE}${path}`, { ...options, credentials: "include" });
   if (!response.ok) throw apiFailure(response, await readPayload(response));
-  return response.blob();
+  const blob = await response.blob();
+  const fileName = filenameFromContentDisposition(response.headers.get("content-disposition"));
+  if (fileName) Object.defineProperty(blob, "fileName", { value: fileName });
+  return blob;
 }
 
 export function apiUrl(path) {

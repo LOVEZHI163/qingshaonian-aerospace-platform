@@ -17,7 +17,7 @@ export function createBlobDownloadManager() {
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
-      link.download = fileName;
+      link.download = blob?.fileName || fileName || "download";
       link.style.display = "none";
       document.body.append(link);
       link.click();

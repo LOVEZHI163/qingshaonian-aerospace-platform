@@ -92,6 +92,10 @@ function isRegistrationRequest(path) {
   return path === "/api/admin/registrations?pageSize=100" || path.startsWith("/api/admin/registrations?eventId=");
 }
 
+function isCertificateRequest(path) {
+  return path === "/api/admin/certificates" || path.startsWith("/api/admin/certificates?");
+}
+
 function installApi({
   certificates = [certificateOne, certificateTwo],
   previewPayload = preview,
@@ -102,7 +106,7 @@ function installApi({
   apiMock.mockImplementation(async (path, options = {}) => {
     if (path === "/api/admin/events") return { rows: eventRows, projects: projectRows };
     if (isRegistrationRequest(path)) return { rows: registrationRows, total: registrationRows.length, page: 1, pageSize: 100 };
-    if (path === "/api/admin/certificates") return { rows: certificates };
+    if (isCertificateRequest(path)) return { rows: certificates };
     if (path === "/api/admin/certificate-imports/preview" && options.method === "POST") return previewPayload;
     if (path === "/api/admin/certificate-imports/B1/commit" && options.method === "POST") {
       return { id: "B1", status: "committed", createdCount: 1, replacedCount: 1 };
@@ -119,6 +123,12 @@ async function chooseFile(wrapper, selector, file) {
   const input = wrapper.get(selector);
   Object.defineProperty(input.element, "files", { configurable: true, value: [file] });
   await input.trigger("change");
+}
+
+function deferred() {
+  let resolve;
+  const promise = new Promise((next) => { resolve = next; });
+  return { promise, resolve };
 }
 
 describe("CertificateManagementPage", () => {
@@ -245,7 +255,7 @@ describe("CertificateManagementPage", () => {
     const clearedRegistration = { ...registration, awardName: "", rank: "", score: "" };
     apiMock.mockImplementation(async (path, options = {}) => {
       if (path === "/api/admin/events") return { rows: [event], projects: [project] };
-      if (path === "/api/admin/certificates") return { rows: [certificateOne, certificateTwo] };
+      if (isCertificateRequest(path)) return { rows: [certificateOne, certificateTwo] };
       if (isRegistrationRequest(path)) {
         registrationLoads += 1;
         return { rows: [registrationLoads === 1 ? registration : clearedRegistration], total: 1, page: 1, pageSize: 100 };
@@ -293,7 +303,7 @@ describe("CertificateManagementPage", () => {
     apiMock.mockImplementation(async (path, options = {}) => {
       if (path === "/api/admin/events") return { rows: [event], projects: [project] };
       if (isRegistrationRequest(path)) return { rows: registrations, total: registrations.length, page: 1, pageSize: 100 };
-      if (path === "/api/admin/certificates") {
+      if (isCertificateRequest(path)) {
         certificateLoads += 1;
         return { rows: certificateLoads === 1 ? initialCertificates : refreshedCertificates };
       }
@@ -355,7 +365,7 @@ describe("CertificateManagementPage", () => {
     apiMock.mockReset();
     apiMock.mockImplementation(async (path) => {
       if (path === "/api/admin/events") return { rows: [event, historicalEvent], projects: [project, historicalProject] };
-      if (path === "/api/admin/certificates") return { rows: [] };
+      if (isCertificateRequest(path)) return { rows: [] };
       if (isRegistrationRequest(path)) return { rows: path.includes("eventId=E0") ? [historicalRegistration] : [registration], total: 1, page: 1, pageSize: 100 };
       return {};
     });
@@ -376,7 +386,7 @@ describe("CertificateManagementPage", () => {
     const secondPageTarget = { ...registrationTwo, id: "R101", athlete: { ...registrationTwo.athlete, name: "第二页目标" } };
     apiMock.mockImplementation(async (path) => {
       if (path === "/api/admin/events") return { rows: [event], projects: [project] };
-      if (path === "/api/admin/certificates") return { rows: [] };
+      if (isCertificateRequest(path)) return { rows: [] };
       if (path === "/api/admin/registrations?eventId=E1&pageSize=100") return { rows: firstPage, total: 101, page: 1, pageSize: 100 };
       if (path === "/api/admin/registrations?eventId=E1&page=2&pageSize=100") return { rows: [secondPageTarget], total: 101, page: 2, pageSize: 100 };
       if (path === "/api/admin/registrations?pageSize=100") return { rows: firstPage, total: 101, page: 1, pageSize: 100 };
@@ -393,7 +403,7 @@ describe("CertificateManagementPage", () => {
   it("所选赛事报名超过安全上限时明确报错且不继续翻页", async () => {
     apiMock.mockImplementation(async (path) => {
       if (path === "/api/admin/events") return { rows: [event], projects: [project] };
-      if (path === "/api/admin/certificates") return { rows: [] };
+      if (isCertificateRequest(path)) return { rows: [] };
       if (path === "/api/admin/registrations?eventId=E1&pageSize=100") return { rows: [], total: 10001, page: 1, pageSize: 100 };
       if (path === "/api/admin/registrations?pageSize=100") return { rows: [], total: 10001, page: 1, pageSize: 100 };
       return {};
@@ -444,7 +454,7 @@ describe("CertificateManagementPage", () => {
     };
     apiMock.mockImplementation(async (path, options = {}) => {
       if (path === "/api/admin/events") return { rows: [event, eventTwo], projects: [project, projectTwo] };
-      if (path === "/api/admin/certificates") return { rows: [certificateOne, secondEventCertificate] };
+      if (isCertificateRequest(path)) return { rows: [certificateOne, secondEventCertificate] };
       if (isRegistrationRequest(path)) {
         const rows = path.includes("eventId=E2") ? [secondEventRegistration] : [registration];
         return { rows, total: 1, page: 1, pageSize: 100 };
@@ -471,7 +481,7 @@ describe("CertificateManagementPage", () => {
     const secondEventRegistration = { ...registrationTwo, eventId: "E2", projectId: "P2", projectName: "橡筋飞机" };
     apiMock.mockImplementation(async (path) => {
       if (path === "/api/admin/events") return { rows: [event, eventTwo], projects: [project, projectTwo] };
-      if (path === "/api/admin/certificates") return { rows: [] };
+      if (isCertificateRequest(path)) return { rows: [] };
       if (path.includes("eventId=E2")) return oldEventResponse;
       if (isRegistrationRequest(path)) return { rows: [registration], total: 1, page: 1, pageSize: 100 };
       return {};
@@ -497,7 +507,7 @@ describe("CertificateManagementPage", () => {
     const oldEventResponse = new Promise((_, reject) => { rejectOldEvent = reject; });
     apiMock.mockImplementation(async (path) => {
       if (path === "/api/admin/events") return { rows: [event, eventTwo], projects: [project, projectTwo] };
-      if (path === "/api/admin/certificates") return { rows: [] };
+      if (isCertificateRequest(path)) return { rows: [] };
       if (path.includes("eventId=E2")) return oldEventResponse;
       if (isRegistrationRequest(path)) return { rows: [registration], total: 1, page: 1, pageSize: 100 };
       return {};
@@ -521,7 +531,7 @@ describe("CertificateManagementPage", () => {
     let registrationLoads = 0;
     apiMock.mockImplementation(async (path, options = {}) => {
       if (path === "/api/admin/events") return { rows: [event], projects: [project] };
-      if (path === "/api/admin/certificates") return { rows: [certificateOne] };
+      if (isCertificateRequest(path)) return { rows: [certificateOne] };
       if (isRegistrationRequest(path)) {
         registrationLoads += 1;
         if (registrationLoads > 1) throw new Error("列表刷新失败");
@@ -553,7 +563,7 @@ describe("CertificateManagementPage", () => {
     apiMock.mockImplementation(async (path, options = {}) => {
       if (path === "/api/admin/events") return { rows: [event], projects: [project] };
       if (isRegistrationRequest(path)) return { rows: [registration], total: 1, page: 1, pageSize: 100 };
-      if (path === "/api/admin/certificates") return { rows: [certificateOne] };
+      if (isCertificateRequest(path)) return { rows: [certificateOne] };
       if (path === "/api/admin/certificates/C1" && options.method === "DELETE") throw new Error("删除失败，请稍后重试");
       return {};
     });
@@ -577,7 +587,7 @@ describe("CertificateManagementPage", () => {
     apiMock.mockImplementation(async (path) => {
       if (path === "/api/admin/events") return { rows: [event], projects: [project] };
       if (isRegistrationRequest(path)) return { rows: [registration], total: 1, page: 1, pageSize: 100 };
-      if (path === "/api/admin/certificates") throw new Error("证书列表暂时无法加载");
+      if (isCertificateRequest(path)) throw new Error("证书列表暂时无法加载");
       return {};
     });
     const wrapper = mount(CertificateManagementPage);

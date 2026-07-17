@@ -16,7 +16,7 @@ const forms = reactive({
   1: { title: "获奖证书", file: null },
   2: { title: "获奖证书", file: null }
 });
-const busySlot = ref(null);
+const busySlots = ref(new Set());
 const error = ref("");
 const success = ref("");
 const deleteTarget = ref(null);
@@ -26,6 +26,26 @@ const certificateAccept = "application/pdf,image/png,image/jpeg,image/webp,.pdf,
 
 function certificateFor(slot) {
   return props.certificates.find((certificate) => Number(certificate.slot) === slot) || null;
+}
+
+function isSlotBusy(slot) {
+  return busySlots.value.has(Number(slot));
+}
+
+function hasBusySlots() {
+  return busySlots.value.size > 0;
+}
+
+function beginSlotWork(slot) {
+  const next = new Set(busySlots.value);
+  next.add(Number(slot));
+  busySlots.value = next;
+}
+
+function endSlotWork(slot) {
+  const next = new Set(busySlots.value);
+  next.delete(Number(slot));
+  busySlots.value = next;
 }
 
 watch(
@@ -59,7 +79,7 @@ async function saveSlot(slot) {
     error.value = `请为证书位置 ${slot} 选择文件。`;
     return;
   }
-  busySlot.value = slot;
+  beginSlotWork(slot);
   error.value = "";
   success.value = "";
   try {
@@ -81,12 +101,13 @@ async function saveSlot(slot) {
   } catch (cause) {
     error.value = cause.message || `证书位置 ${slot} 保存失败，请稍后重试。`;
   } finally {
-    busySlot.value = null;
+    endSlotWork(slot);
   }
 }
 
 async function changeStatus(certificate, status) {
-  busySlot.value = Number(certificate.slot);
+  const slot = Number(certificate.slot);
+  beginSlotWork(slot);
   error.value = "";
   success.value = "";
   try {
@@ -99,7 +120,7 @@ async function changeStatus(certificate, status) {
   } catch (cause) {
     error.value = cause.message || "证书状态更新失败，请稍后重试。";
   } finally {
-    busySlot.value = null;
+    endSlotWork(slot);
   }
 }
 
@@ -117,7 +138,8 @@ async function download(certificate) {
 async function confirmDelete() {
   if (!deleteTarget.value) return;
   const certificate = deleteTarget.value;
-  busySlot.value = Number(certificate.slot);
+  const slot = Number(certificate.slot);
+  beginSlotWork(slot);
   error.value = "";
   success.value = "";
   try {
@@ -128,7 +150,7 @@ async function confirmDelete() {
   } catch (cause) {
     error.value = cause.message || "证书删除失败，请稍后重试。";
   } finally {
-    busySlot.value = null;
+    endSlotWork(slot);
   }
 }
 
@@ -142,22 +164,22 @@ onBeforeUnmount(() => downloads.dispose());
     <div class="certificate-slot-grid">
       <article v-for="slot in slots" :key="slot" class="certificate-slot-card">
         <div class="panel-title"><h4>证书位置 {{ slot }}</h4><em :class="certificateFor(slot)?.status || 'empty'">{{ certificateFor(slot) ? (certificateFor(slot).status === 'published' ? '已发布' : '未发布') : '尚未上传' }}</em></div>
-        <label>证书标题<input v-model="forms[slot].title" :disabled="busySlot === slot" :aria-label="`证书位置 ${slot} 标题`"></label>
+        <label>证书标题<input v-model="forms[slot].title" :disabled="isSlotBusy(slot)" :aria-label="`证书位置 ${slot} 标题`"></label>
         <label>{{ certificateFor(slot) ? "替换文件" : "选择文件" }}
-          <input :data-slot-file="slot" type="file" :accept="certificateAccept" :disabled="busySlot === slot" @change="chooseFile(slot, $event)">
+          <input :data-slot-file="slot" type="file" :accept="certificateAccept" :disabled="isSlotBusy(slot)" @change="chooseFile(slot, $event)">
         </label>
         <p class="hint">{{ forms[slot].file?.name || certificateFor(slot)?.fileName || "支持 PDF、PNG、JPG、WEBP，最大 10 MB" }}</p>
         <p v-if="certificateFor(slot)?.cleanedAt" class="message">原文件已清理，可替换；当前不可预览或下载。</p>
         <div class="form-actions certificate-slot-actions">
-          <button type="button" class="primary" :data-action="`save-slot-${slot}`" :disabled="busySlot === slot" @click="saveSlot(slot)">
-            {{ busySlot === slot ? "正在保存…" : certificateFor(slot) && forms[slot].file ? "替换文件" : certificateFor(slot) ? "保存标题" : "上传文件" }}
+          <button type="button" class="primary" :data-action="`save-slot-${slot}`" :disabled="isSlotBusy(slot)" @click="saveSlot(slot)">
+            {{ isSlotBusy(slot) ? "正在保存…" : certificateFor(slot) && forms[slot].file ? "替换文件" : certificateFor(slot) ? "保存标题" : "上传文件" }}
           </button>
           <template v-if="certificateFor(slot)">
             <button v-if="certificateFor(slot).previewUrl && !certificateFor(slot).cleanedAt" type="button" class="mini" :data-action="`preview-${certificateFor(slot).id}`" @click="previewTarget = certificateFor(slot)">预览</button>
             <button v-if="certificateFor(slot).downloadUrl && !certificateFor(slot).cleanedAt" type="button" class="mini" :data-action="`download-${certificateFor(slot).id}`" @click="download(certificateFor(slot))">下载</button>
-            <button v-if="certificateFor(slot).status !== 'published'" type="button" class="mini" :disabled="busySlot === slot" @click="changeStatus(certificateFor(slot), 'published')">发布</button>
-            <button v-else type="button" class="mini reject" :disabled="busySlot === slot" @click="changeStatus(certificateFor(slot), 'draft')">撤回</button>
-            <button type="button" class="mini reject" :data-action="`request-delete-${certificateFor(slot).id}`" :disabled="busySlot === slot" @click="deleteTarget = certificateFor(slot)">删除</button>
+            <button v-if="certificateFor(slot).status !== 'published'" type="button" class="mini" :disabled="isSlotBusy(slot)" @click="changeStatus(certificateFor(slot), 'published')">发布</button>
+            <button v-else type="button" class="mini reject" :disabled="isSlotBusy(slot)" @click="changeStatus(certificateFor(slot), 'draft')">撤回</button>
+            <button type="button" class="mini reject" :data-action="`request-delete-${certificateFor(slot).id}`" :disabled="isSlotBusy(slot)" @click="deleteTarget = certificateFor(slot)">删除</button>
           </template>
         </div>
       </article>
@@ -168,8 +190,8 @@ onBeforeUnmount(() => downloads.dispose());
         <h3>确认删除{{ deleteTarget.title }}？</h3>
         <p>删除后该位置会变为空白，文件也将无法恢复。</p>
         <div class="form-actions">
-          <button type="button" class="reject" data-action="confirm-delete" :disabled="busySlot !== null" @click="confirmDelete">确认删除</button>
-          <button type="button" data-action="cancel-delete" :disabled="busySlot !== null" @click="deleteTarget = null">暂不删除</button>
+          <button type="button" class="reject" data-action="confirm-delete" :disabled="hasBusySlots()" @click="confirmDelete">确认删除</button>
+          <button type="button" data-action="cancel-delete" :disabled="hasBusySlots()" @click="deleteTarget = null">暂不删除</button>
         </div>
       </section>
     </div>

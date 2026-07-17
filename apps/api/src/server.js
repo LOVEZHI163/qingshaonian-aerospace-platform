@@ -10,6 +10,7 @@ import { createEventsRouter } from "./routes/events.js";
 import { createOrganizationsRouter } from "./routes/organizations.js";
 import { createRegistrationsRouter } from "./routes/registrations.js";
 import { createCertificateImportsRouter } from "./routes/certificate-imports.js";
+import { cleanupExpiredCertificateImportPreviews } from "./services/certificate-imports.js";
 import { createCertificatesRouter } from "./routes/certificates.js";
 import { projectForHistoricalRegistration, registrationContext } from "./services/events.js";
 import { replayFileCleanupJournal } from "./services/organizations.js";
@@ -57,6 +58,12 @@ function athleteKey(athlete) {
 function publicUser(user) {
   if (!user) return null;
   const { password, sessionVersion, ...safe } = user;
+  return safe;
+}
+
+function publicCertificate(certificate) {
+  if (!certificate) return null;
+  const { filePath, storedName, ...safe } = certificate;
   return safe;
 }
 
@@ -637,7 +644,8 @@ app.post("/api/admin/registrations/:id/result", requireAdmin, requirePasswordRea
   const certificates = db.certificates.filter((certificate) => certificate.registrationId === row.id);
   for (const certificate of certificates) updateCertificateFromRegistration(certificate, row);
   await writeDb(db);
-  res.json({ row, certificate: certificates[0] || null, certificates });
+  const publicCertificates = certificates.map(publicCertificate);
+  res.json({ row, certificate: publicCertificates[0] || null, certificates: publicCertificates });
 }));
 
 app.patch("/api/admin/registrations/:id", requireAdmin, requirePasswordReady, mutationAsyncRoute(async (req, res) => {
@@ -691,6 +699,7 @@ app.use((error, _req, res, next) => {
 });
 
 await dataStore.initialize();
+await cleanupExpiredCertificateImportPreviews({ store: dataStore, makeId: id, now });
 await replayFileCleanupJournal({ store: dataStore, now });
 
 const server = app.listen(PORT, () => {

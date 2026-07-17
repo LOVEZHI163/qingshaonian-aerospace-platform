@@ -295,7 +295,7 @@ test("certificate downloads enforce ownership, publication, and organization man
     const ownCertificates = await fetch(`${baseUrl}/api/me/certificates`, withSession(ordinary.cookie));
     assert.equal((await ownCertificates.json()).rows.every((row) => !("filePath" in row) && !("storedName" in row)), true);
     const adminCertificates = await fetch(`${baseUrl}/api/admin/certificates`, withSession(admin.cookie));
-    assert.equal((await adminCertificates.json()).rows.every((row) => "filePath" in row && "storedName" in row), true);
+    assert.equal((await adminCertificates.json()).rows.every((row) => !("filePath" in row) && !("storedName" in row)), true);
   });
 });
 

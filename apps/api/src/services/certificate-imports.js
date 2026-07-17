@@ -28,11 +28,18 @@ export const defaultCertificateImportStorage = {
   deleteFile: deletePrivateFile
 };
 
+export const CERTIFICATE_IMPORT_PREVIEW_TTL_MS = 24 * 60 * 60 * 1000;
+
 const importError = (status, message) => new CertificateImportError(status, message);
 
 function originalFileName(value) {
   const normalized = String(value || "certificates.xlsx").replace(/\\/g, "/");
-  return path.posix.basename(normalized).slice(0, 255) || "certificates.xlsx";
+  const base = path.posix.basename(normalized)
+    .replace(/[\x00-\x1f<>:"|?*]/g, "_")
+    .replace(/\.\.+/g, "_")
+    .replace(/^\.+/, "_")
+    .slice(0, 255);
+  return base || "certificates.xlsx";
 }
 
 function eventIdForCandidates(db, candidates) {
@@ -44,9 +51,12 @@ function eventIdForCandidates(db, candidates) {
   return [...eventIds][0];
 }
 
-function hasExactCertificateSlots(candidate) {
+function hasValidCertificateSlots(candidate) {
   const slots = (candidate.certificates || []).map((certificate) => Number(certificate.slot)).sort();
-  return slots.length === 2 && slots[0] === 1 && slots[1] === 2;
+  return slots.length >= 1
+    && slots.length <= 2
+    && new Set(slots).size === slots.length
+    && slots.every((slot) => slot === 1 || slot === 2);
 }
 
 function candidateValidation(parsedCandidates) {
@@ -59,13 +69,75 @@ function candidateValidation(parsedCandidates) {
   for (const candidate of parsedCandidates) {
     if (counts.get(candidate.registrationId) > 1) {
       errors.push({ rowNumber: candidate.rowNumber, registrationId: candidate.registrationId, message: "同一报名编号只能出现一行" });
-    } else if (!hasExactCertificateSlots(candidate)) {
-      errors.push({ rowNumber: candidate.rowNumber, registrationId: candidate.registrationId, message: "每行必须同时且分别提供证书1和证书2" });
+    } else if (!hasValidCertificateSlots(candidate)) {
+      errors.push({ rowNumber: candidate.rowNumber, registrationId: candidate.registrationId, message: "每行必须提供不重复的证书位置 1 或 2" });
     } else {
       candidates.push(candidate);
     }
   }
   return { candidates, errors };
+}
+
+function selectedEventOrError(db, eventId) {
+  if (!eventId) return null;
+  const event = db.events.find((row) => row.id === eventId);
+  if (!event) throw importError(422, "Selected event does not exist");
+  return event;
+}
+
+function candidatesForSelectedEvent(db, candidates, eventId) {
+  if (!eventId) return { candidates, errors: [] };
+  const registrations = new Map(db.registrations.map((registration) => [registration.id, registration]));
+  const accepted = [];
+  const errors = [];
+  for (const candidate of candidates) {
+    if (registrations.get(candidate.registrationId)?.eventId !== eventId) {
+      errors.push({
+        rowNumber: candidate.rowNumber,
+        registrationId: candidate.registrationId,
+        message: "Registration does not belong to the selected event"
+      });
+      continue;
+    }
+    accepted.push(candidate);
+  }
+  return { candidates: accepted, errors };
+}
+
+function certificateState(certificate) {
+  if (!certificate) return { state: "missing" };
+  return {
+    state: "existing",
+    id: String(certificate.id || ""),
+    version: [
+      certificate.id,
+      certificate.slot,
+      certificate.title,
+      certificate.fileName,
+      certificate.storedName,
+      certificate.filePath,
+      certificate.status,
+      certificate.source,
+      certificate.importBatchId,
+      certificate.uploadedAt,
+      certificate.publishedAt,
+      certificate.cleanedAt,
+      certificate.updatedAt
+    ].map((value) => String(value ?? "")).join("|")
+  };
+}
+
+function expectedCertificateStates(db, candidate) {
+  return Object.fromEntries((candidate.certificates || []).map((certificate) => [
+    String(certificate.slot),
+    certificateState(db.certificates.find((row) => row.registrationId === candidate.registrationId && Number(row.slot) === Number(certificate.slot)))
+  ]));
+}
+
+function sameCertificateState(left, right) {
+  return left?.state === right?.state
+    && left?.id === right?.id
+    && left?.version === right?.version;
 }
 
 function publicCandidate(batchId, candidate) {
@@ -169,6 +241,7 @@ async function cleanupStagingOrJournal({ storage, batchId, stagedFiles, store, d
 
 export async function previewCertificateImport({
   file,
+  eventId,
   userId,
   store,
   makeId,
@@ -177,12 +250,20 @@ export async function previewCertificateImport({
   storage = defaultCertificateImportStorage
 }) {
   if (!file?.buffer) throw importError(422, "请上传证书 Excel 工作簿");
+  const sanitizedName = originalFileName(file.originalname);
+  if (!sanitizedName.toLowerCase().endsWith(".xlsx")) {
+    throw importError(422, "Certificate imports require a .xlsx file");
+  }
+  await cleanupExpiredCertificateImportPreviews({ store, makeId, now, storage });
   const db = await store.readDb();
   const rollbackDb = structuredClone(db);
+  const selectedEvent = selectedEventOrError(db, String(eventId || "").trim());
   const parsed = await parseWorkbook(file.buffer, registrationsForParser(db));
-  const eventId = eventIdForCandidates(db, parsed.candidates);
   const validation = candidateValidation(parsed.candidates);
-  const parsedErrors = [...parsed.errors, ...validation.errors];
+  const eventValidation = candidatesForSelectedEvent(db, validation.candidates, selectedEvent?.id);
+  const validCandidates = eventValidation.candidates;
+  const batchEventId = selectedEvent?.id || eventIdForCandidates(db, validCandidates.length ? validCandidates : parsed.candidates);
+  const parsedErrors = [...parsed.errors, ...validation.errors, ...eventValidation.errors];
   const batchId = makeId("CIB");
   const stagedCandidates = [];
   const stagedFiles = [];
@@ -190,7 +271,7 @@ export async function previewCertificateImport({
   if (db.certificateImportBatches.some((batch) => batch.id === batchId)) {
     throw importError(409, "证书导入批次编号冲突，请重试");
   }
-  if (storage.createStagingBatch) {
+  if (validCandidates.length && storage.createStagingBatch) {
     try {
       await storage.createStagingBatch(batchId);
     } catch (error) {
@@ -200,7 +281,7 @@ export async function previewCertificateImport({
   }
 
   try {
-    for (const candidate of validation.candidates) {
+    for (const candidate of validCandidates) {
       const registration = db.registrations.find((row) => row.id === candidate.registrationId);
       const certificates = [];
       for (const certificate of candidate.certificates) {
@@ -227,6 +308,7 @@ export async function previewCertificateImport({
         athleteName: registration?.athlete?.name || "",
         projectName: registration?.projectName || "",
         result: { ...candidate.result },
+        expectedCertificateStates: expectedCertificateStates(db, candidate),
         certificates
       });
     }
@@ -242,9 +324,9 @@ export async function previewCertificateImport({
   const createdAt = now();
   const batch = {
     id: batchId,
-    eventId,
+    eventId: batchEventId,
     createdBy: userId,
-    originalName: originalFileName(file.originalname),
+    originalName: sanitizedName,
     status: "preview",
     previewJson: stagedCandidates,
     validCount: stagedCandidates.length,
@@ -306,10 +388,26 @@ function batchOrError(db, batchId) {
 function assertCommitCandidates(db, batch) {
   const seen = new Set();
   for (const candidate of batch.previewJson) {
-    if (seen.has(candidate.registrationId) || !hasExactCertificateSlots(candidate)) {
+    if (seen.has(candidate.registrationId) || !hasValidCertificateSlots(candidate)) {
       throw importError(409, "证书导入批次预览数据无效");
     }
     seen.add(candidate.registrationId);
+    const expected = candidate.expectedCertificateStates;
+    if (!expected || typeof expected !== "object") {
+      throw importError(409, "Certificate import preview is stale; run preview again");
+    }
+    for (const certificate of candidate.certificates) {
+      const slot = String(certificate.slot);
+      if (!Object.hasOwn(expected, slot)) {
+        throw importError(409, "Certificate import preview is stale; run preview again");
+      }
+      const current = certificateState(db.certificates.find((row) =>
+        row.registrationId === candidate.registrationId && Number(row.slot) === Number(certificate.slot)
+      ));
+      if (!sameCertificateState(expected[slot], current)) {
+        throw importError(409, "Certificate import preview is stale; run preview again");
+      }
+    }
     const registration = db.registrations.find((row) => row.id === candidate.registrationId);
     if (!registration || registration.status !== "approved" || registration.eventId !== batch.eventId) {
       throw importError(409, `报名记录 ${candidate.registrationId} 已不再满足导入条件`);
@@ -351,6 +449,79 @@ async function finishCleanup({ store, db, markers, oldFiles, batchId, storage, n
   if (!completed.size && !changed) return;
   db.fileCleanupJournal = db.fileCleanupJournal.filter((marker) => !completed.has(marker.id));
   try { await store.writeDb(db); } catch { /* persisted markers safely replay missing files */ }
+}
+
+function isExpiredPreview(batch, nowValue) {
+  if (batch.status !== "preview") return false;
+  const createdAt = Date.parse(batch.createdAt || "");
+  const current = Date.parse(nowValue);
+  return Number.isFinite(createdAt) && Number.isFinite(current)
+    && current - createdAt >= CERTIFICATE_IMPORT_PREVIEW_TTL_MS;
+}
+
+export async function cleanupExpiredCertificateImportPreviews({
+  store,
+  makeId,
+  now,
+  storage = defaultCertificateImportStorage
+}) {
+  const originalDb = await store.readDb();
+  const timestamp = now();
+  const expiredIds = originalDb.certificateImportBatches
+    .filter((batch) => isExpiredPreview(batch, timestamp))
+    .map((batch) => batch.id);
+  if (!expiredIds.length) return [];
+
+  const db = structuredClone(originalDb);
+  const cleanups = [];
+  for (const batch of db.certificateImportBatches) {
+    if (!expiredIds.includes(batch.id)) continue;
+    const markers = batch.previewJson.flatMap((candidate) => candidate.certificates.map((certificate) => cleanupMarker({
+      makeId,
+      filePath: storage.resolveStagingPath(batch.id, certificate.relativePath),
+      category: "certificate-import-staging",
+      now
+    })));
+    db.fileCleanupJournal ||= [];
+    db.fileCleanupJournal.push(...markers);
+    batch.status = "expired";
+    batch.previewJson = [];
+    cleanups.push({ batchId: batch.id, markers });
+  }
+  await store.writeDb(db);
+  for (const cleanup of cleanups) {
+    await finishCleanup({
+      store,
+      db,
+      markers: cleanup.markers,
+      oldFiles: [],
+      batchId: cleanup.batchId,
+      storage,
+      now
+    });
+  }
+  return expiredIds;
+}
+
+export async function listActiveCertificateImportPreviews({
+  eventId,
+  store,
+  makeId,
+  now,
+  storage = defaultCertificateImportStorage
+}) {
+  const selectedEventId = String(eventId || "").trim();
+  if (!selectedEventId) throw importError(422, "请选择赛事");
+  await cleanupExpiredCertificateImportPreviews({ store, makeId, now, storage });
+  const db = await store.readDb();
+  selectedEventOrError(db, selectedEventId);
+  return db.certificateImportBatches
+    .filter((batch) => batch.status === "preview" && batch.eventId === selectedEventId)
+    .sort((left, right) => String(right.createdAt).localeCompare(String(left.createdAt)) || String(right.id).localeCompare(String(left.id)))
+    .map((batch) => publicCertificateImportPreview(
+      batch,
+      db.certificateImportErrors.filter((error) => error.batchId === batch.id)
+    ));
 }
 
 export async function commitCertificateImport({

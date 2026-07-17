@@ -40,6 +40,25 @@ describe("api", () => {
     expect(fetchMock).toHaveBeenCalledWith("/api/credential", expect.objectContaining({ credentials: "include" }));
   });
 
+  it("reads an RFC5987 UTF-8 filename from blob responses and ignores unsafe filename headers", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response("file", {
+        status: 200,
+        headers: { "Content-Disposition": "attachment; filename=certificate.pdf; filename*=UTF-8''%E5%BC%A0%E4%B8%89_%E7%BA%B8%E9%A3%9E%E6%9C%BA_%E4%B8%80%E7%AD%89%E5%A5%96.pdf" }
+      }))
+      .mockResolvedValueOnce(new Response("file", {
+        status: 200,
+        headers: { "Content-Disposition": "attachment; filename=../../unsafe.pdf" }
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const named = await apiBlob("/api/certificate");
+    const unsafe = await apiBlob("/api/certificate");
+
+    expect(named.fileName).toBe("张三_纸飞机_一等奖.pdf");
+    expect(unsafe.fileName).toBeUndefined();
+  });
+
   it("routes 401 to logout and 428 to forced password change", async () => {
     const unauthorized = vi.fn();
     const passwordChangeRequired = vi.fn();

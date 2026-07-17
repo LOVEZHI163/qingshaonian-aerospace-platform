@@ -31,4 +31,16 @@ describe("createBlobDownloadManager", () => {
     expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:two");
     expect(URL.revokeObjectURL).toHaveBeenCalledTimes(2);
   });
+
+  it("prefers the safe server filename attached to a downloaded blob", () => {
+    const manager = createBlobDownloadManager();
+    const blob = { name: "fallback", fileName: "张三_纸飞机_一等奖.pdf" };
+    const clicked = vi.mocked(HTMLAnchorElement.prototype.click).mockImplementation(function click() {
+      expect(this.download).toBe("张三_纸飞机_一等奖.pdf");
+    });
+
+    manager.save(blob, "fallback.pdf");
+
+    expect(clicked).toHaveBeenCalledTimes(1);
+  });
 });

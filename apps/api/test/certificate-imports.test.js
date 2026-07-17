@@ -6,6 +6,8 @@ import test from "node:test";
 
 import ExcelJS from "exceljs";
 
+import * as certificateImports from "../src/services/certificate-imports.js";
+
 import { buildCertificateTemplate } from "../src/certificates/template.js";
 import {
   deletePrivateFile,
@@ -42,11 +44,12 @@ const approvedRegistration = {
   score: ""
 };
 
-function workbookForm(buffer, name = "certificates.xlsx") {
+function workbookForm(buffer, name = "certificates.xlsx", eventId = "wz-aerospace-2026") {
   const form = new FormData();
   form.append("workbook", new Blob([buffer], {
     type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
   }), name);
+  form.append("eventId", eventId);
   return form;
 }
 
@@ -82,10 +85,10 @@ async function readDb(dbPath) {
   return JSON.parse(await fs.readFile(dbPath, "utf8"));
 }
 
-async function previewWorkbook(baseUrl, cookie, buffer, name) {
+async function previewWorkbook(baseUrl, cookie, buffer, name, eventId) {
   return fetch(`${baseUrl}/api/admin/certificate-imports/preview`, withSession(cookie, {
     method: "POST",
-    body: workbookForm(buffer, name)
+    body: workbookForm(buffer, name, eventId)
   }));
 }
 
@@ -274,6 +277,40 @@ function stagedCertificate(slot) {
   };
 }
 
+function certificateSnapshot(certificate) {
+  if (!certificate) return { state: "missing" };
+  return {
+    state: "existing",
+    id: String(certificate.id || ""),
+    version: [
+      certificate.id,
+      certificate.slot,
+      certificate.title,
+      certificate.fileName,
+      certificate.storedName,
+      certificate.filePath,
+      certificate.status,
+      certificate.source,
+      certificate.importBatchId,
+      certificate.uploadedAt,
+      certificate.publishedAt,
+      certificate.cleanedAt,
+      certificate.updatedAt
+    ].map((value) => String(value ?? "")).join("|")
+  };
+}
+
+function previewCandidateForDb(db, certificates) {
+  const candidate = previewCandidate(certificates);
+  return {
+    ...candidate,
+    expectedCertificateStates: Object.fromEntries(certificates.map((certificate) => [
+      String(certificate.slot),
+      certificateSnapshot(db.certificates.find((row) => row.registrationId === candidate.registrationId && Number(row.slot) === Number(certificate.slot)))
+    ]))
+  };
+}
+
 test("certificate import preview removes staging when saving a later image fails", async () => {
   const db = serviceDb();
   const stagedFiles = new Set();
@@ -317,7 +354,7 @@ test("certificate import commit removes every new file and preserves old data wh
   const persisted = serviceDb({ withExistingCertificate: true });
   persisted.certificateImportBatches.push({
     id: "B1", eventId: "E1", createdBy: "U9001", originalName: "rollback.xlsx", status: "preview",
-    previewJson: [previewCandidate([stagedCertificate(1), stagedCertificate(2)])],
+    previewJson: [previewCandidateForDb(persisted, [stagedCertificate(1), stagedCertificate(2)])],
     validCount: 1, errorCount: 0, replaceCount: 1, createdAt: "2026-07-17T00:00:00.000Z", committedAt: null
   });
   const files = new Set(["C:/uploads/certificates/old.png"]);
@@ -355,7 +392,7 @@ test("certificate import commit journals failed old-file and staging cleanup wit
   let persisted = serviceDb({ withExistingCertificate: true });
   persisted.certificateImportBatches.push({
     id: "B2", eventId: "E1", createdBy: "U9001", originalName: "cleanup.xlsx", status: "preview",
-    previewJson: [previewCandidate([stagedCertificate(1), stagedCertificate(2)])],
+    previewJson: [previewCandidateForDb(persisted, [stagedCertificate(1), stagedCertificate(2)])],
     validCount: 1, errorCount: 0, replaceCount: 1, createdAt: "2026-07-17T00:00:00.000Z", committedAt: null
   });
   const storage = {
@@ -445,7 +482,7 @@ test("certificate import commit journals new orphan files when database persiste
   let persisted = serviceDb({ withExistingCertificate: true });
   persisted.certificateImportBatches.push({
     id: "B4", eventId: "E1", createdBy: "U9001", originalName: "orphan.xlsx", status: "preview",
-    previewJson: [previewCandidate([stagedCertificate(1), stagedCertificate(2)])],
+    previewJson: [previewCandidateForDb(persisted, [stagedCertificate(1), stagedCertificate(2)])],
     validCount: 1, errorCount: 0, replaceCount: 1, createdAt: "2026-07-17T00:00:00.000Z", committedAt: null
   });
   let writes = 0;
@@ -554,7 +591,7 @@ test("certificate import commit journals a failed formal write target when rollb
   let persisted = serviceDb();
   persisted.certificateImportBatches.push({
     id: "B6", eventId: "E1", createdBy: "U9001", originalName: "partial.xlsx", status: "preview",
-    previewJson: [previewCandidate([stagedCertificate(1), stagedCertificate(2)])],
+    previewJson: [previewCandidateForDb(persisted, [stagedCertificate(1), stagedCertificate(2)])],
     validCount: 1, errorCount: 0, replaceCount: 0, createdAt: "2026-07-17T00:00:00.000Z", committedAt: null
   });
   let writes = 0;
@@ -769,7 +806,7 @@ test("certificate import cancel never follows a linked import-staging parent dur
     let persisted = serviceDb();
     persisted.certificateImportBatches.push({
       id: batchId, eventId: "E1", createdBy: "U9001", originalName: "cancel.xlsx", status: "preview",
-      previewJson: [previewCandidate([stagedCertificate(1), stagedCertificate(2)])],
+    previewJson: [previewCandidateForDb(persisted, [stagedCertificate(1), stagedCertificate(2)])],
       validCount: 1, errorCount: 0, replaceCount: 0, createdAt: "2026-07-17T00:00:00.000Z", committedAt: null
     });
 
@@ -797,7 +834,7 @@ test("certificate import commit never follows a linked import-staging parent dur
     let persisted = serviceDb();
     persisted.certificateImportBatches.push({
       id: batchId, eventId: "E1", createdBy: "U9001", originalName: "commit.xlsx", status: "preview",
-      previewJson: [previewCandidate([stagedCertificate(1), stagedCertificate(2)])],
+      previewJson: [previewCandidateForDb(persisted, [stagedCertificate(1), stagedCertificate(2)])],
       validCount: 1, errorCount: 0, replaceCount: 0, createdAt: "2026-07-17T00:00:00.000Z", committedAt: null
     });
     const storage = {
@@ -869,10 +906,9 @@ test("certificate import preview rollback never follows a linked import-staging 
   });
 });
 
-test("certificate import preview rejects zero, single, or duplicate certificate slots per row", async () => {
+test("certificate import preview rejects zero or duplicate certificate slots per row", async () => {
   const variants = [
     { name: "zero", certificates: [] },
-    { name: "single", certificates: [{ ...stagedCertificate(1), buffer: ONE_PIXEL_PNG }] },
     { name: "duplicate", certificates: [
       { ...stagedCertificate(1), buffer: ONE_PIXEL_PNG },
       { ...stagedCertificate(1), title: "duplicate", buffer: ONE_PIXEL_PNG }
@@ -905,10 +941,9 @@ test("certificate import preview rejects zero, single, or duplicate certificate 
   }
 });
 
-test("certificate import commit rejects zero, single, or duplicate slots without changing results or certificates", async () => {
+test("certificate import commit rejects zero or duplicate slots without changing results or certificates", async () => {
   const variants = [
     { name: "zero", certificates: [] },
-    { name: "single", certificates: [stagedCertificate(1)] },
     { name: "duplicate", certificates: [stagedCertificate(1), { ...stagedCertificate(1), title: "duplicate" }] }
   ];
   for (const variant of variants) {
@@ -1041,4 +1076,261 @@ test("certificate import preview rejects candidates from mixed events before sta
   }), (error) => error.status === 422);
   assert.equal(saves, 0);
   assert.equal(writes, 0);
+});
+
+test("certificate import accepts one supplied certificate slot and keeps an unspecified slot unchanged", async () => {
+  let persisted = serviceDb({ withExistingCertificate: true });
+  persisted.certificates[0].slot = 2;
+  const originalSecondSlot = structuredClone(persisted.certificates[0]);
+  let saved = 0;
+  const preview = await previewCertificateImport({
+    file: { buffer: Buffer.from("workbook"), originalname: "one-slot.xlsx" },
+    eventId: "E1",
+    userId: "U9001",
+    store: {
+      readDb: async () => structuredClone(persisted),
+      writeDb: async (next) => { persisted = structuredClone(next); }
+    },
+    makeId: sequentialIds(),
+    now: () => "2026-07-18T08:00:00.000Z",
+    parseWorkbook: async () => ({
+      candidates: [previewCandidate([{ ...stagedCertificate(1), buffer: ONE_PIXEL_PNG }])],
+      errors: []
+    }),
+    storage: {
+      createStagingBatch: async () => {},
+      saveStagingFile: async ({ rowNumber, slot }) => ({ relativePath: `${rowNumber}-${slot}.png` }),
+      readStagingFile: async () => ONE_PIXEL_PNG,
+      saveCertificateFile: async () => {
+        saved += 1;
+        return { fileName: "new.png", storedName: "new.png", filePath: "C:/uploads/certificates/new.png" };
+      },
+      deleteFile: async () => {},
+      removeStagingBatch: async () => {},
+      resolveStagingPath: (_batchId, relativePath) => `C:/uploads/import-staging/${relativePath}`
+    }
+  });
+
+  assert.equal(preview.validCount, 1);
+  assert.equal(preview.candidates[0].certificates.length, 1);
+  await commitCertificateImport({
+    batchId: preview.id,
+    store: {
+      readDb: async () => structuredClone(persisted),
+      writeDb: async (next) => { persisted = structuredClone(next); }
+    },
+    makeId: sequentialIds(),
+    now: () => "2026-07-18T08:01:00.000Z",
+    storage: {
+      readStagingFile: async () => ONE_PIXEL_PNG,
+      saveCertificateFile: async () => {
+        saved += 1;
+        return { fileName: "new.png", storedName: "new.png", filePath: "C:/uploads/certificates/new.png" };
+      },
+      deleteFile: async () => {},
+      removeStagingBatch: async () => {},
+      resolveStagingPath: (_batchId, relativePath) => `C:/uploads/import-staging/${relativePath}`
+    }
+  });
+
+  assert.equal(saved, 1);
+  assert.deepEqual(persisted.certificates.find((row) => row.slot === 2), originalSecondSlot);
+  assert.equal(persisted.certificates.some((row) => row.slot === 1), true);
+});
+
+test("certificate import preserves an internal expected certificate state and rejects a stale preview before formal writes", async () => {
+  let persisted = serviceDb({ withExistingCertificate: true });
+  let formalWrites = 0;
+  const preview = await previewCertificateImport({
+    file: { buffer: Buffer.from("workbook"), originalname: "stale.xlsx" },
+    eventId: "E1",
+    userId: "U9001",
+    store: {
+      readDb: async () => structuredClone(persisted),
+      writeDb: async (next) => { persisted = structuredClone(next); }
+    },
+    makeId: sequentialIds(),
+    now: () => "2026-07-18T09:00:00.000Z",
+    parseWorkbook: async () => ({
+      candidates: [previewCandidate([
+        { ...stagedCertificate(1), buffer: ONE_PIXEL_PNG },
+        { ...stagedCertificate(2), buffer: ONE_PIXEL_PNG }
+      ])],
+      errors: []
+    }),
+    storage: {
+      createStagingBatch: async () => {},
+      saveStagingFile: async ({ rowNumber, slot }) => ({ relativePath: `${rowNumber}-${slot}.png` }),
+      removeStagingBatch: async () => {},
+      resolveStagingPath: (_batchId, relativePath) => `C:/uploads/import-staging/${relativePath}`
+    }
+  });
+  const storedCandidate = persisted.certificateImportBatches[0].previewJson[0];
+  assert.ok(storedCandidate.expectedCertificateStates);
+  assert.equal(Object.hasOwn(preview.candidates[0], "expectedCertificateStates"), false);
+
+  persisted.certificates[0].title = "changed after preview";
+  const beforeCommit = structuredClone(persisted);
+  await assert.rejects(commitCertificateImport({
+    batchId: preview.id,
+    store: {
+      readDb: async () => structuredClone(persisted),
+      writeDb: async (next) => { persisted = structuredClone(next); }
+    },
+    makeId: sequentialIds(),
+    now: () => "2026-07-18T09:01:00.000Z",
+    storage: {
+      readStagingFile: async () => ONE_PIXEL_PNG,
+      saveCertificateFile: async () => {
+        formalWrites += 1;
+        return { fileName: "new.png", storedName: "new.png", filePath: "C:/uploads/certificates/new.png" };
+      },
+      deleteFile: async () => {},
+      removeStagingBatch: async () => {},
+      resolveStagingPath: (_batchId, relativePath) => `C:/uploads/import-staging/${relativePath}`
+    }
+  }), (error) => error.status === 409);
+  assert.equal(formalWrites, 0);
+  assert.deepEqual(persisted, beforeCommit);
+});
+
+test("certificate import creates an error-only selected-event preview without staging files", async () => {
+  let persisted = serviceDb();
+  let createdBatches = 0;
+  let stagedFiles = 0;
+  const preview = await previewCertificateImport({
+    file: { buffer: Buffer.from("workbook"), originalname: "all-errors.xlsx" },
+    eventId: "E1",
+    userId: "U9001",
+    store: {
+      readDb: async () => structuredClone(persisted),
+      writeDb: async (next) => { persisted = structuredClone(next); }
+    },
+    makeId: sequentialIds(),
+    now: () => "2026-07-18T10:00:00.000Z",
+    parseWorkbook: async () => ({ candidates: [], errors: [{ rowNumber: 2, registrationId: "BAD", message: "invalid row" }] }),
+    storage: {
+      createStagingBatch: async () => { createdBatches += 1; },
+      saveStagingFile: async () => { stagedFiles += 1; return { relativePath: "never.png" }; },
+      removeStagingBatch: async () => {},
+      resolveStagingPath: () => "unused"
+    }
+  });
+
+  assert.equal(preview.status, "preview");
+  assert.equal(preview.validCount, 0);
+  assert.equal(preview.errorCount, 1);
+  assert.equal(createdBatches, 0);
+  assert.equal(stagedFiles, 0);
+  assert.equal(persisted.certificateImportBatches.length, 1);
+  assert.deepEqual(persisted.fileCleanupJournal, []);
+});
+
+test("certificate import turns candidates from a different selected event into preview errors", async () => {
+  let persisted = serviceDb();
+  persisted.events.push({ id: "E2", isCurrent: false });
+  persisted.registrations[0].eventId = "E2";
+  let stagedFiles = 0;
+  const preview = await previewCertificateImport({
+    file: { buffer: Buffer.from("workbook"), originalname: "wrong-event.xlsx" },
+    eventId: "E1",
+    userId: "U9001",
+    store: {
+      readDb: async () => structuredClone(persisted),
+      writeDb: async (next) => { persisted = structuredClone(next); }
+    },
+    makeId: sequentialIds(),
+    now: () => "2026-07-18T11:00:00.000Z",
+    parseWorkbook: async () => ({
+      candidates: [previewCandidate([
+        { ...stagedCertificate(1), buffer: ONE_PIXEL_PNG },
+        { ...stagedCertificate(2), buffer: ONE_PIXEL_PNG }
+      ])],
+      errors: []
+    }),
+    storage: {
+      createStagingBatch: async () => {},
+      saveStagingFile: async () => { stagedFiles += 1; return { relativePath: "never.png" }; },
+      removeStagingBatch: async () => {},
+      resolveStagingPath: () => "unused"
+    }
+  });
+
+  assert.equal(preview.validCount, 0);
+  assert.equal(preview.errorCount, 1);
+  assert.equal(stagedFiles, 0);
+  assert.equal(persisted.certificateImportBatches[0].eventId, "E1");
+});
+
+test("certificate import rejects an OOXML workbook whose sanitized filename is not .xlsx", async () => {
+  await withTestServer(async ({ baseUrl }) => {
+    const admin = await loginAs(baseUrl, "13900000000", "admin123");
+    const workbook = await buildMixedWorkbook();
+    const response = await previewWorkbook(baseUrl, admin.cookie, workbook, "workbook.xlsx.txt");
+    assert.equal(response.status, 422);
+  }, { prefix: "certificate-import-extension-" });
+});
+
+test("certificate import lists recoverable preview batches only for the selected event", async () => {
+  await withTestServer(async ({ baseUrl }) => {
+    const admin = await loginAs(baseUrl, "13900000000", "admin123");
+    const workbook = await buildMixedWorkbook();
+    const created = await previewWorkbook(baseUrl, admin.cookie, workbook, "recoverable.xlsx");
+    assert.equal(created.status, 201);
+    const preview = await created.json();
+
+    const response = await fetch(
+      `${baseUrl}/api/admin/certificate-imports?eventId=wz-aerospace-2026`,
+      withSession(admin.cookie)
+    );
+    assert.equal(response.status, 200);
+    const payload = await response.json();
+    assert.deepEqual(payload.rows.map((row) => row.id), [preview.id]);
+    assert.equal(JSON.stringify(payload).includes("relativePath"), false);
+    assert.equal(JSON.stringify(payload).includes("expectedCertificateStates"), false);
+  }, { prefix: "certificate-import-recovery-" });
+});
+
+test("certificate import expiry cleanup clears preview data and staging with an injected clock", async () => {
+  assert.equal(typeof certificateImports.cleanupExpiredCertificateImportPreviews, "function");
+  assert.equal(typeof certificateImports.CERTIFICATE_IMPORT_PREVIEW_TTL_MS, "number");
+
+  let persisted = serviceDb();
+  const oldCandidate = previewCandidateForDb(persisted, [stagedCertificate(1)]);
+  persisted.certificateImportBatches.push(
+    {
+      id: "B-EXPIRED", eventId: "E1", createdBy: "U9001", originalName: "expired.xlsx", status: "preview",
+      previewJson: [oldCandidate], validCount: 1, errorCount: 1, replaceCount: 0,
+      createdAt: "2026-07-17T00:00:00.000Z", committedAt: null
+    },
+    {
+      id: "B-FRESH", eventId: "E1", createdBy: "U9001", originalName: "fresh.xlsx", status: "preview",
+      previewJson: [previewCandidateForDb(persisted, [stagedCertificate(2)])], validCount: 1, errorCount: 0, replaceCount: 0,
+      createdAt: "2026-07-18T11:59:59.999Z", committedAt: null
+    }
+  );
+  persisted.certificateImportErrors.push({ id: "CIE-EXPIRED", batchId: "B-EXPIRED", rowNumber: 2, registrationId: approvedRegistration.id, message: "keep audit error" });
+  const removed = [];
+  const cleaned = await certificateImports.cleanupExpiredCertificateImportPreviews({
+    store: {
+      readDb: async () => structuredClone(persisted),
+      writeDb: async (next) => { persisted = structuredClone(next); }
+    },
+    makeId: sequentialIds(),
+    now: () => "2026-07-18T12:00:00.000Z",
+    storage: {
+      removeStagingBatch: async (batchId) => { removed.push(batchId); },
+      resolveStagingPath: (_batchId, relativePath) => `C:/uploads/import-staging/${relativePath}`
+    }
+  });
+
+  assert.deepEqual(cleaned, ["B-EXPIRED"]);
+  const expired = persisted.certificateImportBatches.find((batch) => batch.id === "B-EXPIRED");
+  const fresh = persisted.certificateImportBatches.find((batch) => batch.id === "B-FRESH");
+  assert.equal(expired.status, "expired");
+  assert.deepEqual(expired.previewJson, []);
+  assert.equal(fresh.status, "preview");
+  assert.equal(fresh.previewJson.length, 1);
+  assert.deepEqual(removed, ["B-EXPIRED"]);
+  assert.equal(persisted.certificateImportErrors.some((row) => row.batchId === "B-EXPIRED"), true);
 });
