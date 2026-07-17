@@ -1,52 +1,12 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import AdmZip from "adm-zip";
-
-const rootDir = path.resolve(import.meta.dirname, "../../..");
-const serverPath = path.resolve(import.meta.dirname, "../src/server.js");
-
-async function waitForServer(baseUrl, child) {
-  const started = Date.now();
-  while (Date.now() - started < 5000) {
-    if (child.exitCode !== null) throw new Error("API server exited before becoming ready");
-    try {
-      const res = await fetch(`${baseUrl}/api/public/event`);
-      if (res.ok) return;
-    } catch {
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
-  }
-  throw new Error("API server did not start in time");
-}
+import { withTestServer } from "../test-support/server.js";
 
 async function withServer(fn) {
-  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "wz-cert-api-"));
-  const port = 4600 + Math.floor(Math.random() * 1000);
-  const baseUrl = `http://127.0.0.1:${port}`;
-  const child = spawn(process.execPath, [serverPath], {
-    cwd: rootDir,
-    env: {
-      ...process.env,
-      NODE_ENV: "test",
-      PORT: String(port),
-      DB_PATH: path.join(tempDir, "db.json"),
-      UPLOAD_ROOT: path.join(tempDir, "uploads")
-    },
-    stdio: ["ignore", "pipe", "pipe"]
-  });
-
-  try {
-    await waitForServer(baseUrl, child);
-    await fn(baseUrl, tempDir);
-  } finally {
-    child.kill();
-    await new Promise((resolve) => child.once("exit", resolve));
-    await fs.rm(tempDir, { recursive: true, force: true });
-  }
+  await withTestServer(({ baseUrl, tempDir }) => fn(baseUrl, tempDir), { prefix: "wz-cert-api-" });
 }
 
 async function json(res) {

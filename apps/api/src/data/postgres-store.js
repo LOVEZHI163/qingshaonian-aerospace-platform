@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 
 import { APPROVED_GROUP_NAMES, ensureDbShape, EVENT, PROJECTS, seedDb } from "./seed.js";
+import { createPostgresAuthState } from "./auth-state.js";
 
 const schemaUrl = new URL("./schema.sql", import.meta.url);
 const migrationsUrl = new URL("./migrations/", import.meta.url);
@@ -37,10 +38,19 @@ async function runMigrations(pool) {
     if (projectGroups.rowCount > 0) {
       migration = migration.replace(/CREATE TABLE IF NOT EXISTS project_groups \([\s\S]*?\);\s*/, "");
     }
+    for (const tableName of ["auth_rate_buckets", "password_reset_challenges"]) {
+      const existing = await pool.query(`
+        SELECT 1 FROM information_schema.tables
+        WHERE table_schema = 'public' AND table_name = $1
+      `, [tableName]);
+      if (existing.rowCount > 0) {
+        migration = migration.replace(new RegExp(`CREATE TABLE IF NOT EXISTS ${tableName} \\([\\s\\S]*?\\);\\s*`), "");
+      }
+    }
     if (!supportsPlpgsql) {
       migration = migration.replace(/DO \$\$[\s\S]*?END \$\$;/g, "");
     }
-    await pool.query(migration);
+    if (migration.trim()) await pool.query(migration);
   }
 }
 
@@ -72,6 +82,7 @@ async function addApprovedGroups(pool) {
 export function createPostgresStore(pool) {
   const store = {
     kind: "postgres",
+    authState: createPostgresAuthState(pool),
     async initialize() {
       await runSchema(pool);
       await runMigrations(pool);

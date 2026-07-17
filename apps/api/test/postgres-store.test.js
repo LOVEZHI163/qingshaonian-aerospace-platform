@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { newDb } from "pg-mem";
 
+import { createPostgresAuthState } from "../src/data/auth-state.js";
 import { createPostgresStore } from "../src/data/postgres-store.js";
 
 async function withStore(fn) {
@@ -26,7 +27,7 @@ test("PostgreSQL store creates normalized tables and seeds an empty database", a
       WHERE table_schema = 'public'
     `);
     const tables = new Set(tableRows.rows.map((row) => row.table_name));
-    for (const name of ["users", "organizations", "memberships", "events", "projects", "project_groups", "registrations", "results", "certificates"]) {
+    for (const name of ["users", "organizations", "memberships", "events", "projects", "project_groups", "registrations", "results", "certificates", "auth_rate_buckets", "password_reset_challenges"]) {
       assert.equal(tables.has(name), true, `missing table ${name}`);
     }
 
@@ -85,6 +86,35 @@ test("PostgreSQL schema enforces unique phone and registration foreign keys", as
            'paper-plane-gate', '', 'individual', '', 'pending', '', NOW(), NOW())`
       )
     );
+  });
+});
+
+test("PostgreSQL auth state atomically enforces limits and consumes challenges once across instances", async () => {
+  await withStore(async (store, pool) => {
+    const now = Date.parse("2026-07-17T00:00:00.000Z");
+    const peer = createPostgresAuthState(pool);
+    const states = [store.authState, peer];
+    const results = await Promise.all(Array.from({ length: 6 }, (_, index) => states[index % 2].consumeRateLimits([
+      { key: "login:ip:127.0.0.1", limit: 5, windowMs: 60_000 }
+    ], now)));
+    assert.equal(results.filter(Boolean).length, 5);
+
+    for (let index = 0; index < 5; index += 1) {
+      await states[index % 2].releaseRateLimits(["login:ip:127.0.0.1"], now);
+    }
+    const emptyBuckets = await pool.query("SELECT key FROM auth_rate_buckets WHERE key = $1", ["login:ip:127.0.0.1"]);
+    assert.equal(emptyBuckets.rowCount, 0);
+
+    await store.authState.saveChallenge({ phone: "13800000001", digest: "b".repeat(64), expiresAt: now + 300_000 });
+    const consumed = await Promise.all(states.map((state) => state.consumeChallenge({
+      phone: "13800000001", digest: "b".repeat(64), now, maxAttempts: 5
+    })));
+    assert.equal(consumed.filter(Boolean).length, 1);
+
+    await peer.saveChallenge({ phone: "13800000002", digest: "c".repeat(64), expiresAt: now + 1 });
+    await store.authState.consumeChallenge({ phone: "13800000003", digest: "d".repeat(64), now: now + 2, maxAttempts: 5 });
+    const expired = await pool.query("SELECT phone FROM password_reset_challenges WHERE phone = $1", ["13800000002"]);
+    assert.equal(expired.rowCount, 0);
   });
 });
 

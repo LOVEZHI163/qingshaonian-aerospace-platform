@@ -5,9 +5,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import multer from "multer";
 import AdmZip from "adm-zip";
-import { hashPassword, isLegacyPassword, validatePassword, verifyPassword } from "./auth/passwords.js";
+import { hashPassword, isLegacyPassword, validatePassword, verifyLoginPassword } from "./auth/passwords.js";
 import { createSmsPasswordResetService, sendPasswordResetError } from "./auth/password-reset.js";
-import { asyncRoute, createLoginFailureLimiter, createSessionMiddleware, requireAdmin, requireUser } from "./auth/session.js";
+import { asyncRoute, createSessionMiddleware, requireAdmin, requireUser } from "./auth/session.js";
 import { createAliyunSmsProvider } from "./auth/sms.js";
 import { createDataStore } from "./data/index.js";
 import { EVENT, GRADES, PROJECTS } from "./data/seed.js";
@@ -24,9 +24,9 @@ const smsPasswordReset = createSmsPasswordResetService({
   secret: process.env.SESSION_SECRET || "test-session-secret-32-characters",
   readDb,
   writeDb,
-  smsProvider
+  smsProvider,
+  authState: dataStore.authState
 });
-const loginFailureLimiter = createLoginFailureLimiter();
 
 function id(prefix) {
   return `${prefix}${Date.now()}${Math.floor(Math.random() * 1000)}`;
@@ -283,16 +283,20 @@ app.post("/api/auth/register", asyncRoute(async (req, res) => {
 }));
 
 app.post("/api/auth/login", asyncRoute(async (req, res) => {
-  const db = await readDb();
   const phone = normalizePhone(req.body.phone);
-  const rateKey = { phone, ip: req.ip };
-  if (loginFailureLimiter.isLimited(rateKey)) return res.status(429).json({ error: "登录尝试过于频繁，请稍后再试" });
+  const attemptTime = Date.now();
+  const rateKeys = [`login:phone:${phone}`, `login:ip:${req.ip}`];
+  const allowed = await dataStore.authState.consumeRateLimits([
+    { key: rateKeys[0], limit: 5, windowMs: 15 * 60 * 1000 },
+    { key: rateKeys[1], limit: 20, windowMs: 15 * 60 * 1000 }
+  ], attemptTime);
+  if (!allowed) return res.status(429).json({ error: "登录尝试过于频繁，请稍后再试" });
+  const db = await readDb();
   const user = db.users.find((item) => normalizePhone(item.phone) === phone && item.status === "active");
-  if (!user || !(await verifyPassword(req.body.password, user.password))) {
-    loginFailureLimiter.recordFailure(rateKey);
+  if (!(await verifyLoginPassword(req.body.password, user?.password))) {
     return res.status(401).json({ error: "手机号或密码错误" });
   }
-  loginFailureLimiter.clearPhone(phone);
+  await dataStore.authState.releaseRateLimits(rateKeys, attemptTime);
   if (isLegacyPassword(user.password)) {
     user.password = await hashPassword(req.body.password);
     await writeDb(db);
@@ -846,7 +850,7 @@ app.use((error, _req, res, next) => {
 await dataStore.initialize();
 
 const server = app.listen(PORT, () => {
-  console.log(`API listening on http://localhost:${PORT}`);
+  console.log(`API listening on http://localhost:${server.address().port}`);
 });
 
 async function shutdown() {

@@ -1,52 +1,10 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
 import test from "node:test";
-
-const rootDir = path.resolve(import.meta.dirname, "../../..");
-const serverPath = path.resolve(import.meta.dirname, "../src/server.js");
-
-async function waitForServer(baseUrl, child) {
-  const started = Date.now();
-  while (Date.now() - started < 5000) {
-    if (child.exitCode !== null) throw new Error("API server exited before becoming ready");
-    try {
-      const response = await fetch(`${baseUrl}/api/public/event`);
-      if (response.ok) return;
-    } catch {
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
-  }
-  throw new Error("API server did not start in time");
-}
+import { withTestServer } from "../test-support/server.js";
 
 async function withServer(fn) {
-  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "aerogp-auth-"));
-  const dbPath = path.join(tempDir, "db.json");
-  const port = 6600 + Math.floor(Math.random() * 1000);
-  const baseUrl = `http://127.0.0.1:${port}`;
-  const child = spawn(process.execPath, [serverPath], {
-    cwd: rootDir,
-    env: {
-      ...process.env,
-      NODE_ENV: "test",
-      PORT: String(port),
-      DB_PATH: dbPath,
-      UPLOAD_ROOT: path.join(tempDir, "uploads")
-    },
-    stdio: ["ignore", "pipe", "pipe"]
-  });
-
-  try {
-    await waitForServer(baseUrl, child);
-    await fn({ baseUrl, dbPath });
-  } finally {
-    child.kill();
-    await new Promise((resolve) => child.once("exit", resolve));
-    await fs.rm(tempDir, { recursive: true, force: true });
-  }
+  await withTestServer(fn, { prefix: "aerogp-auth-" });
 }
 
 test("login upgrades a legacy password and restores the user from a session", async () => {
@@ -59,8 +17,14 @@ test("login upgrades a legacy password and restores the user from a session", as
     assert.equal(login.status, 200);
     const loginBody = await login.json();
     assert.equal("password" in loginBody.user, false);
-    const cookie = login.headers.get("set-cookie")?.split(";")[0];
+    const setCookie = login.headers.get("set-cookie") || "";
+    const cookie = setCookie.split(";")[0];
     assert.match(cookie, /^aerogp\.sid=/);
+    assert.match(setCookie, /; HttpOnly(?:;|$)/);
+    assert.match(setCookie, /; SameSite=Lax(?:;|$)/);
+    const expires = /; Expires=([^;]+)/.exec(setCookie)?.[1];
+    assert.ok(expires, "session cookie must expose its eight-hour max age");
+    assert.ok(Math.abs(new Date(expires).getTime() - Date.now() - 8 * 60 * 60 * 1000) < 60_000);
 
     const denied = await fetch(`${baseUrl}/api/auth/me`);
     assert.equal(denied.status, 401);

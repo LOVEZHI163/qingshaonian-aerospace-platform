@@ -39,6 +39,11 @@ test("password policy requires 8 to 64 characters with letters and digits", () =
   assert.match(passwordAuth.validatePassword(`Ab${"1".repeat(63)}`), /64/);
 });
 
+test("login password verification performs bcrypt work for unknown users", async () => {
+  assert.equal(typeof passwordAuth.verifyLoginPassword, "function");
+  assert.equal(await passwordAuth.verifyLoginPassword("Wrong123", null), false);
+});
+
 test("async route forwards rejected promises to Express", async () => {
   assert.equal(typeof sessionAuth.asyncRoute, "function");
   const expected = new Error("provider failed");

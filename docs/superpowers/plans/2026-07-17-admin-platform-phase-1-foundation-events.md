@@ -316,11 +316,11 @@ test("login upgrades a legacy password and restores the user from a session", as
 
   管理员接口为 `POST /api/admin/users/:id/reset-password`，只允许管理员调用，生成或接收符合规则的临时密码，并把 `mustChangePassword` 设为 `true`。
 
-  短信自助接口为 `POST /api/auth/password-reset/sms/request` 和 `POST /api/auth/password-reset/sms/confirm`。验证码为 6 位，有效期 5 分钟，最多尝试 5 次；同手机号冷却 60 秒且每小时最多 5 次，来源 IP 每小时最多 20 次。申请接口返回统一结果，不暴露手机号是否存在；测试注入 fake SMS provider，不连接真实网络。
+  短信自助接口为 `POST /api/auth/password-reset/sms/request` 和 `POST /api/auth/password-reset/sms/confirm`。验证码为 6 位，有效期 5 分钟，最多尝试 5 次；同手机号冷却 60 秒且每小时最多 5 次，来源 IP 每小时最多 20 次。验证码、尝试次数与限流事件持久化到 PostgreSQL，并依靠事务/原子写入支持多实例；文件测试库提供等价持久接口。申请接口返回统一正文和等价时序，不暴露手机号是否存在；短信发送进入异步派发，测试注入 fake SMS provider，不连接真实网络。
 
   阿里云短信使用官方 `@alicloud/dysmsapi20170525` SDK，凭据只从 `ALIBABA_CLOUD_ACCESS_KEY_ID`、`ALIBABA_CLOUD_ACCESS_KEY_SECRET`、`ALIYUN_SMS_SIGN_NAME`、`ALIYUN_SMS_TEMPLATE_CODE` 读取，Endpoint 为 `dysmsapi.aliyuncs.com`。未配置时 `/api/public/features` 返回 `smsPasswordResetEnabled: false`，管理员重置不受影响。
 
-  密码必须为 8–64 位并至少包含一个字母和一个数字。登录失败按 IP 与手机号限流。所有异步路由必须把错误交给 Express 错误处理中间件；退出时销毁会话并清理 cookie；生产 `SESSION_SECRET` 至少 32 字节。Cookie 根据反向代理后的 HTTP/HTTPS 自动设置 `Secure`。
+  密码必须为 8–64 位并至少包含一个字母和一个数字。登录失败按 IP 与手机号限流，并在查询用户前检查限制；未知手机号执行 dummy bcrypt 校验，避免通过响应时间枚举账户。所有异步路由必须把错误交给 Express 错误处理中间件；退出时销毁会话并清理 cookie；生产 `SESSION_SECRET` 至少 32 字节。Cookie 根据反向代理后的 HTTP/HTTPS 自动设置 `Secure`。
 
 - [ ] **Step 6: 运行认证测试并提交**
 

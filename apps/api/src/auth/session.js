@@ -29,31 +29,6 @@ export function createSessionMiddleware({ env, dataStore }) {
 
 export const asyncRoute = (handler) => (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
 
-export function createLoginFailureLimiter({ clock = Date.now, windowMs = 15 * 60 * 1000, phoneLimit = 5, ipLimit = 20 } = {}) {
-  const phoneFailures = new Map();
-  const ipFailures = new Map();
-
-  function recent(map, key) {
-    const threshold = clock() - windowMs;
-    const failures = (map.get(key) || []).filter((time) => time > threshold);
-    map.set(key, failures);
-    return failures;
-  }
-
-  return {
-    isLimited({ phone, ip }) {
-      return recent(phoneFailures, phone).length >= phoneLimit || recent(ipFailures, ip).length >= ipLimit;
-    },
-    recordFailure({ phone, ip }) {
-      recent(phoneFailures, phone).push(clock());
-      recent(ipFailures, ip).push(clock());
-    },
-    clearPhone(phone) {
-      phoneFailures.delete(phone);
-    }
-  };
-}
-
 export function requireUser(req, res, next) {
   if (!req.user) return res.status(401).json({ error: "请先登录" });
   next();

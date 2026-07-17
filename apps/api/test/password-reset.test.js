@@ -1,51 +1,15 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
 import test from "node:test";
 
 import { verifyPassword } from "../src/auth/passwords.js";
+import { withTestServer } from "../test-support/server.js";
 
 const passwordResetModule = await import("../src/auth/password-reset.js").catch(() => ({}));
 const smsModule = await import("../src/auth/sms.js").catch(() => ({}));
 
-const rootDir = path.resolve(import.meta.dirname, "../../..");
-const serverPath = path.resolve(import.meta.dirname, "../src/server.js");
-
-async function waitForServer(baseUrl, child) {
-  const started = Date.now();
-  while (Date.now() - started < 5000) {
-    if (child.exitCode !== null) throw new Error("API server exited before becoming ready");
-    try {
-      const response = await fetch(`${baseUrl}/api/public/event`);
-      if (response.ok) return;
-    } catch {
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
-  }
-  throw new Error("API server did not start in time");
-}
-
 async function withServer(fn) {
-  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "aerogp-password-reset-"));
-  const dbPath = path.join(tempDir, "db.json");
-  const port = 7600 + Math.floor(Math.random() * 1000);
-  const baseUrl = `http://127.0.0.1:${port}`;
-  const child = spawn(process.execPath, [serverPath], {
-    cwd: rootDir,
-    env: { ...process.env, NODE_ENV: "test", PORT: String(port), DB_PATH: dbPath },
-    stdio: ["ignore", "pipe", "pipe"]
-  });
-
-  try {
-    await waitForServer(baseUrl, child);
-    await fn({ baseUrl, dbPath });
-  } finally {
-    child.kill();
-    await new Promise((resolve) => child.once("exit", resolve));
-    await fs.rm(tempDir, { recursive: true, force: true });
-  }
+  await withTestServer(fn, { prefix: "aerogp-password-reset-" });
 }
 
 async function login(baseUrl, phone, password, extraHeaders = {}) {
@@ -116,7 +80,7 @@ test("administrator reset sets a temporary password and invalidates existing ses
   });
 });
 
-function serviceHarness({ sendCode } = {}) {
+function serviceHarness({ sendCode, logger } = {}) {
   let currentTime = Date.parse("2026-07-17T00:00:00.000Z");
   let db = {
     users: [{
@@ -126,19 +90,59 @@ function serviceHarness({ sendCode } = {}) {
   };
   const sent = [];
   const challengeStore = new Map();
+  let challengePreparations = 0;
+  const rateBuckets = new Map();
+  const authState = {
+    async consumeRateLimits(rules, now) {
+      let allowed = true;
+      const prepared = rules.map((rule) => {
+        const events = (rateBuckets.get(rule.key) || []).filter((time) => time > now - rule.windowMs);
+        if (events.length >= rule.limit || (rule.cooldownMs && events.at(-1) > now - rule.cooldownMs)) allowed = false;
+        return { rule, events };
+      });
+      for (const { rule, events } of prepared) {
+        if (allowed) events.push(now);
+        rateBuckets.set(rule.key, events);
+      }
+      return allowed;
+    },
+    async saveChallenge(challenge, { enabled = true } = {}) {
+      challengePreparations += 1;
+      if (enabled) challengeStore.set(challenge.phone, structuredClone(challenge));
+    },
+    async deleteChallenge(phone, digest) {
+      if (!digest || challengeStore.get(phone)?.digest === digest) challengeStore.delete(phone);
+    },
+    async consumeChallenge({ phone, digest, now, maxAttempts }) {
+      const challenge = challengeStore.get(phone);
+      if (!challenge || challenge.expiresAt <= now) {
+        challengeStore.delete(phone);
+        return false;
+      }
+      if (challenge.digest !== digest) {
+        challenge.attempts += 1;
+        if (challenge.attempts >= maxAttempts) challengeStore.delete(phone);
+        return false;
+      }
+      challengeStore.delete(phone);
+      return true;
+    }
+  };
   const smsProvider = { sendCode: sendCode || (async (payload) => { sent.push(payload); }) };
   const service = passwordResetModule.createSmsPasswordResetService?.({
     secret: "s".repeat(32),
     readDb: async () => structuredClone(db),
     writeDb: async (next) => { db = structuredClone(next); },
     smsProvider,
-    challengeStore,
+    authState,
+    logger: logger || { warn() {}, error() {} },
     clock: () => currentTime,
     generateCode: () => "123456"
   });
   return {
     service, sent, challengeStore,
     db: () => db,
+    challengePreparations: () => challengePreparations,
     advance: (milliseconds) => { currentTime += milliseconds; }
   };
 }
@@ -151,6 +155,7 @@ test("SMS reset request is uniform and stores only a code digest", async () => {
   const unknown = await harness.service.request({ phone: "13800000002", ip: "127.0.0.1" });
 
   assert.deepEqual(known, unknown);
+  assert.equal(harness.challengePreparations(), 2);
   assert.deepEqual(harness.sent, [{ phone: "13800000001", code: "123456" }]);
   const stored = harness.challengeStore.get("13800000001");
   assert.equal(stored.digest.length, 64);
@@ -162,8 +167,41 @@ test("SMS provider failures keep the request response uniform and store no chall
   assert.equal(typeof passwordResetModule.createSmsPasswordResetService, "function");
   const harness = serviceHarness({ sendCode: async () => { throw new Error("SMS unavailable"); } });
   const response = await harness.service.request({ phone: "13800000001", ip: "127.0.0.1" });
+  await new Promise((resolve) => setImmediate(resolve));
   assert.deepEqual(response, { ok: true, message: "如果该手机号已注册，验证码将发送到该号码" });
   assert.equal(harness.challengeStore.has("13800000001"), false);
+});
+
+test("SMS dispatch failures remain handled even when the logger throws", async () => {
+  const unhandled = [];
+  const onUnhandled = (error) => { unhandled.push(error); };
+  process.on("unhandledRejection", onUnhandled);
+  try {
+    const harness = serviceHarness({
+      sendCode: async () => { throw new Error("SMS unavailable"); },
+      logger: { warn() { throw new Error("logger unavailable"); }, error() { throw new Error("logger unavailable"); } }
+    });
+    await harness.service.request({ phone: "13800000001", ip: "127.0.0.1" });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(harness.challengeStore.has("13800000001"), false);
+    assert.deepEqual(unhandled, []);
+  } finally {
+    process.removeListener("unhandledRejection", onUnhandled);
+  }
+});
+
+test("SMS reset response does not synchronously wait for the provider", async () => {
+  let dispatched = false;
+  const harness = serviceHarness({ sendCode: () => {
+    dispatched = true;
+    return new Promise(() => {});
+  } });
+  const response = await Promise.race([
+    harness.service.request({ phone: "13800000001", ip: "127.0.0.1" }),
+    new Promise((_, reject) => setTimeout(() => reject(new Error("request waited for SMS")), 100))
+  ]);
+  assert.equal(dispatched, true);
+  assert.equal(response.ok, true);
 });
 
 test("SMS reset enforces cooldown, hourly phone and IP limits", async () => {
@@ -211,7 +249,7 @@ test("SMS reset expires after five minutes and allows at most five checks", asyn
   assert.equal(typeof passwordResetModule.createSmsPasswordResetService, "function");
   const expired = serviceHarness();
   await expired.service.request({ phone: "13800000001", ip: "127.0.0.1" });
-  expired.advance(5 * 60 * 1000 + 1);
+  expired.advance(5 * 60 * 1000);
   await assert.rejects(expired.service.confirm({ phone: "13800000001", code: "123456", password: "NextPass2" }), (error) => error.statusCode === 422);
 
   const attempts = serviceHarness();
@@ -227,7 +265,7 @@ test("Aliyun SMS provider is disabled without config and maps code to the offici
   assert.equal(smsModule.createAliyunSmsProvider({}), null);
 
   const requests = [];
-  const client = { sendSms: async (request) => { requests.push(request); } };
+  const client = { sendSms: async (request) => { requests.push(request); return { body: { code: "OK" } }; } };
   const provider = smsModule.createAliyunSmsProvider({
     ALIBABA_CLOUD_ACCESS_KEY_ID: "id",
     ALIBABA_CLOUD_ACCESS_KEY_SECRET: "secret",
@@ -241,6 +279,14 @@ test("Aliyun SMS provider is disabled without config and maps code to the offici
   assert.equal(requests[0].templateCode, "SMS_123");
   assert.deepEqual(JSON.parse(requests[0].templateParam), { code: "123456" });
   assert.equal(provider.endpoint, "dysmsapi.aliyuncs.com");
+
+  const rejected = smsModule.createAliyunSmsProvider({
+    ALIBABA_CLOUD_ACCESS_KEY_ID: "id",
+    ALIBABA_CLOUD_ACCESS_KEY_SECRET: "secret",
+    ALIYUN_SMS_SIGN_NAME: "test",
+    ALIYUN_SMS_TEMPLATE_CODE: "SMS_123"
+  }, { client: { sendSms: async () => ({ body: {} }) } });
+  await assert.rejects(rejected.sendCode({ phone: "13800000001", code: "123456" }), /delivery failed/);
 });
 
 test("public features reports SMS reset disabled when Aliyun is not configured", async () => {

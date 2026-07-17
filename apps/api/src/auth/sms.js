@@ -30,7 +30,7 @@ export function createAliyunSmsProvider(env, { client: injectedClient } = {}) {
         templateCode: env.ALIYUN_SMS_TEMPLATE_CODE,
         templateParam: JSON.stringify({ code })
       }));
-      if (response?.body?.code && response.body.code !== "OK") throw new Error("Aliyun SMS delivery failed");
+      if (response?.body?.code !== "OK") throw new Error("Aliyun SMS delivery failed");
     }
   };
 }

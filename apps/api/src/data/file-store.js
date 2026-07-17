@@ -2,10 +2,12 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 import { ensureDbShape, seedDb } from "./seed.js";
+import { createFileAuthState } from "./auth-state.js";
 
 export function createFileStore(dbPath) {
   return {
     kind: "file",
+    authState: createFileAuthState(`${dbPath}.auth.json`),
     async initialize() {},
     async readDb() {
       try {

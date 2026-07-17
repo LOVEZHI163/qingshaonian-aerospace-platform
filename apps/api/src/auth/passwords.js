@@ -1,5 +1,7 @@
 import bcrypt from "bcryptjs";
 
+const DUMMY_PASSWORD_HASH = "$2b$12$kNjNKYCdGTg4MqmixCKtCef4X/67YNoukU4h9wliHNkSne0fWICca";
+
 export const isLegacyPassword = (value) => !String(value || "").startsWith("$2");
 
 export const hashPassword = (value) => bcrypt.hash(String(value), 12);
@@ -15,4 +17,10 @@ export function validatePassword(value) {
 export async function verifyPassword(value, stored) {
   if (isLegacyPassword(stored)) return String(value) === String(stored);
   return bcrypt.compare(String(value), stored);
+}
+
+export async function verifyLoginPassword(value, stored) {
+  if (stored && !isLegacyPassword(stored)) return bcrypt.compare(String(value || ""), stored);
+  await bcrypt.compare(String(value || ""), DUMMY_PASSWORD_HASH);
+  return stored ? String(value) === String(stored) : false;
 }
