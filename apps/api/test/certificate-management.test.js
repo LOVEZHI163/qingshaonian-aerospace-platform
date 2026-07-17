@@ -366,3 +366,47 @@ test("manual certificate management rolls back a new file and journals it when d
     lastError: "disk unavailable"
   }]);
 });
+
+test("manual certificate management whitelists certificate fields in admin, owner, organization, and single payloads", async () => {
+  await withTestServer(async ({ baseUrl, dbPath }) => {
+    const admin = await loginAs(baseUrl, "13900000000", "admin123");
+    const athleteOwner = await loginAs(baseUrl, "13800000001", "123456");
+    const organizationOwner = await loginAs(baseUrl, "13800000011", "123456");
+    const upload = await uploadCertificate(baseUrl, admin.cookie, "R20260627001", 1, { title: "白名单证书" });
+    assert.equal(upload.status, 201);
+    const certificate = (await responseJson(upload)).row;
+    const published = await fetch(`${baseUrl}/api/admin/certificates/bulk-status`, jsonRequest("POST", {
+      ids: [certificate.id], status: "published"
+    }, admin.cookie));
+    assert.equal(published.status, 200);
+
+    const legacyKey = ["certificate", "No"].join("");
+    const unknownKey = ["internal", "Secret"].join("");
+    const db = JSON.parse(await fs.readFile(dbPath, "utf8"));
+    const stored = db.certificates.find((row) => row.id === certificate.id);
+    stored[legacyKey] = "LEGACY-LEAK";
+    stored[unknownKey] = "UNKNOWN-LEAK";
+    await fs.writeFile(dbPath, JSON.stringify(db, null, 2), "utf8");
+
+    const responses = [
+      await fetch(`${baseUrl}/api/admin/certificates`, withSession(admin.cookie)),
+      await fetch(`${baseUrl}/api/me/certificates`, withSession(athleteOwner.cookie)),
+      await fetch(`${baseUrl}/api/organizations/O1001/certificates`, withSession(organizationOwner.cookie))
+    ];
+    for (const response of responses) {
+      assert.equal(response.status, 200);
+      const row = (await responseJson(response)).rows.find((item) => item.id === certificate.id);
+      assert.ok(row);
+      assert.equal(Object.hasOwn(row, legacyKey), false);
+      assert.equal(Object.hasOwn(row, unknownKey), false);
+    }
+
+    const single = await fetch(`${baseUrl}/api/admin/certificates/${certificate.id}`, jsonRequest("PATCH", {
+      title: "白名单证书（修改）"
+    }, admin.cookie));
+    assert.equal(single.status, 200);
+    const row = (await responseJson(single)).row;
+    assert.equal(Object.hasOwn(row, legacyKey), false);
+    assert.equal(Object.hasOwn(row, unknownKey), false);
+  }, { prefix: "manual-certificate-management-whitelist-" });
+});

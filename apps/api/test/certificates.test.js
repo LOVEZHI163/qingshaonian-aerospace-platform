@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { CERTIFICATE_POLICY, validateUpload } from "../src/files/policy.js";
+import { ensureDbShape } from "../src/data/seed.js";
 import {
   CertificateError,
   removeCertificate,
@@ -41,6 +42,21 @@ test("certificate file policy accepts real PDF, PNG, JPEG, and WebP content", as
   for (const buffer of [pdf, png, jpeg, webp]) {
     await assert.doesNotReject(() => validateUpload({ buffer }, CERTIFICATE_POLICY));
   }
+});
+
+test("certificate JSON normalization removes the legacy camel-case number field", () => {
+  const legacyKey = ["certificate", "No"].join("");
+  const db = ensureDbShape({
+    certificates: [{
+      id: "C-LEGACY-FIELD",
+      registrationId: "R1",
+      slot: 1,
+      title: "旧证书",
+      [legacyKey]: "LEGACY-001"
+    }]
+  });
+
+  assert.equal(Object.hasOwn(db.certificates[0], legacyKey), false);
 });
 
 test("certificate service upserts the two slots and resets replacements to draft", () => {
