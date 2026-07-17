@@ -5,6 +5,21 @@ import { createPostgresAuthState } from "./auth-state.js";
 
 const schemaUrl = new URL("./schema.sql", import.meta.url);
 const migrationsUrl = new URL("./migrations/", import.meta.url);
+const ADVISORY_LOCK_KEY = 72451029;
+let postgresFallbackTail = Promise.resolve();
+
+async function acquireFallbackLock() {
+  let unlock;
+  const previous = postgresFallbackTail;
+  postgresFallbackTail = new Promise((resolve) => { unlock = resolve; });
+  await previous;
+  let released = false;
+  return async () => {
+    if (released) return;
+    released = true;
+    unlock();
+  };
+}
 
 function iso(value) {
   if (!value) return "";
@@ -69,7 +84,7 @@ async function runMigrations(pool) {
       } else {
         migration = migration.replace("CREATE TABLE IF NOT EXISTS organization_documents", "CREATE TABLE organization_documents");
       }
-      for (const tableName of ["auth_rate_buckets", "password_reset_challenges"]) {
+      for (const tableName of ["auth_rate_buckets", "password_reset_challenges", "file_cleanup_journal"]) {
         const existing = await client.query(`
           SELECT 1 FROM information_schema.tables
           WHERE table_schema = 'public' AND table_name = $1
@@ -131,6 +146,21 @@ export function createPostgresStore(pool) {
   const store = {
     kind: "postgres",
     authState: createPostgresAuthState(pool),
+    async acquireMutationLock() {
+      const client = await pool.connect();
+      try {
+        await client.query("SELECT pg_advisory_lock($1)", [ADVISORY_LOCK_KEY]);
+      } catch {
+        client.release();
+        return acquireFallbackLock();
+      }
+      let released = false;
+      return async () => {
+        if (released) return;
+        released = true;
+        try { await client.query("SELECT pg_advisory_unlock($1)", [ADVISORY_LOCK_KEY]); } finally { client.release(); }
+      };
+    },
     async initialize() {
       await runSchema(pool);
       await runMigrations(pool);
@@ -189,7 +219,7 @@ export function createPostgresStore(pool) {
       if (count.rows[0].count === 0) await store.writeDb(structuredClone(seedDb));
     },
     async readDb() {
-      const [events, projects, projectGroups, users, organizations, memberships, registrations, certificates, organizationDocuments] = await Promise.all([
+      const [events, projects, projectGroups, users, organizations, memberships, registrations, certificates, organizationDocuments, fileCleanupJournal] = await Promise.all([
         pool.query("SELECT * FROM events ORDER BY created_at, id"),
         pool.query("SELECT * FROM projects ORDER BY display_order, id"),
         pool.query("SELECT * FROM project_groups ORDER BY project_id, group_name"),
@@ -203,7 +233,8 @@ export function createPostgresStore(pool) {
           ORDER BY r.created_at, r.id
         `),
         pool.query("SELECT * FROM certificates ORDER BY uploaded_at DESC, id"),
-        pool.query("SELECT * FROM organization_documents ORDER BY uploaded_at DESC, id")
+        pool.query("SELECT * FROM organization_documents ORDER BY uploaded_at DESC, id"),
+        pool.query("SELECT * FROM file_cleanup_journal ORDER BY created_at, id")
       ]);
 
       const groupsByProject = projectGroups.rows.reduce((groups, row) => {
@@ -334,7 +365,8 @@ export function createPostgresStore(pool) {
           sizeBytes: Number(row.size_bytes),
           uploadedAt: iso(row.uploaded_at),
           cleanedAt: row.cleaned_at ? iso(row.cleaned_at) : null
-        }))
+        })),
+        fileCleanupJournal: fileCleanupJournal.rows.map((row) => ({ id: row.id, filePath: row.file_path, category: row.category, attempts: row.attempts, lastError: row.last_error, createdAt: iso(row.created_at) }))
       });
     },
     async writeDb(input) {
@@ -469,6 +501,15 @@ export function createPostgresStore(pool) {
           );
         }
 
+        for (const row of db.fileCleanupJournal || []) {
+          await client.query(
+            `INSERT INTO file_cleanup_journal (id, file_path, category, attempts, last_error, created_at)
+             VALUES ($1, $2, $3, $4, $5, $6)
+             ON CONFLICT (id) DO UPDATE SET file_path = EXCLUDED.file_path, category = EXCLUDED.category, attempts = EXCLUDED.attempts, last_error = EXCLUDED.last_error, created_at = EXCLUDED.created_at`,
+            [row.id, row.filePath, row.category, row.attempts, row.lastError, row.createdAt]
+          );
+        }
+
         for (const row of db.memberships) {
           await client.query(
             `INSERT INTO memberships
@@ -557,6 +598,7 @@ export function createPostgresStore(pool) {
         }
 
         await deleteMissing(client, "organization_documents", "id", db.organizationDocuments.map((row) => row.id));
+        await deleteMissing(client, "file_cleanup_journal", "id", (db.fileCleanupJournal || []).map((row) => row.id));
         await deleteMissing(client, "certificates", "id", db.certificates.map((row) => row.id));
         await deleteMissing(client, "registrations", "id", db.registrations.map((row) => row.id));
         await deleteMissing(client, "projects", "id", db.projects.map((row) => row.id));

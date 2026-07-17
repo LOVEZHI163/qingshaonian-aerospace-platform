@@ -123,7 +123,8 @@ Object.assign(seedDb, {
   events: [EVENT],
   projects: PROJECTS,
   projectGroups: PROJECT_GROUPS,
-  organizationDocuments: []
+  organizationDocuments: [],
+  fileCleanupJournal: []
 });
 for (const organization of seedDb.organizations) {
   Object.assign(organization, {
@@ -146,6 +147,7 @@ export function ensureDbShape(db) {
   db.organizations ||= [];
   const isLegacyOrganizationShape = !Array.isArray(db.organizationDocuments);
   db.organizationDocuments ||= [];
+  db.fileCleanupJournal ||= [];
   for (const organization of db.organizations) {
     if (!organization.creditCode) {
       organization.creditCode = isLegacyOrganizationShape

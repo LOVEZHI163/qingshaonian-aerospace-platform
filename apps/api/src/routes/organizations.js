@@ -1,5 +1,6 @@
 import express from "express";
 import multer from "multer";
+import fs from "node:fs/promises";
 
 import {
   assertOrganizationReadyForApproval,
@@ -83,7 +84,13 @@ export function createOrganizationsRouter({ store, requireUser, requireAdmin, re
       const db = await deps.readDb();
       const organization = db.organizations.find((row) => row.id === req.params.id);
       if (!organization) return res.status(404).json({ error: "组织不存在" });
-      if (req.body?.status === "approved") assertOrganizationReadyForApproval(organization, db.organizationDocuments);
+      if (req.body?.status === "approved") {
+        assertOrganizationReadyForApproval(organization, db.organizationDocuments);
+        const credential = db.organizationDocuments
+          .filter((document) => document.organizationId === organization.id && !document.cleanedAt)
+          .sort((left, right) => String(right.uploadedAt).localeCompare(String(left.uploadedAt)))[0];
+        try { await fs.access(credential.filePath); } catch { throw new OrganizationError(422, "组织资质文件不存在"); }
+      }
       reviewOrganization(organization, req.body || {}, req.user.id, now());
       await deps.writeDb(db);
       res.json({ organization: publicOrganization(organization) });

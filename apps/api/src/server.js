@@ -10,6 +10,7 @@ import { createSmsPasswordResetService, sendPasswordResetError } from "./auth/pa
 import { asyncRoute, createSessionMiddleware, requireAdmin, requirePasswordReady, requireUser } from "./auth/session.js";
 import { createAliyunSmsProvider } from "./auth/sms.js";
 import { createDataStore } from "./data/index.js";
+import { createMutationLockMiddleware } from "./data/mutation-lock.js";
 import { createEventsRouter } from "./routes/events.js";
 import { createOrganizationsRouter } from "./routes/organizations.js";
 import { projectForHistoricalRegistration, registrationContext } from "./services/events.js";
@@ -261,6 +262,7 @@ app.use(asyncRoute(async (req, _res, next) => {
   }
   next();
 }));
+app.use("/api", createMutationLockMiddleware(dataStore));
 
 app.use("/api", createOrganizationsRouter({
   store: dataStore,

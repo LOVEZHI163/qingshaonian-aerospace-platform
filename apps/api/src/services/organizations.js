@@ -15,13 +15,6 @@ export class OrganizationError extends Error {
 }
 
 const validationError = (message) => new OrganizationError(422, message);
-let organizationMutation = Promise.resolve();
-
-function coordinateOrganizationMutation(operation) {
-  const result = organizationMutation.then(operation, operation);
-  organizationMutation = result.catch(() => {});
-  return result;
-}
 
 function normalizedPhone(value) {
   return String(value || "").replace(/[^\d]/g, "");
@@ -87,11 +80,27 @@ function documentRecord({ makeId, organizationId, documentType, stored, now }) {
 
 async function cleanup(file, removePrivateFile) {
   if (!file) return;
-  try {
-    await removePrivateFile(file);
-  } catch {
-    // The original persistence error is more useful to callers; cleanup is best effort.
+  let lastError;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      await removePrivateFile(file);
+      return true;
+    } catch (error) {
+      lastError = error;
+    }
   }
+  return { error: lastError };
+}
+
+async function journalCleanup(db, file, result, writeDb, makeId, now) {
+  if (result === true || !file) return;
+  const rollback = structuredClone(db);
+  rollback.fileCleanupJournal ||= [];
+  rollback.fileCleanupJournal.push({
+    id: makeId("CLN"), filePath: file.filePath, category: "organization-documents", attempts: 3,
+    lastError: String(result.error?.message || "文件清理失败"), createdAt: now()
+  });
+  try { await writeDb(rollback); } catch { /* original persistence failure remains primary */ }
 }
 
 export async function registerOrdinary({ input, readDb, writeDb, hashPassword, validatePassword, makeId, now }) {
@@ -109,16 +118,13 @@ export async function registerOrdinary({ input, readDb, writeDb, hashPassword, v
   return { user, organization: null, document: null };
 }
 
-export function registerOrganization(input) {
-  return coordinateOrganizationMutation(() => registerOrganizationMutation(input));
-}
-
-async function registerOrganizationMutation({ input, file, readDb, writeDb, hashPassword, validatePassword, makeId, now, saveFile = savePrivateFile, removePrivateFile = deletePrivateFile }) {
+export async function registerOrganization({ input, file, readDb, writeDb, hashPassword, validatePassword, makeId, now, saveFile = savePrivateFile, removePrivateFile = deletePrivateFile }) {
   const values = validateCredentialInput(input, file);
   const passwordError = validatePassword(values.password);
   if (passwordError) throw validationError(passwordError);
   await validateCredentialFile(file);
   const db = await readDb();
+  const rollbackDb = structuredClone(db);
   assertAccountAvailable(db, values.phone, values.creditCode);
 
   let stored;
@@ -146,7 +152,8 @@ async function registerOrganizationMutation({ input, file, readDb, writeDb, hash
     await writeDb(db);
     return { user, organization, document };
   } catch (error) {
-    await cleanup(stored, removePrivateFile);
+    const cleanupResult = await cleanup(stored, removePrivateFile);
+    await journalCleanup(rollbackDb, stored, cleanupResult, writeDb, makeId, now);
     if (error?.code === "23505") throw new OrganizationError(409, "统一社会信用代码已注册");
     throw error;
   }
@@ -177,16 +184,13 @@ export function assertOrganizationReadyForApproval(organization, documents) {
   if (!hasCredential) throw validationError("组织缺少有效资质文件");
 }
 
-export function resubmitOrganization(input) {
-  return coordinateOrganizationMutation(() => resubmitOrganizationMutation(input));
-}
-
-async function resubmitOrganizationMutation({ input, file, userId, readDb, writeDb, makeId, now, saveFile = savePrivateFile, removePrivateFile = deletePrivateFile }) {
+export async function resubmitOrganization({ input, file, userId, readDb, writeDb, makeId, now, saveFile = savePrivateFile, removePrivateFile = deletePrivateFile }) {
   const documentType = requiredText(input.documentType, "资质类型");
   if (!DOCUMENT_TYPES.has(documentType)) throw validationError("资质类型无效");
   if (!file) throw validationError("资质文件不能为空");
   await validateCredentialFile(file);
   const db = await readDb();
+  const rollbackDb = structuredClone(db);
   const organization = db.organizations.find((row) => row.ownerUserId === userId);
   const owner = organization && db.memberships.some((row) => row.userId === userId && row.organizationId === organization.id && row.role === "owner" && row.status === "active");
   if (!organization || !owner) throw new OrganizationError(403, "只有组织负责人可以修改组织资料");
@@ -198,7 +202,6 @@ async function resubmitOrganizationMutation({ input, file, userId, readDb, write
   let stored;
   try {
     stored = await saveFile({ category: "organization-documents", ownerId: organization.id, file });
-    const oldDocuments = db.organizationDocuments.filter((row) => row.organizationId === organization.id && !row.cleanedAt);
     const document = documentRecord({ makeId, organizationId: organization.id, documentType, stored, now });
     organization.name = organizationName;
     organization.creditCode = creditCode;
@@ -208,13 +211,13 @@ async function resubmitOrganizationMutation({ input, file, userId, readDb, write
     organization.reviewedBy = null;
     organization.reviewedAt = null;
     organization.updatedAt = now();
-    db.organizationDocuments = db.organizationDocuments.filter((row) => row.organizationId !== organization.id);
     db.organizationDocuments.push(document);
     await writeDb(db);
-    await Promise.all(oldDocuments.map((oldDocument) => cleanup(oldDocument, removePrivateFile)));
     return { organization, document };
   } catch (error) {
-    await cleanup(stored, removePrivateFile);
+    const cleanupResult = await cleanup(stored, removePrivateFile);
+    await journalCleanup(rollbackDb, stored, cleanupResult, writeDb, makeId, now);
+    if (error?.code === "23505") throw new OrganizationError(409, "统一社会信用代码已注册");
     throw error;
   }
 }

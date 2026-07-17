@@ -163,6 +163,22 @@ test("organization registration removes the saved credential when its atomic dat
   assert.deepEqual(cleaned, [saved.filePath]);
 });
 
+test("organization registration records a cleanup tombstone when database failure leaves its new file undeletable", async () => {
+  const saved = { filePath: "/safe/uploads/organization-documents/O3/license.pdf", originalName: "license.pdf", storedName: "license.pdf", mimeType: "application/pdf", size: pdfBuffer.length };
+  let writes = 0;
+  let journal;
+  await assert.rejects(() => registerOrganization({
+    input: { name: "负责人", phone: "13600009993", password: "Strong123", organizationName: "清理组织", creditCode: "91330300TEST000013", documentType: "business_license" },
+    file: uploadedFile(pdfBuffer, "license.pdf", "application/pdf"),
+    readDb: async () => ({ users: [], organizations: [], memberships: [], organizationDocuments: [], fileCleanupJournal: [] }),
+    writeDb: async (db) => { if (writes++ === 0) throw new Error("database failure"); journal = db.fileCleanupJournal; },
+    hashPassword: async () => "hash", validatePassword: () => "", makeId: (prefix) => `${prefix}3`, now: () => "2026-07-17T00:00:00.000Z",
+    saveFile: async () => saved, removePrivateFile: async () => { throw new Error("disk unavailable"); }
+  }), /database failure/);
+  assert.equal(journal.length, 1);
+  assert.equal(journal[0].filePath, saved.filePath);
+});
+
 test("organization registrations reject pending, rejected, and disabled organizations without blocking personal registration", async () => {
   await withTestServer(async ({ baseUrl, dbPath }) => {
     const registered = await postOrganizationRegistration(baseUrl, { creditCode: "91330300TEST000020" });
@@ -256,31 +272,40 @@ test("concurrent same-credit registrations return one conflict without an orphan
   }, { prefix: "organization-credit-race-" });
 });
 
-test("organization mutation coordinator preserves concurrent PostgreSQL store registrations", async () => {
+test("PostgreSQL store mutation lock preserves concurrent registrations across store instances", async () => {
   const memory = newDb({ autoCreateForeignKeyIndices: true });
   const { Pool } = memory.adapters.createPg();
   const store = createPostgresStore(new Pool());
   let sequence = 0;
   const makeId = (prefix) => `${prefix}${++sequence}`;
-  const register = (creditCode, phone) => registerOrganization({
-    input: { name: "并发负责人", phone, password: "Strong123", organizationName: `组织-${creditCode}`, creditCode, documentType: "business_license" },
-    file: uploadedFile(pdfBuffer, "license.pdf", "application/pdf"),
-    readDb: () => store.readDb(),
-    writeDb: (db) => store.writeDb(db),
-    hashPassword: async () => "hash",
-    validatePassword: () => "",
-    makeId,
-    now: () => "2026-07-17T00:00:00.000Z",
-    saveFile: async ({ ownerId }) => ({
-      filePath: `/safe/uploads/organization-documents/${ownerId}/license.pdf`, originalName: "license.pdf", storedName: `${ownerId}.pdf`, mimeType: "application/pdf", size: pdfBuffer.length
-    })
-  });
+  const register = async (storeInstance, creditCode, phone) => {
+    const release = await storeInstance.acquireMutationLock();
+    try {
+      return await registerOrganization({
+        input: { name: "并发负责人", phone, password: "Strong123", organizationName: `组织-${creditCode}`, creditCode, documentType: "business_license" },
+        file: uploadedFile(pdfBuffer, "license.pdf", "application/pdf"),
+        readDb: () => storeInstance.readDb(),
+        writeDb: (db) => storeInstance.writeDb(db),
+        hashPassword: async () => "hash",
+        validatePassword: () => "",
+        makeId,
+        now: () => "2026-07-17T00:00:00.000Z",
+        saveFile: async ({ ownerId }) => ({
+          filePath: `/safe/uploads/organization-documents/${ownerId}/license.pdf`, originalName: "license.pdf", storedName: `${ownerId}.pdf`, mimeType: "application/pdf", size: pdfBuffer.length
+        })
+      });
+    } finally {
+      await release();
+    }
+  };
 
   try {
     await store.initialize();
+    const secondStore = createPostgresStore(new Pool());
+    await secondStore.initialize();
     const [first, second] = await Promise.all([
-      register("91330300TEST000032", "13600009932"),
-      register("91330300TEST000033", "13600009933")
+      register(store, "91330300TEST000032", "13600009932"),
+      register(secondStore, "91330300TEST000033", "13600009933")
     ]);
     const db = await store.readDb();
     for (const result of [first, second]) {
@@ -288,6 +313,7 @@ test("organization mutation coordinator preserves concurrent PostgreSQL store re
       assert.ok(db.organizations.some((row) => row.id === result.organization.id));
       assert.ok(db.organizationDocuments.some((row) => row.id === result.document.id));
     }
+    await secondStore.close();
   } finally {
     await store.close();
   }
