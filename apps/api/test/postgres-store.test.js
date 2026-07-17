@@ -130,6 +130,25 @@ test("PostgreSQL auth state handles burst contention without surfacing storage c
   });
 });
 
+test("denied PostgreSQL requests do not retain empty buckets for rotating phone keys", async () => {
+  await withStore(async (store, pool) => {
+    const now = Date.parse("2026-07-17T00:00:00.000Z");
+    assert.equal(await store.authState.consumeRateLimits([
+      { key: "login:ip:saturated", limit: 1, windowMs: 60_000 }
+    ], now), true);
+
+    const states = Array.from({ length: 5 }, () => createPostgresAuthState(pool));
+    const denied = await Promise.all(Array.from({ length: 25 }, (_, index) => states[index % states.length].consumeRateLimits([
+      { key: `login:phone:rotating:${index}`, limit: 5, windowMs: 60_000 },
+      { key: "login:ip:saturated", limit: 1, windowMs: 60_000 }
+    ], now + 1)));
+    assert.equal(denied.every((allowed) => allowed === false), true);
+
+    const emptyPhones = await pool.query("SELECT key FROM auth_rate_buckets WHERE key LIKE 'login:phone:rotating:%'");
+    assert.equal(emptyPhones.rowCount, 0);
+  });
+});
+
 test("PostgreSQL store rejects invalid registration modes and project groups", async () => {
   await withStore(async (store) => {
     const invalidMode = await store.readDb();

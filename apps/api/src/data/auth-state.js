@@ -142,18 +142,31 @@ export function createPostgresAuthState(pool) {
           const prepared = [];
           let allowed = true;
           for (const rule of [...rules].sort((left, right) => left.key.localeCompare(right.key))) {
-            await client.query(
-              "INSERT INTO auth_rate_buckets (key, events, updated_at) VALUES ($1, '[]'::jsonb, $2) ON CONFLICT (key) DO NOTHING",
+            const inserted = await client.query(
+              "INSERT INTO auth_rate_buckets (key, events, updated_at) VALUES ($1, '[]'::jsonb, $2) ON CONFLICT (key) DO NOTHING RETURNING key",
               [rule.key, new Date(now)]
             );
             const result = await client.query("SELECT events, version FROM auth_rate_buckets WHERE key = $1 FOR UPDATE", [rule.key]);
             const originalEvents = (result.rows[0]?.events || []).map(Number);
             const events = originalEvents.filter((time) => time > now - rule.windowMs);
             if (events.length >= rule.limit || (rule.cooldownMs && events.at(-1) > now - rule.cooldownMs)) allowed = false;
-            prepared.push({ rule, events, version: result.rows[0].version, needsCleanup: events.length !== originalEvents.length });
+            prepared.push({
+              rule,
+              events,
+              version: result.rows[0].version,
+              needsCleanup: events.length !== originalEvents.length,
+              wasInserted: inserted.rowCount === 1
+            });
           }
-          for (const { rule, events, version, needsCleanup } of prepared) {
-            if (!allowed && !needsCleanup) continue;
+          for (const { rule, events, version, needsCleanup, wasInserted } of prepared) {
+            if (!allowed && events.length === 0) {
+              await client.query(
+                "DELETE FROM auth_rate_buckets WHERE key = $1 AND version = $2 AND events = '[]'::jsonb",
+                [rule.key, version]
+              );
+              continue;
+            }
+            if (!allowed && !needsCleanup && !wasInserted) continue;
             if (allowed) events.push(now);
             const updated = await client.query(
               "UPDATE auth_rate_buckets SET events = $2::jsonb, updated_at = $3, version = version + 1 WHERE key = $1 AND version = $4 RETURNING key",
