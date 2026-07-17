@@ -122,8 +122,19 @@ export const seedDb = {
 Object.assign(seedDb, {
   events: [EVENT],
   projects: PROJECTS,
-  projectGroups: PROJECT_GROUPS
+  projectGroups: PROJECT_GROUPS,
+  organizationDocuments: []
 });
+for (const organization of seedDb.organizations) {
+  Object.assign(organization, {
+    creditCode: `LEGACY-${organization.id}`,
+    reviewStatus: "approved",
+    rejectReason: "",
+    reviewedBy: null,
+    reviewedAt: null,
+    updatedAt: organization.createdAt
+  });
+}
 for (const row of seedDb.registrations) row.eventId = EVENT.id;
 
 export function ensureDbShape(db) {
@@ -133,6 +144,15 @@ export function ensureDbShape(db) {
     user.mustChangePassword ??= false;
   }
   db.organizations ||= [];
+  db.organizationDocuments ||= [];
+  for (const organization of db.organizations) {
+    organization.creditCode ||= `LEGACY-${organization.id}`;
+    organization.reviewStatus ||= "approved";
+    organization.rejectReason ||= "";
+    organization.reviewedBy ??= null;
+    organization.reviewedAt ??= null;
+    organization.updatedAt ||= organization.createdAt;
+  }
   db.memberships ||= [];
   db.events ||= structuredClone([EVENT]);
   db.projects ||= structuredClone(PROJECTS);

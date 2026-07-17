@@ -49,6 +49,15 @@ async function runMigrations(pool) {
     if (projectGroups.rowCount > 0) {
       migration = migration.replace(/CREATE TABLE IF NOT EXISTS project_groups \([\s\S]*?\);\s*/, "");
     }
+    const organizationDocuments = await pool.query(`
+      SELECT 1 FROM information_schema.tables
+      WHERE table_schema = 'public' AND table_name = 'organization_documents'
+    `);
+    if (organizationDocuments.rowCount > 0) {
+      migration = migration.replace(/CREATE TABLE IF NOT EXISTS organization_documents \([\s\S]*?\);\s*/, "");
+    } else {
+      migration = migration.replace("CREATE TABLE IF NOT EXISTS organization_documents", "CREATE TABLE organization_documents");
+    }
     for (const tableName of ["auth_rate_buckets", "password_reset_challenges"]) {
       const existing = await pool.query(`
         SELECT 1 FROM information_schema.tables
@@ -157,7 +166,7 @@ export function createPostgresStore(pool) {
       if (count.rows[0].count === 0) await store.writeDb(structuredClone(seedDb));
     },
     async readDb() {
-      const [events, projects, projectGroups, users, organizations, memberships, registrations, certificates] = await Promise.all([
+      const [events, projects, projectGroups, users, organizations, memberships, registrations, certificates, organizationDocuments] = await Promise.all([
         pool.query("SELECT * FROM events ORDER BY created_at, id"),
         pool.query("SELECT * FROM projects ORDER BY display_order, id"),
         pool.query("SELECT * FROM project_groups ORDER BY project_id, group_name"),
@@ -170,7 +179,8 @@ export function createPostgresStore(pool) {
           LEFT JOIN results x ON x.registration_id = r.id
           ORDER BY r.created_at, r.id
         `),
-        pool.query("SELECT * FROM certificates ORDER BY uploaded_at DESC, id")
+        pool.query("SELECT * FROM certificates ORDER BY uploaded_at DESC, id"),
+        pool.query("SELECT * FROM organization_documents ORDER BY uploaded_at DESC, id")
       ]);
 
       const groupsByProject = projectGroups.rows.reduce((groups, row) => {
@@ -230,7 +240,13 @@ export function createPostgresStore(pool) {
           contactName: row.contact_name,
           contactPhone: row.contact_phone,
           status: row.status,
-          createdAt: iso(row.created_at)
+          createdAt: iso(row.created_at),
+          creditCode: row.credit_code,
+          reviewStatus: row.review_status,
+          rejectReason: row.reject_reason,
+          reviewedBy: row.reviewed_by,
+          reviewedAt: row.reviewed_at ? iso(row.reviewed_at) : null,
+          updatedAt: iso(row.updated_at)
         })),
         memberships: memberships.rows.map((row) => ({
           id: row.id,
@@ -283,6 +299,18 @@ export function createPostgresStore(pool) {
           status: row.status,
           uploadedAt: iso(row.uploaded_at),
           publishedAt: iso(row.published_at)
+        })),
+        organizationDocuments: organizationDocuments.rows.map((row) => ({
+          id: row.id,
+          organizationId: row.organization_id,
+          documentType: row.document_type,
+          originalName: row.original_name,
+          storedName: row.stored_name,
+          filePath: row.file_path,
+          mimeType: row.mime_type,
+          sizeBytes: Number(row.size_bytes),
+          uploadedAt: iso(row.uploaded_at),
+          cleanedAt: row.cleaned_at ? iso(row.cleaned_at) : null
         }))
       });
     },
@@ -372,8 +400,9 @@ export function createPostgresStore(pool) {
         for (const row of db.organizations) {
           await client.query(
             `INSERT INTO organizations
-              (id, name, code, owner_user_id, contact_name, contact_phone, status, created_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+              (id, name, code, owner_user_id, contact_name, contact_phone, status, created_at,
+               credit_code, review_status, reject_reason, reviewed_by, reviewed_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
              ON CONFLICT (id) DO UPDATE SET
                name = EXCLUDED.name,
                code = EXCLUDED.code,
@@ -381,8 +410,39 @@ export function createPostgresStore(pool) {
                contact_name = EXCLUDED.contact_name,
                contact_phone = EXCLUDED.contact_phone,
                status = EXCLUDED.status,
-               created_at = EXCLUDED.created_at`,
-            [row.id, row.name, row.code, row.ownerUserId, row.contactName || "", row.contactPhone || "", row.status, row.createdAt]
+               created_at = EXCLUDED.created_at,
+               credit_code = EXCLUDED.credit_code,
+               review_status = EXCLUDED.review_status,
+               reject_reason = EXCLUDED.reject_reason,
+               reviewed_by = EXCLUDED.reviewed_by,
+               reviewed_at = EXCLUDED.reviewed_at,
+               updated_at = EXCLUDED.updated_at`,
+            [
+              row.id, row.name, row.code, row.ownerUserId, row.contactName || "", row.contactPhone || "", row.status, row.createdAt,
+              row.creditCode, row.reviewStatus, row.rejectReason || "", row.reviewedBy || null, row.reviewedAt || null, row.updatedAt
+            ]
+          );
+        }
+
+        for (const row of db.organizationDocuments) {
+          await client.query(
+            `INSERT INTO organization_documents
+              (id, organization_id, document_type, original_name, stored_name, file_path, mime_type, size_bytes, uploaded_at, cleaned_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+             ON CONFLICT (id) DO UPDATE SET
+               organization_id = EXCLUDED.organization_id,
+               document_type = EXCLUDED.document_type,
+               original_name = EXCLUDED.original_name,
+               stored_name = EXCLUDED.stored_name,
+               file_path = EXCLUDED.file_path,
+               mime_type = EXCLUDED.mime_type,
+               size_bytes = EXCLUDED.size_bytes,
+               uploaded_at = EXCLUDED.uploaded_at,
+               cleaned_at = EXCLUDED.cleaned_at`,
+            [
+              row.id, row.organizationId, row.documentType, row.originalName, row.storedName, row.filePath,
+              row.mimeType, row.sizeBytes, row.uploadedAt, row.cleanedAt || null
+            ]
           );
         }
 
@@ -473,6 +533,7 @@ export function createPostgresStore(pool) {
           );
         }
 
+        await deleteMissing(client, "organization_documents", "id", db.organizationDocuments.map((row) => row.id));
         await deleteMissing(client, "certificates", "id", db.certificates.map((row) => row.id));
         await deleteMissing(client, "registrations", "id", db.registrations.map((row) => row.id));
         await deleteMissing(client, "projects", "id", db.projects.map((row) => row.id));

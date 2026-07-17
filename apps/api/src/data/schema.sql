@@ -18,7 +18,26 @@ CREATE TABLE IF NOT EXISTS organizations (
   contact_name TEXT NOT NULL DEFAULT '',
   contact_phone TEXT NOT NULL DEFAULT '',
   status TEXT NOT NULL,
-  created_at TIMESTAMPTZ NOT NULL
+  created_at TIMESTAMPTZ NOT NULL,
+  credit_code TEXT UNIQUE,
+  review_status TEXT NOT NULL DEFAULT 'pending',
+  reject_reason TEXT NOT NULL DEFAULT '',
+  reviewed_by TEXT REFERENCES users(id),
+  reviewed_at TIMESTAMPTZ,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS organization_documents (
+  id TEXT PRIMARY KEY,
+  organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  document_type TEXT NOT NULL,
+  original_name TEXT NOT NULL,
+  stored_name TEXT NOT NULL,
+  file_path TEXT NOT NULL,
+  mime_type TEXT NOT NULL,
+  size_bytes BIGINT NOT NULL,
+  uploaded_at TIMESTAMPTZ NOT NULL,
+  cleaned_at TIMESTAMPTZ
 );
 
 CREATE TABLE IF NOT EXISTS memberships (

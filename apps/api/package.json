@@ -16,6 +16,7 @@
     "cors": "^2.8.5",
     "express": "^4.19.2",
     "express-session": "^1.19.0",
+    "file-type": "^22.0.1",
     "multer": "^2.0.2",
     "pg": "^8.22.0"
   },
