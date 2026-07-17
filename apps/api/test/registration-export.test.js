@@ -35,17 +35,19 @@ test("registration workbook exports filtered rows with the required headers and 
   });
 });
 
-test("certificate template includes only approved registrations and exactly two editable certificate pairs", async () => {
+test("registration workbook certificate template includes only approved registrations in the dedicated import sheet", async () => {
   await withServer(async (baseUrl) => {
     const admin = await loginAs(baseUrl, "13900000000", "admin123");
     const response = await fetch(`${baseUrl}/api/admin/events/wz-aerospace-2026/certificate-template.xlsx`, withSession(admin.cookie));
+    assert.match(response.headers.get("content-disposition") || "", /%E8%AF%81%E4%B9%A6%E5%AF%BC%E5%85%A5%E6%A8%A1%E6%9D%BF\.xlsx/);
     const workbook = await loadWorkbook(response);
-    const sheet = workbook.getWorksheet("报名名单");
+    const sheet = workbook.getWorksheet("证书导入");
     assert.equal(sheet.rowCount, 2);
     assert.deepEqual(sheet.getRow(1).values.slice(-4), ["证书1名称", "证书1图片", "证书2名称", "证书2图片"]);
-    assert.equal(sheet.getColumn(17).width, 24);
+    assert.equal(sheet.getColumn(13).width, 24);
+    assert.equal(sheet.getColumn(15).width, 24);
     assert.equal(sheet.getRow(2).height, 90);
-    assert.equal(sheet.getCell("P2").fill.fgColor.argb, "FFFFF2CC");
+    assert.equal(sheet.getCell("I2").fill.fgColor.argb, "FFFFF2CC");
   });
 });
 

@@ -1,6 +1,7 @@
 import ExcelJS from "exceljs";
 
 export const MAX_REGISTRATION_EXPORT_ROWS = 10_000;
+export const WORKBOOK_CREATOR = "青少年航空赛事报名系统";
 
 export class RegistrationExportLimitError extends Error {
   constructor() {
@@ -27,48 +28,46 @@ const BASE_COLUMNS = [
   ["成绩/分数", (row) => row.score]
 ];
 
-const CERTIFICATE_COLUMNS = ["证书1名称", "证书1图片", "证书2名称", "证书2图片"];
 const TEXT_COLUMNS = new Set([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
 
-function columnWidth(header) {
+export function workbookColumnWidth(header) {
   if (header.includes("图片")) return 24;
   return Math.max(12, Math.min(28, header.length * 2 + 4));
 }
 
-export function buildRegistrationWorkbook(rows, { mode = "registration" } = {}) {
+export function createExportWorkbook() {
   const workbook = new ExcelJS.Workbook();
-  workbook.creator = "青少年航空赛事报名系统";
+  workbook.creator = WORKBOOK_CREATOR;
   workbook.created = new Date();
+  return workbook;
+}
+
+export function styleWorkbookHeaderCell(cell, { fill = "FF1F4E78", fontColor = "FFFFFFFF" } = {}) {
+  cell.font = { bold: true, color: { argb: fontColor } };
+  cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: fill } };
+  cell.alignment = { vertical: "middle", horizontal: "center" };
+}
+
+export function buildRegistrationWorkbook(rows) {
+  const workbook = createExportWorkbook();
 
   const sheet = workbook.addWorksheet("报名名单", {
     views: [{ state: "frozen", ySplit: 1 }]
   });
-  const headers = [...BASE_COLUMNS.map(([header]) => header), ...(mode === "certificate-template" ? CERTIFICATE_COLUMNS : [])];
+  const headers = BASE_COLUMNS.map(([header]) => header);
   const headerRow = sheet.addRow(headers);
   headerRow.height = 24;
-  headerRow.eachCell((cell) => {
-    cell.font = { bold: true, color: { argb: "FFFFFFFF" } };
-    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1F4E78" } };
-    cell.alignment = { vertical: "middle", horizontal: "center" };
-  });
+  headerRow.eachCell((cell) => styleWorkbookHeaderCell(cell));
 
   for (const row of rows) {
     const data = BASE_COLUMNS.map(([, value]) => value(row) ?? "");
-    if (mode === "certificate-template") data.push("", "", "", "");
     const excelRow = sheet.addRow(data);
     excelRow.alignment = { vertical: "middle", wrapText: true };
-    if (mode === "certificate-template") {
-      excelRow.height = 90;
-      for (let index = BASE_COLUMNS.length + 1; index <= headers.length; index += 1) {
-        const cell = excelRow.getCell(index);
-        cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFF2CC" } };
-      }
-    }
   }
 
   for (let index = 1; index <= headers.length; index += 1) {
     const column = sheet.getColumn(index);
-    column.width = columnWidth(headers[index - 1]);
+    column.width = workbookColumnWidth(headers[index - 1]);
     if (TEXT_COLUMNS.has(index)) column.numFmt = "@";
   }
   sheet.autoFilter = { from: "A1", to: `${sheet.getColumn(headers.length).letter}${Math.max(1, sheet.rowCount)}` };

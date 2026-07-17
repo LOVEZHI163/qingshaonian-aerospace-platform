@@ -1,5 +1,6 @@
 import express from "express";
 
+import { buildCertificateTemplate } from "../certificates/template.js";
 import { buildBoundRegistrationWorkbook, contentDisposition } from "../exports/registration-workbook.js";
 
 import {
@@ -55,8 +56,8 @@ export function createRegistrationsRouter({ store, requireUser, requireAdmin, re
     const event = db.events.find((item) => item.id === req.params.eventId);
     if (!event) return res.status(404).json({ error: "赛事不存在" });
     const rows = filterAdminRegistrations(db, { eventId: event.id, status: "approved" });
-    const workbook = buildBoundRegistrationWorkbook(rows, { mode: "certificate-template" });
-    const fileName = `${event.name}-证书模板.xlsx`;
+    const workbook = await buildCertificateTemplate(rows);
+    const fileName = `${event.name}_证书导入模板.xlsx`;
     res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
     res.setHeader("Content-Disposition", contentDisposition(fileName));
     await workbook.xlsx.write(res);
