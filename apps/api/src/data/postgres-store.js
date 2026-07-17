@@ -1,8 +1,9 @@
 import fs from "node:fs/promises";
 
-import { ensureDbShape, EVENT, PROJECTS, seedDb } from "./seed.js";
+import { APPROVED_GROUP_NAMES, ensureDbShape, EVENT, PROJECTS, seedDb } from "./seed.js";
 
 const schemaUrl = new URL("./schema.sql", import.meta.url);
+const migrationsUrl = new URL("./migrations/", import.meta.url);
 
 function iso(value) {
   if (!value) return "";
@@ -17,39 +18,82 @@ async function deleteMissing(client, table, key, ids) {
   }
 }
 
+async function runMigrations(pool) {
+  const names = (await fs.readdir(migrationsUrl))
+    .filter((name) => name.endsWith(".sql"))
+    .sort();
+  for (const name of names) {
+    let migration = await fs.readFile(new URL(name, migrationsUrl), "utf8");
+    const projectGroups = await pool.query(`
+      SELECT 1 FROM information_schema.tables
+      WHERE table_schema = 'public' AND table_name = 'project_groups'
+    `);
+    if (projectGroups.rowCount > 0) {
+      migration = migration.replace(/CREATE TABLE IF NOT EXISTS project_groups \([\s\S]*?\);\s*/, "");
+    }
+    await pool.query(migration);
+  }
+}
+
+async function addApprovedGroups(pool) {
+  const projects = await pool.query("SELECT id FROM projects");
+  for (const project of projects.rows) {
+    for (const groupName of APPROVED_GROUP_NAMES) {
+      await pool.query(
+        `INSERT INTO project_groups (project_id, group_name)
+         VALUES ($1, $2)
+         ON CONFLICT (project_id, group_name) DO NOTHING`,
+        [project.id, groupName]
+      );
+    }
+  }
+}
+
 export function createPostgresStore(pool) {
   const store = {
     kind: "postgres",
     async initialize() {
       const schema = await fs.readFile(schemaUrl, "utf8");
       await pool.query(schema);
+      await runMigrations(pool);
+      await addApprovedGroups(pool);
 
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
-        await client.query(
-          `INSERT INTO events (id, name, theme, date_label, venue, registration_deadline, contact)
-           VALUES ($1, $2, $3, $4, $5, $6, $7)
-           ON CONFLICT (id) DO UPDATE SET
-             name = EXCLUDED.name,
-             theme = EXCLUDED.theme,
-             date_label = EXCLUDED.date_label,
-             venue = EXCLUDED.venue,
-             registration_deadline = EXCLUDED.registration_deadline,
-             contact = EXCLUDED.contact`,
-          [EVENT.id, EVENT.name, EVENT.theme, EVENT.date, EVENT.venue, EVENT.registrationDeadline, EVENT.contact]
-        );
+        const existingEvent = await client.query("SELECT id FROM events WHERE id = $1", [EVENT.id]);
+        if (existingEvent.rowCount === 0) {
+          await client.query(
+            `INSERT INTO events
+              (id, name, theme, date_label, venue, registration_deadline, contact,
+               registration_start_at, registration_end_at, registration_mode, status, is_current,
+               archived_at, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
+            [
+              EVENT.id, EVENT.name, EVENT.theme, EVENT.date, EVENT.venue, EVENT.registrationDeadline, EVENT.contact,
+              EVENT.registrationStartAt, EVENT.registrationEndAt, EVENT.registrationMode, EVENT.status, EVENT.isCurrent,
+              EVENT.archivedAt, EVENT.createdAt, EVENT.updatedAt
+            ]
+          );
+        }
         for (const project of PROJECTS) {
           await client.query(
-            `INSERT INTO projects (id, event_id, name, type, category)
-             VALUES ($1, $2, $3, $4, $5)
-             ON CONFLICT (id) DO UPDATE SET
-               event_id = EXCLUDED.event_id,
-               name = EXCLUDED.name,
-               type = EXCLUDED.type,
-               category = EXCLUDED.category`,
-            [project.id, EVENT.id, project.name, project.type, project.category]
+            `INSERT INTO projects
+              (id, event_id, name, type, category, enabled, instructor_required, display_order)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+             ON CONFLICT (id) DO NOTHING`,
+            [project.id, project.eventId || EVENT.id, project.name, project.type, project.category, project.enabled, project.instructorRequired, project.displayOrder]
           );
+        }
+        for (const project of PROJECTS) {
+          for (const groupName of project.allowedGroups) {
+            await client.query(
+              `INSERT INTO project_groups (project_id, group_name)
+               VALUES ($1, $2)
+               ON CONFLICT (project_id, group_name) DO NOTHING`,
+              [project.id, groupName]
+            );
+          }
         }
         await client.query("COMMIT");
       } catch (error) {
@@ -63,7 +107,10 @@ export function createPostgresStore(pool) {
       if (count.rows[0].count === 0) await store.writeDb(structuredClone(seedDb));
     },
     async readDb() {
-      const [users, organizations, memberships, registrations, certificates] = await Promise.all([
+      const [events, projects, projectGroups, users, organizations, memberships, registrations, certificates] = await Promise.all([
+        pool.query("SELECT * FROM events ORDER BY created_at, id"),
+        pool.query("SELECT * FROM projects ORDER BY display_order, id"),
+        pool.query("SELECT * FROM project_groups ORDER BY project_id, group_name"),
         pool.query("SELECT * FROM users ORDER BY created_at, id"),
         pool.query("SELECT * FROM organizations ORDER BY created_at, id"),
         pool.query("SELECT * FROM memberships ORDER BY created_at, id"),
@@ -76,7 +123,44 @@ export function createPostgresStore(pool) {
         pool.query("SELECT * FROM certificates ORDER BY uploaded_at DESC, id")
       ]);
 
+      const groupsByProject = projectGroups.rows.reduce((groups, row) => {
+        (groups[row.project_id] ||= []).push(row);
+        return groups;
+      }, {});
+
       return ensureDbShape({
+        events: events.rows.map((row) => ({
+          id: row.id,
+          name: row.name,
+          theme: row.theme,
+          date: row.date_label,
+          venue: row.venue,
+          registrationDeadline: row.registration_deadline,
+          contact: row.contact,
+          registrationStartAt: iso(row.registration_start_at),
+          registrationEndAt: iso(row.registration_end_at),
+          registrationMode: row.registration_mode,
+          status: row.status,
+          isCurrent: row.is_current,
+          archivedAt: row.archived_at ? iso(row.archived_at) : null,
+          createdAt: iso(row.created_at),
+          updatedAt: iso(row.updated_at)
+        })),
+        projects: projects.rows.map((row) => ({
+          id: row.id,
+          eventId: row.event_id,
+          name: row.name,
+          type: row.type,
+          category: row.category,
+          enabled: row.enabled,
+          instructorRequired: row.instructor_required,
+          displayOrder: row.display_order,
+          allowedGroups: (groupsByProject[row.id] || []).map((group) => group.group_name)
+        })),
+        projectGroups: projectGroups.rows.map((row) => ({
+          projectId: row.project_id,
+          groupName: row.group_name
+        })),
         users: users.rows.map((row) => ({
           id: row.id,
           name: row.name,
@@ -111,6 +195,7 @@ export function createPostgresStore(pool) {
         })),
         registrations: registrations.rows.map((row) => ({
           id: row.id,
+          eventId: row.event_id,
           source: row.source,
           userId: row.user_id,
           organizationId: row.organization_id,
@@ -154,6 +239,61 @@ export function createPostgresStore(pool) {
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
+
+        for (const row of db.events) {
+          await client.query(
+            `INSERT INTO events
+              (id, name, theme, date_label, venue, registration_deadline, contact,
+               registration_start_at, registration_end_at, registration_mode, status, is_current,
+               archived_at, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+             ON CONFLICT (id) DO UPDATE SET
+               name = EXCLUDED.name,
+               theme = EXCLUDED.theme,
+               date_label = EXCLUDED.date_label,
+               venue = EXCLUDED.venue,
+               registration_deadline = EXCLUDED.registration_deadline,
+               contact = EXCLUDED.contact,
+               registration_start_at = EXCLUDED.registration_start_at,
+               registration_end_at = EXCLUDED.registration_end_at,
+               registration_mode = EXCLUDED.registration_mode,
+               status = EXCLUDED.status,
+               is_current = EXCLUDED.is_current,
+               archived_at = EXCLUDED.archived_at,
+               created_at = EXCLUDED.created_at,
+               updated_at = EXCLUDED.updated_at`,
+            [
+              row.id, row.name, row.theme, row.date, row.venue, row.registrationDeadline, row.contact,
+              row.registrationStartAt, row.registrationEndAt, row.registrationMode, row.status, row.isCurrent,
+              row.archivedAt, row.createdAt, row.updatedAt
+            ]
+          );
+        }
+
+        for (const row of db.projects) {
+          await client.query(
+            `INSERT INTO projects
+              (id, event_id, name, type, category, enabled, instructor_required, display_order)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+             ON CONFLICT (id) DO UPDATE SET
+               event_id = EXCLUDED.event_id,
+               name = EXCLUDED.name,
+               type = EXCLUDED.type,
+               category = EXCLUDED.category,
+               enabled = EXCLUDED.enabled,
+               instructor_required = EXCLUDED.instructor_required,
+               display_order = EXCLUDED.display_order`,
+            [row.id, row.eventId, row.name, row.type, row.category, row.enabled, row.instructorRequired, row.displayOrder]
+          );
+        }
+
+        await client.query("DELETE FROM project_groups");
+        for (const row of db.projectGroups) {
+          await client.query(
+            "INSERT INTO project_groups (project_id, group_name) VALUES ($1, $2)",
+            [row.projectId, row.groupName]
+          );
+        }
 
         for (const row of db.users) {
           await client.query(
@@ -230,7 +370,7 @@ export function createPostgresStore(pool) {
                reject_reason = EXCLUDED.reject_reason,
                created_at = EXCLUDED.created_at,
                updated_at = EXCLUDED.updated_at`,
-            [row.id, EVENT.id, row.source, row.userId || null, row.organizationId || null, row.organization || "", JSON.stringify(row.athlete || {}), row.athleteKey, row.group, row.projectId, row.projectName, row.projectType, row.instructor || "", row.status, row.rejectReason || "", row.createdAt, row.updatedAt]
+            [row.id, row.eventId || EVENT.id, row.source, row.userId || null, row.organizationId || null, row.organization || "", JSON.stringify(row.athlete || {}), row.athleteKey, row.group, row.projectId, row.projectName, row.projectType, row.instructor || "", row.status, row.rejectReason || "", row.createdAt, row.updatedAt]
           );
 
           const hasResult = Boolean(row.awardName || row.rank || row.score || row.resultRecordedAt);

@@ -22,6 +22,35 @@ export const PROJECTS = [
   { id: "drone-football", name: "多轴无人机足球比赛", type: "team", category: "多轴无人机足球比赛" }
 ];
 
+const REGISTRATION_START_AT = "2026-10-01T00:00:00.000Z";
+const REGISTRATION_END_AT = "2026-11-01T15:59:59.000Z";
+export const APPROVED_GROUP_NAMES = ["小学低段", "小学高段", "中学组", "职高/高中组"];
+
+Object.assign(EVENT, {
+  registrationStartAt: REGISTRATION_START_AT,
+  registrationEndAt: REGISTRATION_END_AT,
+  registrationMode: "automatic",
+  status: "published",
+  isCurrent: true,
+  archivedAt: null,
+  createdAt: "2026-06-27T06:00:00.000Z",
+  updatedAt: "2026-06-27T06:00:00.000Z"
+});
+
+for (const [displayOrder, project] of PROJECTS.entries()) {
+  Object.assign(project, {
+    eventId: EVENT.id,
+    enabled: true,
+    instructorRequired: false,
+    displayOrder,
+    allowedGroups: [...APPROVED_GROUP_NAMES]
+  });
+}
+
+export const PROJECT_GROUPS = PROJECTS.flatMap((project) =>
+  APPROVED_GROUP_NAMES.map((groupName) => ({ projectId: project.id, groupName }))
+);
+
 export const GRADES = ["小学低组（1-3年级）", "小学中高组（4-6年级）", "中学组（初中、高中、职高）"];
 
 export const seedDb = {
@@ -88,13 +117,45 @@ export const seedDb = {
   certificates: []
 };
 
+Object.assign(seedDb, {
+  events: [EVENT],
+  projects: PROJECTS,
+  projectGroups: PROJECT_GROUPS
+});
+for (const row of seedDb.registrations) row.eventId = EVENT.id;
+
 export function ensureDbShape(db) {
   db.users ||= [];
   db.organizations ||= [];
   db.memberships ||= [];
+  db.events ||= structuredClone([EVENT]);
+  db.projects ||= structuredClone(PROJECTS);
+  db.projectGroups ||= db.projects.flatMap((project) =>
+    (project.allowedGroups || APPROVED_GROUP_NAMES).map((groupName) => ({ projectId: project.id, groupName }))
+  );
   db.registrations ||= [];
   db.certificates ||= [];
+  for (const event of db.events) {
+    event.registrationStartAt ||= event.createdAt || REGISTRATION_START_AT;
+    event.registrationEndAt ||= REGISTRATION_END_AT;
+    event.registrationMode ||= "automatic";
+    event.status ||= "published";
+    event.isCurrent ??= event.id === EVENT.id;
+    event.archivedAt ??= null;
+    event.createdAt ||= REGISTRATION_START_AT;
+    event.updatedAt ||= event.createdAt;
+  }
+  for (const project of db.projects) {
+    project.eventId ||= EVENT.id;
+    project.enabled ??= true;
+    project.instructorRequired ??= false;
+    project.displayOrder ??= 0;
+    project.allowedGroups ||= db.projectGroups
+      .filter((group) => group.projectId === project.id)
+      .map((group) => group.groupName);
+  }
   for (const row of db.registrations) {
+    row.eventId ||= EVENT.id;
     row.awardName ||= "";
     row.rank ||= "";
     row.score ||= "";

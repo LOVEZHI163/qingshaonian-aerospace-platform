@@ -41,7 +41,15 @@ CREATE TABLE IF NOT EXISTS events (
   date_label TEXT NOT NULL,
   venue TEXT NOT NULL,
   registration_deadline TEXT NOT NULL,
-  contact TEXT NOT NULL
+  contact TEXT NOT NULL,
+  registration_start_at TIMESTAMPTZ NOT NULL,
+  registration_end_at TIMESTAMPTZ NOT NULL,
+  registration_mode TEXT NOT NULL DEFAULT 'automatic',
+  status TEXT NOT NULL DEFAULT 'published',
+  is_current BOOLEAN NOT NULL DEFAULT FALSE,
+  archived_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS projects (
@@ -49,7 +57,16 @@ CREATE TABLE IF NOT EXISTS projects (
   event_id TEXT NOT NULL REFERENCES events(id),
   name TEXT NOT NULL,
   type TEXT NOT NULL,
-  category TEXT NOT NULL
+  category TEXT NOT NULL,
+  enabled BOOLEAN NOT NULL DEFAULT TRUE,
+  instructor_required BOOLEAN NOT NULL DEFAULT FALSE,
+  display_order INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS project_groups (
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  group_name TEXT NOT NULL,
+  PRIMARY KEY (project_id, group_name)
 );
 
 CREATE TABLE IF NOT EXISTS registrations (
@@ -101,3 +118,4 @@ CREATE INDEX IF NOT EXISTS registrations_user_id_idx ON registrations(user_id);
 CREATE INDEX IF NOT EXISTS registrations_organization_id_idx ON registrations(organization_id);
 CREATE INDEX IF NOT EXISTS memberships_organization_id_idx ON memberships(organization_id);
 CREATE INDEX IF NOT EXISTS certificates_user_id_idx ON certificates(user_id);
+CREATE UNIQUE INDEX IF NOT EXISTS events_single_current_key ON events ((is_current)) WHERE is_current = TRUE;

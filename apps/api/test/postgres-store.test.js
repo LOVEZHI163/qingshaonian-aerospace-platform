@@ -26,14 +26,25 @@ test("PostgreSQL store creates normalized tables and seeds an empty database", a
       WHERE table_schema = 'public'
     `);
     const tables = new Set(tableRows.rows.map((row) => row.table_name));
-    for (const name of ["users", "organizations", "memberships", "events", "projects", "registrations", "results", "certificates"]) {
+    for (const name of ["users", "organizations", "memberships", "events", "projects", "project_groups", "registrations", "results", "certificates"]) {
       assert.equal(tables.has(name), true, `missing table ${name}`);
+    }
+
+    const eventColumns = await pool.query(`
+      SELECT column_name FROM information_schema.columns WHERE table_name = 'events'
+    `);
+    const names = new Set(eventColumns.rows.map((row) => row.column_name));
+    for (const name of ["registration_start_at", "registration_end_at", "registration_mode", "status", "is_current", "archived_at"]) {
+      assert.equal(names.has(name), true, `missing events.${name}`);
     }
 
     const data = await store.readDb();
     assert.equal(data.users.length, 3);
     assert.equal(data.registrations.length, 2);
     assert.equal(data.registrations[0].awardName, "");
+    assert.equal(data.events.filter((event) => event.isCurrent).length, 1);
+    assert.equal(data.registrations.every((row) => row.eventId), true);
+    assert.equal(data.projects.every((project) => project.allowedGroups.length === 4), true);
   });
 });
 
