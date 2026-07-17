@@ -38,4 +38,11 @@ describe("AuthPage", () => {
     expect(wrapper.get('[data-auth-form="login"]').exists()).toBe(true);
     expect(wrapper.text()).toContain("注册成功，请登录");
   });
+
+  it("normalizes the organization credit code to uppercase", async () => {
+    const wrapper = mount(AuthPage);
+    await wrapper.get('[data-auth-tab="register"]').trigger("click");
+    await wrapper.get('[data-testid="organization-credit-code"]').setValue("91330300test000001");
+    expect(wrapper.get('[data-testid="organization-credit-code"]').element.value).toBe("91330300TEST000001");
+  });
 });

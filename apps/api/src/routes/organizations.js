@@ -25,6 +25,7 @@ function publicOrganization(organization) {
 function organizationWithDocuments(db, organization, membershipRole = null) {
   return {
     ...publicOrganization(organization),
+    memberCount: db.memberships.filter((membership) => membership.organizationId === organization.id).length,
     ...(membershipRole ? { membershipRole } : {}),
     documents: db.organizationDocuments
       .filter((document) => document.organizationId === organization.id && !document.cleanedAt)
@@ -77,6 +78,20 @@ export function createOrganizationsRouter({ store, requireUser, requireAdmin, re
   router.get("/admin/organizations", requireAdmin, requirePasswordReady, asyncRoute(async (_req, res) => {
     const db = await deps.readDb();
     res.json({ rows: db.organizations.map((organization) => organizationWithDocuments(db, organization)) });
+  }));
+
+  router.patch("/admin/organizations/:id/status", requireAdmin, requirePasswordReady, asyncRoute(async (req, res, next) => {
+    try {
+      const status = String(req.body?.status || "");
+      if (!new Set(["active", "disabled"]).has(status)) throw new OrganizationError(422, "组织状态无效");
+      const db = await deps.readDb();
+      const organization = db.organizations.find((row) => row.id === req.params.id);
+      if (!organization) return res.status(404).json({ error: "组织不存在" });
+      organization.status = status;
+      organization.updatedAt = now();
+      await deps.writeDb(db);
+      res.json({ organization: publicOrganization(organization) });
+    } catch (error) { respondError(error, res, next); }
   }));
 
   router.patch("/admin/organizations/:id/review", requireAdmin, requirePasswordReady, asyncRoute(async (req, res, next) => {

@@ -1,7 +1,7 @@
 import { flushPromises, mount } from "@vue/test-utils";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-const { apiMock } = vi.hoisted(() => ({ apiMock: vi.fn() }));
-vi.mock("../lib/api.js", () => ({ api: apiMock }));
+const { apiMock, apiBlobMock } = vi.hoisted(() => ({ apiMock: vi.fn(), apiBlobMock: vi.fn() }));
+vi.mock("../lib/api.js", () => ({ api: apiMock, apiBlob: apiBlobMock, apiUrl: (path) => path }));
 vi.mock("../state/session.js", async () => {
   const { ref } = await import("vue");
   const sessionUser = ref(null);

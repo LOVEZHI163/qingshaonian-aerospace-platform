@@ -90,6 +90,8 @@ test("organization registration review keeps pending organizations outside organ
     assert.equal(missing.status, 422);
     const invalidType = await postOrganizationRegistration(baseUrl, { creditCode: "91330300TEST000003", documentType: "invalid" });
     assert.equal(invalidType.status, 422);
+    const lowercaseCredit = await postOrganizationRegistration(baseUrl, { creditCode: "91330300test000004", phone: "13600009984" });
+    assert.equal(lowercaseCredit.status, 422);
 
     const nonAdminReview = await fetch(`${baseUrl}/api/admin/organizations/${payload.organization.id}/review`, withSession(owner.cookie, {
       method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "approved", reason: "" })
@@ -149,6 +151,61 @@ test("rejected owner can replace credentials and resubmit organization for revie
     assert.equal(persisted.documents.length, 2);
     assert.deepEqual(persisted.documents.filter((document) => document.isCurrent).map((document) => document.id), [payload.document.id]);
   }, { prefix: "org-resubmit-" });
+});
+
+test("admin organization status disables owner and manager capabilities and persists the organization state", async () => {
+  await withTestServer(async ({ baseUrl, dbPath }) => {
+    const register = await postOrganizationRegistration(baseUrl, { creditCode: "91330300TEST000071", phone: "13600009971" });
+    const { organization } = await register.json();
+    const admin = await loginAs(baseUrl, "13900000000", "admin123");
+    assert.equal((await fetch(`${baseUrl}/api/admin/organizations/${organization.id}/review`, withSession(admin.cookie, {
+      method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "approved", reason: "" })
+    }))).status, 200);
+
+    const owner = await loginAs(baseUrl, "13600009971", "Strong123");
+    const managerRegistration = await fetch(`${baseUrl}/api/auth/register/ordinary`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "协管老师", phone: "13600009972", password: "Manager72" })
+    });
+    assert.equal(managerRegistration.status, 201);
+    const invitation = await fetch(`${baseUrl}/api/organizations/invite`, withSession(owner.cookie, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ organizationId: organization.id, phone: "13600009972", name: "协管老师", role: "manager" })
+    }));
+    const membership = (await invitation.json()).row;
+    const manager = await loginAs(baseUrl, "13600009972", "Manager72");
+    assert.equal((await fetch(`${baseUrl}/api/memberships/${membership.id}`, withSession(manager.cookie, {
+      method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "active" })
+    }))).status, 200);
+
+    const disabled = await fetch(`${baseUrl}/api/admin/organizations/${organization.id}/status`, withSession(admin.cookie, {
+      method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "disabled" })
+    }));
+    assert.equal(disabled.status, 200);
+    assert.equal((await disabled.json()).organization.status, "disabled");
+    assert.equal((await fetch(`${baseUrl}/api/admin/organizations/${organization.id}/status`, withSession(owner.cookie, {
+      method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "active" })
+    }))).status, 403);
+    const ownerRow = (await (await fetch(`${baseUrl}/api/users`, withSession(admin.cookie))).json()).rows.find((user) => user.id === organization.ownerUserId);
+    assert.equal(ownerRow.status, "active");
+    assert.equal((await fetch(`${baseUrl}/api/organizations/${organization.id}/registrations`, withSession(owner.cookie))).status, 403);
+    assert.equal((await fetch(`${baseUrl}/api/organizations/${organization.id}/registrations`, withSession(manager.cookie))).status, 403);
+    const stored = JSON.parse(await fs.readFile(dbPath, "utf8"));
+    assert.equal(stored.organizations.find((row) => row.id === organization.id).status, "disabled");
+
+    const enabled = await fetch(`${baseUrl}/api/admin/organizations/${organization.id}/status`, withSession(admin.cookie, {
+      method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "active" })
+    }));
+    assert.equal(enabled.status, 200);
+    assert.equal((await fetch(`${baseUrl}/api/organizations/${organization.id}/registrations`, withSession(owner.cookie))).status, 200);
+    assert.equal((await fetch(`${baseUrl}/api/organizations/${organization.id}/registrations`, withSession(manager.cookie))).status, 200);
+
+    const rows = (await (await fetch(`${baseUrl}/api/admin/organizations`, withSession(admin.cookie))).json()).rows;
+    const row = rows.find((item) => item.id === organization.id);
+    assert.equal(row.memberCount, 2);
+    assert.equal(Object.hasOwn(row.documents[0], "filePath"), false);
+    assert.equal(Object.hasOwn(row.documents[0], "storedName"), false);
+  }, { prefix: "organization-status-" });
 });
 
 test("organization registration removes the saved credential when its atomic database write fails", async () => {

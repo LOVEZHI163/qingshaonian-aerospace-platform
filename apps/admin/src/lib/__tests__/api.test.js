@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ApiError, api, setPasswordChangeRequiredHandler, setUnauthorizedHandler } from "../api.js";
+import { ApiError, api, apiBlob, setPasswordChangeRequiredHandler, setUnauthorizedHandler } from "../api.js";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -31,6 +31,13 @@ describe("api", () => {
     await api("/api/upload", { method: "POST", body });
 
     expect(fetchMock.mock.calls[0][1].headers).toEqual({});
+  });
+
+  it("fetches credential blobs with the session cookie", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response("file", { status: 200, headers: { "Content-Type": "application/pdf" } }));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(apiBlob("/api/credential")).resolves.toBeInstanceOf(Blob);
+    expect(fetchMock).toHaveBeenCalledWith("/api/credential", expect.objectContaining({ credentials: "include" }));
   });
 
   it("routes 401 to logout and 428 to forced password change", async () => {

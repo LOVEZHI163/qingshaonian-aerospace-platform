@@ -53,6 +53,15 @@ export async function api(path, options = {}) {
   return payload;
 }
 
+export async function apiBlob(path, options = {}) {
+  const response = await fetch(`${API_BASE}${path}`, { ...options, credentials: "include" });
+  if (!response.ok) {
+    const payload = await readPayload(response);
+    throw new ApiError(payload.error || payload.message || `请求失败 (${response.status})`, { status: response.status, code: payload.code, payload });
+  }
+  return response.blob();
+}
+
 export function apiUrl(path) {
   return `${API_BASE}${path}`;
 }

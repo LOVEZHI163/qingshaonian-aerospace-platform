@@ -371,6 +371,7 @@ async function logout() {
 async function organizationResubmitted() {
   resubmitOrganizationOpen.value = false;
   message.value = "组织资料已重新提交，等待管理员审核";
+  await session.restore();
   await loadData();
 }
 
@@ -694,6 +695,7 @@ onMounted(async () => {
         <OrganizationRegistrationForm
           v-if="resubmitOrganizationOpen && ownerOrganization(currentUser.id)?.reviewStatus === 'rejected'"
           endpoint="/api/me/organization"
+          method="PATCH"
           submit-label="重新提交组织资料"
           resubmission
           :initial-form="{ name: currentUser.name, phone: currentUser.phone, organizationName: ownerOrganization(currentUser.id)?.name, creditCode: ownerOrganization(currentUser.id)?.creditCode }"

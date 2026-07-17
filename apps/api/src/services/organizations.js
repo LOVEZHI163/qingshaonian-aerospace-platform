@@ -34,6 +34,7 @@ function validateCredentialInput(input, file) {
   const creditCode = requiredText(input.creditCode, "统一社会信用代码");
   const documentType = requiredText(input.documentType, "资质类型");
   if (!DOCUMENT_TYPES.has(documentType)) throw validationError("资质类型无效");
+  if (!/^[0-9A-Z]{18}$/.test(creditCode)) throw validationError("统一社会信用代码必须为 18 位大写字母或数字");
   if (!file) throw validationError("资质文件不能为空");
   return { name, phone, password, organizationName, creditCode, documentType };
 }
@@ -213,6 +214,7 @@ export async function resubmitOrganization({ input, file, userId, readDb, writeD
   if (organization.reviewStatus !== "rejected") throw validationError("只有被驳回的组织可以重新提交");
   const organizationName = requiredText(input.organizationName || organization.name, "组织名称");
   const creditCode = requiredText(input.creditCode || organization.creditCode, "统一社会信用代码");
+  if (!/^[0-9A-Z]{18}$/.test(creditCode)) throw validationError("统一社会信用代码必须为 18 位大写字母或数字");
   if (db.organizations.some((row) => row.id !== organization.id && row.creditCode === creditCode)) throw new OrganizationError(409, "统一社会信用代码已注册");
 
   let stored;
