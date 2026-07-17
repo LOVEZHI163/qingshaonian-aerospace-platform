@@ -106,6 +106,9 @@ test("PostgreSQL store upgrades a legacy schema without losing existing records"
   const pool = new Pool();
   const store = createPostgresStore(pool);
 
+  assert.equal(store.pool, pool);
+  assert.equal(Object.getOwnPropertyDescriptor(store, "pool").writable, false);
+
   try {
     await pool.query(`
       CREATE TABLE users (id TEXT PRIMARY KEY, name TEXT NOT NULL, phone TEXT NOT NULL UNIQUE, password TEXT NOT NULL, type TEXT NOT NULL, status TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL);

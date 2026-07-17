@@ -9,8 +9,11 @@
   },
   "dependencies": {
     "adm-zip": "^0.5.16",
+    "bcryptjs": "^3.0.3",
+    "connect-pg-simple": "^10.0.0",
     "cors": "^2.8.5",
     "express": "^4.19.2",
+    "express-session": "^1.19.0",
     "multer": "^2.0.2",
     "pg": "^8.22.0"
   },

@@ -31,6 +31,7 @@ async function withServer(fn) {
     cwd: rootDir,
     env: {
       ...process.env,
+      NODE_ENV: "test",
       PORT: String(port),
       DB_PATH: path.join(tempDir, "db.json"),
       UPLOAD_ROOT: path.join(tempDir, "uploads")

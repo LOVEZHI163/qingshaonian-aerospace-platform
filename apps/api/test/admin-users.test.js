@@ -28,7 +28,7 @@ async function withServer(fn) {
   const baseUrl = `http://127.0.0.1:${port}`;
   const child = spawn(process.execPath, [serverPath], {
     cwd: rootDir,
-    env: { ...process.env, PORT: String(port), DB_PATH: path.join(tempDir, "db.json"), UPLOAD_ROOT: path.join(tempDir, "uploads") },
+    env: { ...process.env, NODE_ENV: "test", PORT: String(port), DB_PATH: path.join(tempDir, "db.json"), UPLOAD_ROOT: path.join(tempDir, "uploads") },
     stdio: ["ignore", "pipe", "pipe"]
   });
   try {

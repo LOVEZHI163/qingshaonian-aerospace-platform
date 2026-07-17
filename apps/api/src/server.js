@@ -5,6 +5,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import multer from "multer";
 import AdmZip from "adm-zip";
+import { hashPassword, isLegacyPassword, verifyPassword } from "./auth/passwords.js";
+import { createSessionMiddleware, requireUser } from "./auth/session.js";
 import { createDataStore } from "./data/index.js";
 import { EVENT, GRADES, PROJECTS } from "./data/seed.js";
 
@@ -197,6 +199,18 @@ const app = express();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 app.use(cors());
 app.use(express.json({ limit: "5mb" }));
+app.use(createSessionMiddleware({ env: process.env, dataStore }));
+app.use(async (req, _res, next) => {
+  try {
+    if (req.session.userId) {
+      const db = await readDb();
+      req.user = db.users.find((user) => user.id === req.session.userId && user.status === "active");
+    }
+    next();
+  } catch (error) {
+    next(error);
+  }
+});
 
 app.get("/api/public/event", (_req, res) => {
   res.json({ event: EVENT, projects: PROJECTS, grades: GRADES });
@@ -206,10 +220,11 @@ app.post("/api/auth/register", async (req, res) => {
   const db = await readDb();
   const { name, phone, password, type = "ordinary", organizationName, organizationCode } = req.body;
   if (!name || !phone || !password) return res.status(422).json({ error: "姓名、手机号和密码不能为空" });
+  if (!["ordinary", "organization"].includes(type)) return res.status(422).json({ error: "账号类型不合法" });
   const normalizedPhone = normalizePhone(phone);
   if (db.users.some((user) => normalizePhone(user.phone) === normalizedPhone)) return res.status(409).json({ error: "该手机号已注册" });
 
-  const user = { id: id("U"), name, phone: normalizedPhone, password, type, status: "active", createdAt: now() };
+  const user = { id: id("U"), name, phone: normalizedPhone, password: await hashPassword(password), type, status: "active", createdAt: now() };
   db.users.push(user);
 
   let organization = null;
@@ -246,9 +261,28 @@ app.post("/api/auth/register", async (req, res) => {
 app.post("/api/auth/login", async (req, res) => {
   const db = await readDb();
   const phone = normalizePhone(req.body.phone);
-  const user = db.users.find((item) => normalizePhone(item.phone) === phone && item.password === req.body.password);
-  if (!user) return res.status(401).json({ error: "手机号或密码错误" });
+  const user = db.users.find((item) => normalizePhone(item.phone) === phone && item.status === "active");
+  if (!user || !(await verifyPassword(req.body.password, user.password))) {
+    return res.status(401).json({ error: "手机号或密码错误" });
+  }
+  if (isLegacyPassword(user.password)) {
+    user.password = await hashPassword(req.body.password);
+    await writeDb(db);
+  }
+  await new Promise((resolve, reject) => req.session.regenerate((error) => error ? reject(error) : resolve()));
+  req.session.userId = user.id;
+  await new Promise((resolve, reject) => req.session.save((error) => error ? reject(error) : resolve()));
   res.json({ user: publicUser(user), organizations: userOrganizations(db, user.id) });
+});
+
+app.get("/api/auth/me", requireUser, async (req, res) => {
+  const db = await readDb();
+  res.json({ user: publicUser(req.user), organizations: userOrganizations(db, req.user.id) });
+});
+
+app.post("/api/auth/logout", async (req, res) => {
+  await new Promise((resolve, reject) => req.session.destroy((error) => error ? reject(error) : resolve()));
+  res.json({ ok: true });
 });
 
 app.post("/api/auth/reset-password", async (req, res) => {
@@ -257,7 +291,7 @@ app.post("/api/auth/reset-password", async (req, res) => {
   const user = db.users.find((item) => normalizePhone(item.phone) === phone && normalizeText(item.name) === normalizeText(req.body.name));
   if (!user) return res.status(404).json({ error: "未找到匹配的账号，请确认姓名和手机号" });
   if (!req.body.password || String(req.body.password).length < 6) return res.status(422).json({ error: "新密码至少 6 位" });
-  user.password = String(req.body.password);
+  user.password = await hashPassword(req.body.password);
   await writeDb(db);
   res.json({ user: publicUser(user), message: "密码已重置，请使用新密码登录" });
 });
@@ -276,7 +310,7 @@ app.post("/api/admin/users", async (req, res) => {
   const normalizedPhone = normalizePhone(phone);
   if (db.users.some((user) => normalizePhone(user.phone) === normalizedPhone)) return res.status(409).json({ error: "该手机号已注册" });
 
-  const user = { id: id("U"), name, phone: normalizedPhone, password, type, status: req.body.status || "active", createdAt: now() };
+  const user = { id: id("U"), name, phone: normalizedPhone, password: await hashPassword(password), type, status: req.body.status || "active", createdAt: now() };
   db.users.push(user);
   const organization = type === "organization" ? createOrganizationForUser(db, user, { organizationName, organizationCode }) : null;
   await writeDb(db);
@@ -297,7 +331,7 @@ app.patch("/api/admin/users/:id", async (req, res) => {
     user.phone = normalizedPhone;
   }
   if (req.body.name) user.name = String(req.body.name);
-  if (req.body.password) user.password = String(req.body.password);
+  if (req.body.password) user.password = await hashPassword(req.body.password);
   if (req.body.status) user.status = String(req.body.status);
   if (req.body.type && ["ordinary", "organization"].includes(req.body.type)) user.type = req.body.type;
 

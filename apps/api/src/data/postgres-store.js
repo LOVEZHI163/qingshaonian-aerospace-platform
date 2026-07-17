@@ -452,5 +452,11 @@ export function createPostgresStore(pool) {
     }
   };
 
+  Object.defineProperty(store, "pool", {
+    value: pool,
+    enumerable: true,
+    writable: false
+  });
+
   return store;
 }
