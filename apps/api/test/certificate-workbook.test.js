@@ -32,10 +32,14 @@ const pendingRegistration = {
   certificates: []
 };
 
-const qaPngUrl = new URL("../../../qa-web.png", import.meta.url);
+const heroPngUrl = new URL("../../web/public/images/hero-aerospace.png", import.meta.url);
+const jpegUrl = new URL("../../../qa-web.png", import.meta.url);
+const heroPngPromise = readFile(heroPngUrl);
+const jpegPromise = readFile(jpegUrl);
+const onePixelGif = Buffer.from("R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==", "base64");
 
-async function addImage(workbook, sheet, buffer, { col, row = 1.1 } = {}) {
-  const imageId = workbook.addImage({ buffer, extension: "png" });
+async function addImage(workbook, sheet, buffer, { col, row = 1.1, extension = "png" } = {}) {
+  const imageId = workbook.addImage({ buffer, extension });
   sheet.addImage(imageId, { tl: { col, row }, ext: { width: 80, height: 80 } });
 }
 
@@ -44,8 +48,9 @@ async function parseWorkbook(workbook, registrations = [approvedRegistration]) {
 }
 
 test("certificate workbook parses two real embedded PNG images from M2 and O2", async () => {
-  const qaPng = await readFile(qaPngUrl);
-  assert.ok(qaPng.length > 60_000);
+  const heroPng = await heroPngPromise;
+  assert.ok(heroPng.length > 1_700_000);
+  assert.equal(heroPng.subarray(0, 8).toString("hex").toUpperCase(), "89504E470D0A1A0A");
 
   const workbook = await buildCertificateTemplate([approvedRegistration]);
   const sheet = workbook.getWorksheet("证书导入");
@@ -54,8 +59,8 @@ test("certificate workbook parses two real embedded PNG images from M2 and O2", 
   sheet.getCell("K2").value = 0;
   sheet.getCell("L2").value = "一等奖证书";
   sheet.getCell("N2").value = "优秀选手证书";
-  await addImage(workbook, sheet, qaPng, { col: 12.1 });
-  await addImage(workbook, sheet, qaPng, { col: 14.1 });
+  await addImage(workbook, sheet, heroPng, { col: 12.1 });
+  await addImage(workbook, sheet, heroPng, { col: 14.1 });
 
   const parsed = await parseWorkbook(workbook);
 
@@ -68,8 +73,63 @@ test("certificate workbook parses two real embedded PNG images from M2 and O2", 
     { slot: 1, title: "一等奖证书", extension: "png", mimeType: "image/png", replacing: false },
     { slot: 2, title: "优秀选手证书", extension: "png", mimeType: "image/png", replacing: true }
   ]);
-  assert.equal(parsed.candidates[0].certificates.every((certificate) => Buffer.compare(certificate.buffer, qaPng) === 0), true);
+  assert.equal(parsed.candidates[0].certificates.every((certificate) => Buffer.compare(certificate.buffer, heroPng) === 0), true);
   assert.equal("certificateNo" in parsed.candidates[0], false);
+});
+
+test("certificate workbook accepts real JPEG content declared as JPG or JPEG and returns canonical metadata", async () => {
+  const jpeg = await jpegPromise;
+  assert.equal(jpeg.subarray(0, 3).toString("hex").toUpperCase(), "FFD8FF");
+
+  const workbook = await buildCertificateTemplate([approvedRegistration]);
+  const sheet = workbook.getWorksheet("证书导入");
+  sheet.getCell("L2").value = "JPG 证书";
+  sheet.getCell("N2").value = "JPEG 证书";
+  await addImage(workbook, sheet, jpeg, { col: 12.1, extension: "jpg" });
+  await addImage(workbook, sheet, jpeg, { col: 14.1, extension: "jpeg" });
+
+  const parsed = await parseWorkbook(workbook);
+  assert.equal(parsed.errors.length, 0);
+  assert.deepEqual(parsed.candidates[0].certificates.map(({ extension, mimeType }) => ({ extension, mimeType })), [
+    { extension: "jpg", mimeType: "image/jpeg" },
+    { extension: "jpg", mimeType: "image/jpeg" }
+  ]);
+});
+
+test("certificate workbook detects a JPEG disguised with an ExcelJS PNG extension", async () => {
+  const jpeg = await jpegPromise;
+  const workbook = await buildCertificateTemplate([approvedRegistration]);
+  const sheet = workbook.getWorksheet("证书导入");
+  sheet.getCell("L2").value = "伪装扩展";
+  await addImage(workbook, sheet, jpeg, { col: 12.1, extension: "png" });
+
+  const parsed = await parseWorkbook(workbook);
+  assert.equal(parsed.errors.length, 0);
+  assert.deepEqual(parsed.candidates[0].certificates.map(({ extension, mimeType }) => ({ extension, mimeType })), [
+    { extension: "jpg", mimeType: "image/jpeg" }
+  ]);
+});
+
+test("certificate workbook rejects real GIF content and excludes its row from candidates", async () => {
+  const workbook = await buildCertificateTemplate([approvedRegistration]);
+  const sheet = workbook.getWorksheet("证书导入");
+  sheet.getCell("L2").value = "GIF 不允许";
+  await addImage(workbook, sheet, onePixelGif, { col: 12.1, extension: "gif" });
+
+  const parsed = await parseWorkbook(workbook);
+  assert.equal(parsed.candidates.length, 0);
+  assert.match(parsed.errors[0].message, /只支持 PNG、JPG 或 JPEG/);
+});
+
+test("certificate workbook rejects unknown bytes disguised with a PNG extension", async () => {
+  const workbook = await buildCertificateTemplate([approvedRegistration]);
+  const sheet = workbook.getWorksheet("证书导入");
+  sheet.getCell("L2").value = "未知格式";
+  await addImage(workbook, sheet, Buffer.from("not an image"), { col: 12.1, extension: "png" });
+
+  const parsed = await parseWorkbook(workbook);
+  assert.equal(parsed.candidates.length, 0);
+  assert.match(parsed.errors[0].message, /只支持 PNG、JPG 或 JPEG/);
 });
 
 test("certificate workbook template fixes columns, styles, filter, and editable image layout", async () => {
@@ -112,10 +172,10 @@ test("certificate workbook rejects a title without its image", async () => {
 });
 
 test("certificate workbook rejects an image without its title", async () => {
-  const qaPng = await readFile(qaPngUrl);
+  const heroPng = await heroPngPromise;
   const workbook = await buildCertificateTemplate([approvedRegistration]);
   const sheet = workbook.getWorksheet("证书导入");
-  await addImage(workbook, sheet, qaPng, { col: 12.1 });
+  await addImage(workbook, sheet, heroPng, { col: 12.1 });
 
   const parsed = await parseWorkbook(workbook);
   assert.equal(parsed.candidates.length, 0);
@@ -123,12 +183,12 @@ test("certificate workbook rejects an image without its title", async () => {
 });
 
 test("certificate workbook rejects duplicate images anchored to one slot", async () => {
-  const qaPng = await readFile(qaPngUrl);
+  const heroPng = await heroPngPromise;
   const workbook = await buildCertificateTemplate([approvedRegistration]);
   const sheet = workbook.getWorksheet("证书导入");
   sheet.getCell("L2").value = "重复锚点";
-  await addImage(workbook, sheet, qaPng, { col: 12.1 });
-  await addImage(workbook, sheet, qaPng, { col: 12.2 });
+  await addImage(workbook, sheet, heroPng, { col: 12.1 });
+  await addImage(workbook, sheet, heroPng, { col: 12.2 });
 
   const parsed = await parseWorkbook(workbook);
   assert.equal(parsed.candidates.length, 0);
@@ -136,13 +196,13 @@ test("certificate workbook rejects duplicate images anchored to one slot", async
 });
 
 test("certificate workbook matches registrations only from column A and rejects unknown identifiers", async () => {
-  const qaPng = await readFile(qaPngUrl);
+  const heroPng = await heroPngPromise;
   const workbook = await buildCertificateTemplate([approvedRegistration]);
   const sheet = workbook.getWorksheet("证书导入");
   sheet.getCell("A2").value = "R-UNKNOWN";
   sheet.getCell("B2").value = approvedRegistration.athlete.name;
   sheet.getCell("L2").value = "未知报名";
-  await addImage(workbook, sheet, qaPng, { col: 12.1 });
+  await addImage(workbook, sheet, heroPng, { col: 12.1 });
 
   const parsed = await parseWorkbook(workbook);
   assert.equal(parsed.candidates.length, 0);
@@ -151,11 +211,11 @@ test("certificate workbook matches registrations only from column A and rejects 
 });
 
 test("certificate workbook rejects registrations that are not approved", async () => {
-  const qaPng = await readFile(qaPngUrl);
+  const heroPng = await heroPngPromise;
   const workbook = await buildCertificateTemplate([pendingRegistration]);
   const sheet = workbook.getWorksheet("证书导入");
   sheet.getCell("L2").value = "待审核报名";
-  await addImage(workbook, sheet, qaPng, { col: 12.1 });
+  await addImage(workbook, sheet, heroPng, { col: 12.1 });
 
   const parsed = await parseWorkbook(workbook, [pendingRegistration]);
   assert.equal(parsed.candidates.length, 0);
@@ -163,10 +223,10 @@ test("certificate workbook rejects registrations that are not approved", async (
 });
 
 test("certificate workbook rejects images placed outside M and O columns", async () => {
-  const qaPng = await readFile(qaPngUrl);
+  const heroPng = await heroPngPromise;
   const workbook = await buildCertificateTemplate([approvedRegistration]);
   const sheet = workbook.getWorksheet("证书导入");
-  await addImage(workbook, sheet, qaPng, { col: 11.1 });
+  await addImage(workbook, sheet, heroPng, { col: 11.1 });
 
   const parsed = await parseWorkbook(workbook);
   assert.equal(parsed.candidates.length, 0);
@@ -201,11 +261,11 @@ test("certificate workbook accepts 5000 data rows and rejects row 5001", async (
 });
 
 test("certificate workbook rejects image 10001 before row parsing", async () => {
-  const qaPng = await readFile(qaPngUrl);
+  const heroPng = await heroPngPromise;
   const workbook = new ExcelJS.Workbook();
   const sheet = workbook.addWorksheet("证书导入");
   sheet.getCell("A2").value = approvedRegistration.id;
-  const imageId = workbook.addImage({ buffer: qaPng, extension: "png" });
+  const imageId = workbook.addImage({ buffer: heroPng, extension: "png" });
   for (let index = 0; index < MAX_CERTIFICATE_IMAGES + 1; index += 1) {
     sheet.addImage(imageId, { tl: { col: 12.1, row: 1.1 }, ext: { width: 1, height: 1 } });
   }

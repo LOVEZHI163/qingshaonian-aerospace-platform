@@ -1,15 +1,14 @@
 import ExcelJS from "exceljs";
+import { fileTypeFromBuffer } from "file-type";
 
 export const MAX_CERTIFICATE_ROWS = 5_000;
 export const MAX_CERTIFICATE_IMAGES = 10_000;
 export const MAX_CERTIFICATE_WORKBOOK_BYTES = 25 * 1024 * 1024;
 
 const IMAGE_COLUMN_TO_SLOT = new Map([[13, 1], [15, 2]]);
-const MIME_TYPES = new Map([
+const ALLOWED_IMAGE_TYPES = new Map([
   ["png", "image/png"],
-  ["jpg", "image/jpeg"],
-  ["jpeg", "image/jpeg"],
-  ["gif", "image/gif"]
+  ["jpg", "image/jpeg"]
 ]);
 
 export class CertificateWorkbookLimitError extends Error {
@@ -36,13 +35,6 @@ function valueToString(value, fallback = "") {
 
 function cellText(cell) {
   return valueToString(cell.value, cell.text);
-}
-
-function normalizeExtension(asset) {
-  const extension = String(asset?.extension || "").toLowerCase().replace(/^\./, "");
-  if (extension) return extension;
-  const match = String(asset?.filename || "").toLowerCase().match(/\.([a-z0-9]+)$/);
-  return match?.[1] || "";
 }
 
 function hasExistingSlot(registration, slot) {
@@ -151,13 +143,19 @@ export async function parseCertificateWorkbook(input, registrations) {
       }
       if (!asset) continue;
 
-      const extension = normalizeExtension(asset);
+      const imageBuffer = asset.buffer ? Buffer.from(asset.buffer) : Buffer.alloc(0);
+      const detectedType = await fileTypeFromBuffer(imageBuffer);
+      const mimeType = ALLOWED_IMAGE_TYPES.get(detectedType?.ext);
+      if (!mimeType || detectedType.mime !== mimeType) {
+        pushError({ rowNumber, registrationId, message: `证书${slot}图片只支持 PNG、JPG 或 JPEG 格式` });
+        continue;
+      }
       certificates.push({
         slot,
         title,
-        extension,
-        mimeType: MIME_TYPES.get(extension) || "application/octet-stream",
-        buffer: Buffer.from(asset.buffer),
+        extension: detectedType.ext,
+        mimeType,
+        buffer: imageBuffer,
         replacing: hasExistingSlot(registration, slot)
       });
     }

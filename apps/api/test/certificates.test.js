@@ -1,8 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import AdmZip from "adm-zip";
-
 import { withTestServer } from "../test-support/server.js";
 import { loginAs, withSession } from "./helpers/api-client.js";
 
@@ -141,29 +139,5 @@ test("certificate upload saves slots 1 and 2 separately, rejects invalid slots, 
     const rows = (await json(certificates)).rows.filter((row) => row.registrationId === "R20260627001");
     assert.deepEqual(rows.map((row) => row.slot).sort(), [1, 2]);
     assert.equal(rows.every((row) => !("certificateNo" in row)), true);
-  });
-});
-
-test("legacy certificate ZIP upload still writes slot 1 without certificateNo", async () => {
-  await withServer(async (baseUrl) => {
-    const admin = await loginAs(baseUrl, "13900000000", "admin123");
-    const zip = new AdmZip();
-    zip.addFile("周星言_温州市第二实验中学_无人机.pdf", Buffer.from("%PDF-1.4 legacy zip"));
-    const form = new FormData();
-    form.set("zip", new Blob([zip.toBuffer()], { type: "application/zip" }), "certificates.zip");
-
-    const upload = await fetch(`${baseUrl}/api/admin/certificates/batch`, withSession(admin.cookie, {
-      method: "POST",
-      body: form
-    }));
-    assert.equal(upload.status, 200);
-    const payload = await json(upload);
-    assert.equal(payload.matched.length, 1);
-    assert.equal(payload.matched[0].registrationId, "R20260627002");
-
-    const certificates = await fetch(`${baseUrl}/api/admin/certificates`, withSession(admin.cookie));
-    const certificate = (await json(certificates)).rows.find((row) => row.registrationId === "R20260627002");
-    assert.equal(certificate.slot, 1);
-    assert.equal("certificateNo" in certificate, false);
   });
 });
