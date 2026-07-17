@@ -4,6 +4,11 @@ import test from "node:test";
 import { withTestServer } from "../test-support/server.js";
 import { loginAs, withSession } from "./helpers/api-client.js";
 
+const CERTIFICATE_PNG = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+  "base64"
+);
+
 async function withServer(fn) {
   await withTestServer(({ baseUrl }) => fn(baseUrl), { prefix: "aerogp-authorization-" });
 }
@@ -14,6 +19,16 @@ function jsonOptions(method, body, cookie) {
     headers: { "Content-Type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body)
   });
+}
+
+function uploadCertificate(baseUrl, registrationId, slot, cookie, title = "获奖证书") {
+  const form = new FormData();
+  form.append("certificate", new Blob([CERTIFICATE_PNG], { type: "image/png" }), `slot-${slot}.png`);
+  form.append("title", title);
+  return fetch(`${baseUrl}/api/admin/registrations/${registrationId}/certificates/${slot}`, withSession(cookie, {
+    method: "POST",
+    body: form
+  }));
 }
 
 test("every business API requires a session and every administrator API rejects ordinary users", async () => {
@@ -28,7 +43,7 @@ test("every business API requires a session and every administrator API rejects 
       "/api/organizations/O1001/registrations",
       "/api/organizations/O1001/certificates",
       "/api/admin/certificates",
-      "/api/certificates/not-found/download"
+      "/api/certificates/not-found/file"
     ];
     for (const route of protectedGets) {
       assert.equal((await fetch(`${baseUrl}${route}`)).status, 401, route);
@@ -54,9 +69,10 @@ test("every business API requires a session and every administrator API rejects 
       ["DELETE", "/api/admin/users/U2001"],
       ["POST", "/api/admin/registrations/R20260627001/result", {}],
       ["PATCH", "/api/admin/registrations/R20260627001", {}],
-      ["POST", "/api/admin/registrations/R20260627001/certificate", {}],
-      ["POST", "/api/admin/certificates/batch", {}],
-      ["PATCH", "/api/admin/certificates/not-found/publish", {}]
+      ["POST", "/api/admin/registrations/R20260627001/certificates/1", {}],
+      ["POST", "/api/admin/certificates/bulk-status", {}],
+      ["PATCH", "/api/admin/certificates/not-found", {}],
+      ["DELETE", "/api/admin/certificates/not-found"]
     ];
     for (const [method, route, body] of adminRequests) {
       const options = body === undefined
@@ -242,31 +258,23 @@ test("certificate downloads enforce ownership, publication, and organization man
     assert.equal((await fetch(`${baseUrl}/api/admin/events/wz-aerospace-2026`, jsonOptions("PATCH", {
       registrationMode: "force_open"
     }, admin.cookie))).status, 200);
-    const upload = await fetch(`${baseUrl}/api/admin/registrations/R20260627001/certificate`, jsonOptions("POST", {
-      fileName: "draft.pdf",
-      fileContentBase64: Buffer.from("%PDF-1.4 draft").toString("base64"),
-      slot: 1
-    }, admin.cookie));
+    const upload = await uploadCertificate(baseUrl, "R20260627001", 1, admin.cookie, "草稿证书");
     assert.equal(upload.status, 201);
     const certificate = (await upload.json()).row;
 
-    assert.equal((await fetch(`${baseUrl}/api/certificates/${certificate.id}/download`, withSession(ordinary.cookie))).status, 403);
-    assert.equal((await fetch(`${baseUrl}/api/certificates/${certificate.id}/download`, withSession(owner.cookie))).status, 403);
-    assert.equal((await fetch(`${baseUrl}/api/certificates/${certificate.id}/download`, withSession(admin.cookie))).status, 200);
+    assert.equal((await fetch(`${baseUrl}/api/certificates/${certificate.id}/file`, withSession(ordinary.cookie))).status, 403);
+    assert.equal((await fetch(`${baseUrl}/api/certificates/${certificate.id}/file`, withSession(owner.cookie))).status, 403);
+    assert.equal((await fetch(`${baseUrl}/api/certificates/${certificate.id}/file`, withSession(admin.cookie))).status, 200);
 
-    const publish = await fetch(`${baseUrl}/api/admin/certificates/${certificate.id}/publish`, jsonOptions("PATCH", { status: "published" }, admin.cookie));
+    const publish = await fetch(`${baseUrl}/api/admin/certificates/bulk-status`, jsonOptions("POST", { ids: [certificate.id], status: "published" }, admin.cookie));
     assert.equal(publish.status, 200);
-    assert.equal((await fetch(`${baseUrl}/api/certificates/${certificate.id}/download`, withSession(ordinary.cookie))).status, 200);
-    assert.equal((await fetch(`${baseUrl}/api/certificates/${certificate.id}/download`, withSession(owner.cookie))).status, 200);
+    assert.equal((await fetch(`${baseUrl}/api/certificates/${certificate.id}/file?download=1`, withSession(ordinary.cookie))).status, 200);
+    assert.equal((await fetch(`${baseUrl}/api/certificates/${certificate.id}/file?download=1`, withSession(owner.cookie))).status, 200);
 
-    const foreign = await fetch(`${baseUrl}/api/admin/registrations/R20260627002/certificate`, jsonOptions("POST", {
-      fileName: "foreign.pdf",
-      fileContentBase64: Buffer.from("%PDF-1.4 foreign").toString("base64"),
-      slot: 1
-    }, admin.cookie));
+    const foreign = await uploadCertificate(baseUrl, "R20260627002", 1, admin.cookie, "外部证书");
     const foreignCertificate = (await foreign.json()).row;
-    await fetch(`${baseUrl}/api/admin/certificates/${foreignCertificate.id}/publish`, jsonOptions("PATCH", { status: "published" }, admin.cookie));
-    assert.equal((await fetch(`${baseUrl}/api/certificates/${foreignCertificate.id}/download`, withSession(ordinary.cookie))).status, 403);
+    await fetch(`${baseUrl}/api/admin/certificates/bulk-status`, jsonOptions("POST", { ids: [foreignCertificate.id], status: "published" }, admin.cookie));
+    assert.equal((await fetch(`${baseUrl}/api/certificates/${foreignCertificate.id}/file`, withSession(ordinary.cookie))).status, 403);
 
     const privateRegistration = await fetch(`${baseUrl}/api/registrations`, jsonOptions("POST", {
       athlete: { name: "私人报名", school: "个人学校", grade: "初二", phone: "13600002001" },
@@ -275,14 +283,10 @@ test("certificate downloads enforce ownership, publication, and organization man
     }, ordinary.cookie));
     assert.equal(privateRegistration.status, 201);
     const privateRow = (await privateRegistration.json()).row;
-    const privateUpload = await fetch(`${baseUrl}/api/admin/registrations/${privateRow.id}/certificate`, jsonOptions("POST", {
-      fileName: "private.pdf",
-      fileContentBase64: Buffer.from("%PDF-1.4 private").toString("base64"),
-      slot: 1
-    }, admin.cookie));
+    const privateUpload = await uploadCertificate(baseUrl, privateRow.id, 1, admin.cookie, "私人证书");
     const privateCertificate = (await privateUpload.json()).row;
-    await fetch(`${baseUrl}/api/admin/certificates/${privateCertificate.id}/publish`, jsonOptions("PATCH", { status: "published" }, admin.cookie));
-    assert.equal((await fetch(`${baseUrl}/api/certificates/${privateCertificate.id}/download`, withSession(owner.cookie))).status, 403);
+    await fetch(`${baseUrl}/api/admin/certificates/bulk-status`, jsonOptions("POST", { ids: [privateCertificate.id], status: "published" }, admin.cookie));
+    assert.equal((await fetch(`${baseUrl}/api/certificates/${privateCertificate.id}/file`, withSession(owner.cookie))).status, 403);
 
     const organizationCertificates = await fetch(`${baseUrl}/api/organizations/O1001/certificates`, withSession(owner.cookie));
     const organizationRows = (await organizationCertificates.json()).rows;

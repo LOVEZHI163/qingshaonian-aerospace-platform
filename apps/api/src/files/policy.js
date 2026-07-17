@@ -6,6 +6,12 @@ export const CREDENTIAL_POLICY = {
   maxBytes: 10 * 1024 * 1024
 };
 
+export const CERTIFICATE_POLICY = {
+  extensions: new Set(["pdf", "png", "jpg", "jpeg", "webp"]),
+  mimeTypes: new Set(["application/pdf", "image/png", "image/jpeg", "image/webp"]),
+  maxBytes: 10 * 1024 * 1024
+};
+
 export async function validateUpload(file, policy = CREDENTIAL_POLICY) {
   if (!file || !Buffer.isBuffer(file.buffer) || file.buffer.length === 0) {
     throw new Error("A non-empty file buffer is required");

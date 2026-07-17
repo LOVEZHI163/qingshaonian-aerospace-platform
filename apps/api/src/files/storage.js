@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 
-import { CREDENTIAL_POLICY, validateUpload } from "./policy.js";
+import { CERTIFICATE_POLICY, CREDENTIAL_POLICY, validateUpload } from "./policy.js";
 
 const SAFE_PATH_COMPONENT = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 const CERTIFICATE_IMAGE_EXTENSIONS = new Set(["png", "jpg"]);
@@ -196,6 +196,44 @@ export async function saveCertificateImportFile({ registrationId, slot, extensio
     storedName,
     filePath,
     fileName: `${safeRegistrationId}-certificate-${slot}.${safeExtension}`
+  };
+}
+
+export async function saveCertificateFile({ registrationId, slot, file, fileSystem = fs }) {
+  const safeRegistrationId = safePathComponent(registrationId, "registration");
+  if (![1, 2].includes(slot)) throw new Error("Invalid certificate slot");
+  const detected = await validateUpload(file, CERTIFICATE_POLICY);
+  const root = uploadRoot();
+  const storedName = `${crypto.randomUUID()}.${detected.ext}`;
+  const filePath = path.resolve(root, "certificates", storedName);
+  assertInside(root, filePath, "Certificate file path escapes upload root");
+  await prepareManagedDirectory(root, path.dirname(filePath), fileSystem);
+  try {
+    await fileSystem.writeFile(filePath, file.buffer, { flag: "wx" });
+  } catch (error) {
+    if (error?.code === "EEXIST") throw error;
+    try { await fileSystem.unlink(filePath); } catch (cleanupError) {
+      if (cleanupError?.code !== "ENOENT") {
+        error.cleanupError = cleanupError;
+        error.cleanupTarget = {
+          storedName,
+          filePath,
+          fileName: `${safeRegistrationId}-certificate-${slot}.${detected.ext}`,
+          category: "certificate-manual-new",
+          cleanupAttempts: 1
+        };
+      }
+    }
+    throw error;
+  }
+  return {
+    storedName,
+    filePath,
+    fileName: `${safeRegistrationId}-certificate-${slot}.${detected.ext}`,
+    originalName: safeOriginalName(file.originalname),
+    mimeType: detected.mime,
+    size: file.buffer.length,
+    extension: detected.ext
   };
 }
 

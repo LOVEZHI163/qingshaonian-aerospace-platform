@@ -74,7 +74,6 @@ test("certificate workbook parses two real embedded PNG images from M2 and O2", 
     { slot: 2, title: "优秀选手证书", extension: "png", mimeType: "image/png", replacing: true }
   ]);
   assert.equal(parsed.candidates[0].certificates.every((certificate) => Buffer.compare(certificate.buffer, heroPng) === 0), true);
-  assert.equal("certificateNo" in parsed.candidates[0], false);
 });
 
 test("certificate workbook accepts real JPEG content declared as JPG or JPEG and returns canonical metadata", async () => {

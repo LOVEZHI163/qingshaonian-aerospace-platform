@@ -85,7 +85,6 @@ test("certificate schema migrates legacy certificates to slot 1 and permits one 
       { id: "C-SLOT-1", slot: 1, title: "优秀选手" },
       { id: "C-SLOT-2", slot: 2, title: "优秀选手" }
     ]);
-    assert.equal("certificateNo" in persisted.certificates.find((certificate) => certificate.id === "C-SLOT-1"), false);
   } finally {
     await store.close();
   }

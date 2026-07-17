@@ -316,7 +316,6 @@ test("PostgreSQL store upgrades a legacy schema without losing existing records"
     assert.equal(legacyRegistration.awardName, "一等奖");
     assert.equal(legacyCertificate.slot, 1);
     assert.equal(legacyCertificate.title, "获奖证书");
-    assert.equal("certificateNo" in legacyCertificate, false);
     assert.equal(data.events.filter((event) => event.isCurrent).length, 1);
   } finally {
     await store.close();

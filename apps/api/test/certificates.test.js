@@ -1,143 +1,125 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { withTestServer } from "../test-support/server.js";
-import { loginAs, withSession } from "./helpers/api-client.js";
+import { CERTIFICATE_POLICY, validateUpload } from "../src/files/policy.js";
+import {
+  CertificateError,
+  removeCertificate,
+  setCertificateStatuses,
+  updateCertificateMetadata,
+  upsertCertificate
+} from "../src/services/certificates.js";
 
-async function withServer(fn) {
-  await withTestServer(({ baseUrl, tempDir }) => fn(baseUrl, tempDir), { prefix: "wz-cert-api-" });
+function fixture() {
+  return {
+    registrations: [{
+      id: "R1",
+      userId: "U1",
+      organizationId: "O1",
+      awardName: "",
+      rank: "",
+      score: ""
+    }],
+    certificates: []
+  };
 }
 
-async function json(res) {
-  return res.json();
-}
-
-test("published certificates are visible to the owner but drafts are hidden", async () => {
-  await withServer(async (baseUrl) => {
-    const admin = await loginAs(baseUrl, "13900000000", "admin123");
-    const owner = await loginAs(baseUrl, "13800000011", "123456");
-    const draftRes = await fetch(`${baseUrl}/api/admin/registrations/R20260627002/certificate`, withSession(admin.cookie, {
-      method: "POST",
-      body: JSON.stringify({
-        fileName: "zhou.pdf",
-        fileContentBase64: Buffer.from("%PDF-1.4 draft").toString("base64"),
-        slot: 1
-      }),
-      headers: { "Content-Type": "application/json" }
-    }));
-    assert.equal(draftRes.status, 201);
-
-    const hiddenRes = await fetch(`${baseUrl}/api/me/certificates`, withSession(owner.cookie));
-    assert.equal(hiddenRes.status, 200);
-    assert.deepEqual((await json(hiddenRes)).rows, []);
-
-    const certificate = (await json(draftRes)).row;
-    const publishRes = await fetch(`${baseUrl}/api/admin/certificates/${certificate.id}/publish`, withSession(admin.cookie, {
-      method: "PATCH",
-      body: JSON.stringify({ status: "published" }),
-      headers: { "Content-Type": "application/json" }
-    }));
-    assert.equal(publishRes.status, 200);
-
-    const visibleRes = await fetch(`${baseUrl}/api/me/certificates`, withSession(owner.cookie));
-    const visible = await json(visibleRes);
-    assert.equal(visible.rows.length, 1);
-    assert.equal(visible.rows[0].slot, 1);
-    assert.equal(visible.rows[0].title, "获奖证书");
-    assert.equal("filePath" in visible.rows[0], false);
-    assert.equal("storedName" in visible.rows[0], false);
-  });
+const storedFile = (suffix) => ({
+  originalName: `${suffix}.png`,
+  storedName: `${suffix}.png`,
+  filePath: `/safe/certificates/${suffix}.png`
 });
 
-test("organization certificate query includes active members and excludes pending members", async () => {
-  await withServer(async (baseUrl) => {
-    const admin = await loginAs(baseUrl, "13900000000", "admin123");
-    const owner = await loginAs(baseUrl, "13800000011", "123456");
-    const pendingUserRes = await fetch(`${baseUrl}/api/auth/register`, {
-      method: "POST",
-      body: JSON.stringify({ name: "待审核家长", phone: "13600000001", password: "Strong123" }),
-      headers: { "Content-Type": "application/json" }
-    });
-    const pendingUser = (await json(pendingUserRes)).user;
-    const pending = await loginAs(baseUrl, "13600000001", "Strong123");
-    await fetch(`${baseUrl}/api/organizations/request`, withSession(pending.cookie, {
-      method: "POST",
-      body: JSON.stringify({ userId: pendingUser.id, organizationId: "O1001", note: "测试待审核成员" }),
-      headers: { "Content-Type": "application/json" }
-    }));
+const png = Buffer.from("89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000a49444154789c63600000020001e221bc330000000049454e44ae426082", "hex");
+const pdf = Buffer.from("%PDF-1.7\n1 0 obj\n<<>>\nendobj\n%%EOF\n");
+const jpeg = Buffer.from("/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////2wBDAf//////////////////////////////////////////////////////////////////////////////////////wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAf/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIQAxAAAAFcf//EABQQAQAAAAAAAAAAAAAAAAAAABD/2gAIAQEAAQUCq//EABQRAQAAAAAAAAAAAAAAAAAAABD/2gAIAQMBAT8QH//EABQRAQAAAAAAAAAAAAAAAAAAABD/2gAIAQIBAT8QH//EABQQAQAAAAAAAAAAAAAAAAAAABD/2gAIAQEABj8Cp//EABQQAQAAAAAAAAAAAAAAAAAAABD/2gAIAQEAAT8h/9oADAMBAAIAAwAAABD/xAAUEQEAAAAAAAAAAAAAAAAAAAAQ/9oACAEDAQE/EH//xAAUEQEAAAAAAAAAAAAAAAAAAAAQ/9oACAECAQE/EH//xAAUEAEAAAAAAAAAAAAAAAAAAAAQ/9oACAEBAAE/EP/Z", "base64");
+const webp = Buffer.concat([Buffer.from("RIFF"), Buffer.from([0x18, 0, 0, 0]), Buffer.from("WEBPVP8 "), Buffer.alloc(20)]);
 
-    const uploadRes = await fetch(`${baseUrl}/api/admin/registrations/R20260627001/certificate`, withSession(admin.cookie, {
-      method: "POST",
-      body: JSON.stringify({
-        fileName: "chen.pdf",
-        fileContentBase64: Buffer.from("%PDF-1.4 active").toString("base64"),
-        slot: 1
-      }),
-      headers: { "Content-Type": "application/json" }
-    }));
-    const certificate = (await json(uploadRes)).row;
-    await fetch(`${baseUrl}/api/admin/certificates/${certificate.id}/publish`, withSession(admin.cookie, {
-      method: "PATCH",
-      body: JSON.stringify({ status: "published" }),
-      headers: { "Content-Type": "application/json" }
-    }));
-
-    const orgRes = await fetch(`${baseUrl}/api/organizations/O1001/certificates`, withSession(owner.cookie));
-    assert.equal(orgRes.status, 200);
-    const rows = (await json(orgRes)).rows;
-    assert.deepEqual(rows.map((row) => ({ slot: row.slot, title: row.title })), [{ slot: 1, title: "获奖证书" }]);
-    assert.equal(rows.every((row) => !("filePath" in row) && !("storedName" in row)), true);
-  });
+test("certificate file policy accepts real PDF, PNG, JPEG, and WebP content", async () => {
+  assert.deepEqual([...CERTIFICATE_POLICY.extensions], ["pdf", "png", "jpg", "jpeg", "webp"]);
+  assert.equal(CERTIFICATE_POLICY.maxBytes, 10 * 1024 * 1024);
+  for (const buffer of [pdf, png, jpeg, webp]) {
+    await assert.doesNotReject(() => validateUpload({ buffer }, CERTIFICATE_POLICY));
+  }
 });
 
-test("certificate upload persists the first slot and a title", async () => {
-  await withServer(async (baseUrl) => {
-    const admin = await loginAs(baseUrl, "13900000000", "admin123");
-    const uploadRes = await fetch(`${baseUrl}/api/admin/registrations/R20260627001/certificate`, withSession(admin.cookie, {
-      method: "POST",
-      body: JSON.stringify({
-        fileName: "slot-one.pdf",
-        fileContentBase64: Buffer.from("%PDF-1.4 slot one").toString("base64"),
-        slot: 1
-      }),
-      headers: { "Content-Type": "application/json" }
-    }));
-    assert.equal(uploadRes.status, 201);
-
-    const certificates = await fetch(`${baseUrl}/api/admin/certificates`, withSession(admin.cookie));
-    assert.equal(certificates.status, 200);
-    assert.deepEqual((await json(certificates)).rows.map((row) => ({ slot: row.slot, title: row.title })), [{
-      slot: 1,
-      title: "获奖证书"
-    }]);
+test("certificate service upserts the two slots and resets replacements to draft", () => {
+  const db = fixture();
+  const registration = db.registrations[0];
+  const first = upsertCertificate(db, {
+    registration,
+    slot: 1,
+    title: "  一等奖  ",
+    storedFile: storedFile("first"),
+    source: "manual",
+    now: "2026-07-17T00:00:00.000Z"
   });
+  const second = upsertCertificate(db, {
+    registration,
+    slot: 2,
+    title: "二等奖",
+    storedFile: storedFile("second"),
+    source: "manual",
+    now: "2026-07-17T00:01:00.000Z"
+  });
+  first.status = "published";
+  first.publishedAt = "2026-07-17T00:02:00.000Z";
+  const replaced = upsertCertificate(db, {
+    registration,
+    slot: 1,
+    title: "替换证书",
+    storedFile: storedFile("replacement"),
+    source: "manual",
+    now: "2026-07-17T00:03:00.000Z"
+  });
+
+  assert.equal(first.title, "替换证书");
+  assert.equal(replaced.id, first.id);
+  assert.equal(replaced.status, "draft");
+  assert.equal(replaced.publishedAt, "");
+  assert.deepEqual(db.certificates.map((row) => row.slot).sort(), [1, 2]);
+  assert.equal(second.slot, 2);
 });
 
-test("certificate upload saves slots 1 and 2 separately, rejects invalid slots, and never exposes certificateNo", async () => {
-  await withServer(async (baseUrl) => {
-    const admin = await loginAs(baseUrl, "13900000000", "admin123");
-    const upload = async (slot) => fetch(`${baseUrl}/api/admin/registrations/R20260627001/certificate`, withSession(admin.cookie, {
-      method: "POST",
-      body: JSON.stringify({
-        fileName: `slot-${slot}.pdf`,
-        fileContentBase64: Buffer.from(`%PDF-1.4 slot ${slot}`).toString("base64"),
-        slot
-      }),
-      headers: { "Content-Type": "application/json" }
-    }));
-
-    const first = await upload(1);
-    const second = await upload(2);
-    const invalid = await upload(3);
-    assert.equal(first.status, 201);
-    assert.equal(second.status, 201);
-    assert.equal(invalid.status, 422);
-    assert.equal("certificateNo" in (await json(first)).row, false);
-    assert.equal("certificateNo" in (await json(second)).row, false);
-
-    const certificates = await fetch(`${baseUrl}/api/admin/certificates`, withSession(admin.cookie));
-    const rows = (await json(certificates)).rows.filter((row) => row.registrationId === "R20260627001");
-    assert.deepEqual(rows.map((row) => row.slot).sort(), [1, 2]);
-    assert.equal(rows.every((row) => !("certificateNo" in row)), true);
+test("certificate service validates metadata, bulk status, and removal atomically", () => {
+  const db = fixture();
+  const certificate = upsertCertificate(db, {
+    registration: db.registrations[0],
+    slot: 1,
+    title: "初始标题",
+    storedFile: storedFile("certificate"),
+    source: "manual",
+    now: "2026-07-17T00:00:00.000Z"
   });
+
+  assert.throws(() => upsertCertificate(db, {
+    registration: db.registrations[0], slot: 3, title: "非法", storedFile: storedFile("invalid"), now: "now"
+  }), (error) => error instanceof CertificateError && error.status === 422);
+  assert.throws(() => updateCertificateMetadata(db, {
+    certificateId: certificate.id, title: "   ", now: "now"
+  }), (error) => error instanceof CertificateError && error.status === 422);
+
+  const updated = updateCertificateMetadata(db, {
+    certificateId: certificate.id,
+    title: "  金奖证书  ",
+    awardName: "一等奖",
+    rank: "1",
+    score: "100",
+    now: "2026-07-17T00:01:00.000Z"
+  });
+  assert.deepEqual({ title: updated.title, awardName: updated.awardName, rank: updated.rank, score: updated.score }, {
+    title: "金奖证书", awardName: "一等奖", rank: "1", score: "100"
+  });
+
+  assert.throws(() => setCertificateStatuses(db, [certificate.id], "archived", "now"), (error) => error.status === 422);
+  assert.throws(() => setCertificateStatuses(db, [certificate.id, "missing"], "published", "now"), (error) => error.status === 404);
+  assert.equal(certificate.status, "draft");
+  setCertificateStatuses(db, [certificate.id], "published", "2026-07-17T00:02:00.000Z");
+  assert.equal(certificate.publishedAt, "2026-07-17T00:02:00.000Z");
+  setCertificateStatuses(db, [certificate.id], "draft", "2026-07-17T00:03:00.000Z");
+  assert.equal(certificate.publishedAt, "");
+
+  assert.equal(removeCertificate(db, certificate.id), certificate);
+  assert.deepEqual(db.certificates, []);
+  assert.throws(() => removeCertificate(db, certificate.id), (error) => error.status === 404);
 });

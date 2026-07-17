@@ -1,10 +1,5 @@
 import express from "express";
 import cors from "cors";
-import fs from "node:fs/promises";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-import multer from "multer";
-import AdmZip from "adm-zip";
 import { hashPassword, isLegacyPassword, validatePassword, verifyLoginPassword } from "./auth/passwords.js";
 import { createSmsPasswordResetService, sendPasswordResetError } from "./auth/password-reset.js";
 import { asyncRoute, createSessionMiddleware, requireAdmin, requirePasswordReady, requireUser } from "./auth/session.js";
@@ -15,12 +10,10 @@ import { createEventsRouter } from "./routes/events.js";
 import { createOrganizationsRouter } from "./routes/organizations.js";
 import { createRegistrationsRouter } from "./routes/registrations.js";
 import { createCertificateImportsRouter } from "./routes/certificate-imports.js";
+import { createCertificatesRouter } from "./routes/certificates.js";
 import { projectForHistoricalRegistration, registrationContext } from "./services/events.js";
 import { replayFileCleanupJournal } from "./services/organizations.js";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const uploadRoot = process.env.UPLOAD_ROOT ? path.resolve(process.env.UPLOAD_ROOT) : path.resolve(__dirname, "../uploads");
-const certificateUploadDir = path.join(uploadRoot, "certificates");
 const PORT = Number(process.env.PORT || 4300);
 const dataStore = createDataStore();
 const mutationAsyncRoute = createMutationAsyncRoute(dataStore);
@@ -116,52 +109,6 @@ function activeMemberIdsForManagedOrganizations(db, userId, organizationId = nul
   return [...new Set(memberIds)];
 }
 
-function canAccessRegistration(db, userId, registration) {
-  if (!registration) return false;
-  if (db.users.some((item) => item.id === userId && item.type === "admin")) return true;
-  if (registration.userId === userId) return true;
-  if (!registration.organizationId || !canManageOrganization(db, userId, registration.organizationId)) return false;
-  return db.memberships.some((membership) =>
-    membership.userId === registration.userId
-    && membership.organizationId === registration.organizationId
-    && membership.status === "active"
-  );
-}
-
-function canAccessCertificate(db, userId, certificate, { includeDraft = false } = {}) {
-  if (!certificate) return false;
-  if (!includeDraft && certificate.status !== "published") return false;
-  const registration = db.registrations.find((row) => row.id === certificate.registrationId);
-  return canAccessRegistration(db, userId, registration);
-}
-
-function certificatePayload(certificate, registration) {
-  return {
-    ...certificate,
-    registration,
-    athlete: registration?.athlete,
-    projectName: registration?.projectName,
-    organization: registration?.organization || ""
-  };
-}
-
-function publicCertificatePayload(certificate, registration) {
-  const { filePath, storedName, ...safe } = certificatePayload(certificate, registration);
-  return safe;
-}
-
-function safeFileName(fileName) {
-  return path.basename(String(fileName || "certificate.pdf")).replace(/[^\w.\-\u4e00-\u9fa5]/g, "_");
-}
-
-async function saveCertificateFile({ fileName, buffer }) {
-  await fs.mkdir(certificateUploadDir, { recursive: true });
-  const storedName = `${Date.now()}-${Math.floor(Math.random() * 1000)}-${safeFileName(fileName)}`;
-  const filePath = path.join(certificateUploadDir, storedName);
-  await fs.writeFile(filePath, buffer);
-  return { storedName, filePath };
-}
-
 function updateCertificateFromRegistration(certificate, registration) {
   certificate.userId = registration.userId || null;
   certificate.organizationId = registration.organizationId || null;
@@ -219,7 +166,6 @@ function validateRegistration(input, existingRows, project, eventId, ignoreId = 
 
 const app = express();
 app.set("trust proxy", 1);
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 app.use(cors());
 app.use(express.json({ limit: "5mb", strict: false }));
 app.use((req, res, next) => {
@@ -277,6 +223,17 @@ app.use("/api", createCertificateImportsRouter({
   requireAdmin,
   requirePasswordReady,
   asyncRoute: mutationAsyncRoute,
+  makeId: id,
+  now
+}));
+
+app.use("/api", createCertificatesRouter({
+  store: dataStore,
+  requireUser,
+  requireAdmin,
+  requirePasswordReady,
+  asyncRoute,
+  mutationAsyncRoute,
   makeId: id,
   now
 }));
@@ -590,23 +547,9 @@ app.patch("/api/memberships/:id", requireUser, requirePasswordReady, mutationAsy
   res.json({ row });
 }));
 
-app.get("/api/admin/certificates", requireAdmin, requirePasswordReady, asyncRoute(async (_req, res) => {
-  const db = await readDb();
-  const rows = db.certificates.map((certificate) => certificatePayload(certificate, db.registrations.find((row) => row.id === certificate.registrationId)));
-  res.json({ rows });
-}));
-
 app.get("/api/me/registrations", requireUser, requirePasswordReady, asyncRoute(async (req, res) => {
   const db = await readDb();
   res.json({ rows: db.registrations.filter((item) => item.userId === req.user.id) });
-}));
-
-app.get("/api/me/certificates", requireUser, requirePasswordReady, asyncRoute(async (req, res) => {
-  const db = await readDb();
-  const rows = db.certificates
-    .filter((certificate) => certificate.userId === req.user.id && certificate.status === "published")
-    .map((certificate) => publicCertificatePayload(certificate, db.registrations.find((row) => row.id === certificate.registrationId)));
-  res.json({ rows });
 }));
 
 app.get("/api/organizations/:id/members", requireUser, requirePasswordReady, asyncRoute(async (req, res) => {
@@ -622,19 +565,6 @@ app.get("/api/organizations/:id/registrations", requireUser, requirePasswordRead
   res.json({
     rows: db.registrations.filter((row) => row.organizationId === req.params.id && memberIds.includes(row.userId))
   });
-}));
-
-app.get("/api/organizations/:id/certificates", requireUser, requirePasswordReady, asyncRoute(async (req, res) => {
-  const db = await readDb();
-  if (!canManageOrganization(db, req.user.id, req.params.id)) return res.status(403).json({ error: "无权查看该组织证书" });
-  const memberIds = activeMemberIdsForManagedOrganizations(db, req.user.id, req.params.id);
-  const registrationIds = db.registrations
-    .filter((row) => row.organizationId === req.params.id && memberIds.includes(row.userId))
-    .map((row) => row.id);
-  const rows = db.certificates
-    .filter((certificate) => certificate.status === "published" && registrationIds.includes(certificate.registrationId))
-    .map((certificate) => publicCertificatePayload(certificate, db.registrations.find((row) => row.id === certificate.registrationId)));
-  res.json({ rows });
 }));
 
 app.post("/api/registrations/check", requireUser, requirePasswordReady, asyncRoute(async (req, res) => {
@@ -749,160 +679,6 @@ app.patch("/api/admin/registrations/:id", requireAdmin, requirePasswordReady, mu
   }
   await writeDb(db);
   res.json({ row });
-}));
-
-app.post("/api/admin/registrations/:id/certificate", requireAdmin, requirePasswordReady, upload.single("certificate"), mutationAsyncRoute(async (req, res) => {
-  const db = await readDb();
-  const registration = db.registrations.find((item) => item.id === req.params.id);
-  if (!registration) return res.status(404).json({ error: "报名记录不存在" });
-
-  const slot = Number(req.body.slot);
-  if (![1, 2].includes(slot)) return res.status(422).json({ error: "证书位置只能为 1 或 2" });
-
-  const incomingBuffer = req.file?.buffer || (req.body.fileContentBase64 ? Buffer.from(req.body.fileContentBase64, "base64") : null);
-  if (!incomingBuffer) return res.status(422).json({ error: "请上传证书 PDF 文件" });
-  const originalName = req.file?.originalname || req.body.fileName || `${registration.id}.pdf`;
-  const { storedName, filePath } = await saveCertificateFile({ fileName: originalName, buffer: incomingBuffer });
-
-  let certificate = findCertificateByRegistration(db, registration.id, slot);
-  if (!certificate) {
-    certificate = {
-      id: id("C"),
-      registrationId: registration.id,
-      slot,
-      title: req.body.title || registration.awardName || "获奖证书",
-      userId: registration.userId || null,
-      organizationId: registration.organizationId || null,
-      fileName: originalName,
-      storedName,
-      filePath,
-      awardName: registration.awardName || "",
-      rank: registration.rank || "",
-      score: registration.score || "",
-      status: "draft",
-      source: "manual",
-      importBatchId: null,
-      uploadedAt: now(),
-      publishedAt: "",
-      cleanedAt: ""
-    };
-    db.certificates.unshift(certificate);
-  } else {
-    Object.assign(certificate, {
-      title: req.body.title || certificate.title,
-      fileName: originalName,
-      storedName,
-      filePath,
-      uploadedAt: now(),
-      status: "draft",
-      publishedAt: ""
-    });
-    updateCertificateFromRegistration(certificate, registration);
-  }
-
-  await writeDb(db);
-  res.status(201).json({ row: certificatePayload(certificate, registration) });
-}));
-
-function matchCertificateFile(db, fileName) {
-  const baseName = path.basename(fileName, path.extname(fileName));
-  const [name = "", school = "", projectKeyword = ""] = baseName.split("_");
-  const nameKey = normalizeText(name);
-  const schoolKey = normalizeText(school);
-  const projectKey = normalizeText(projectKeyword);
-  if (!nameKey || !schoolKey || !projectKey) return [];
-  return db.registrations.filter((row) => {
-    return (
-      normalizeText(row.athlete?.name) === nameKey &&
-      normalizeText(row.athlete?.school) === schoolKey &&
-      normalizeText(row.projectName).includes(projectKey)
-    );
-  });
-}
-
-app.post("/api/admin/certificates/batch", requireAdmin, requirePasswordReady, upload.single("zip"), mutationAsyncRoute(async (req, res) => {
-  const db = await readDb();
-  if (!req.file?.buffer) return res.status(422).json({ error: "请上传 ZIP 文件" });
-
-  const zip = new AdmZip(req.file.buffer);
-  const entries = zip.getEntries().filter((entry) => !entry.isDirectory && entry.entryName.toLowerCase().endsWith(".pdf"));
-  const matched = [];
-  const unmatched = [];
-  const ambiguous = [];
-
-  for (const entry of entries) {
-    const matches = matchCertificateFile(db, entry.entryName);
-    if (matches.length === 0) {
-      unmatched.push({ fileName: entry.entryName, reason: "未找到姓名、学校、赛项匹配的报名记录" });
-      continue;
-    }
-    if (matches.length > 1) {
-      ambiguous.push({ fileName: entry.entryName, registrations: matches.map((row) => ({ id: row.id, athlete: row.athlete, projectName: row.projectName })) });
-      continue;
-    }
-
-    const registration = matches[0];
-    const { storedName, filePath } = await saveCertificateFile({ fileName: entry.entryName, buffer: entry.getData() });
-    let certificate = findCertificateByRegistration(db, registration.id, 1);
-    if (!certificate) {
-      certificate = {
-        id: id("C"),
-        registrationId: registration.id,
-        slot: 1,
-        title: registration.awardName || "获奖证书",
-        userId: registration.userId || null,
-        organizationId: registration.organizationId || null,
-        fileName: path.basename(entry.entryName),
-        storedName,
-        filePath,
-        awardName: registration.awardName || "",
-        rank: registration.rank || "",
-        score: registration.score || "",
-        status: "draft",
-        source: "manual",
-        importBatchId: null,
-        uploadedAt: now(),
-        publishedAt: "",
-        cleanedAt: ""
-      };
-      db.certificates.unshift(certificate);
-    } else {
-      Object.assign(certificate, {
-        fileName: path.basename(entry.entryName),
-        storedName,
-        filePath,
-        status: "draft",
-        uploadedAt: now(),
-        publishedAt: ""
-      });
-      updateCertificateFromRegistration(certificate, registration);
-    }
-    matched.push({ fileName: entry.entryName, registrationId: registration.id, certificateId: certificate.id });
-  }
-
-  await writeDb(db);
-  res.json({ matched, unmatched, ambiguous });
-}));
-
-app.patch("/api/admin/certificates/:id/publish", requireAdmin, requirePasswordReady, mutationAsyncRoute(async (req, res) => {
-  const db = await readDb();
-  const certificate = db.certificates.find((item) => item.id === req.params.id);
-  if (!certificate) return res.status(404).json({ error: "证书不存在" });
-  if (!["draft", "published"].includes(req.body.status)) return res.status(422).json({ error: "状态不合法" });
-  certificate.status = req.body.status;
-  certificate.publishedAt = req.body.status === "published" ? now() : "";
-  await writeDb(db);
-  res.json({ row: certificatePayload(certificate, db.registrations.find((row) => row.id === certificate.registrationId)) });
-}));
-
-app.get("/api/certificates/:id/download", requireUser, requirePasswordReady, asyncRoute(async (req, res) => {
-  const db = await readDb();
-  const certificate = db.certificates.find((item) => item.id === req.params.id);
-  if (!certificate) return res.status(404).json({ error: "证书不存在" });
-  if (!canAccessCertificate(db, req.user.id, certificate, { includeDraft: req.user.type === "admin" })) {
-    return res.status(403).json({ error: "无权下载该证书" });
-  }
-  res.download(certificate.filePath, certificate.fileName);
 }));
 
 app.use((error, _req, res, next) => {
