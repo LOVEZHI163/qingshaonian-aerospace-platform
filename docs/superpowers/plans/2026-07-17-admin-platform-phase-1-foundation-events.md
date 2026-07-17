@@ -443,6 +443,8 @@ test("login upgrades a legacy password and restores the user from a session", as
 
   同时测试已有报名的赛项 `DELETE` 返回 `409`，停用 `PATCH` 返回 `200`。
 
+  报名 API 必须真正消费赛事配置：只允许当前已发布赛事在实时窗口开放时报名；项目必须属于当前赛事、已启用且允许所选固定组别；新报名写入当前 `eventId`。临时开放/关闭不能只影响页面展示。
+
   Run: `npm test -w apps/api -- --test-name-pattern="event management"`
 
   Expected: FAIL，赛事管理路由不存在。
@@ -474,9 +476,11 @@ test("login upgrades a legacy password and restores the user from a session", as
 
   所有管理操作在一次 `readDb`/`writeDb` 周期中完成；PostgreSQL store 保持一次事务写入。
 
+  复制赛事同时复制项目及其 `projectGroups`，项目使用新 ID；不复制报名、证书或成绩。设置当前赛事后数据库中必须恰好一条 `isCurrent=true`，并使用 PostgreSQL 唯一约束兜底。
+
 - [ ] **Step 3: 建立 Router 和输入校验**
 
-  路由统一使用 `requireAdmin`。赛事写入只接受允许字段；起止时间必须是有效 ISO 时间且开始早于截止；报名模式和值域严格校验。项目 `allowedGroups` 必须是四个固定组别的子集。
+  路由统一使用 `requireAdmin` 和 `requirePasswordReady`。赛事写入只接受允许字段；起止时间必须是有效 ISO 时间且开始早于截止；报名模式和值域严格校验。项目 `allowedGroups` 必须是四个固定组别的非空子集，项目类型只允许 `individual/team`。已有报名的项目不可硬删除，但可停用。
 
   ```js
   router.patch("/events/:id", async (req, res, next) => {
@@ -493,7 +497,7 @@ test("login upgrades a legacy password and restores the user from a session", as
 
 - [ ] **Step 4: 让公开赛事接口读取数据库**
 
-  移除 `EVENT/PROJECTS/GRADES` 的静态响应。只返回 `isCurrent && status === "published"` 的赛事、该赛事启用项目、固定组别和实时 `registrationWindow`。为保持官网兼容，赛事 payload 继续提供 `date`、`venue`、`registrationDeadline`、`contact`，其中 `date` 来自数据库 `dateLabel`，`registrationDeadline` 来自 `registrationEndAt` 的北京时间日期。没有当前赛事时返回 `503` 和明确错误。
+  移除 `EVENT/PROJECTS/GRADES` 的静态响应和报名校验依赖。只返回 `isCurrent && status === "published"` 的赛事、该赛事启用项目、四个固定组别和实时 `registrationWindow`。为保持官网兼容，赛事 payload 继续提供 `date`、`venue`、`registrationDeadline`、`contact`，其中 `date` 来自数据库 `dateLabel`，`registrationDeadline` 来自 `registrationEndAt` 的北京时间日期。没有当前赛事时返回 `503` 和明确错误。
 
 - [ ] **Step 5: 运行测试并提交**
 

@@ -11,6 +11,17 @@ function iso(value) {
   return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
 }
 
+function shanghaiDate(value) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).formatToParts(new Date(value));
+  const byType = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${byType.year}-${byType.month}-${byType.day}`;
+}
+
 async function deleteMissing(client, table, key, ids) {
   const keep = new Set(ids);
   const existing = await client.query(`SELECT ${key} AS id FROM ${table}`);
@@ -163,7 +174,7 @@ export function createPostgresStore(pool) {
           id: row.id,
           name: row.name,
           theme: row.theme,
-          date: row.date_label,
+          dateLabel: row.date_label,
           venue: row.venue,
           registrationDeadline: row.registration_deadline,
           contact: row.contact,
@@ -272,6 +283,10 @@ export function createPostgresStore(pool) {
       try {
         await client.query("BEGIN");
 
+        if (db.events.some((row) => row.isCurrent)) {
+          await client.query("UPDATE events SET is_current = FALSE WHERE is_current = TRUE");
+        }
+
         for (const row of db.events) {
           await client.query(
             `INSERT INTO events
@@ -295,7 +310,8 @@ export function createPostgresStore(pool) {
                created_at = EXCLUDED.created_at,
                updated_at = EXCLUDED.updated_at`,
             [
-              row.id, row.name, row.theme, row.date, row.venue, row.registrationDeadline, row.contact,
+              row.id, row.name, row.theme, row.dateLabel, row.venue,
+              shanghaiDate(row.registrationEndAt), row.contact,
               row.registrationStartAt, row.registrationEndAt, row.registrationMode, row.status, row.isCurrent,
               row.archivedAt, row.createdAt, row.updatedAt
             ]
@@ -450,6 +466,7 @@ export function createPostgresStore(pool) {
 
         await deleteMissing(client, "certificates", "id", db.certificates.map((row) => row.id));
         await deleteMissing(client, "registrations", "id", db.registrations.map((row) => row.id));
+        await deleteMissing(client, "projects", "id", db.projects.map((row) => row.id));
         await deleteMissing(client, "memberships", "id", db.memberships.map((row) => row.id));
         await deleteMissing(client, "organizations", "id", db.organizations.map((row) => row.id));
         await deleteMissing(client, "users", "id", db.users.map((row) => row.id));

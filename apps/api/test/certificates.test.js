@@ -93,12 +93,17 @@ test("batch certificate upload reports matched, unmatched, and ambiguous files",
   await withServer(async (baseUrl) => {
     const admin = await loginAs(baseUrl, "13900000000", "admin123");
     const ordinary = await loginAs(baseUrl, "13800000001", "123456");
+    assert.equal((await fetch(`${baseUrl}/api/admin/events/wz-aerospace-2026`, withSession(admin.cookie, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ registrationMode: "force_open" })
+    }))).status, 200);
     const duplicateRegistration = {
       userId: "U1001",
       organizationId: "O1001",
       source: "普通用户",
       athlete: { name: "陈宇航", school: "温州市实验小学", grade: "五年级", phone: "13800000099" },
-      group: "小学中高组（4-6年级）",
+      group: "小学高段",
       projectId: "rocket-duration",
       instructor: "林老师"
     };

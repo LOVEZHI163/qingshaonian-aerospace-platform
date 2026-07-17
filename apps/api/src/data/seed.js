@@ -28,6 +28,7 @@ export const APPROVED_GROUP_NAMES = ["小学低段", "小学高段", "中学组"
 export const REGISTRATION_MODES = ["automatic", "force_open", "force_closed"];
 
 Object.assign(EVENT, {
+  dateLabel: EVENT.date,
   registrationStartAt: REGISTRATION_START_AT,
   registrationEndAt: REGISTRATION_END_AT,
   registrationMode: "automatic",
@@ -141,6 +142,7 @@ export function ensureDbShape(db) {
   db.registrations ||= [];
   db.certificates ||= [];
   for (const event of db.events) {
+    event.dateLabel ||= event.date;
     event.registrationStartAt ||= event.createdAt || REGISTRATION_START_AT;
     event.registrationEndAt ||= REGISTRATION_END_AT;
     event.registrationMode ||= "automatic";

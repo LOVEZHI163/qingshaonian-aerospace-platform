@@ -10,7 +10,8 @@ import { createSmsPasswordResetService, sendPasswordResetError } from "./auth/pa
 import { asyncRoute, createSessionMiddleware, requireAdmin, requirePasswordReady, requireUser } from "./auth/session.js";
 import { createAliyunSmsProvider } from "./auth/sms.js";
 import { createDataStore } from "./data/index.js";
-import { EVENT, GRADES, PROJECTS } from "./data/seed.js";
+import { createEventsRouter } from "./routes/events.js";
+import { projectForHistoricalRegistration, registrationContext } from "./services/events.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const uploadRoot = process.env.UPLOAD_ROOT ? path.resolve(process.env.UPLOAD_ROOT) : path.resolve(__dirname, "../uploads");
@@ -51,10 +52,6 @@ function athleteKey(athlete) {
     normalizeText(athlete.grade),
     normalizePhone(athlete.phone)
   ].join("|");
-}
-
-function projectType(projectId) {
-  return PROJECTS.find((item) => item.id === projectId)?.type || "individual";
 }
 
 function publicUser(user) {
@@ -200,7 +197,7 @@ function userOrganizations(db, userId) {
     .filter(Boolean);
 }
 
-function validateRegistration(input, existingRows, ignoreId = null) {
+function validateRegistration(input, existingRows, project, eventId, ignoreId = null) {
   const errors = [];
   const athlete = input.athlete || {};
   const required = [
@@ -216,12 +213,9 @@ function validateRegistration(input, existingRows, ignoreId = null) {
     if (!String(input[key] ?? athlete[key] ?? "").trim()) errors.push(`${label}不能为空`);
   }
 
-  if (!GRADES.includes(input.group)) errors.push("组别不在赛事规程范围内");
-  if (!PROJECTS.some((project) => project.id === input.projectId)) errors.push("赛项不存在");
-
   const nextKey = athleteKey(athlete);
-  const nextType = projectType(input.projectId);
-  const activeRows = existingRows.filter((row) => row.id !== ignoreId && row.status !== "cancelled");
+  const nextType = project?.type || "individual";
+  const activeRows = existingRows.filter((row) => row.id !== ignoreId && row.eventId === eventId && row.status !== "cancelled");
   const sameAthleteRows = activeRows.filter((row) => row.athleteKey === nextKey);
   const hasSameType = sameAthleteRows.some((row) => row.projectType === nextType);
 
@@ -250,9 +244,13 @@ app.use(asyncRoute(async (req, _res, next) => {
   next();
 }));
 
-app.get("/api/public/event", (_req, res) => {
-  res.json({ event: EVENT, projects: PROJECTS, grades: GRADES });
-});
+app.use("/api", createEventsRouter({
+  store: dataStore,
+  requireAdmin,
+  requirePasswordReady,
+  asyncRoute,
+  makeId: id
+}));
 
 app.get("/api/public/features", (_req, res) => {
   res.json({ smsPasswordResetEnabled: smsPasswordReset.enabled });
@@ -619,9 +617,10 @@ app.get("/api/organizations/:id/certificates", requireUser, requirePasswordReady
 
 app.post("/api/registrations/check", requireUser, requirePasswordReady, asyncRoute(async (req, res) => {
   const db = await readDb();
+  const { event } = registrationContext(db, req.body);
   const athlete = req.body.athlete || req.body;
   const key = athleteKey(athlete);
-  const matches = db.registrations.filter((row) => row.athleteKey === key && row.status !== "cancelled");
+  const matches = db.registrations.filter((row) => row.eventId === event.id && row.athleteKey === key && row.status !== "cancelled");
   res.json({
     duplicate: matches.length > 0,
     duplicateCount: matches.length,
@@ -632,10 +631,10 @@ app.post("/api/registrations/check", requireUser, requirePasswordReady, asyncRou
 
 app.post("/api/registrations", requireUser, requirePasswordReady, asyncRoute(async (req, res) => {
   const db = await readDb();
-  const validation = validateRegistration(req.body, db.registrations);
+  const { event, project } = registrationContext(db, req.body);
+  const validation = validateRegistration(req.body, db.registrations, project, event.id);
   if (!validation.ok) return res.status(422).json(validation);
 
-  const project = PROJECTS.find((item) => item.id === req.body.projectId);
   const organization = db.organizations.find((item) => item.id === req.body.organizationId);
   if (req.body.organizationId && !organization) return res.status(404).json({ error: "组织不存在" });
   if (organization) {
@@ -648,6 +647,7 @@ app.post("/api/registrations", requireUser, requirePasswordReady, asyncRoute(asy
   }
   const row = {
     id: id("R"),
+    eventId: event.id,
     source: req.body.source || "普通用户",
     userId: req.user.id,
     organizationId: req.body.organizationId || null,
@@ -698,10 +698,13 @@ app.patch("/api/admin/registrations/:id", requireAdmin, requirePasswordReady, as
     projectId: req.body.projectId || row.projectId,
     instructor: req.body.instructor ?? row.instructor
   };
-  const validation = validateRegistration(next, db.registrations, row.id);
+  const project = (Object.hasOwn(req.body, "projectId") || Object.hasOwn(req.body, "group"))
+    ? projectForHistoricalRegistration(db, row, next.projectId, next.group)
+    : db.projects.find((item) => item.id === next.projectId);
+  if (!project) return res.status(422).json({ error: "赛项不存在" });
+  const validation = validateRegistration(next, db.registrations, project, row.eventId, row.id);
   if (!validation.ok) return res.status(422).json(validation);
 
-  const project = PROJECTS.find((item) => item.id === next.projectId);
   const organization = db.organizations.find((item) => item.id === next.organizationId);
   row.organizationId = next.organizationId;
   row.organization = organization?.name || "";
@@ -912,7 +915,11 @@ app.get("/api/registrations/export.csv", requireAdmin, requirePasswordReady, asy
 
 app.use((error, _req, res, next) => {
   if (res.headersSent) return next(error);
-  res.status(500).json({ error: "服务器内部错误" });
+  const status = Number.isInteger(error.status) ? error.status : 500;
+  res.status(status).json({
+    error: status === 500 ? "服务器内部错误" : error.message,
+    ...(error.code ? { code: error.code } : {})
+  });
 });
 
 await dataStore.initialize();

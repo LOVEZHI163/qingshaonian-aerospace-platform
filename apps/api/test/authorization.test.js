@@ -72,6 +72,9 @@ test("session identity cannot be replaced through body, query, or path values", 
     const ordinary = await loginAs(baseUrl, "13800000001", "123456");
     const owner = await loginAs(baseUrl, "13800000011", "123456");
     const admin = await loginAs(baseUrl, "13900000000", "admin123");
+    assert.equal((await fetch(`${baseUrl}/api/admin/events/wz-aerospace-2026`, jsonOptions("PATCH", {
+      registrationMode: "force_open"
+    }, admin.cookie))).status, 200);
 
     const foreignProfile = await fetch(`${baseUrl}/api/me/U2001`, withSession(ordinary.cookie));
     assert.equal(foreignProfile.status, 403);
@@ -93,7 +96,9 @@ test("session identity cannot be replaced through body, query, or path values", 
     assert.equal(userRows.every((row) => !("password" in row) && !("sessionVersion" in row)), true);
 
     const duplicateCheck = await fetch(`${baseUrl}/api/registrations/check`, jsonOptions("POST", {
-      athlete: { name: "陈宇航", school: "温州市实验小学", grade: "五年级", phone: "13800000001" }
+      athlete: { name: "陈宇航", school: "温州市实验小学", grade: "五年级", phone: "13800000001" },
+      group: "小学高段",
+      projectId: "paper-plane-gate"
     }, ordinary.cookie));
     const duplicatePayload = await duplicateCheck.json();
     assert.equal(duplicatePayload.duplicate, true);
@@ -106,7 +111,7 @@ test("session identity cannot be replaced through body, query, or path values", 
       organizationId: "O1001",
       source: "伪造来源",
       athlete: { name: "测试学生甲", school: "温州市实验小学", grade: "五年级", phone: "13600001001" },
-      group: "小学中高组（4-6年级）",
+      group: "小学高段",
       projectId: "rocket-duration",
       instructor: "林老师"
     }, ordinary.cookie));
@@ -116,7 +121,7 @@ test("session identity cannot be replaced through body, query, or path values", 
     const unrelatedOrganization = await fetch(`${baseUrl}/api/registrations`, jsonOptions("POST", {
       organizationId: "O1002",
       athlete: { name: "测试学生乙", school: "其他学校", grade: "初二", phone: "13600001002" },
-      group: "中学组（初中、高中、职高）",
+      group: "中学组",
       projectId: "drone-relay"
     }, ordinary.cookie));
     assert.equal(unrelatedOrganization.status, 403);
@@ -124,14 +129,14 @@ test("session identity cannot be replaced through body, query, or path values", 
     const unknownOrganization = await fetch(`${baseUrl}/api/registrations`, jsonOptions("POST", {
       organizationId: "O-NOT-FOUND",
       athlete: { name: "测试学生丙", school: "其他学校", grade: "初二", phone: "13600001003" },
-      group: "中学组（初中、高中、职高）",
+      group: "中学组",
       projectId: "drone-relay"
     }, ordinary.cookie));
     assert.equal(unknownOrganization.status, 404);
 
     const privateRegistration = await fetch(`${baseUrl}/api/registrations`, jsonOptions("POST", {
       athlete: { name: "私人参赛者", school: "个人学校", grade: "初二", phone: "13600001004" },
-      group: "中学组（初中、高中、职高）",
+      group: "中学组",
       projectId: "drone-relay"
     }, ordinary.cookie));
     assert.equal(privateRegistration.status, 201);
@@ -234,6 +239,9 @@ test("certificate downloads enforce ownership, publication, and organization man
     const ordinary = await loginAs(baseUrl, "13800000001", "123456");
     const owner = await loginAs(baseUrl, "13800000011", "123456");
     const admin = await loginAs(baseUrl, "13900000000", "admin123");
+    assert.equal((await fetch(`${baseUrl}/api/admin/events/wz-aerospace-2026`, jsonOptions("PATCH", {
+      registrationMode: "force_open"
+    }, admin.cookie))).status, 200);
     const upload = await fetch(`${baseUrl}/api/admin/registrations/R20260627001/certificate`, jsonOptions("POST", {
       fileName: "draft.pdf",
       fileContentBase64: Buffer.from("%PDF-1.4 draft").toString("base64")
@@ -260,7 +268,7 @@ test("certificate downloads enforce ownership, publication, and organization man
 
     const privateRegistration = await fetch(`${baseUrl}/api/registrations`, jsonOptions("POST", {
       athlete: { name: "私人报名", school: "个人学校", grade: "初二", phone: "13600002001" },
-      group: "中学组（初中、高中、职高）",
+      group: "中学组",
       projectId: "drone-relay"
     }, ordinary.cookie));
     assert.equal(privateRegistration.status, 201);

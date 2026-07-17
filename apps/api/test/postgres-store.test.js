@@ -67,6 +67,55 @@ test("PostgreSQL store persists mutations, results, and deletions", async () => 
   });
 });
 
+test("PostgreSQL store switches the unique current event and removes projects without registrations", async () => {
+  await withStore(async (store, pool) => {
+    const data = await store.readDb();
+    data.events.push({
+      id: "event-next",
+      name: "下一届赛事",
+      theme: "下一届主题",
+      dateLabel: "2027年10月1日",
+      venue: "测试场馆",
+      contact: "测试联系人",
+      registrationStartAt: "2027-08-01T00:00:00.000Z",
+      registrationEndAt: "2027-09-01T00:00:00.000Z",
+      registrationMode: "automatic",
+      status: "published",
+      isCurrent: true,
+      archivedAt: null,
+      createdAt: "2027-01-01T00:00:00.000Z",
+      updatedAt: "2027-01-01T00:00:00.000Z"
+    });
+    data.events.find((event) => event.id === "wz-aerospace-2026").isCurrent = false;
+    data.projects.push({
+      id: "project-removable",
+      eventId: "event-next",
+      name: "可删除赛项",
+      type: "individual",
+      category: "测试",
+      enabled: true,
+      instructorRequired: false,
+      displayOrder: 0,
+      allowedGroups: ["小学低段"]
+    });
+    data.projectGroups.push({ projectId: "project-removable", groupName: "小学低段" });
+    await store.writeDb(data);
+
+    const switched = await store.readDb();
+    assert.deepEqual(switched.events.filter((event) => event.isCurrent).map((event) => event.id), ["event-next"]);
+    switched.events.find((event) => event.id === "wz-aerospace-2026").isCurrent = true;
+    switched.events.find((event) => event.id === "event-next").isCurrent = false;
+    switched.projects = switched.projects.filter((project) => project.id !== "project-removable");
+    switched.projectGroups = switched.projectGroups.filter((group) => group.projectId !== "project-removable");
+    await store.writeDb(switched);
+
+    const persisted = await store.readDb();
+    assert.deepEqual(persisted.events.filter((event) => event.isCurrent).map((event) => event.id), ["wz-aerospace-2026"]);
+    assert.equal(persisted.projects.some((project) => project.id === "project-removable"), false);
+    assert.equal((await pool.query("SELECT 1 FROM project_groups WHERE project_id = $1", ["project-removable"])).rowCount, 0);
+  });
+});
+
 test("PostgreSQL schema enforces unique phone and registration foreign keys", async () => {
   await withStore(async (_store, pool) => {
     await assert.rejects(
@@ -86,6 +135,15 @@ test("PostgreSQL schema enforces unique phone and registration foreign keys", as
            'paper-plane-gate', '', 'individual', '', 'pending', '', NOW(), NOW())`
       )
     );
+
+    await assert.rejects(pool.query(`
+      INSERT INTO events
+        (id, name, theme, date_label, venue, registration_deadline, contact,
+         registration_start_at, registration_end_at, registration_mode, status, is_current)
+      VALUES
+        ('duplicate-current', '重复当前赛事', '主题', '2027年', '场馆', '2027-01-01', '联系人',
+         '2026-12-01T00:00:00.000Z', '2027-01-01T00:00:00.000Z', 'automatic', 'published', TRUE)
+    `));
   });
 });
 
