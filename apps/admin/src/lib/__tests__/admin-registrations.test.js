@@ -60,9 +60,9 @@ describe("loadAdminRegistrations", () => {
   });
 
   it("rejects maliciously large initial page counts without requesting more pages", async () => {
-    const request = vi.fn(async () => ({ rows: [], total: 100001, page: 1, pageSize: 100 }));
+    const request = vi.fn(async () => ({ rows: [], total: 10001, page: 1, pageSize: 100 }));
 
-    await expect(loadAdminRegistrations({}, request)).rejects.toBeInstanceOf(AdminRegistrationPaginationError);
+    await expect(loadAdminRegistrations({}, request)).rejects.toThrow("报名数据过多，请缩小赛事或筛选范围后重试");
     expect(request).toHaveBeenCalledTimes(1);
   });
 

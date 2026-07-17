@@ -240,6 +240,83 @@ describe("CertificateManagementPage", () => {
     expect(uploadCall[1].body.get("certificate").name).toBe("第二张.pdf");
   });
 
+  it("成绩三个字段清空提交后，刷新界面仍精确显示空值", async () => {
+    let registrationLoads = 0;
+    const clearedRegistration = { ...registration, awardName: "", rank: "", score: "" };
+    apiMock.mockImplementation(async (path, options = {}) => {
+      if (path === "/api/admin/events") return { rows: [event], projects: [project] };
+      if (path === "/api/admin/certificates") return { rows: [certificateOne, certificateTwo] };
+      if (isRegistrationRequest(path)) {
+        registrationLoads += 1;
+        return { rows: [registrationLoads === 1 ? registration : clearedRegistration], total: 1, page: 1, pageSize: 100 };
+      }
+      if (path === "/api/admin/registrations/R1/result" && options.method === "POST") return { row: clearedRegistration };
+      return {};
+    });
+    const wrapper = mount(CertificateManagementPage);
+    await flushPromises();
+
+    await wrapper.get('[data-result="awardName"]').setValue("");
+    await wrapper.get('[data-result="rank"]').setValue("");
+    await wrapper.get('[data-result="score"]').setValue("");
+    await wrapper.get('[data-action="save-result"]').trigger("click");
+    await flushPromises();
+
+    expect(apiMock).toHaveBeenCalledWith("/api/admin/registrations/R1/result", {
+      method: "POST",
+      body: JSON.stringify({ awardName: "", rank: "", score: "" })
+    });
+    expect(wrapper.get('[data-result="awardName"]').element.value).toBe("");
+    expect(wrapper.get('[data-result="rank"]').element.value).toBe("");
+    expect(wrapper.get('[data-result="score"]').element.value).toBe("");
+  });
+
+  it("刷新后只保留仍存在、未发布且文件未清理的勾选证书", async () => {
+    const registrations = [registration, ...[2, 3, 4].map((id) => ({
+      ...registration,
+      id: `R${id}`,
+      athlete: { ...registration.athlete, name: `选手${id}` }
+    }))];
+    const initialCertificates = registrations.map((row, index) => ({
+      ...certificateOne,
+      id: `C${index + 1}`,
+      registrationId: row.id,
+      registration: row,
+      athlete: row.athlete
+    }));
+    const refreshedCertificates = [
+      { ...initialCertificates[1], status: "published" },
+      { ...initialCertificates[2], cleanedAt: "2026-07-17T12:00:00.000Z", previewUrl: undefined, downloadUrl: undefined },
+      initialCertificates[3]
+    ];
+    let certificateLoads = 0;
+    apiMock.mockImplementation(async (path, options = {}) => {
+      if (path === "/api/admin/events") return { rows: [event], projects: [project] };
+      if (isRegistrationRequest(path)) return { rows: registrations, total: registrations.length, page: 1, pageSize: 100 };
+      if (path === "/api/admin/certificates") {
+        certificateLoads += 1;
+        return { rows: certificateLoads === 1 ? initialCertificates : refreshedCertificates };
+      }
+      if (path === "/api/admin/registrations/R1/result" && options.method === "POST") return { row: registration };
+      if (path === "/api/admin/certificates/bulk-status" && options.method === "POST") return { rows: [initialCertificates[3]] };
+      return {};
+    });
+    const wrapper = mount(CertificateManagementPage);
+    await flushPromises();
+    for (const checkbox of wrapper.findAll('[data-certificate-select]')) await checkbox.setValue(true);
+
+    await wrapper.get('[data-action="save-result"]').trigger("click");
+    await flushPromises();
+
+    expect(wrapper.get(".bulk-actions").text()).toContain("已选 1 张");
+    await wrapper.get('[data-action="bulk-publish"]').trigger("click");
+    await flushPromises();
+    expect(apiMock).toHaveBeenCalledWith("/api/admin/certificates/bulk-status", {
+      method: "POST",
+      body: JSON.stringify({ ids: ["C4"], status: "published" })
+    });
+  });
+
   it("切换报名时销毁上一报名的待上传文件、预览、删除确认和忙碌状态", async () => {
     let releaseSave;
     const pendingSave = new Promise((resolve) => { releaseSave = resolve; });
@@ -317,14 +394,14 @@ describe("CertificateManagementPage", () => {
     apiMock.mockImplementation(async (path) => {
       if (path === "/api/admin/events") return { rows: [event], projects: [project] };
       if (path === "/api/admin/certificates") return { rows: [] };
-      if (path === "/api/admin/registrations?eventId=E1&pageSize=100") return { rows: [], total: 100001, page: 1, pageSize: 100 };
-      if (path === "/api/admin/registrations?pageSize=100") return { rows: [], total: 100001, page: 1, pageSize: 100 };
+      if (path === "/api/admin/registrations?eventId=E1&pageSize=100") return { rows: [], total: 10001, page: 1, pageSize: 100 };
+      if (path === "/api/admin/registrations?pageSize=100") return { rows: [], total: 10001, page: 1, pageSize: 100 };
       return {};
     });
     const wrapper = mount(CertificateManagementPage);
     await flushPromises();
 
-    expect(wrapper.text()).toContain("报名数据在加载期间发生变化，请刷新重试");
+    expect(wrapper.text()).toContain("报名数据过多，请缩小赛事或筛选范围后重试");
     expect(apiMock.mock.calls.some(([path]) => path.includes("page=2"))).toBe(false);
   });
 
@@ -353,6 +430,91 @@ describe("CertificateManagementPage", () => {
     expect(selects[2].element.value).toBe("");
     expect(selects[3].element.value).toBe("");
     expect(apiMock.mock.calls.some(([path]) => path.includes("eventId=E2"))).toBe(true);
+  });
+
+  it("切换赛事会清除旧赛事隐藏的勾选，批量发布不提交消失 ID", async () => {
+    const secondEventRegistration = { ...registrationTwo, eventId: "E2", projectId: "P2", projectName: "橡筋飞机" };
+    const secondEventCertificate = {
+      ...certificateTwo,
+      id: "C-E2",
+      registrationId: secondEventRegistration.id,
+      registration: secondEventRegistration,
+      athlete: secondEventRegistration.athlete,
+      projectName: secondEventRegistration.projectName
+    };
+    apiMock.mockImplementation(async (path, options = {}) => {
+      if (path === "/api/admin/events") return { rows: [event, eventTwo], projects: [project, projectTwo] };
+      if (path === "/api/admin/certificates") return { rows: [certificateOne, secondEventCertificate] };
+      if (isRegistrationRequest(path)) {
+        const rows = path.includes("eventId=E2") ? [secondEventRegistration] : [registration];
+        return { rows, total: 1, page: 1, pageSize: 100 };
+      }
+      if (path === "/api/admin/certificates/bulk-status" && options.method === "POST") return { rows: [] };
+      return {};
+    });
+    const wrapper = mount(CertificateManagementPage);
+    await flushPromises();
+    await wrapper.get('[data-certificate-select]').setValue(true);
+
+    await wrapper.findAll(".certificate-filter-grid select")[0].setValue("E2");
+    await flushPromises();
+
+    expect(wrapper.get(".bulk-actions").text()).toContain("已选 0 张");
+    expect(wrapper.get('[data-action="bulk-publish"]').attributes()).toHaveProperty("disabled");
+    await wrapper.get('[data-action="bulk-publish"]').trigger("click");
+    expect(apiMock.mock.calls.some(([path]) => path === "/api/admin/certificates/bulk-status")).toBe(false);
+  });
+
+  it("快速切换赛事时，较晚返回的旧成功响应不能覆盖最新报名和加载状态", async () => {
+    let resolveOldEvent;
+    const oldEventResponse = new Promise((resolve) => { resolveOldEvent = resolve; });
+    const secondEventRegistration = { ...registrationTwo, eventId: "E2", projectId: "P2", projectName: "橡筋飞机" };
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/admin/events") return { rows: [event, eventTwo], projects: [project, projectTwo] };
+      if (path === "/api/admin/certificates") return { rows: [] };
+      if (path.includes("eventId=E2")) return oldEventResponse;
+      if (isRegistrationRequest(path)) return { rows: [registration], total: 1, page: 1, pageSize: 100 };
+      return {};
+    });
+    const wrapper = mount(CertificateManagementPage);
+    await flushPromises();
+    const eventSelect = wrapper.findAll(".certificate-filter-grid select")[0];
+
+    await eventSelect.setValue("E2");
+    await eventSelect.setValue("E1");
+    await flushPromises();
+    expect(wrapper.get(".registration-summary").text()).toContain("R1");
+    expect(wrapper.text()).not.toContain("正在加载所选赛事的全部报名");
+
+    resolveOldEvent({ rows: [secondEventRegistration], total: 1, page: 1, pageSize: 100 });
+    await flushPromises();
+    expect(wrapper.get(".registration-summary").text()).toContain("R1");
+    expect(wrapper.text()).not.toContain("正在加载所选赛事的全部报名");
+  });
+
+  it("快速切换赛事时，较晚返回的旧失败不能覆盖最新错误和加载状态", async () => {
+    let rejectOldEvent;
+    const oldEventResponse = new Promise((_, reject) => { rejectOldEvent = reject; });
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/admin/events") return { rows: [event, eventTwo], projects: [project, projectTwo] };
+      if (path === "/api/admin/certificates") return { rows: [] };
+      if (path.includes("eventId=E2")) return oldEventResponse;
+      if (isRegistrationRequest(path)) return { rows: [registration], total: 1, page: 1, pageSize: 100 };
+      return {};
+    });
+    const wrapper = mount(CertificateManagementPage);
+    await flushPromises();
+    const eventSelect = wrapper.findAll(".certificate-filter-grid select")[0];
+
+    await eventSelect.setValue("E2");
+    await eventSelect.setValue("E1");
+    await flushPromises();
+    rejectOldEvent(new Error("旧赛事请求失败"));
+    await flushPromises();
+
+    expect(wrapper.get(".registration-summary").text()).toContain("R1");
+    expect(wrapper.text()).not.toContain("旧赛事请求失败");
+    expect(wrapper.text()).not.toContain("正在加载所选赛事的全部报名");
   });
 
   it("批量发布后的列表刷新失败时不保留成功提示", async () => {

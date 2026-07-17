@@ -30,6 +30,7 @@ const filters = reactive({ eventId: "", status: "", group: "", projectId: "", q:
 const result = reactive({ awardName: "", rank: "", score: "" });
 const downloads = createBlobDownloadManager();
 let pageReady = false;
+let registrationRequestSequence = 0;
 
 const eventProjects = computed(() => projects.value.filter((project) => !filters.eventId || project.eventId === filters.eventId));
 const groups = computed(() => [...new Set(eventProjects.value.flatMap((project) => project.allowedGroups || []))]);
@@ -58,6 +59,16 @@ const filteredCertificates = computed(() => certificates.value.filter((certifica
 
 const filteredRegistrations = computed(() => registrations.value.filter(matchesSharedFilters));
 
+function reconcileSelectedCertificates() {
+  const selectableIds = new Set(filteredCertificates.value
+    .filter((certificate) => certificate.status === "draft" && !certificate.cleanedAt)
+    .map((certificate) => certificate.id));
+  const nextIds = selectedIds.value.filter((id) => selectableIds.has(id));
+  if (nextIds.length !== selectedIds.value.length) selectedIds.value = nextIds;
+}
+
+watch(filteredCertificates, reconcileSelectedCertificates);
+
 watch(selectedRegistration, (registration) => {
   Object.assign(result, {
     awardName: registration?.awardName || "",
@@ -79,7 +90,19 @@ function registrationFilters(eventId = filters.eventId) {
 }
 
 async function loadRegistrations(eventId = filters.eventId) {
-  registrations.value = await loadAdminRegistrations(registrationFilters(eventId));
+  const requestSequence = ++registrationRequestSequence;
+  registrationLoading.value = true;
+  try {
+    const rows = await loadAdminRegistrations(registrationFilters(eventId));
+    if (requestSequence !== registrationRequestSequence) return false;
+    registrations.value = rows;
+    return true;
+  } catch (cause) {
+    if (requestSequence !== registrationRequestSequence) return false;
+    throw cause;
+  } finally {
+    if (requestSequence === registrationRequestSequence) registrationLoading.value = false;
+  }
 }
 
 watch(() => filters.eventId, async (eventId, previousEventId) => {
@@ -88,7 +111,6 @@ watch(() => filters.eventId, async (eventId, previousEventId) => {
   filters.projectId = "";
   selectedRegistrationId.value = "";
   if (!pageReady) return;
-  registrationLoading.value = true;
   error.value = "";
   success.value = "";
   try {
@@ -96,10 +118,8 @@ watch(() => filters.eventId, async (eventId, previousEventId) => {
   } catch (cause) {
     registrations.value = [];
     error.value = cause.message || "报名列表加载失败，请稍后重试。";
-  } finally {
-    registrationLoading.value = false;
   }
-});
+}, { flush: "sync" });
 
 async function loadPage() {
   loading.value = true;
@@ -117,7 +137,9 @@ async function loadPage() {
       ? props.initialEventId
       : "";
     if (!filters.eventId) filters.eventId = requestedEventId || events.value.find((event) => event.isCurrent)?.id || events.value[0]?.id || "";
-    await loadRegistrations(filters.eventId);
+    pageReady = true;
+    const applied = await loadRegistrations(filters.eventId);
+    if (!applied) return;
     const requested = props.initialRegistrationId && registrations.value.some((row) => row.id === props.initialRegistrationId)
       ? props.initialRegistrationId
       : "";
@@ -132,19 +154,21 @@ async function loadPage() {
 }
 
 async function refreshCertificates() {
-  const [registrationRows, certificatePayload] = await Promise.all([
-    loadAdminRegistrations(registrationFilters()),
+  const [registrationsApplied, certificatePayload] = await Promise.all([
+    loadRegistrations(filters.eventId),
     api("/api/admin/certificates")
   ]);
-  registrations.value = registrationRows;
+  if (!registrationsApplied) return false;
   certificates.value = certificatePayload.rows || [];
+  reconcileSelectedCertificates();
+  return true;
 }
 
 async function afterImport() {
   success.value = "";
   error.value = "";
   try {
-    await refreshCertificates();
+    if (!await refreshCertificates()) return;
     success.value = "已保存为未发布证书，证书与报名列表已刷新。";
   } catch (cause) {
     error.value = cause.message || "导入已完成，但列表刷新失败；请手动刷新。";
@@ -155,7 +179,7 @@ async function afterCertificateChanged(change) {
   success.value = "";
   error.value = "";
   try {
-    await refreshCertificates();
+    if (!await refreshCertificates()) return;
     success.value = change?.message || "证书操作完成，列表已刷新。";
   } catch (cause) {
     error.value = cause.message || "操作已提交，但列表刷新失败；请手动刷新。";
@@ -163,6 +187,7 @@ async function afterCertificateChanged(change) {
 }
 
 async function bulkPublish() {
+  reconcileSelectedCertificates();
   if (!selectedIds.value.length) return;
   const ids = [...selectedIds.value];
   bulkLoading.value = true;
@@ -173,7 +198,7 @@ async function bulkPublish() {
       method: "POST",
       body: JSON.stringify({ ids, status: "published" })
     });
-    await refreshCertificates();
+    if (!await refreshCertificates()) return;
     selectedIds.value = [];
     success.value = `已批量发布 ${ids.length} 张证书。`;
   } catch (cause) {
@@ -193,7 +218,7 @@ async function saveResult() {
       method: "POST",
       body: JSON.stringify({ awardName: result.awardName, rank: result.rank, score: result.score })
     });
-    await refreshCertificates();
+    if (!await refreshCertificates()) return;
     success.value = "成绩已保存，证书列表已刷新。";
   } catch (cause) {
     error.value = cause.message || "成绩保存失败，请稍后重试。";

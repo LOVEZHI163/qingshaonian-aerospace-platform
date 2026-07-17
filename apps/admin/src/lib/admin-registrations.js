@@ -1,8 +1,10 @@
 import { api } from "./api.js";
 
 const PAGE_SIZE_LIMIT = 100;
-const MAX_PAGES = 1000;
+const MAX_PAGES = 100;
+const MAX_ROWS = 10000;
 const ERROR_MESSAGE = "报名数据在加载期间发生变化，请刷新重试";
+const LIMIT_ERROR_MESSAGE = "报名数据过多，请缩小赛事或筛选范围后重试";
 
 export class AdminRegistrationPaginationError extends Error {
   constructor() {
@@ -11,8 +13,19 @@ export class AdminRegistrationPaginationError extends Error {
   }
 }
 
+export class AdminRegistrationLimitError extends Error {
+  constructor() {
+    super(LIMIT_ERROR_MESSAGE);
+    this.name = "AdminRegistrationLimitError";
+  }
+}
+
 function paginationError() {
   return new AdminRegistrationPaginationError();
+}
+
+function limitError() {
+  return new AdminRegistrationLimitError();
 }
 
 function requestPath(filters, page) {
@@ -49,7 +62,7 @@ export async function loadAdminRegistrations(filters = {}, request = api) {
   const { total: initialTotal, page: initialPage, pageSize: initialPageSize } = metadata(firstPayload);
   if (initialPage !== 1) throw paginationError();
   const expectedPages = Math.ceil(initialTotal / initialPageSize);
-  if (expectedPages > MAX_PAGES) throw paginationError();
+  if (initialTotal > MAX_ROWS || expectedPages > MAX_PAGES) throw limitError();
 
   const rows = [];
   const seen = new Set();

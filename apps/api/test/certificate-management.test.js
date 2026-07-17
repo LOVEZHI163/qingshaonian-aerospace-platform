@@ -162,6 +162,26 @@ test("manual certificate management uploads both slots, edits, replaces, deletes
     assert.equal(resultCertificates.length, 2);
     assert.equal(resultCertificates.every((row) => row.awardName === "特等奖" && row.rank === "1" && row.score === "99.9"), true);
 
+    async function assertExactResultSync(expected) {
+      const response = await fetch(`${baseUrl}/api/admin/registrations/R20260627001/result`, jsonRequest("POST", expected, admin.cookie));
+      assert.equal(response.status, 200);
+      const payload = await responseJson(response);
+      assert.equal(payload.certificates.length, 2);
+      assert.equal(payload.certificates.every((row) => (
+        row.awardName === expected.awardName && row.rank === expected.rank && row.score === expected.score
+      )), true);
+      const persisted = (await responseJson(await fetch(`${baseUrl}/api/admin/certificates`, withSession(admin.cookie)))).rows
+        .filter((row) => row.registrationId === "R20260627001");
+      assert.equal(persisted.length, 2);
+      assert.equal(persisted.every((row) => (
+        row.awardName === expected.awardName && row.rank === expected.rank && row.score === expected.score
+      )), true);
+    }
+
+    await assertExactResultSync({ awardName: "", rank: "1", score: "99.9" });
+    await assertExactResultSync({ awardName: "特等奖", rank: "", score: "99.9" });
+    await assertExactResultSync({ awardName: "特等奖", rank: "1", score: "" });
+
     const metadata = await fetch(`${baseUrl}/api/admin/certificates/${first.id}`, jsonRequest("PATCH", {
       title: "  金奖证书  ",
       awardName: "一等奖",

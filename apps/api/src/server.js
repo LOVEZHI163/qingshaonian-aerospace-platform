@@ -112,9 +112,9 @@ function activeMemberIdsForManagedOrganizations(db, userId, organizationId = nul
 function updateCertificateFromRegistration(certificate, registration) {
   certificate.userId = registration.userId || null;
   certificate.organizationId = registration.organizationId || null;
-  certificate.awardName = registration.awardName || certificate.awardName || "";
-  certificate.rank = registration.rank || certificate.rank || "";
-  certificate.score = registration.score || certificate.score || "";
+  certificate.awardName = registration.awardName ?? "";
+  certificate.rank = registration.rank ?? "";
+  certificate.score = registration.score ?? "";
 }
 
 function findCertificateByRegistration(db, registrationId, slot) {
