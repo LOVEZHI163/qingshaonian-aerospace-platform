@@ -31,46 +31,69 @@ async function deleteMissing(client, table, key, ids) {
 }
 
 async function runMigrations(pool) {
-  const names = (await fs.readdir(migrationsUrl))
-    .filter((name) => name.endsWith(".sql"))
-    .sort();
-  let supportsPlpgsql = true;
+  const client = await pool.connect();
   try {
-    await pool.query("DO $$ BEGIN END $$;");
-  } catch {
-    supportsPlpgsql = false;
-  }
-  for (const name of names) {
-    let migration = await fs.readFile(new URL(name, migrationsUrl), "utf8");
-    const projectGroups = await pool.query(`
-      SELECT 1 FROM information_schema.tables
-      WHERE table_schema = 'public' AND table_name = 'project_groups'
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS schema_migrations (
+        name TEXT
+      )
     `);
-    if (projectGroups.rowCount > 0) {
-      migration = migration.replace(/CREATE TABLE IF NOT EXISTS project_groups \([\s\S]*?\);\s*/, "");
+    await client.query("CREATE UNIQUE INDEX IF NOT EXISTS schema_migrations_name_key ON schema_migrations(name)");
+    const names = (await fs.readdir(migrationsUrl))
+      .filter((name) => name.endsWith(".sql"))
+      .sort();
+    let supportsPlpgsql = true;
+    try {
+      await client.query("DO $$ BEGIN END $$;");
+    } catch {
+      supportsPlpgsql = false;
     }
-    const organizationDocuments = await pool.query(`
-      SELECT 1 FROM information_schema.tables
-      WHERE table_schema = 'public' AND table_name = 'organization_documents'
-    `);
-    if (organizationDocuments.rowCount > 0) {
-      migration = migration.replace(/CREATE TABLE IF NOT EXISTS organization_documents \([\s\S]*?\);\s*/, "");
-    } else {
-      migration = migration.replace("CREATE TABLE IF NOT EXISTS organization_documents", "CREATE TABLE organization_documents");
-    }
-    for (const tableName of ["auth_rate_buckets", "password_reset_challenges"]) {
-      const existing = await pool.query(`
+    for (const name of names) {
+      const applied = await client.query("SELECT 1 FROM schema_migrations WHERE name = $1", [name]);
+      if (applied.rowCount > 0) continue;
+
+      let migration = await fs.readFile(new URL(name, migrationsUrl), "utf8");
+      const projectGroups = await client.query(`
         SELECT 1 FROM information_schema.tables
-        WHERE table_schema = 'public' AND table_name = $1
-      `, [tableName]);
-      if (existing.rowCount > 0) {
-        migration = migration.replace(new RegExp(`CREATE TABLE IF NOT EXISTS ${tableName} \\([\\s\\S]*?\\);\\s*`), "");
+        WHERE table_schema = 'public' AND table_name = 'project_groups'
+      `);
+      if (projectGroups.rowCount > 0) {
+        migration = migration.replace(/CREATE TABLE IF NOT EXISTS project_groups \([\s\S]*?\);\s*/, "");
+      }
+      const organizationDocuments = await client.query(`
+        SELECT 1 FROM information_schema.tables
+        WHERE table_schema = 'public' AND table_name = 'organization_documents'
+      `);
+      if (organizationDocuments.rowCount > 0) {
+        migration = migration.replace(/CREATE TABLE IF NOT EXISTS organization_documents \([\s\S]*?\);\s*/, "");
+      } else {
+        migration = migration.replace("CREATE TABLE IF NOT EXISTS organization_documents", "CREATE TABLE organization_documents");
+      }
+      for (const tableName of ["auth_rate_buckets", "password_reset_challenges"]) {
+        const existing = await client.query(`
+          SELECT 1 FROM information_schema.tables
+          WHERE table_schema = 'public' AND table_name = $1
+        `, [tableName]);
+        if (existing.rowCount > 0) {
+          migration = migration.replace(new RegExp(`CREATE TABLE IF NOT EXISTS ${tableName} \\([\\s\\S]*?\\);\\s*`), "");
+        }
+      }
+      if (!supportsPlpgsql) {
+        migration = migration.replace(/DO \$\$[\s\S]*?END \$\$;/g, "");
+      }
+
+      await client.query("BEGIN");
+      try {
+        if (migration.trim()) await client.query(migration);
+        await client.query("INSERT INTO schema_migrations (name) VALUES ($1)", [name]);
+        await client.query("COMMIT");
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
       }
     }
-    if (!supportsPlpgsql) {
-      migration = migration.replace(/DO \$\$[\s\S]*?END \$\$;/g, "");
-    }
-    if (migration.trim()) await pool.query(migration);
+  } finally {
+    client.release();
   }
 }
 

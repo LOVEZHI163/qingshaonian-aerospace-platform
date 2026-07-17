@@ -147,8 +147,10 @@ export function ensureDbShape(db) {
   const isLegacyOrganizationShape = !Array.isArray(db.organizationDocuments);
   db.organizationDocuments ||= [];
   for (const organization of db.organizations) {
-    if (isLegacyOrganizationShape && !organization.creditCode) {
-      organization.creditCode = `LEGACY-${organization.id}`;
+    if (!organization.creditCode) {
+      organization.creditCode = isLegacyOrganizationShape
+        ? `LEGACY-${organization.id}`
+        : `PENDING-${organization.id}`;
     }
     organization.reviewStatus ||= isLegacyOrganizationShape ? "approved" : "pending";
     organization.rejectReason ||= "";
