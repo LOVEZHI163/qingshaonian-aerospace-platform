@@ -35,10 +35,37 @@ function originalFileName(value) {
   return path.posix.basename(normalized).slice(0, 255) || "certificates.xlsx";
 }
 
-function currentEventId(db, candidates) {
-  return db.events.find((event) => event.isCurrent)?.id
-    || db.registrations.find((registration) => candidates.some((candidate) => candidate.registrationId === registration.id))?.eventId
-    || db.events[0]?.id;
+function eventIdForCandidates(db, candidates) {
+  const registrationById = new Map(db.registrations.map((registration) => [registration.id, registration]));
+  const eventIds = new Set(candidates.map((candidate) => registrationById.get(candidate.registrationId)?.eventId).filter(Boolean));
+  if (eventIds.size !== 1) {
+    throw importError(422, eventIds.size > 1 ? "同一导入批次不能包含多个赛事" : "无法从有效报名记录确定导入赛事");
+  }
+  return [...eventIds][0];
+}
+
+function hasExactCertificateSlots(candidate) {
+  const slots = (candidate.certificates || []).map((certificate) => Number(certificate.slot)).sort();
+  return slots.length === 2 && slots[0] === 1 && slots[1] === 2;
+}
+
+function candidateValidation(parsedCandidates) {
+  const counts = parsedCandidates.reduce((byRegistration, candidate) => {
+    byRegistration.set(candidate.registrationId, (byRegistration.get(candidate.registrationId) || 0) + 1);
+    return byRegistration;
+  }, new Map());
+  const candidates = [];
+  const errors = [];
+  for (const candidate of parsedCandidates) {
+    if (counts.get(candidate.registrationId) > 1) {
+      errors.push({ rowNumber: candidate.rowNumber, registrationId: candidate.registrationId, message: "同一报名编号只能出现一行" });
+    } else if (!hasExactCertificateSlots(candidate)) {
+      errors.push({ rowNumber: candidate.rowNumber, registrationId: candidate.registrationId, message: "每行必须同时且分别提供证书1和证书2" });
+    } else {
+      candidates.push(candidate);
+    }
+  }
+  return { candidates, errors };
 }
 
 function publicCandidate(batchId, candidate) {
@@ -75,9 +102,9 @@ export function publicCertificateImportPreview(batch, errors = []) {
 async function bestEffortRemoveStaging(storage, batchId) {
   try {
     await storage.removeStagingBatch(batchId);
-    return { ok: true };
+    return { ok: true, attempts: 1 };
   } catch (error) {
-    return { ok: false, error };
+    return { ok: false, error, attempts: 1 };
   }
 }
 
@@ -86,7 +113,9 @@ async function bestEffortDeleteFiles(storage, files) {
   for (const file of files) {
     let removed = false;
     let lastError;
+    let attempts = Number(file.cleanupAttempts || 0);
     for (let attempt = 0; attempt < 3; attempt += 1) {
+      attempts += 1;
       try {
         await storage.deleteFile(file);
         removed = true;
@@ -99,7 +128,7 @@ async function bestEffortDeleteFiles(storage, files) {
         lastError = error;
       }
     }
-    if (!removed) failed.push({ file, error: lastError });
+    if (!removed) failed.push({ file, error: lastError, attempts });
   }
   return failed;
 }
@@ -113,16 +142,25 @@ function registrationsForParser(db) {
   }));
 }
 
-async function cleanupStagingOrJournal({ storage, batchId, relativePaths, store, db, makeId, now }) {
+async function cleanupStagingOrJournal({ storage, batchId, stagedFiles, store, db, makeId, now }) {
   const cleanup = await bestEffortRemoveStaging(storage, batchId);
   if (cleanup.ok) return;
+  const targets = new Map();
+  for (const target of stagedFiles) {
+    const normalized = typeof target === "string" ? { relativePath: target, cleanupAttempts: 0 } : target;
+    const previous = targets.get(normalized.relativePath);
+    if (!previous || Number(normalized.cleanupAttempts || 0) > Number(previous.cleanupAttempts || 0)) {
+      targets.set(normalized.relativePath, normalized);
+    }
+  }
   await persistCleanupJournal({
     store,
     db,
-    entries: [...new Set(relativePaths)].map((relativePath) => ({
-      filePath: storage.resolveStagingPath(batchId, relativePath),
+    entries: [...targets.values()].map((target) => ({
+      filePath: storage.resolveStagingPath(batchId, target.relativePath),
       category: "certificate-import-staging",
-      error: cleanup.error
+      error: cleanup.error,
+      attempts: Number(target.cleanupAttempts || 0) + cleanup.attempts
     })),
     makeId,
     now
@@ -142,6 +180,9 @@ export async function previewCertificateImport({
   const db = await store.readDb();
   const rollbackDb = structuredClone(db);
   const parsed = await parseWorkbook(file.buffer, registrationsForParser(db));
+  const eventId = eventIdForCandidates(db, parsed.candidates);
+  const validation = candidateValidation(parsed.candidates);
+  const parsedErrors = [...parsed.errors, ...validation.errors];
   const batchId = makeId("CIB");
   const stagedCandidates = [];
   const stagedFiles = [];
@@ -159,7 +200,7 @@ export async function previewCertificateImport({
   }
 
   try {
-    for (const candidate of parsed.candidates) {
+    for (const candidate of validation.candidates) {
       const registration = db.registrations.find((row) => row.id === candidate.registrationId);
       const certificates = [];
       for (const certificate of candidate.certificates) {
@@ -170,7 +211,7 @@ export async function previewCertificateImport({
           extension: certificate.extension,
           buffer: certificate.buffer
         });
-        stagedFiles.push(staged.relativePath);
+        stagedFiles.push({ relativePath: staged.relativePath, cleanupAttempts: 0 });
         certificates.push({
           slot: certificate.slot,
           title: certificate.title,
@@ -190,16 +231,14 @@ export async function previewCertificateImport({
       });
     }
   } catch (error) {
-    if (error.cleanupTarget?.relativePath) stagedFiles.push(error.cleanupTarget.relativePath);
-    await cleanupStagingOrJournal({ storage, batchId, relativePaths: stagedFiles, store, db: rollbackDb, makeId, now });
+    if (error.cleanupTarget?.relativePath) stagedFiles.push({
+      relativePath: error.cleanupTarget.relativePath,
+      cleanupAttempts: Number(error.cleanupTarget.cleanupAttempts || 0)
+    });
+    await cleanupStagingOrJournal({ storage, batchId, stagedFiles, store, db: rollbackDb, makeId, now });
     throw error;
   }
 
-  const eventId = currentEventId(db, stagedCandidates);
-  if (!eventId) {
-    await cleanupStagingOrJournal({ storage, batchId, relativePaths: stagedFiles, store, db: rollbackDb, makeId, now });
-    throw importError(422, "没有可用于导入证书的赛事");
-  }
   const createdAt = now();
   const batch = {
     id: batchId,
@@ -209,12 +248,12 @@ export async function previewCertificateImport({
     status: "preview",
     previewJson: stagedCandidates,
     validCount: stagedCandidates.length,
-    errorCount: parsed.errors.length,
+    errorCount: parsedErrors.length,
     replaceCount: stagedCandidates.reduce((total, candidate) => total + candidate.certificates.filter((certificate) => certificate.replacing).length, 0),
     createdAt,
     committedAt: null
   };
-  const errors = parsed.errors.map((error) => ({
+  const errors = parsedErrors.map((error) => ({
     id: makeId("CIE"),
     batchId,
     rowNumber: error.rowNumber,
@@ -226,7 +265,7 @@ export async function previewCertificateImport({
   try {
     await store.writeDb(db);
   } catch (error) {
-    await cleanupStagingOrJournal({ storage, batchId, relativePaths: stagedFiles, store, db: rollbackDb, makeId, now });
+    await cleanupStagingOrJournal({ storage, batchId, stagedFiles, store, db: rollbackDb, makeId, now });
     throw error;
   }
   return publicCertificateImportPreview(batch, errors);
@@ -250,7 +289,7 @@ async function persistCleanupJournal({ store, db, entries, makeId, now }) {
   rollback.fileCleanupJournal ||= [];
   for (const entry of entries) {
     const marker = cleanupMarker({ makeId, filePath: entry.filePath, category: entry.category, now });
-    marker.attempts = 3;
+    marker.attempts = Number(entry.attempts || 0);
     marker.lastError = String(entry.error?.message || entry.error || "cleanup failed");
     rollback.fileCleanupJournal.push(marker);
   }
@@ -262,6 +301,20 @@ function batchOrError(db, batchId) {
   if (!batch) throw importError(404, "证书导入批次不存在");
   if (batch.status !== "preview") throw importError(409, "证书导入批次已处理");
   return batch;
+}
+
+function assertCommitCandidates(db, batch) {
+  const seen = new Set();
+  for (const candidate of batch.previewJson) {
+    if (seen.has(candidate.registrationId) || !hasExactCertificateSlots(candidate)) {
+      throw importError(409, "证书导入批次预览数据无效");
+    }
+    seen.add(candidate.registrationId);
+    const registration = db.registrations.find((row) => row.id === candidate.registrationId);
+    if (!registration || registration.status !== "approved" || registration.eventId !== batch.eventId) {
+      throw importError(409, `报名记录 ${candidate.registrationId} 已不再满足导入条件`);
+    }
+  }
 }
 
 async function finishCleanup({ store, db, markers, oldFiles, batchId, storage, now }) {
@@ -309,6 +362,7 @@ export async function commitCertificateImport({
 }) {
   const originalDb = await store.readDb();
   const sourceBatch = batchOrError(originalDb, batchId);
+  assertCommitCandidates(originalDb, sourceBatch);
   const db = structuredClone(originalDb);
   const batch = db.certificateImportBatches.find((row) => row.id === batchId);
   const savedFiles = [];
@@ -399,10 +453,11 @@ export async function commitCertificateImport({
     await persistCleanupJournal({
       store,
       db: originalDb,
-      entries: failed.map(({ file, error: cleanupError }) => ({
+      entries: failed.map(({ file, error: cleanupError, attempts }) => ({
         filePath: file.filePath,
         category: "certificate-import-new",
-        error: cleanupError
+        error: cleanupError,
+        attempts
       })),
       makeId,
       now

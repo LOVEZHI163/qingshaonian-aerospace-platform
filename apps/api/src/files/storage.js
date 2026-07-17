@@ -119,7 +119,7 @@ export async function saveImportStagingFile({ batchId, rowNumber, slot, extensio
     try { await fileSystem.unlink(filePath); } catch (cleanupError) {
       if (cleanupError?.code !== "ENOENT") {
         error.cleanupError = cleanupError;
-        error.cleanupTarget = { filePath, relativePath, category: "certificate-import-staging" };
+        error.cleanupTarget = { filePath, relativePath, category: "certificate-import-staging", cleanupAttempts: 1 };
       }
     }
     throw error;
@@ -148,7 +148,26 @@ export async function readImportStagingFile({ batchId, relativePath, fileSystem 
 }
 
 export async function removeImportStagingBatch(batchId, fileSystem = fs) {
-  await fileSystem.rm(importStagingDirectory(batchId), { recursive: true, force: true });
+  const root = uploadRoot();
+  const parent = path.resolve(root, "import-staging");
+  const directory = importStagingDirectory(batchId);
+  try {
+    await fileSystem.lstat(parent);
+  } catch (error) {
+    if (error?.code === "ENOENT") return;
+    throw error;
+  }
+  await assertNoLinkedComponents(root, parent, fileSystem);
+  await assertRealPathInsideRoot(root, parent, fileSystem);
+  try {
+    await fileSystem.lstat(directory);
+  } catch (error) {
+    if (error?.code === "ENOENT") return;
+    throw error;
+  }
+  await assertNoLinkedComponents(root, directory, fileSystem);
+  await assertRealPathInsideRoot(root, directory, fileSystem);
+  await fileSystem.rm(directory, { recursive: true, force: true });
 }
 
 export async function saveCertificateImportFile({ registrationId, slot, extension, buffer, fileSystem = fs }) {
@@ -168,7 +187,7 @@ export async function saveCertificateImportFile({ registrationId, slot, extensio
       if (cleanupError?.code !== "ENOENT") {
         const fileName = `${safeRegistrationId}-certificate-${slot}.${safeExtension}`;
         error.cleanupError = cleanupError;
-        error.cleanupTarget = { storedName, filePath, fileName, category: "certificate-import-new" };
+        error.cleanupTarget = { storedName, filePath, fileName, category: "certificate-import-new", cleanupAttempts: 1 };
       }
     }
     throw error;
