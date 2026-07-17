@@ -129,6 +129,14 @@ test("session identity cannot be replaced through body, query, or path values", 
     }, ordinary.cookie));
     assert.equal(unknownOrganization.status, 404);
 
+    const privateRegistration = await fetch(`${baseUrl}/api/registrations`, jsonOptions("POST", {
+      athlete: { name: "私人参赛者", school: "个人学校", grade: "初二", phone: "13600001004" },
+      group: "中学组（初中、高中、职高）",
+      projectId: "drone-relay"
+    }, ordinary.cookie));
+    assert.equal(privateRegistration.status, 201);
+    const privateRegistrationId = (await privateRegistration.json()).row.id;
+
     assert.equal((await fetch(`${baseUrl}/api/organizations/O1002/registrations`, withSession(ordinary.cookie))).status, 403);
     assert.equal((await fetch(`${baseUrl}/api/organizations/O1002/certificates`, withSession(ordinary.cookie))).status, 403);
     assert.equal((await fetch(`${baseUrl}/api/organizations/O1001/registrations`, withSession(ordinary.cookie))).status, 403);
@@ -136,8 +144,15 @@ test("session identity cannot be replaced through body, query, or path values", 
     assert.equal((await fetch(`${baseUrl}/api/organizations/invite`, jsonOptions("POST", {
       organizationId: "O1002", phone: "13700000001", name: "越权邀请"
     }, ordinary.cookie))).status, 403);
-    assert.equal((await fetch(`${baseUrl}/api/organizations/O1001/registrations`, withSession(owner.cookie))).status, 200);
-    assert.equal((await fetch(`${baseUrl}/api/organizations/O1001/registrations`, withSession(admin.cookie))).status, 200);
+    const ownerOrganizationRows = await fetch(`${baseUrl}/api/organizations/O1001/registrations`, withSession(owner.cookie));
+    assert.equal(ownerOrganizationRows.status, 200);
+    const ownerRows = (await ownerOrganizationRows.json()).rows;
+    assert.equal(ownerRows.every((row) => row.organizationId === "O1001"), true);
+    assert.equal(ownerRows.some((row) => row.id === "R20260627002"), false);
+    assert.equal(ownerRows.some((row) => row.id === privateRegistrationId), false);
+    const adminOrganizationRows = await fetch(`${baseUrl}/api/organizations/O1001/registrations`, withSession(admin.cookie));
+    assert.equal(adminOrganizationRows.status, 200);
+    assert.equal((await adminOrganizationRows.json()).rows.every((row) => row.organizationId === "O1001"), true);
 
     assert.equal((await fetch(`${baseUrl}/api/registrations/R20260627001/status`, jsonOptions("PATCH", { status: "approved" }, ordinary.cookie))).status, 403);
     assert.equal((await fetch(`${baseUrl}/api/registrations/R20260627002/status`, jsonOptions("PATCH", { status: "cancelled" }, ordinary.cookie))).status, 403);
@@ -149,6 +164,10 @@ test("session identity cannot be replaced through body, query, or path values", 
 test("an invited manager can accept their own invitation and manage the organization", async () => {
   await withServer(async (baseUrl) => {
     const owner = await loginAs(baseUrl, "13800000011", "123456");
+    const admin = await loginAs(baseUrl, "13900000000", "admin123");
+    assert.equal((await fetch(`${baseUrl}/api/organizations/invite`, jsonOptions("POST", {
+      organizationId: "O-NOT-FOUND", phone: "13700000016", name: "孤儿关系", role: "member"
+    }, admin.cookie))).status, 404);
     const registration = await fetch(`${baseUrl}/api/auth/register`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -169,9 +188,44 @@ test("an invited manager can accept their own invitation and manage the organiza
     assert.equal(accepted.status, 200);
     assert.equal((await accepted.json()).row.userId, manager.user.id);
     assert.equal((await fetch(`${baseUrl}/api/organizations/O1001/registrations`, withSession(manager.cookie))).status, 200);
-    assert.equal((await fetch(`${baseUrl}/api/organizations/invite`, jsonOptions("POST", {
+    const memberInvitation = await fetch(`${baseUrl}/api/organizations/invite`, jsonOptions("POST", {
       organizationId: "O1001", phone: "13700000011", name: "受邀成员"
-    }, manager.cookie))).status, 201);
+    }, manager.cookie));
+    assert.equal(memberInvitation.status, 201);
+    const memberMembership = (await memberInvitation.json()).row;
+
+    assert.equal((await fetch(`${baseUrl}/api/organizations/invite`, jsonOptions("POST", {
+      organizationId: "O1001", phone: "13700000012", name: "非法负责人", role: "owner"
+    }, owner.cookie))).status, 422);
+    assert.equal((await fetch(`${baseUrl}/api/organizations/invite`, jsonOptions("POST", {
+      organizationId: "O1001", phone: "13700000013", name: "非法角色", role: "supervisor"
+    }, owner.cookie))).status, 422);
+    assert.equal((await fetch(`${baseUrl}/api/organizations/invite`, jsonOptions("POST", {
+      organizationId: "O1001", phone: "13700000014", name: "越权协管", role: "manager"
+    }, manager.cookie))).status, 403);
+
+    assert.equal((await fetch(`${baseUrl}/api/memberships/M1001`, jsonOptions("PATCH", { status: "removed" }, manager.cookie))).status, 403);
+    assert.equal((await fetch(`${baseUrl}/api/memberships/${membership.id}`, jsonOptions("PATCH", { status: "removed" }, manager.cookie))).status, 403);
+    assert.equal((await fetch(`${baseUrl}/api/memberships/${memberMembership.id}`, jsonOptions("PATCH", {
+      status: "active", role: "manager"
+    }, manager.cookie))).status, 403);
+    assert.equal((await fetch(`${baseUrl}/api/memberships/${memberMembership.id}`, jsonOptions("PATCH", { status: "removed" }, manager.cookie))).status, 200);
+    assert.equal((await fetch(`${baseUrl}/api/memberships/${memberMembership.id}`, jsonOptions("PATCH", {
+      status: "active", role: "owner"
+    }, owner.cookie))).status, 422);
+    assert.equal((await fetch(`${baseUrl}/api/memberships/M1001`, jsonOptions("PATCH", {
+      status: "active", role: "member"
+    }, owner.cookie))).status, 403);
+    assert.equal((await fetch(`${baseUrl}/api/memberships/${membership.id}`, jsonOptions("PATCH", { status: "removed" }, owner.cookie))).status, 200);
+
+    const adminManagerInvite = await fetch(`${baseUrl}/api/organizations/invite`, jsonOptions("POST", {
+      organizationId: "O1002", phone: "13700000015", name: "管理员邀请协管", role: "manager"
+    }, admin.cookie));
+    assert.equal(adminManagerInvite.status, 201);
+    const adminManagedMembership = (await adminManagerInvite.json()).row;
+    assert.equal((await fetch(`${baseUrl}/api/memberships/${adminManagedMembership.id}`, jsonOptions("PATCH", {
+      status: "removed"
+    }, admin.cookie))).status, 200);
   });
 });
 
@@ -218,6 +272,15 @@ test("certificate downloads enforce ownership, publication, and organization man
     const privateCertificate = (await privateUpload.json()).row;
     await fetch(`${baseUrl}/api/admin/certificates/${privateCertificate.id}/publish`, jsonOptions("PATCH", { status: "published" }, admin.cookie));
     assert.equal((await fetch(`${baseUrl}/api/certificates/${privateCertificate.id}/download`, withSession(owner.cookie))).status, 403);
+
+    const organizationCertificates = await fetch(`${baseUrl}/api/organizations/O1001/certificates`, withSession(owner.cookie));
+    const organizationRows = (await organizationCertificates.json()).rows;
+    assert.deepEqual(organizationRows.map((row) => row.registrationId), ["R20260627001"]);
+    assert.equal(organizationRows.every((row) => !("filePath" in row) && !("storedName" in row)), true);
+    const ownCertificates = await fetch(`${baseUrl}/api/me/certificates`, withSession(ordinary.cookie));
+    assert.equal((await ownCertificates.json()).rows.every((row) => !("filePath" in row) && !("storedName" in row)), true);
+    const adminCertificates = await fetch(`${baseUrl}/api/admin/certificates`, withSession(admin.cookie));
+    assert.equal((await adminCertificates.json()).rows.every((row) => "filePath" in row && "storedName" in row), true);
   });
 });
 
@@ -238,6 +301,12 @@ test("temporary-password users must change password and only the current session
       currentPassword: "WrongPass9", newPassword: "NextPass2"
     }, first.cookie));
     assert.equal(wrong.status, 401);
+
+    const unchanged = await fetch(`${baseUrl}/api/auth/change-password`, jsonOptions("POST", {
+      currentPassword: "TempPass9", newPassword: "TempPass9"
+    }, first.cookie));
+    assert.equal(unchanged.status, 422);
+    assert.equal((await fetch(`${baseUrl}/api/me/registrations`, withSession(first.cookie))).status, 428);
 
     const changed = await fetch(`${baseUrl}/api/auth/change-password`, jsonOptions("POST", {
       currentPassword: "TempPass9", newPassword: "NextPass2"

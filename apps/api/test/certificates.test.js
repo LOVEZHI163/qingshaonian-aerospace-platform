@@ -43,6 +43,8 @@ test("published certificates are visible to the owner but drafts are hidden", as
     const visible = await json(visibleRes);
     assert.equal(visible.rows.length, 1);
     assert.equal(visible.rows[0].certificateNo, "CERT-001");
+    assert.equal("filePath" in visible.rows[0], false);
+    assert.equal("storedName" in visible.rows[0], false);
   });
 });
 
@@ -83,6 +85,7 @@ test("organization certificate query includes active members and excludes pendin
     assert.equal(orgRes.status, 200);
     const rows = (await json(orgRes)).rows;
     assert.deepEqual(rows.map((row) => row.certificateNo), ["CERT-ACTIVE"]);
+    assert.equal(rows.every((row) => !("filePath" in row) && !("storedName" in row)), true);
   });
 });
 

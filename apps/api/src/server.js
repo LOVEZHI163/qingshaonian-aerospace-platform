@@ -63,12 +63,33 @@ function publicUser(user) {
   return safe;
 }
 
-function canManageOrganization(db, userId, organizationId) {
+const MANAGED_MEMBERSHIP_ROLES = ["manager", "member"];
+
+function organizationRole(db, userId, organizationId) {
   const user = db.users.find((item) => item.id === userId);
-  if (user?.type === "admin") return true;
-  return db.memberships.some(
-    (item) => item.userId === userId && item.organizationId === organizationId && item.status === "active" && ["owner", "manager"].includes(item.role)
-  );
+  if (user?.type === "admin") return "admin";
+  return db.memberships.find(
+    (item) => item.userId === userId && item.organizationId === organizationId && item.status === "active"
+  )?.role || null;
+}
+
+function canManageOrganization(db, userId, organizationId) {
+  return ["admin", "owner", "manager"].includes(organizationRole(db, userId, organizationId));
+}
+
+function canGrantOrganizationRole(db, userId, organizationId, role) {
+  const currentRole = organizationRole(db, userId, organizationId);
+  if (["admin", "owner"].includes(currentRole)) return MANAGED_MEMBERSHIP_ROLES.includes(role);
+  return currentRole === "manager" && role === "member";
+}
+
+function canManageMembership(db, userId, membership, nextRole) {
+  if (membership.role === "owner") return false;
+  const currentRole = organizationRole(db, userId, membership.organizationId);
+  if (["admin", "owner"].includes(currentRole)) {
+    return MANAGED_MEMBERSHIP_ROLES.includes(membership.role) && MANAGED_MEMBERSHIP_ROLES.includes(nextRole);
+  }
+  return currentRole === "manager" && membership.role === "member" && nextRole === "member";
 }
 
 function activeMemberIdsForManagedOrganizations(db, userId, organizationId = null) {
@@ -108,6 +129,11 @@ function certificatePayload(certificate, registration) {
     projectName: registration?.projectName,
     organization: registration?.organization || ""
   };
+}
+
+function publicCertificatePayload(certificate, registration) {
+  const { filePath, storedName, ...safe } = certificatePayload(certificate, registration);
+  return safe;
 }
 
 function safeFileName(fileName) {
@@ -318,6 +344,9 @@ app.post("/api/auth/change-password", requireUser, asyncRoute(async (req, res) =
   }
   const passwordError = validatePassword(req.body.newPassword);
   if (passwordError) return res.status(422).json({ error: passwordError });
+  if (await verifyLoginPassword(req.body.newPassword, user.password)) {
+    return res.status(422).json({ error: "新密码不能与当前密码相同" });
+  }
   user.password = await hashPassword(req.body.newPassword);
   user.sessionVersion += 1;
   user.mustChangePassword = false;
@@ -480,7 +509,13 @@ app.post("/api/organizations/request", requireUser, requirePasswordReady, asyncR
 
 app.post("/api/organizations/invite", requireUser, requirePasswordReady, asyncRoute(async (req, res) => {
   const db = await readDb();
-  if (!canManageOrganization(db, req.user.id, req.body.organizationId)) return res.status(403).json({ error: "无权邀请该组织成员" });
+  const role = req.body.role || "member";
+  if (!MANAGED_MEMBERSHIP_ROLES.includes(role)) return res.status(422).json({ error: "邀请角色不合法" });
+  const organization = db.organizations.find((item) => item.id === req.body.organizationId);
+  if (!organization) return res.status(404).json({ error: "组织不存在" });
+  if (!canGrantOrganizationRole(db, req.user.id, req.body.organizationId, role)) {
+    return res.status(403).json({ error: "无权邀请该角色" });
+  }
   const phone = normalizePhone(req.body.phone);
   const user = db.users.find((item) => normalizePhone(item.phone) === phone);
   const existing = db.memberships.find(
@@ -494,7 +529,7 @@ app.post("/api/organizations/invite", requireUser, requirePasswordReady, asyncRo
     invitedPhone: phone,
     invitedName: req.body.name || user?.name || "",
     organizationId: req.body.organizationId,
-    role: req.body.role || "member",
+    role,
     status: "invited",
     direction: "org_invite",
     note: req.body.note || "",
@@ -512,13 +547,24 @@ app.patch("/api/memberships/:id", requireUser, requirePasswordReady, asyncRoute(
   if (!row) return res.status(404).json({ error: "成员关系不存在" });
 
   const currentUser = req.user;
-  const approvingSelfInvite = row.direction === "org_invite"
+  const acceptingSelfInvite = row.direction === "org_invite"
+    && row.status === "invited"
+    && MANAGED_MEMBERSHIP_ROLES.includes(row.role)
     && (row.userId === currentUser.id || normalizePhone(row.invitedPhone) === normalizePhone(currentUser.phone));
-  const managingOrg = canManageOrganization(db, currentUser.id, row.organizationId);
-  if (!approvingSelfInvite && !managingOrg) return res.status(403).json({ error: "无权处理该关系" });
-
   if (!["active", "rejected", "removed"].includes(req.body.status)) return res.status(422).json({ error: "状态不合法" });
+  const nextRole = req.body.role || row.role;
+  if (req.body.role && !MANAGED_MEMBERSHIP_ROLES.includes(req.body.role)) {
+    return res.status(422).json({ error: "成员角色不合法" });
+  }
+  const selfDecision = acceptingSelfInvite
+    && ["active", "rejected"].includes(req.body.status)
+    && (!req.body.role || req.body.role === row.role);
+  if (!selfDecision && !canManageMembership(db, currentUser.id, row, nextRole)) {
+    return res.status(403).json({ error: "无权处理该关系" });
+  }
+
   row.status = req.body.status;
+  row.role = nextRole;
   if (!row.userId && normalizePhone(row.invitedPhone) === normalizePhone(currentUser.phone) && req.body.status === "active") row.userId = currentUser.id;
   row.updatedAt = now();
   await writeDb(db);
@@ -545,7 +591,7 @@ app.get("/api/me/certificates", requireUser, requirePasswordReady, asyncRoute(as
   const db = await readDb();
   const rows = db.certificates
     .filter((certificate) => certificate.userId === req.user.id && certificate.status === "published")
-    .map((certificate) => certificatePayload(certificate, db.registrations.find((row) => row.id === certificate.registrationId)));
+    .map((certificate) => publicCertificatePayload(certificate, db.registrations.find((row) => row.id === certificate.registrationId)));
   res.json({ rows });
 }));
 
@@ -553,17 +599,21 @@ app.get("/api/organizations/:id/registrations", requireUser, requirePasswordRead
   const db = await readDb();
   if (!canManageOrganization(db, req.user.id, req.params.id)) return res.status(403).json({ error: "无权查看该组织记录" });
   const memberIds = activeMemberIdsForManagedOrganizations(db, req.user.id, req.params.id);
-  res.json({ rows: db.registrations.filter((row) => memberIds.includes(row.userId)) });
+  res.json({
+    rows: db.registrations.filter((row) => row.organizationId === req.params.id && memberIds.includes(row.userId))
+  });
 }));
 
 app.get("/api/organizations/:id/certificates", requireUser, requirePasswordReady, asyncRoute(async (req, res) => {
   const db = await readDb();
   if (!canManageOrganization(db, req.user.id, req.params.id)) return res.status(403).json({ error: "无权查看该组织证书" });
   const memberIds = activeMemberIdsForManagedOrganizations(db, req.user.id, req.params.id);
-  const registrationIds = db.registrations.filter((row) => memberIds.includes(row.userId)).map((row) => row.id);
+  const registrationIds = db.registrations
+    .filter((row) => row.organizationId === req.params.id && memberIds.includes(row.userId))
+    .map((row) => row.id);
   const rows = db.certificates
     .filter((certificate) => certificate.status === "published" && registrationIds.includes(certificate.registrationId))
-    .map((certificate) => certificatePayload(certificate, db.registrations.find((row) => row.id === certificate.registrationId)));
+    .map((certificate) => publicCertificatePayload(certificate, db.registrations.find((row) => row.id === certificate.registrationId)));
   res.json({ rows });
 }));
 

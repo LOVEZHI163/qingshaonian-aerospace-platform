@@ -386,9 +386,11 @@ test("login upgrades a legacy password and restores the user from a session", as
 
   组织成员接口通过 `requireUser` 后，再检查 `req.user` 是否是目标组织 active owner/manager 或 admin。证书下载不再读取 `actorUserId` 查询参数。
 
+  组织报名/证书列表必须同时限制 `registration.organizationId === 目标组织` 与报名用户是该组织 active member，不能因为用户同时加入多个组织而泄露私人或其他组织记录。角色层级固定：owner/admin 可邀请或管理 manager/member；manager 只能邀请或管理 member，不能创建 owner、不能移除 owner/manager；负责人转移留给独立流程。
+
   所有 `/api/admin/*`、全部报名列表/导出、证书管理和用户管理接口使用 `requireAdmin`。普通报名、重复检查、组织申请、本人报名/证书和证书下载使用 `requireUser`，写入的 `userId` 一律来自 `req.user.id`。`GET /api/organizations` 不再公开 memberships，只向已登录用户返回组织公开搜索字段。
 
-  增加 `requirePasswordReady`：当 `req.user.mustChangePassword=true` 时，除 `/api/auth/me`、`/api/auth/logout`、`/api/auth/change-password` 外，受保护接口返回 `428` 与稳定错误码 `PASSWORD_CHANGE_REQUIRED`。本人改密必须校验当前密码，成功后递增 `sessionVersion`、清除 `mustChangePassword`，使其他旧会话失效并更新当前 session 版本。
+  增加 `requirePasswordReady`：当 `req.user.mustChangePassword=true` 时，除 `/api/auth/me`、`/api/auth/logout`、`/api/auth/change-password` 外，受保护接口返回 `428` 与稳定错误码 `PASSWORD_CHANGE_REQUIRED`。本人改密必须校验当前密码，并拒绝新密码与当前密码相同；成功后递增 `sessionVersion`、清除 `mustChangePassword`，使其他旧会话失效并更新当前 session 版本。
 
 - [ ] **Step 3: 更新所有 API 测试请求**
 
