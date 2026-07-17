@@ -24,7 +24,8 @@ CREATE TABLE IF NOT EXISTS organizations (
   reject_reason TEXT NOT NULL DEFAULT '',
   reviewed_by TEXT REFERENCES users(id),
   reviewed_at TIMESTAMPTZ,
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  current_document_id TEXT
 );
 
 CREATE TABLE IF NOT EXISTS organization_documents (
@@ -46,7 +47,8 @@ CREATE TABLE IF NOT EXISTS file_cleanup_journal (
   category TEXT NOT NULL,
   attempts INTEGER NOT NULL,
   last_error TEXT NOT NULL,
-  created_at TIMESTAMPTZ NOT NULL
+  created_at TIMESTAMPTZ NOT NULL,
+  last_attempt_at TIMESTAMPTZ NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS memberships (

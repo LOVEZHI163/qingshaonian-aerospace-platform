@@ -1,6 +1,5 @@
 import express from "express";
 import multer from "multer";
-import fs from "node:fs/promises";
 
 import {
   assertOrganizationReadyForApproval,
@@ -8,13 +7,14 @@ import {
   registerOrdinary,
   registerOrganization,
   resubmitOrganization,
-  reviewOrganization
+  reviewOrganization,
+  validateCurrentCredentialFile
 } from "../services/organizations.js";
 
-function publicDocument(document) {
+function publicDocument(document, currentDocumentId = null) {
   if (!document) return null;
   const { filePath, storedName, ...safe } = document;
-  return safe;
+  return { ...safe, isCurrent: document.id === currentDocumentId };
 }
 
 function publicOrganization(organization) {
@@ -28,7 +28,7 @@ function organizationWithDocuments(db, organization, membershipRole = null) {
     ...(membershipRole ? { membershipRole } : {}),
     documents: db.organizationDocuments
       .filter((document) => document.organizationId === organization.id && !document.cleanedAt)
-      .map(publicDocument)
+      .map((document) => publicDocument(document, organization.currentDocumentId))
   };
 }
 
@@ -58,7 +58,7 @@ export function createOrganizationsRouter({ store, requireUser, requireAdmin, re
   router.post("/auth/register/organization", uploadCredential, asyncRoute(async (req, res, next) => {
     try {
       const result = await registerOrganization({ ...deps, input: req.body || {}, file: req.file });
-      res.status(201).json({ user: publicUser(result.user), organization: publicOrganization(result.organization), document: publicDocument(result.document) });
+      res.status(201).json({ user: publicUser(result.user), organization: publicOrganization(result.organization), document: publicDocument(result.document, result.organization.currentDocumentId) });
     } catch (error) { respondError(error, res, next); }
   }));
 
@@ -85,11 +85,8 @@ export function createOrganizationsRouter({ store, requireUser, requireAdmin, re
       const organization = db.organizations.find((row) => row.id === req.params.id);
       if (!organization) return res.status(404).json({ error: "组织不存在" });
       if (req.body?.status === "approved") {
-        assertOrganizationReadyForApproval(organization, db.organizationDocuments);
-        const credential = db.organizationDocuments
-          .filter((document) => document.organizationId === organization.id && !document.cleanedAt)
-          .sort((left, right) => String(right.uploadedAt).localeCompare(String(left.uploadedAt)))[0];
-        try { await fs.access(credential.filePath); } catch { throw new OrganizationError(422, "组织资质文件不存在"); }
+        const credential = assertOrganizationReadyForApproval(organization, db.organizationDocuments);
+        await validateCurrentCredentialFile(credential);
       }
       reviewOrganization(organization, req.body || {}, req.user.id, now());
       await deps.writeDb(db);
@@ -100,7 +97,7 @@ export function createOrganizationsRouter({ store, requireUser, requireAdmin, re
   router.patch("/me/organization", requireUser, requirePasswordReady, uploadCredential, asyncRoute(async (req, res, next) => {
     try {
       const result = await resubmitOrganization({ ...deps, input: req.body || {}, file: req.file, userId: req.user.id });
-      res.json({ organization: publicOrganization(result.organization), document: publicDocument(result.document) });
+      res.json({ organization: publicOrganization(result.organization), document: publicDocument(result.document, result.organization.currentDocumentId) });
     } catch (error) { respondError(error, res, next); }
   }));
 

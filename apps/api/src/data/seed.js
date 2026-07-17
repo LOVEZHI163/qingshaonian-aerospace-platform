@@ -133,7 +133,8 @@ for (const organization of seedDb.organizations) {
     rejectReason: "",
     reviewedBy: null,
     reviewedAt: null,
-    updatedAt: organization.createdAt
+    updatedAt: organization.createdAt,
+    currentDocumentId: null
   });
 }
 for (const row of seedDb.registrations) row.eventId = EVENT.id;
@@ -159,7 +160,14 @@ export function ensureDbShape(db) {
     organization.reviewedBy ??= null;
     organization.reviewedAt ??= null;
     organization.updatedAt ||= organization.createdAt;
+    if (!Object.hasOwn(organization, "currentDocumentId")) {
+      const currentDocument = db.organizationDocuments
+        .filter((document) => document.organizationId === organization.id && !document.cleanedAt)
+        .sort((left, right) => String(right.uploadedAt || "").localeCompare(String(left.uploadedAt || "")) || String(right.id || "").localeCompare(String(left.id || "")))[0];
+      organization.currentDocumentId = currentDocument?.id || null;
+    }
   }
+  for (const marker of db.fileCleanupJournal) marker.lastAttemptAt ||= marker.createdAt;
   db.memberships ||= [];
   db.events ||= structuredClone([EVENT]);
   db.projects ||= structuredClone(PROJECTS);

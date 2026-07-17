@@ -1,10 +1,11 @@
+import fs from "node:fs/promises";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { withTestServer } from "../test-support/server.js";
 import { loginAs, withSession } from "./helpers/api-client.js";
 
 async function withServer(fn) {
-  await withTestServer(({ baseUrl }) => fn(baseUrl), { prefix: "wz-admin-users-" });
+  await withTestServer((context) => fn(context.baseUrl, context), { prefix: "wz-admin-users-" });
 }
 
 const asJson = (res) => res.json();
@@ -77,5 +78,23 @@ test("admin user management rejects organization creation and conversion without
 
     const orgs = await asJson(await fetch(`${baseUrl}/api/organizations`, withSession(admin.cookie)));
     assert.equal(orgs.rows.some((org) => org.code === "TEST-NEW" || org.code === "TEST-SCHOOL"), false);
+  });
+});
+
+test("admin patch rejects a historical organization user whose owned organization is missing", async () => {
+  await withServer(async (baseUrl, { dbPath }) => {
+    const admin = await loginAs(baseUrl, "13900000000", "admin123");
+    const db = JSON.parse(await fs.readFile(dbPath, "utf8"));
+    db.organizations = db.organizations.filter((organization) => organization.ownerUserId !== "U2001");
+    db.memberships = db.memberships.filter((membership) => membership.userId !== "U2001");
+    await fs.writeFile(dbPath, JSON.stringify(db), "utf8");
+
+    const update = await fetch(`${baseUrl}/api/admin/users/U2001`, withSession(admin.cookie, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ organizationName: "不得补建的历史组织" })
+    }));
+    assert.equal(update.status, 422);
+    assert.match((await update.json()).error, /资质|组织|重新注册/);
   });
 });

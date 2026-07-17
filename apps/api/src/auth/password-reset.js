@@ -24,6 +24,7 @@ export function createSmsPasswordResetService({
   writeDb,
   smsProvider,
   authState,
+  withMutationLock = (handler) => handler(),
   clock = Date.now,
   generateCode = () => String(randomInt(0, 1_000_000)).padStart(6, "0"),
   logger = console
@@ -87,13 +88,15 @@ export function createSmsPasswordResetService({
       });
       if (!valid) throw new PasswordResetError(422, "验证码无效或已过期");
 
-      const db = await readDb();
-      const user = db.users.find((item) => normalizePhone(item.phone) === phone && item.status === "active");
-      if (!user) throw new PasswordResetError(422, "验证码无效或已过期");
-      user.password = await hashPassword(password);
-      user.sessionVersion += 1;
-      user.mustChangePassword = false;
-      await writeDb(db);
+      await withMutationLock(async () => {
+        const db = await readDb();
+        const user = db.users.find((item) => normalizePhone(item.phone) === phone && item.status === "active");
+        if (!user) throw new PasswordResetError(422, "验证码无效或已过期");
+        user.password = await hashPassword(password);
+        user.sessionVersion += 1;
+        user.mustChangePassword = false;
+        await writeDb(db);
+      });
       return { ok: true };
     }
   };

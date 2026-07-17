@@ -10,7 +10,7 @@ import { CREDENTIAL_POLICY, validateUpload } from "../src/files/policy.js";
 import { deletePrivateFile, savePrivateFile } from "../src/files/storage.js";
 import { createPostgresStore } from "../src/data/postgres-store.js";
 import { ensureDbShape, seedDb } from "../src/data/seed.js";
-import { registerOrganization } from "../src/services/organizations.js";
+import { registerOrganization, resubmitOrganization } from "../src/services/organizations.js";
 import { withTestServer } from "../test-support/server.js";
 import { loginAs, withSession } from "./helpers/api-client.js";
 
@@ -74,6 +74,7 @@ test("organization registration review keeps pending organizations outside organ
     const payload = await register.json();
     assert.equal(payload.organization.reviewStatus, "pending");
     assert.equal(payload.organization.creditCode, "91330300TEST000001");
+    assert.equal(payload.organization.currentDocumentId, payload.document.id);
     assert.equal(Object.hasOwn(payload.organization, "filePath"), false);
 
     const owner = await loginAs(baseUrl, "13600009991", "Strong123");
@@ -109,6 +110,7 @@ test("organization registration review keeps pending organizations outside organ
     const reviewedOrganization = (await reviewedOrganizations.json()).rows.find((row) => row.id === payload.organization.id);
     assert.equal(Object.hasOwn(reviewedOrganization, "filePath"), false);
     assert.equal(reviewedOrganization.documents[0].id, payload.document.id);
+    assert.equal(reviewedOrganization.documents[0].isCurrent, true);
     assert.equal(Object.hasOwn(reviewedOrganization.documents[0], "filePath"), false);
 
     const credential = await fetch(`${baseUrl}/api/organizations/${payload.organization.id}/credential/${payload.document.id}`, withSession(owner.cookie));
@@ -123,7 +125,8 @@ test("organization registration review keeps pending organizations outside organ
 test("rejected owner can replace credentials and resubmit organization for review", async () => {
   await withTestServer(async ({ baseUrl }) => {
     const register = await postOrganizationRegistration(baseUrl, { creditCode: "91330300TEST000011" });
-    const { organization } = await register.json();
+    const firstPayload = await register.json();
+    const { organization } = firstPayload;
     const admin = await loginAs(baseUrl, "13900000000", "admin123");
     const rejected = await fetch(`${baseUrl}/api/admin/organizations/${organization.id}/review`, withSession(admin.cookie, {
       method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "rejected", reason: "证照不清晰" })
@@ -139,6 +142,12 @@ test("rejected owner can replace credentials and resubmit organization for revie
     assert.equal(payload.organization.reviewStatus, "pending");
     assert.equal(payload.organization.rejectReason, "");
     assert.equal(payload.document.documentType, "school_license");
+    assert.equal(payload.organization.currentDocumentId, payload.document.id);
+    assert.notEqual(payload.organization.currentDocumentId, firstPayload.document.id);
+    const adminOrganizations = await fetch(`${baseUrl}/api/admin/organizations`, withSession(admin.cookie));
+    const persisted = (await adminOrganizations.json()).rows.find((row) => row.id === organization.id);
+    assert.equal(persisted.documents.length, 2);
+    assert.deepEqual(persisted.documents.filter((document) => document.isCurrent).map((document) => document.id), [payload.document.id]);
   }, { prefix: "org-resubmit-" });
 });
 
@@ -278,10 +287,8 @@ test("PostgreSQL store mutation lock preserves concurrent registrations across s
   const store = createPostgresStore(new Pool());
   let sequence = 0;
   const makeId = (prefix) => `${prefix}${++sequence}`;
-  const register = async (storeInstance, creditCode, phone) => {
-    const release = await storeInstance.acquireMutationLock();
-    try {
-      return await registerOrganization({
+  const register = (storeInstance, creditCode, phone) => storeInstance.withMutationLock(() =>
+    registerOrganization({
         input: { name: "并发负责人", phone, password: "Strong123", organizationName: `组织-${creditCode}`, creditCode, documentType: "business_license" },
         file: uploadedFile(pdfBuffer, "license.pdf", "application/pdf"),
         readDb: () => storeInstance.readDb(),
@@ -293,11 +300,8 @@ test("PostgreSQL store mutation lock preserves concurrent registrations across s
         saveFile: async ({ ownerId }) => ({
           filePath: `/safe/uploads/organization-documents/${ownerId}/license.pdf`, originalName: "license.pdf", storedName: `${ownerId}.pdf`, mimeType: "application/pdf", size: pdfBuffer.length
         })
-      });
-    } finally {
-      await release();
-    }
-  };
+      })
+  );
 
   try {
     await store.initialize();
@@ -310,7 +314,7 @@ test("PostgreSQL store mutation lock preserves concurrent registrations across s
     const db = await store.readDb();
     for (const result of [first, second]) {
       assert.ok(db.users.some((row) => row.id === result.user.id));
-      assert.ok(db.organizations.some((row) => row.id === result.organization.id));
+      assert.equal(db.organizations.find((row) => row.id === result.organization.id)?.currentDocumentId, result.document.id);
       assert.ok(db.organizationDocuments.some((row) => row.id === result.document.id));
     }
     await secondStore.close();
@@ -339,6 +343,27 @@ test("organization registration maps a PostgreSQL credit-code conflict to 409 an
     }),
     (error) => error.status === 409
   );
+  assert.deepEqual(cleaned, [saved.filePath]);
+});
+
+test("organization resubmission maps a PostgreSQL credit-code conflict to 409 and cleans its new file", async () => {
+  const saved = { filePath: "/safe/uploads/organization-documents/O2/replacement.pdf", originalName: "replacement.pdf", storedName: "replacement.pdf", mimeType: "application/pdf", size: pdfBuffer.length };
+  const cleaned = [];
+  const conflict = Object.assign(new Error("duplicate key"), { code: "23505" });
+  const db = ensureDbShape({
+    users: [],
+    organizations: [{ id: "O2", ownerUserId: "U2", name: "Old", creditCode: "91330300TEST000042", reviewStatus: "rejected", createdAt: "2026-07-16T00:00:00.000Z" }],
+    memberships: [{ id: "M2", userId: "U2", organizationId: "O2", role: "owner", status: "active" }],
+    organizationDocuments: [],
+    fileCleanupJournal: []
+  });
+  await assert.rejects(() => resubmitOrganization({
+    input: { organizationName: "New", creditCode: "91330300TEST000043", documentType: "business_license" },
+    file: uploadedFile(pdfBuffer, "replacement.pdf", "application/pdf"), userId: "U2",
+    readDb: async () => structuredClone(db), writeDb: async () => { throw conflict; },
+    makeId: (prefix) => `${prefix}2`, now: () => "2026-07-17T00:00:00.000Z",
+    saveFile: async () => saved, removePrivateFile: async (record) => { cleaned.push(record.filePath); }
+  }), (error) => error.status === 409);
   assert.deepEqual(cleaned, [saved.filePath]);
 });
 
@@ -394,6 +419,34 @@ test("organization review cannot approve historical records missing a credential
     }));
     assert.equal(invalidCreditApproval.status, 422);
   }, { prefix: "organization-review-defense-" });
+});
+
+test("organization review rejects a current credential outside UPLOAD_ROOT or with a changed disk signature", async () => {
+  await withTestServer(async ({ baseUrl, dbPath, tempDir }) => {
+    const admin = await loginAs(baseUrl, "13900000000", "admin123");
+    const outsidePath = path.join(tempDir, "outside.pdf");
+    await fs.writeFile(outsidePath, pdfBuffer);
+    const outside = await postOrganizationRegistration(baseUrl, { creditCode: "91330300TEST000072", phone: "13600009972" });
+    const outsidePayload = await outside.json();
+    let db = JSON.parse(await fs.readFile(dbPath, "utf8"));
+    db.organizationDocuments.find((row) => row.id === outsidePayload.document.id).filePath = outsidePath;
+    await fs.writeFile(dbPath, JSON.stringify(db), "utf8");
+    const outsideApproval = await fetch(`${baseUrl}/api/admin/organizations/${outsidePayload.organization.id}/review`, withSession(admin.cookie, {
+      method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "approved", reason: "" })
+    }));
+    assert.equal(outsideApproval.status, 422);
+    await fs.access(outsidePath);
+
+    const drifted = await postOrganizationRegistration(baseUrl, { creditCode: "91330300TEST000073", phone: "13600009973" });
+    const driftedPayload = await drifted.json();
+    db = JSON.parse(await fs.readFile(dbPath, "utf8"));
+    const driftedDocument = db.organizationDocuments.find((row) => row.id === driftedPayload.document.id);
+    await fs.writeFile(driftedDocument.filePath, Buffer.alloc(driftedDocument.sizeBytes, 0x41));
+    const driftedApproval = await fetch(`${baseUrl}/api/admin/organizations/${driftedPayload.organization.id}/review`, withSession(admin.cookie, {
+      method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "approved", reason: "" })
+    }));
+    assert.equal(driftedApproval.status, 422);
+  }, { prefix: "organization-review-disk-defense-" });
 });
 
 test("credential policy accepts real PNG and PDF and rejects disguised executables", async () => {
@@ -583,6 +636,19 @@ test("legacy file snapshots migrate to approved while new organizations remain p
   assert.notEqual(newOrganization.creditCode, secondNewOrganization.creditCode);
 });
 
+test("file snapshots deterministically migrate currentDocumentId by uploadedAt and then id", () => {
+  const db = ensureDbShape({
+    users: [],
+    organizations: [{ id: "O1", createdAt: "2026-01-01T00:00:00.000Z" }],
+    organizationDocuments: [
+      { id: "DOC-A", organizationId: "O1", uploadedAt: "2026-07-17T00:00:00.000Z", cleanedAt: null },
+      { id: "DOC-C", organizationId: "O1", uploadedAt: "2026-07-17T00:00:01.000Z", cleanedAt: null },
+      { id: "DOC-B", organizationId: "O1", uploadedAt: "2026-07-17T00:00:01.000Z", cleanedAt: null }
+    ]
+  });
+  assert.equal(db.organizations[0].currentDocumentId, "DOC-C");
+});
+
 test("PostgreSQL credential migration upgrades a legacy organization only during first initialization", async () => {
   const memory = newDb({ autoCreateForeignKeyIndices: true });
   const { Pool } = memory.adapters.createPg();
@@ -590,8 +656,13 @@ test("PostgreSQL credential migration upgrades a legacy organization only during
   await pool.query(`
     CREATE TABLE users (id TEXT PRIMARY KEY, name TEXT NOT NULL, phone TEXT NOT NULL UNIQUE, password TEXT NOT NULL, type TEXT NOT NULL, status TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL);
     CREATE TABLE organizations (id TEXT PRIMARY KEY, name TEXT NOT NULL, code TEXT NOT NULL UNIQUE, owner_user_id TEXT NOT NULL REFERENCES users(id), contact_name TEXT NOT NULL DEFAULT '', contact_phone TEXT NOT NULL DEFAULT '', status TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL);
+    CREATE TABLE organization_documents (id TEXT PRIMARY KEY, organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE, document_type TEXT NOT NULL, original_name TEXT NOT NULL, stored_name TEXT NOT NULL, file_path TEXT NOT NULL, mime_type TEXT NOT NULL, size_bytes BIGINT NOT NULL, uploaded_at TIMESTAMPTZ NOT NULL, cleaned_at TIMESTAMPTZ);
     INSERT INTO users VALUES ('ULEGACY', 'Legacy owner', '13000000000', 'secret', 'organization', 'active', '2026-01-01T00:00:00.000Z');
     INSERT INTO organizations VALUES ('OLEGACY', 'Legacy organization', 'LEGACY', 'ULEGACY', 'Owner', '13000000000', 'active', '2026-01-01T00:00:00.000Z');
+    INSERT INTO organization_documents VALUES
+      ('DOC-A', 'OLEGACY', 'business_license', 'a.pdf', 'a.pdf', '/data/uploads/a.pdf', 'application/pdf', 10, '2026-07-16T00:00:00.000Z', NULL),
+      ('DOC-B', 'OLEGACY', 'business_license', 'b.pdf', 'b.pdf', '/data/uploads/b.pdf', 'application/pdf', 10, '2026-07-17T00:00:00.000Z', NULL),
+      ('DOC-C', 'OLEGACY', 'business_license', 'c.pdf', 'c.pdf', '/data/uploads/c.pdf', 'application/pdf', 10, '2026-07-17T00:00:00.000Z', NULL);
   `);
   let store = createPostgresStore(pool);
 
@@ -600,7 +671,9 @@ test("PostgreSQL credential migration upgrades a legacy organization only during
     const migrated = (await store.readDb()).organizations.find((organization) => organization.id === "OLEGACY");
     assert.equal(migrated.creditCode, "LEGACY-OLEGACY");
     assert.equal(migrated.reviewStatus, "approved");
+    assert.equal(migrated.currentDocumentId, "DOC-C");
     assert.equal((await store.pool.query("SELECT name FROM schema_migrations WHERE name = $1", ["002-organization-credentials.sql"])).rowCount, 1);
+    assert.equal((await store.pool.query("SELECT name FROM schema_migrations WHERE name = $1", ["005-organization-current-document.sql"])).rowCount, 1);
 
     await store.close();
     store = createPostgresStore(new Pool());

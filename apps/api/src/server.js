@@ -10,16 +10,18 @@ import { createSmsPasswordResetService, sendPasswordResetError } from "./auth/pa
 import { asyncRoute, createSessionMiddleware, requireAdmin, requirePasswordReady, requireUser } from "./auth/session.js";
 import { createAliyunSmsProvider } from "./auth/sms.js";
 import { createDataStore } from "./data/index.js";
-import { createMutationLockMiddleware } from "./data/mutation-lock.js";
+import { createMutationAsyncRoute } from "./data/mutation-lock.js";
 import { createEventsRouter } from "./routes/events.js";
 import { createOrganizationsRouter } from "./routes/organizations.js";
 import { projectForHistoricalRegistration, registrationContext } from "./services/events.js";
+import { replayFileCleanupJournal } from "./services/organizations.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const uploadRoot = process.env.UPLOAD_ROOT ? path.resolve(process.env.UPLOAD_ROOT) : path.resolve(__dirname, "../uploads");
 const certificateUploadDir = path.join(uploadRoot, "certificates");
 const PORT = Number(process.env.PORT || 4300);
 const dataStore = createDataStore();
+const mutationAsyncRoute = createMutationAsyncRoute(dataStore);
 const readDb = () => dataStore.readDb();
 const writeDb = (db) => dataStore.writeDb(db);
 const smsProvider = createAliyunSmsProvider(process.env);
@@ -28,7 +30,8 @@ const smsPasswordReset = createSmsPasswordResetService({
   readDb,
   writeDb,
   smsProvider,
-  authState: dataStore.authState
+  authState: dataStore.authState,
+  withMutationLock: (handler) => dataStore.withMutationLock(handler)
 });
 
 function id(prefix) {
@@ -173,32 +176,6 @@ function organizationForOwner(db, userId) {
   return db.organizations.find((item) => item.ownerUserId === userId);
 }
 
-function createOrganizationForUser(db, user, { organizationName, organizationCode } = {}) {
-  const organization = {
-    id: id("O"),
-    name: organizationName || `${user.name}组织`,
-    code: organizationCode || `ORG-${normalizePhone(user.phone).slice(-4)}`,
-    ownerUserId: user.id,
-    contactName: user.name,
-    contactPhone: user.phone,
-    status: "active",
-    createdAt: now()
-  };
-  db.organizations.push(organization);
-  db.memberships.push({
-    id: id("M"),
-    userId: user.id,
-    organizationId: organization.id,
-    role: "owner",
-    status: "active",
-    direction: "system",
-    note: "管理员创建组织用户",
-    createdAt: now(),
-    updatedAt: now()
-  });
-  return organization;
-}
-
 function userOrganizations(db, userId) {
   const memberships = db.memberships.filter((item) => item.userId === userId && item.status === "active");
   return memberships
@@ -262,14 +239,12 @@ app.use(asyncRoute(async (req, _res, next) => {
   }
   next();
 }));
-app.use("/api", createMutationLockMiddleware(dataStore));
-
 app.use("/api", createOrganizationsRouter({
   store: dataStore,
   requireUser,
   requireAdmin,
   requirePasswordReady,
-  asyncRoute,
+  asyncRoute: mutationAsyncRoute,
   hashPassword,
   validatePassword,
   makeId: id,
@@ -281,7 +256,7 @@ app.use("/api", createEventsRouter({
   store: dataStore,
   requireAdmin,
   requirePasswordReady,
-  asyncRoute,
+  asyncRoute: mutationAsyncRoute,
   makeId: id
 }));
 
@@ -289,7 +264,7 @@ app.get("/api/public/features", (_req, res) => {
   res.json({ smsPasswordResetEnabled: smsPasswordReset.enabled });
 });
 
-app.post("/api/auth/register", asyncRoute(async (req, res) => {
+app.post("/api/auth/register", mutationAsyncRoute(async (req, res) => {
   const db = await readDb();
   const { name, phone, password, type = "ordinary" } = req.body;
   if (!name || !phone || !password) return res.status(422).json({ error: "姓名、手机号和密码不能为空" });
@@ -319,16 +294,21 @@ app.post("/api/auth/login", asyncRoute(async (req, res) => {
     { key: rateKeys[1], limit: 20, windowMs: 15 * 60 * 1000 }
   ], attemptTime);
   if (!allowed) return res.status(429).json({ error: "登录尝试过于频繁，请稍后再试" });
-  const db = await readDb();
-  const user = db.users.find((item) => normalizePhone(item.phone) === phone && item.status === "active");
-  if (!(await verifyLoginPassword(req.body.password, user?.password))) {
+  const authenticated = await dataStore.withMutationLock(async () => {
+    const db = await readDb();
+    const user = db.users.find((item) => normalizePhone(item.phone) === phone && item.status === "active");
+    if (!(await verifyLoginPassword(req.body.password, user?.password))) return null;
+    if (isLegacyPassword(user.password)) {
+      user.password = await hashPassword(req.body.password);
+      await writeDb(db);
+    }
+    return { db, user };
+  });
+  if (!authenticated) {
     return res.status(401).json({ error: "手机号或密码错误" });
   }
   await dataStore.authState.releaseRateLimits(rateKeys, attemptTime);
-  if (isLegacyPassword(user.password)) {
-    user.password = await hashPassword(req.body.password);
-    await writeDb(db);
-  }
+  const { db, user } = authenticated;
   await new Promise((resolve, reject) => req.session.regenerate((error) => error ? reject(error) : resolve()));
   req.session.userId = user.id;
   req.session.sessionVersion = user.sessionVersion;
@@ -342,20 +322,23 @@ app.get("/api/auth/me", requireUser, asyncRoute(async (req, res) => {
 }));
 
 app.post("/api/auth/change-password", requireUser, asyncRoute(async (req, res) => {
-  const db = await readDb();
-  const user = db.users.find((item) => item.id === req.user.id);
-  if (!user || !(await verifyLoginPassword(req.body.currentPassword, user.password))) {
-    return res.status(401).json({ error: "当前密码错误" });
+  const result = await dataStore.withMutationLock(async () => {
+    const db = await readDb();
+    const user = db.users.find((item) => item.id === req.user.id);
+    if (!user || !(await verifyLoginPassword(req.body.currentPassword, user.password))) return { status: 401, error: "当前密码错误" };
+    const passwordError = validatePassword(req.body.newPassword);
+    if (passwordError) return { status: 422, error: passwordError };
+    if (await verifyLoginPassword(req.body.newPassword, user.password)) return { status: 422, error: "新密码不能与当前密码相同" };
+    user.password = await hashPassword(req.body.newPassword);
+    user.sessionVersion += 1;
+    user.mustChangePassword = false;
+    await writeDb(db);
+    return { user };
+  });
+  if (result.error) {
+    return res.status(result.status).json({ error: result.error });
   }
-  const passwordError = validatePassword(req.body.newPassword);
-  if (passwordError) return res.status(422).json({ error: passwordError });
-  if (await verifyLoginPassword(req.body.newPassword, user.password)) {
-    return res.status(422).json({ error: "新密码不能与当前密码相同" });
-  }
-  user.password = await hashPassword(req.body.newPassword);
-  user.sessionVersion += 1;
-  user.mustChangePassword = false;
-  await writeDb(db);
+  const { user } = result;
   req.session.sessionVersion = user.sessionVersion;
   await new Promise((resolve, reject) => req.session.save((error) => error ? reject(error) : resolve()));
   res.json({ user: publicUser(user) });
@@ -388,7 +371,7 @@ app.get("/api/users", requireAdmin, requirePasswordReady, asyncRoute(async (_req
   res.json({ rows: db.users.map(publicUser) });
 }));
 
-app.post("/api/admin/users/:id/reset-password", requireAdmin, requirePasswordReady, asyncRoute(async (req, res) => {
+app.post("/api/admin/users/:id/reset-password", requireAdmin, requirePasswordReady, mutationAsyncRoute(async (req, res) => {
   const passwordError = validatePassword(req.body.password);
   if (passwordError) return res.status(422).json({ error: passwordError });
   const db = await readDb();
@@ -401,12 +384,12 @@ app.post("/api/admin/users/:id/reset-password", requireAdmin, requirePasswordRea
   res.json({ user: publicUser(user) });
 }));
 
-app.post("/api/admin/users", requireAdmin, requirePasswordReady, asyncRoute(async (req, res) => {
+app.post("/api/admin/users", requireAdmin, requirePasswordReady, mutationAsyncRoute(async (req, res) => {
   const db = await readDb();
-  const { name, phone, password, type = "ordinary", organizationName, organizationCode } = req.body;
+  const { name, phone, password, type = "ordinary" } = req.body;
   if (!name || !phone || !password) return res.status(422).json({ error: "姓名、手机号和密码不能为空" });
   if (type === "organization") return res.status(422).json({ error: "组织必须通过资质注册并审核" });
-  if (!["ordinary", "organization"].includes(type)) return res.status(422).json({ error: "账号类型不合法" });
+  if (type !== "ordinary") return res.status(422).json({ error: "账号类型不合法" });
   const passwordError = validatePassword(password);
   if (passwordError) return res.status(422).json({ error: passwordError });
   const normalizedPhone = normalizePhone(phone);
@@ -417,15 +400,18 @@ app.post("/api/admin/users", requireAdmin, requirePasswordReady, asyncRoute(asyn
     sessionVersion: 0, mustChangePassword: false, createdAt: now()
   };
   db.users.push(user);
-  const organization = type === "organization" ? createOrganizationForUser(db, user, { organizationName, organizationCode }) : null;
   await writeDb(db);
-  res.status(201).json({ row: publicUser(user), organization });
+  res.status(201).json({ row: publicUser(user), organization: null });
 }));
 
-app.patch("/api/admin/users/:id", requireAdmin, requirePasswordReady, asyncRoute(async (req, res) => {
+app.patch("/api/admin/users/:id", requireAdmin, requirePasswordReady, mutationAsyncRoute(async (req, res) => {
   const db = await readDb();
   const user = db.users.find((item) => item.id === req.params.id);
   if (!user) return res.status(404).json({ error: "用户不存在" });
+  let organization = organizationForOwner(db, user.id);
+  if (user.type === "organization" && !organization) {
+    return res.status(422).json({ error: "历史组织账号缺少资质组织，请重新注册并审核" });
+  }
   if (user.type === "admin" && req.body.type && req.body.type !== "admin") return res.status(422).json({ error: "不能修改超级管理员账号类型" });
   if (req.body.type === "organization" && user.type !== "organization") return res.status(422).json({ error: "组织必须通过资质注册并审核" });
 
@@ -440,9 +426,7 @@ app.patch("/api/admin/users/:id", requireAdmin, requirePasswordReady, asyncRoute
   if (req.body.status) user.status = String(req.body.status);
   if (req.body.type && ["ordinary", "organization"].includes(req.body.type)) user.type = req.body.type;
 
-  let organization = organizationForOwner(db, user.id);
   if (user.type === "organization" && (req.body.organizationName || req.body.organizationCode)) {
-    if (!organization) organization = createOrganizationForUser(db, user, { organizationName: req.body.organizationName, organizationCode: req.body.organizationCode });
     organization.name = req.body.organizationName || organization.name;
     organization.code = req.body.organizationCode || organization.code;
     organization.contactName = user.name;
@@ -453,7 +437,7 @@ app.patch("/api/admin/users/:id", requireAdmin, requirePasswordReady, asyncRoute
   res.json({ row: publicUser(user), organization });
 }));
 
-app.delete("/api/admin/users/:id", requireAdmin, requirePasswordReady, asyncRoute(async (req, res) => {
+app.delete("/api/admin/users/:id", requireAdmin, requirePasswordReady, mutationAsyncRoute(async (req, res) => {
   const db = await readDb();
   const user = db.users.find((item) => item.id === req.params.id);
   if (!user) return res.status(404).json({ error: "用户不存在" });
@@ -493,7 +477,7 @@ app.get("/api/me/:userId", requireUser, requirePasswordReady, asyncRoute(async (
   });
 }));
 
-app.post("/api/organizations/request", requireUser, requirePasswordReady, asyncRoute(async (req, res) => {
+app.post("/api/organizations/request", requireUser, requirePasswordReady, mutationAsyncRoute(async (req, res) => {
   const db = await readDb();
   const user = db.users.find((item) => item.id === req.user.id);
   const organization = db.organizations.find((item) => item.id === req.body.organizationId);
@@ -518,7 +502,7 @@ app.post("/api/organizations/request", requireUser, requirePasswordReady, asyncR
   res.status(201).json({ row: membership });
 }));
 
-app.post("/api/organizations/invite", requireUser, requirePasswordReady, asyncRoute(async (req, res) => {
+app.post("/api/organizations/invite", requireUser, requirePasswordReady, mutationAsyncRoute(async (req, res) => {
   const db = await readDb();
   const role = req.body.role || "member";
   if (!MANAGED_MEMBERSHIP_ROLES.includes(role)) return res.status(422).json({ error: "邀请角色不合法" });
@@ -552,7 +536,7 @@ app.post("/api/organizations/invite", requireUser, requirePasswordReady, asyncRo
   res.status(201).json({ row: membership });
 }));
 
-app.patch("/api/memberships/:id", requireUser, requirePasswordReady, asyncRoute(async (req, res) => {
+app.patch("/api/memberships/:id", requireUser, requirePasswordReady, mutationAsyncRoute(async (req, res) => {
   const db = await readDb();
   const row = db.memberships.find((item) => item.id === req.params.id);
   if (!row) return res.status(404).json({ error: "成员关系不存在" });
@@ -651,7 +635,7 @@ app.post("/api/registrations/check", requireUser, requirePasswordReady, asyncRou
   });
 }));
 
-app.post("/api/registrations", requireUser, requirePasswordReady, asyncRoute(async (req, res) => {
+app.post("/api/registrations", requireUser, requirePasswordReady, mutationAsyncRoute(async (req, res) => {
   const db = await readDb();
   const { event, project } = registrationContext(db, req.body);
   const validation = validateRegistration(req.body, db.registrations, project, event.id);
@@ -695,7 +679,7 @@ app.post("/api/registrations", requireUser, requirePasswordReady, asyncRoute(asy
   res.status(201).json({ row, duplicateCount: validation.duplicateCount });
 }));
 
-app.post("/api/admin/registrations/:id/result", requireAdmin, requirePasswordReady, asyncRoute(async (req, res) => {
+app.post("/api/admin/registrations/:id/result", requireAdmin, requirePasswordReady, mutationAsyncRoute(async (req, res) => {
   const db = await readDb();
   const row = db.registrations.find((item) => item.id === req.params.id);
   if (!row) return res.status(404).json({ error: "报名记录不存在" });
@@ -710,7 +694,7 @@ app.post("/api/admin/registrations/:id/result", requireAdmin, requirePasswordRea
   res.json({ row, certificate });
 }));
 
-app.patch("/api/admin/registrations/:id", requireAdmin, requirePasswordReady, asyncRoute(async (req, res) => {
+app.patch("/api/admin/registrations/:id", requireAdmin, requirePasswordReady, mutationAsyncRoute(async (req, res) => {
   const db = await readDb();
   const row = db.registrations.find((item) => item.id === req.params.id);
   if (!row) return res.status(404).json({ error: "报名记录不存在" });
@@ -751,7 +735,7 @@ app.patch("/api/admin/registrations/:id", requireAdmin, requirePasswordReady, as
   res.json({ row });
 }));
 
-app.post("/api/admin/registrations/:id/certificate", requireAdmin, requirePasswordReady, upload.single("certificate"), asyncRoute(async (req, res) => {
+app.post("/api/admin/registrations/:id/certificate", requireAdmin, requirePasswordReady, upload.single("certificate"), mutationAsyncRoute(async (req, res) => {
   const db = await readDb();
   const registration = db.registrations.find((item) => item.id === req.params.id);
   if (!registration) return res.status(404).json({ error: "报名记录不存在" });
@@ -813,7 +797,7 @@ function matchCertificateFile(db, fileName) {
   });
 }
 
-app.post("/api/admin/certificates/batch", requireAdmin, requirePasswordReady, upload.single("zip"), asyncRoute(async (req, res) => {
+app.post("/api/admin/certificates/batch", requireAdmin, requirePasswordReady, upload.single("zip"), mutationAsyncRoute(async (req, res) => {
   const db = await readDb();
   if (!req.file?.buffer) return res.status(422).json({ error: "请上传 ZIP 文件" });
 
@@ -873,7 +857,7 @@ app.post("/api/admin/certificates/batch", requireAdmin, requirePasswordReady, up
   res.json({ matched, unmatched, ambiguous });
 }));
 
-app.patch("/api/admin/certificates/:id/publish", requireAdmin, requirePasswordReady, asyncRoute(async (req, res) => {
+app.patch("/api/admin/certificates/:id/publish", requireAdmin, requirePasswordReady, mutationAsyncRoute(async (req, res) => {
   const db = await readDb();
   const certificate = db.certificates.find((item) => item.id === req.params.id);
   if (!certificate) return res.status(404).json({ error: "证书不存在" });
@@ -894,7 +878,7 @@ app.get("/api/certificates/:id/download", requireUser, requirePasswordReady, asy
   res.download(certificate.filePath, certificate.fileName);
 }));
 
-app.patch("/api/registrations/:id/status", requireUser, requirePasswordReady, asyncRoute(async (req, res) => {
+app.patch("/api/registrations/:id/status", requireUser, requirePasswordReady, mutationAsyncRoute(async (req, res) => {
   const db = await readDb();
   const row = db.registrations.find((item) => item.id === req.params.id);
   if (!row) return res.status(404).json({ error: "报名记录不存在" });
@@ -948,6 +932,7 @@ app.use((error, _req, res, next) => {
 });
 
 await dataStore.initialize();
+await replayFileCleanupJournal({ store: dataStore, now });
 
 const server = app.listen(PORT, () => {
   console.log(`API listening on http://localhost:${server.address().port}`);

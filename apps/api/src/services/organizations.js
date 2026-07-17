@@ -1,4 +1,4 @@
-import { deletePrivateFile, savePrivateFile } from "../files/storage.js";
+import { deletePrivateFile, readPrivateFile, savePrivateFile } from "../files/storage.js";
 import { validateUpload } from "../files/policy.js";
 
 export const DOCUMENT_TYPES = new Set([
@@ -98,7 +98,7 @@ async function journalCleanup(db, file, result, writeDb, makeId, now) {
   rollback.fileCleanupJournal ||= [];
   rollback.fileCleanupJournal.push({
     id: makeId("CLN"), filePath: file.filePath, category: "organization-documents", attempts: 3,
-    lastError: String(result.error?.message || "文件清理失败"), createdAt: now()
+    lastError: String(result.error?.message || "文件清理失败"), createdAt: now(), lastAttemptAt: now()
   });
   try { await writeDb(rollback); } catch { /* original persistence failure remains primary */ }
 }
@@ -142,6 +142,7 @@ export async function registerOrganization({ input, file, readDb, writeDb, hashP
       reviewStatus: "pending", rejectReason: "", reviewedBy: null, reviewedAt: null, createdAt: now(), updatedAt: now()
     };
     const document = documentRecord({ makeId, organizationId: organization.id, documentType: values.documentType, stored, now });
+    organization.currentDocumentId = document.id;
     db.users.push(user);
     db.organizations.push(organization);
     db.memberships.push({
@@ -174,14 +175,29 @@ export function assertOrganizationReadyForApproval(organization, documents) {
   if (!/^[0-9A-Z]{18}$/.test(String(organization.creditCode || ""))) {
     throw validationError("统一社会信用代码无效");
   }
-  const hasCredential = documents.some((document) =>
-    document.organizationId === organization.id
+  const credential = documents.find((document) =>
+    document.id === organization.currentDocumentId
+    && document.organizationId === organization.id
     && !document.cleanedAt
     && DOCUMENT_TYPES.has(document.documentType)
     && String(document.filePath || "").trim()
     && String(document.storedName || "").trim()
   );
-  if (!hasCredential) throw validationError("组织缺少有效资质文件");
+  if (!credential) throw validationError("组织缺少有效的当前资质文件");
+  return credential;
+}
+
+export async function validateCurrentCredentialFile(document, loadFile = readPrivateFile) {
+  try {
+    const buffer = await loadFile(document);
+    if (!Buffer.isBuffer(buffer) || buffer.length !== Number(document.sizeBytes)) {
+      throw new Error("Stored file size does not match credential metadata");
+    }
+    const detected = await validateUpload({ buffer });
+    if (detected.mime !== document.mimeType) throw new Error("Stored file signature does not match credential metadata");
+  } catch (error) {
+    throw validationError(`组织资质文件无效：${error.message}`);
+  }
 }
 
 export async function resubmitOrganization({ input, file, userId, readDb, writeDb, makeId, now, saveFile = savePrivateFile, removePrivateFile = deletePrivateFile }) {
@@ -212,6 +228,7 @@ export async function resubmitOrganization({ input, file, userId, readDb, writeD
     organization.reviewedAt = null;
     organization.updatedAt = now();
     db.organizationDocuments.push(document);
+    organization.currentDocumentId = document.id;
     await writeDb(db);
     return { organization, document };
   } catch (error) {
@@ -220,4 +237,50 @@ export async function resubmitOrganization({ input, file, userId, readDb, writeD
     if (error?.code === "23505") throw new OrganizationError(409, "统一社会信用代码已注册");
     throw error;
   }
+}
+
+function cleanupPathIsReferenced(db, filePath) {
+  const referencedByDocument = (db.organizationDocuments || []).some((document) => {
+    if (document.filePath !== filePath) return false;
+    const organization = (db.organizations || []).find((row) => row.id === document.organizationId);
+    return !document.cleanedAt || organization?.currentDocumentId === document.id;
+  });
+  return referencedByDocument || (db.certificates || []).some((row) => row.filePath === filePath);
+}
+
+export async function replayFileCleanupJournal({ store, removePrivateFile = deletePrivateFile, now = () => new Date().toISOString() }) {
+  return store.withMutationLock(async () => {
+    const db = await store.readDb();
+    const markers = [...(db.fileCleanupJournal || [])];
+    if (!markers.length) return { removed: 0, retained: 0 };
+    let changed = false;
+    let removed = 0;
+    let retained = 0;
+
+    for (const marker of markers) {
+      if (cleanupPathIsReferenced(db, marker.filePath)) {
+        retained += 1;
+        continue;
+      }
+      try {
+        await removePrivateFile(marker);
+        db.fileCleanupJournal = db.fileCleanupJournal.filter((row) => row.id !== marker.id);
+        removed += 1;
+        changed = true;
+      } catch (error) {
+        if (error?.code === "ENOENT") {
+          db.fileCleanupJournal = db.fileCleanupJournal.filter((row) => row.id !== marker.id);
+          removed += 1;
+        } else {
+          marker.attempts = Number(marker.attempts || 0) + 1;
+          marker.lastError = String(error?.message || error);
+          marker.lastAttemptAt = now();
+          retained += 1;
+        }
+        changed = true;
+      }
+    }
+    if (changed) await store.writeDb(db);
+    return { removed, retained };
+  });
 }

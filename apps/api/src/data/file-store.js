@@ -36,6 +36,14 @@ export function createFileStore(dbPath) {
         unlock();
       };
     },
+    async withMutationLock(handler) {
+      const release = await this.acquireMutationLock();
+      try {
+        return await handler();
+      } finally {
+        await release();
+      }
+    },
     async close() {}
   };
 }

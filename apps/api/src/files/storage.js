@@ -75,3 +75,22 @@ export async function deletePrivateFile(record) {
   }
   await fs.unlink(filePath);
 }
+
+export async function readPrivateFile(record, fileSystem = fs) {
+  if (!record?.filePath) throw new Error("Private file record is required");
+  const root = uploadRoot();
+  const filePath = path.resolve(record.filePath);
+  const relative = path.relative(root, filePath);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) {
+    throw new Error("Private file path escapes upload root");
+  }
+  const [realRoot, realFilePath] = await Promise.all([
+    fileSystem.realpath(root),
+    fileSystem.realpath(filePath)
+  ]);
+  const realRelative = path.relative(realRoot, realFilePath);
+  if (realRelative.startsWith("..") || path.isAbsolute(realRelative)) {
+    throw new Error("Private file path escapes upload root");
+  }
+  return fileSystem.readFile(realFilePath);
+}

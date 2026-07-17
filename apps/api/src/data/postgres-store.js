@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import { AsyncLocalStorage } from "node:async_hooks";
 
 import { APPROVED_GROUP_NAMES, ensureDbShape, EVENT, PROJECTS, seedDb } from "./seed.js";
 import { createPostgresAuthState } from "./auth-state.js";
@@ -7,6 +8,11 @@ const schemaUrl = new URL("./schema.sql", import.meta.url);
 const migrationsUrl = new URL("./migrations/", import.meta.url);
 const ADVISORY_LOCK_KEY = 72451029;
 let postgresFallbackTail = Promise.resolve();
+
+function isPgMemUnsupportedAdvisoryLock(error) {
+  return /function pg_advisory_lock\([^)]*\) does not exist/i.test(String(error?.data?.error || ""))
+    && /pg-mem implements very few native functions/i.test(String(error?.data?.hint || ""));
+}
 
 async function acquireFallbackLock() {
   let unlock;
@@ -142,28 +148,106 @@ async function addApprovedGroups(pool) {
   }
 }
 
+async function backfillCurrentDocumentIds(pool) {
+  const [organizations, documents] = await Promise.all([
+    pool.query("SELECT id, current_document_id FROM organizations"),
+    pool.query("SELECT id, organization_id, uploaded_at FROM organization_documents WHERE cleaned_at IS NULL")
+  ]);
+  const currentByOrganization = new Map();
+  for (const document of documents.rows) {
+    const current = currentByOrganization.get(document.organization_id);
+    const documentTime = new Date(document.uploaded_at).getTime();
+    const currentTime = current ? new Date(current.uploaded_at).getTime() : Number.NEGATIVE_INFINITY;
+    if (!current || documentTime > currentTime || (documentTime === currentTime && document.id.localeCompare(current.id) > 0)) {
+      currentByOrganization.set(document.organization_id, document);
+    }
+  }
+  for (const organization of organizations.rows) {
+    if (organization.current_document_id) continue;
+    const current = currentByOrganization.get(organization.id);
+    if (current) await pool.query("UPDATE organizations SET current_document_id = $1 WHERE id = $2 AND current_document_id IS NULL", [current.id, organization.id]);
+  }
+}
+
 export function createPostgresStore(pool) {
+  const mutationContext = new AsyncLocalStorage();
+  let mutationTail = Promise.resolve();
+
+  async function acquireQueueSlot() {
+    let unlock;
+    const previous = mutationTail;
+    mutationTail = new Promise((resolve) => { unlock = resolve; });
+    await previous;
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      unlock();
+    };
+  }
+
+  async function acquireMutationClient() {
+    const releaseQueue = await acquireQueueSlot();
+    let client;
+    try {
+      client = await pool.connect();
+      await client.query("SELECT pg_advisory_lock($1)", [ADVISORY_LOCK_KEY]);
+    } catch (error) {
+      client?.release();
+      if (!isPgMemUnsupportedAdvisoryLock(error)) {
+        releaseQueue();
+        throw error;
+      }
+      const releaseFallback = await acquireFallbackLock();
+      return {
+        client: null,
+        async release() {
+          try { await releaseFallback(); } finally { releaseQueue(); }
+        }
+      };
+    }
+
+    let released = false;
+    return {
+      client,
+      async release() {
+        if (released) return;
+        released = true;
+        try {
+          await client.query("SELECT pg_advisory_unlock($1)", [ADVISORY_LOCK_KEY]);
+        } finally {
+          client.release();
+          releaseQueue();
+        }
+      }
+    };
+  }
+
+  function activeContext() {
+    const context = mutationContext.getStore();
+    if (context && !context.active) throw new Error("Mutation lock context has already been released");
+    return context;
+  }
+
   const store = {
     kind: "postgres",
     authState: createPostgresAuthState(pool),
-    async acquireMutationLock() {
-      const client = await pool.connect();
+    async withMutationLock(handler) {
+      const existing = activeContext();
+      if (existing) return handler();
+      const lock = await acquireMutationClient();
+      const context = { client: lock.client, active: true };
       try {
-        await client.query("SELECT pg_advisory_lock($1)", [ADVISORY_LOCK_KEY]);
-      } catch {
-        client.release();
-        return acquireFallbackLock();
+        return await mutationContext.run(context, handler);
+      } finally {
+        context.active = false;
+        await lock.release();
       }
-      let released = false;
-      return async () => {
-        if (released) return;
-        released = true;
-        try { await client.query("SELECT pg_advisory_unlock($1)", [ADVISORY_LOCK_KEY]); } finally { client.release(); }
-      };
     },
     async initialize() {
       await runSchema(pool);
       await runMigrations(pool);
+      await backfillCurrentDocumentIds(pool);
       await addApprovedGroups(pool);
 
       const client = await pool.connect();
@@ -219,22 +303,23 @@ export function createPostgresStore(pool) {
       if (count.rows[0].count === 0) await store.writeDb(structuredClone(seedDb));
     },
     async readDb() {
+      const executor = activeContext()?.client || pool;
       const [events, projects, projectGroups, users, organizations, memberships, registrations, certificates, organizationDocuments, fileCleanupJournal] = await Promise.all([
-        pool.query("SELECT * FROM events ORDER BY created_at, id"),
-        pool.query("SELECT * FROM projects ORDER BY display_order, id"),
-        pool.query("SELECT * FROM project_groups ORDER BY project_id, group_name"),
-        pool.query("SELECT * FROM users ORDER BY created_at, id"),
-        pool.query("SELECT * FROM organizations ORDER BY created_at, id"),
-        pool.query("SELECT * FROM memberships ORDER BY created_at, id"),
-        pool.query(`
+        executor.query("SELECT * FROM events ORDER BY created_at, id"),
+        executor.query("SELECT * FROM projects ORDER BY display_order, id"),
+        executor.query("SELECT * FROM project_groups ORDER BY project_id, group_name"),
+        executor.query("SELECT * FROM users ORDER BY created_at, id"),
+        executor.query("SELECT * FROM organizations ORDER BY created_at, id"),
+        executor.query("SELECT * FROM memberships ORDER BY created_at, id"),
+        executor.query(`
           SELECT r.*, x.award_name, x.rank, x.score, x.recorded_at
           FROM registrations r
           LEFT JOIN results x ON x.registration_id = r.id
           ORDER BY r.created_at, r.id
         `),
-        pool.query("SELECT * FROM certificates ORDER BY uploaded_at DESC, id"),
-        pool.query("SELECT * FROM organization_documents ORDER BY uploaded_at DESC, id"),
-        pool.query("SELECT * FROM file_cleanup_journal ORDER BY created_at, id")
+        executor.query("SELECT * FROM certificates ORDER BY uploaded_at DESC, id"),
+        executor.query("SELECT * FROM organization_documents ORDER BY uploaded_at DESC, id"),
+        executor.query("SELECT * FROM file_cleanup_journal ORDER BY created_at, id")
       ]);
 
       const groupsByProject = projectGroups.rows.reduce((groups, row) => {
@@ -300,7 +385,8 @@ export function createPostgresStore(pool) {
           rejectReason: row.reject_reason,
           reviewedBy: row.reviewed_by,
           reviewedAt: row.reviewed_at ? iso(row.reviewed_at) : null,
-          updatedAt: iso(row.updated_at)
+          updatedAt: iso(row.updated_at),
+          currentDocumentId: row.current_document_id || null
         })),
         memberships: memberships.rows.map((row) => ({
           id: row.id,
@@ -366,12 +452,14 @@ export function createPostgresStore(pool) {
           uploadedAt: iso(row.uploaded_at),
           cleanedAt: row.cleaned_at ? iso(row.cleaned_at) : null
         })),
-        fileCleanupJournal: fileCleanupJournal.rows.map((row) => ({ id: row.id, filePath: row.file_path, category: row.category, attempts: row.attempts, lastError: row.last_error, createdAt: iso(row.created_at) }))
+        fileCleanupJournal: fileCleanupJournal.rows.map((row) => ({ id: row.id, filePath: row.file_path, category: row.category, attempts: row.attempts, lastError: row.last_error, createdAt: iso(row.created_at), lastAttemptAt: iso(row.last_attempt_at) }))
       });
     },
     async writeDb(input) {
       const db = ensureDbShape(structuredClone(input));
-      const client = await pool.connect();
+      const context = activeContext();
+      const client = context?.client || await pool.connect();
+      const ownsClient = !context?.client;
       try {
         await client.query("BEGIN");
 
@@ -456,8 +544,8 @@ export function createPostgresStore(pool) {
           await client.query(
             `INSERT INTO organizations
               (id, name, code, owner_user_id, contact_name, contact_phone, status, created_at,
-               credit_code, review_status, reject_reason, reviewed_by, reviewed_at, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+               credit_code, review_status, reject_reason, reviewed_by, reviewed_at, updated_at, current_document_id)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
              ON CONFLICT (id) DO UPDATE SET
                name = EXCLUDED.name,
                code = EXCLUDED.code,
@@ -471,10 +559,11 @@ export function createPostgresStore(pool) {
                reject_reason = EXCLUDED.reject_reason,
                reviewed_by = EXCLUDED.reviewed_by,
                reviewed_at = EXCLUDED.reviewed_at,
-               updated_at = EXCLUDED.updated_at`,
+               updated_at = EXCLUDED.updated_at,
+               current_document_id = EXCLUDED.current_document_id`,
             [
               row.id, row.name, row.code, row.ownerUserId, row.contactName || "", row.contactPhone || "", row.status, row.createdAt,
-              row.creditCode, row.reviewStatus, row.rejectReason || "", row.reviewedBy || null, row.reviewedAt || null, row.updatedAt
+              row.creditCode, row.reviewStatus, row.rejectReason || "", row.reviewedBy || null, row.reviewedAt || null, row.updatedAt, row.currentDocumentId || null
             ]
           );
         }
@@ -503,10 +592,10 @@ export function createPostgresStore(pool) {
 
         for (const row of db.fileCleanupJournal || []) {
           await client.query(
-            `INSERT INTO file_cleanup_journal (id, file_path, category, attempts, last_error, created_at)
-             VALUES ($1, $2, $3, $4, $5, $6)
-             ON CONFLICT (id) DO UPDATE SET file_path = EXCLUDED.file_path, category = EXCLUDED.category, attempts = EXCLUDED.attempts, last_error = EXCLUDED.last_error, created_at = EXCLUDED.created_at`,
-            [row.id, row.filePath, row.category, row.attempts, row.lastError, row.createdAt]
+            `INSERT INTO file_cleanup_journal (id, file_path, category, attempts, last_error, created_at, last_attempt_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)
+             ON CONFLICT (id) DO UPDATE SET file_path = EXCLUDED.file_path, category = EXCLUDED.category, attempts = EXCLUDED.attempts, last_error = EXCLUDED.last_error, created_at = EXCLUDED.created_at, last_attempt_at = EXCLUDED.last_attempt_at`,
+            [row.id, row.filePath, row.category, row.attempts, row.lastError, row.createdAt, row.lastAttemptAt || row.createdAt]
           );
         }
 
@@ -611,7 +700,7 @@ export function createPostgresStore(pool) {
         await client.query("ROLLBACK");
         throw error;
       } finally {
-        client.release();
+        if (ownsClient) client.release();
       }
     },
     async close() {
