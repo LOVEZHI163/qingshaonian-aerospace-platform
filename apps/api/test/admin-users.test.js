@@ -48,7 +48,7 @@ test("admin can create, update, and delete an ordinary user", async () => {
     const createRes = await fetch(`${baseUrl}/api/admin/users`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ actorUserId: "U9001", name: "测试家长", phone: "13600001111", password: "123456", type: "ordinary" })
+      body: JSON.stringify({ actorUserId: "U9001", name: "测试家长", phone: "13600001111", password: "Strong123", type: "ordinary" })
     });
     assert.equal(createRes.status, 201);
     const created = (await asJson(createRes)).row;
@@ -64,7 +64,13 @@ test("admin can create, update, and delete an ordinary user", async () => {
 
     const deleteRes = await fetch(`${baseUrl}/api/admin/users/${created.id}?actorUserId=U9001`, { method: "DELETE" });
     assert.equal(deleteRes.status, 200);
-    const usersRes = await fetch(`${baseUrl}/api/users`);
+    const loginRes = await fetch(`${baseUrl}/api/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ phone: "13900000000", password: "admin123" })
+    });
+    const cookie = loginRes.headers.get("set-cookie")?.split(";")[0];
+    const usersRes = await fetch(`${baseUrl}/api/users`, { headers: { Cookie: cookie } });
     const users = (await asJson(usersRes)).rows;
     assert.equal(users.some((user) => user.id === created.id), false);
   });
@@ -79,7 +85,7 @@ test("admin organization user CRUD creates and updates owned organization", asyn
         actorUserId: "U9001",
         name: "领队老师",
         phone: "13600003333",
-        password: "123456",
+        password: "Strong123",
         type: "organization",
         organizationName: "测试学校",
         organizationCode: "TEST-SCHOOL"

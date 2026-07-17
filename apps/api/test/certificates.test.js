@@ -90,7 +90,7 @@ test("organization certificate query includes active members and excludes pendin
   await withServer(async (baseUrl) => {
     const pendingUserRes = await fetch(`${baseUrl}/api/auth/register`, {
       method: "POST",
-      body: JSON.stringify({ name: "待审核家长", phone: "13600000001", password: "123456" }),
+      body: JSON.stringify({ name: "待审核家长", phone: "13600000001", password: "Strong123" }),
       headers: { "Content-Type": "application/json" }
     });
     const pendingUser = (await json(pendingUserRes)).user;

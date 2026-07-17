@@ -5,8 +5,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import multer from "multer";
 import AdmZip from "adm-zip";
-import { hashPassword, isLegacyPassword, verifyPassword } from "./auth/passwords.js";
-import { createSessionMiddleware, requireUser } from "./auth/session.js";
+import { hashPassword, isLegacyPassword, validatePassword, verifyPassword } from "./auth/passwords.js";
+import { createSmsPasswordResetService, sendPasswordResetError } from "./auth/password-reset.js";
+import { asyncRoute, createLoginFailureLimiter, createSessionMiddleware, requireAdmin, requireUser } from "./auth/session.js";
+import { createAliyunSmsProvider } from "./auth/sms.js";
 import { createDataStore } from "./data/index.js";
 import { EVENT, GRADES, PROJECTS } from "./data/seed.js";
 
@@ -17,6 +19,14 @@ const PORT = Number(process.env.PORT || 4300);
 const dataStore = createDataStore();
 const readDb = () => dataStore.readDb();
 const writeDb = (db) => dataStore.writeDb(db);
+const smsProvider = createAliyunSmsProvider(process.env);
+const smsPasswordReset = createSmsPasswordResetService({
+  secret: process.env.SESSION_SECRET || "test-session-secret-32-characters",
+  readDb,
+  writeDb,
+  smsProvider
+});
+const loginFailureLimiter = createLoginFailureLimiter();
 
 function id(prefix) {
   return `${prefix}${Date.now()}${Math.floor(Math.random() * 1000)}`;
@@ -49,7 +59,7 @@ function projectType(projectId) {
 
 function publicUser(user) {
   if (!user) return null;
-  const { password, ...safe } = user;
+  const { password, sessionVersion, ...safe } = user;
   return safe;
 }
 
@@ -196,6 +206,7 @@ function validateRegistration(input, existingRows, ignoreId = null) {
 }
 
 const app = express();
+app.set("trust proxy", 1);
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 app.use(cors());
 app.use(express.json({ limit: "5mb" }));
@@ -204,7 +215,11 @@ app.use(async (req, _res, next) => {
   try {
     if (req.session.userId) {
       const db = await readDb();
-      req.user = db.users.find((user) => user.id === req.session.userId && user.status === "active");
+      req.user = db.users.find((user) =>
+        user.id === req.session.userId
+        && user.status === "active"
+        && user.sessionVersion === req.session.sessionVersion
+      );
     }
     next();
   } catch (error) {
@@ -216,15 +231,24 @@ app.get("/api/public/event", (_req, res) => {
   res.json({ event: EVENT, projects: PROJECTS, grades: GRADES });
 });
 
-app.post("/api/auth/register", async (req, res) => {
+app.get("/api/public/features", (_req, res) => {
+  res.json({ smsPasswordResetEnabled: smsPasswordReset.enabled });
+});
+
+app.post("/api/auth/register", asyncRoute(async (req, res) => {
   const db = await readDb();
   const { name, phone, password, type = "ordinary", organizationName, organizationCode } = req.body;
   if (!name || !phone || !password) return res.status(422).json({ error: "姓名、手机号和密码不能为空" });
   if (!["ordinary", "organization"].includes(type)) return res.status(422).json({ error: "账号类型不合法" });
+  const passwordError = validatePassword(password);
+  if (passwordError) return res.status(422).json({ error: passwordError });
   const normalizedPhone = normalizePhone(phone);
   if (db.users.some((user) => normalizePhone(user.phone) === normalizedPhone)) return res.status(409).json({ error: "该手机号已注册" });
 
-  const user = { id: id("U"), name, phone: normalizedPhone, password: await hashPassword(password), type, status: "active", createdAt: now() };
+  const user = {
+    id: id("U"), name, phone: normalizedPhone, password: await hashPassword(password), type, status: "active",
+    sessionVersion: 0, mustChangePassword: false, createdAt: now()
+  };
   db.users.push(user);
 
   let organization = null;
@@ -256,68 +280,97 @@ app.post("/api/auth/register", async (req, res) => {
 
   await writeDb(db);
   res.status(201).json({ user: publicUser(user), organization });
-});
+}));
 
-app.post("/api/auth/login", async (req, res) => {
+app.post("/api/auth/login", asyncRoute(async (req, res) => {
   const db = await readDb();
   const phone = normalizePhone(req.body.phone);
+  const rateKey = { phone, ip: req.ip };
+  if (loginFailureLimiter.isLimited(rateKey)) return res.status(429).json({ error: "登录尝试过于频繁，请稍后再试" });
   const user = db.users.find((item) => normalizePhone(item.phone) === phone && item.status === "active");
   if (!user || !(await verifyPassword(req.body.password, user.password))) {
+    loginFailureLimiter.recordFailure(rateKey);
     return res.status(401).json({ error: "手机号或密码错误" });
   }
+  loginFailureLimiter.clearPhone(phone);
   if (isLegacyPassword(user.password)) {
     user.password = await hashPassword(req.body.password);
     await writeDb(db);
   }
   await new Promise((resolve, reject) => req.session.regenerate((error) => error ? reject(error) : resolve()));
   req.session.userId = user.id;
+  req.session.sessionVersion = user.sessionVersion;
   await new Promise((resolve, reject) => req.session.save((error) => error ? reject(error) : resolve()));
   res.json({ user: publicUser(user), organizations: userOrganizations(db, user.id) });
-});
+}));
 
-app.get("/api/auth/me", requireUser, async (req, res) => {
+app.get("/api/auth/me", requireUser, asyncRoute(async (req, res) => {
   const db = await readDb();
   res.json({ user: publicUser(req.user), organizations: userOrganizations(db, req.user.id) });
-});
+}));
 
-app.post("/api/auth/logout", async (req, res) => {
+app.post("/api/auth/logout", asyncRoute(async (req, res) => {
   await new Promise((resolve, reject) => req.session.destroy((error) => error ? reject(error) : resolve()));
+  res.clearCookie("aerogp.sid", { path: "/", httpOnly: true, sameSite: "lax", secure: req.secure });
   res.json({ ok: true });
-});
+}));
 
-app.post("/api/auth/reset-password", async (req, res) => {
-  const db = await readDb();
-  const phone = normalizePhone(req.body.phone);
-  const user = db.users.find((item) => normalizePhone(item.phone) === phone && normalizeText(item.name) === normalizeText(req.body.name));
-  if (!user) return res.status(404).json({ error: "未找到匹配的账号，请确认姓名和手机号" });
-  if (!req.body.password || String(req.body.password).length < 6) return res.status(422).json({ error: "新密码至少 6 位" });
-  user.password = await hashPassword(req.body.password);
-  await writeDb(db);
-  res.json({ user: publicUser(user), message: "密码已重置，请使用新密码登录" });
-});
+app.post("/api/auth/password-reset/sms/request", asyncRoute(async (req, res) => {
+  try {
+    res.json(await smsPasswordReset.request({ phone: req.body.phone, ip: req.ip }));
+  } catch (error) {
+    return sendPasswordResetError(error, res);
+  }
+}));
 
-app.get("/api/users", async (_req, res) => {
+app.post("/api/auth/password-reset/sms/confirm", asyncRoute(async (req, res) => {
+  try {
+    res.json(await smsPasswordReset.confirm(req.body));
+  } catch (error) {
+    return sendPasswordResetError(error, res);
+  }
+}));
+
+app.get("/api/users", requireAdmin, asyncRoute(async (_req, res) => {
   const db = await readDb();
   res.json({ rows: db.users.map(publicUser) });
-});
+}));
 
-app.post("/api/admin/users", async (req, res) => {
+app.post("/api/admin/users/:id/reset-password", requireAdmin, asyncRoute(async (req, res) => {
+  const passwordError = validatePassword(req.body.password);
+  if (passwordError) return res.status(422).json({ error: passwordError });
+  const db = await readDb();
+  const user = db.users.find((item) => item.id === req.params.id);
+  if (!user) return res.status(404).json({ error: "用户不存在" });
+  user.password = await hashPassword(req.body.password);
+  user.sessionVersion += 1;
+  user.mustChangePassword = true;
+  await writeDb(db);
+  res.json({ user: publicUser(user) });
+}));
+
+app.post("/api/admin/users", asyncRoute(async (req, res) => {
   const db = await readDb();
   if (!isAdmin(db, req.body.actorUserId)) return res.status(403).json({ error: "只有管理员可以创建用户" });
-  const { name, phone, password = "123456", type = "ordinary", organizationName, organizationCode } = req.body;
+  const { name, phone, password, type = "ordinary", organizationName, organizationCode } = req.body;
   if (!name || !phone || !password) return res.status(422).json({ error: "姓名、手机号和密码不能为空" });
   if (!["ordinary", "organization"].includes(type)) return res.status(422).json({ error: "账号类型不合法" });
+  const passwordError = validatePassword(password);
+  if (passwordError) return res.status(422).json({ error: passwordError });
   const normalizedPhone = normalizePhone(phone);
   if (db.users.some((user) => normalizePhone(user.phone) === normalizedPhone)) return res.status(409).json({ error: "该手机号已注册" });
 
-  const user = { id: id("U"), name, phone: normalizedPhone, password: await hashPassword(password), type, status: req.body.status || "active", createdAt: now() };
+  const user = {
+    id: id("U"), name, phone: normalizedPhone, password: await hashPassword(password), type, status: req.body.status || "active",
+    sessionVersion: 0, mustChangePassword: false, createdAt: now()
+  };
   db.users.push(user);
   const organization = type === "organization" ? createOrganizationForUser(db, user, { organizationName, organizationCode }) : null;
   await writeDb(db);
   res.status(201).json({ row: publicUser(user), organization });
-});
+}));
 
-app.patch("/api/admin/users/:id", async (req, res) => {
+app.patch("/api/admin/users/:id", asyncRoute(async (req, res) => {
   const db = await readDb();
   if (!isAdmin(db, req.body.actorUserId)) return res.status(403).json({ error: "只有管理员可以修改用户" });
   const user = db.users.find((item) => item.id === req.params.id);
@@ -331,7 +384,7 @@ app.patch("/api/admin/users/:id", async (req, res) => {
     user.phone = normalizedPhone;
   }
   if (req.body.name) user.name = String(req.body.name);
-  if (req.body.password) user.password = await hashPassword(req.body.password);
+  if (req.body.password) return res.status(422).json({ error: "请使用管理员密码重置接口" });
   if (req.body.status) user.status = String(req.body.status);
   if (req.body.type && ["ordinary", "organization"].includes(req.body.type)) user.type = req.body.type;
 
@@ -346,9 +399,9 @@ app.patch("/api/admin/users/:id", async (req, res) => {
 
   await writeDb(db);
   res.json({ row: publicUser(user), organization });
-});
+}));
 
-app.delete("/api/admin/users/:id", async (req, res) => {
+app.delete("/api/admin/users/:id", asyncRoute(async (req, res) => {
   const db = await readDb();
   if (!isAdmin(db, req.query.actorUserId)) return res.status(403).json({ error: "只有管理员可以删除用户" });
   const user = db.users.find((item) => item.id === req.params.id);
@@ -363,7 +416,7 @@ app.delete("/api/admin/users/:id", async (req, res) => {
   db.certificates = db.certificates.map((certificate) => certificate.userId === user.id ? { ...certificate, userId: null } : certificate);
   await writeDb(db);
   res.json({ ok: true });
-});
+}));
 
 app.get("/api/organizations", async (_req, res) => {
   const db = await readDb();
@@ -783,6 +836,11 @@ app.get("/api/registrations/export.csv", async (_req, res) => {
   res.setHeader("Content-Type", "text/csv; charset=utf-8");
   res.setHeader("Content-Disposition", "attachment; filename=registrations.csv");
   res.send(`\uFEFF${csv}`);
+});
+
+app.use((error, _req, res, next) => {
+  if (res.headersSent) return next(error);
+  res.status(500).json({ error: "服务器内部错误" });
 });
 
 await dataStore.initialize();

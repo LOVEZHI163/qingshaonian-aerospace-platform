@@ -5,6 +5,8 @@ CREATE TABLE IF NOT EXISTS users (
   password TEXT NOT NULL,
   type TEXT NOT NULL,
   status TEXT NOT NULL,
+  session_version INTEGER NOT NULL DEFAULT 0,
+  must_change_password BOOLEAN NOT NULL DEFAULT FALSE,
   created_at TIMESTAMPTZ NOT NULL
 );
 

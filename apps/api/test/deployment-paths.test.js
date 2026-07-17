@@ -37,3 +37,24 @@ test("deployment configuration requires and bootstraps a session secret", async 
   assert.match(bootstrap, /sed -i "s\/\^SESSION_SECRET=\.\*\/SESSION_SECRET=\$session_secret\/"/);
   assert.match(bootstrap, /chmod 600 "\$deploy_dir\/\.env"/);
 });
+
+test("deployment passes optional Aliyun SMS configuration without generating credentials", async () => {
+  const [example, compose, bootstrap, smsSource] = await Promise.all([
+    fs.readFile(path.join(root, ".env.example"), "utf8"),
+    fs.readFile(path.join(root, "compose.yaml"), "utf8"),
+    fs.readFile(path.join(root, "deploy/bootstrap-secrets.sh"), "utf8"),
+    fs.readFile(path.join(root, "apps/api/src/auth/sms.js"), "utf8")
+  ]);
+  const names = [
+    "ALIBABA_CLOUD_ACCESS_KEY_ID",
+    "ALIBABA_CLOUD_ACCESS_KEY_SECRET",
+    "ALIYUN_SMS_SIGN_NAME",
+    "ALIYUN_SMS_TEMPLATE_CODE"
+  ];
+  for (const name of names) {
+    assert.match(example, new RegExp(`^${name}=$`, "m"));
+    assert.equal(compose.includes(`${name}: ` + "${" + `${name}:-}`), true);
+    assert.equal(bootstrap.includes(name), false);
+  }
+  assert.match(smsSource, /dysmsapi\.aliyuncs\.com/);
+});

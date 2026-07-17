@@ -187,6 +187,8 @@ export function createPostgresStore(pool) {
           password: row.password,
           type: row.type,
           status: row.status,
+          sessionVersion: row.session_version,
+          mustChangePassword: row.must_change_password,
           createdAt: iso(row.created_at)
         })),
         organizations: organizations.rows.map((row) => ({
@@ -316,16 +318,18 @@ export function createPostgresStore(pool) {
 
         for (const row of db.users) {
           await client.query(
-            `INSERT INTO users (id, name, phone, password, type, status, created_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7)
+            `INSERT INTO users (id, name, phone, password, type, status, session_version, must_change_password, created_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
              ON CONFLICT (id) DO UPDATE SET
                name = EXCLUDED.name,
                phone = EXCLUDED.phone,
                password = EXCLUDED.password,
                type = EXCLUDED.type,
                status = EXCLUDED.status,
+               session_version = EXCLUDED.session_version,
+               must_change_password = EXCLUDED.must_change_password,
                created_at = EXCLUDED.created_at`,
-            [row.id, row.name, row.phone, row.password, row.type, row.status, row.createdAt]
+            [row.id, row.name, row.phone, row.password, row.type, row.status, row.sessionVersion, row.mustChangePassword, row.createdAt]
           );
         }
 
