@@ -1,9 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { apiMock } = vi.hoisted(() => ({ apiMock: vi.fn() }));
+const { apiMock, passwordChangeHook } = vi.hoisted(() => ({
+  apiMock: vi.fn(),
+  passwordChangeHook: { handler: null }
+}));
 vi.mock("../../lib/api.js", () => ({
   api: apiMock,
-  setUnauthorizedHandler: vi.fn()
+  setUnauthorizedHandler: vi.fn(),
+  setPasswordChangeRequiredHandler: vi.fn((handler) => { passwordChangeHook.handler = handler; })
 }));
 
 import { useSession } from "../session.js";
@@ -31,5 +35,13 @@ describe("session state", () => {
     await useSession().logout();
 
     expect(useSession().user.value).toBeNull();
+  });
+
+  it("keeps the user and marks the session for forced password change on 428", () => {
+    useSession().setUser({ id: "U1", type: "admin", mustChangePassword: false }, []);
+
+    passwordChangeHook.handler();
+
+    expect(useSession().user.value).toEqual(expect.objectContaining({ id: "U1", mustChangePassword: true }));
   });
 });

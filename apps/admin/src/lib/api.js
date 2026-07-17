@@ -1,6 +1,7 @@
 const API_BASE = import.meta.env.VITE_API_URL || "";
 
 let unauthorizedHandler = null;
+let passwordChangeRequiredHandler = null;
 
 export class ApiError extends Error {
   constructor(message, { status, code, payload } = {}) {
@@ -14,6 +15,10 @@ export class ApiError extends Error {
 
 export function setUnauthorizedHandler(handler) {
   unauthorizedHandler = typeof handler === "function" ? handler : null;
+}
+
+export function setPasswordChangeRequiredHandler(handler) {
+  passwordChangeRequiredHandler = typeof handler === "function" ? handler : null;
 }
 
 async function readPayload(response) {
@@ -39,7 +44,9 @@ export async function api(path, options = {}) {
   const payload = await readPayload(response);
   if (!response.ok) {
     const code = payload.code || "";
-    if (response.status === 401 && code !== "PASSWORD_CHANGE_REQUIRED") unauthorizedHandler?.();
+    const passwordChangeRequired = response.status === 428 || code === "PASSWORD_CHANGE_REQUIRED";
+    if (passwordChangeRequired) passwordChangeRequiredHandler?.();
+    else if (response.status === 401) unauthorizedHandler?.();
     const message = payload.error || payload.message || payload.errors?.join("；") || `请求失败 (${response.status})`;
     throw new ApiError(message, { status: response.status, code, payload });
   }

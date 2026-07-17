@@ -12,6 +12,7 @@ const events = ref([]);
 const projects = ref([]);
 const registrations = ref([]);
 const selectedId = ref("");
+const creating = ref(false);
 const loading = ref(true);
 const saving = ref(false);
 const pageError = ref("");
@@ -66,6 +67,7 @@ function toIsoDateTime(value) {
 }
 
 function selectEvent(id) {
+  creating.value = false;
   selectedId.value = id;
   const row = events.value.find((item) => item.id === id);
   if (!row) return;
@@ -148,6 +150,7 @@ async function saveEvent() {
 }
 
 function startCreateEvent() {
+  creating.value = true;
   selectedId.value = "";
   Object.assign(eventForm, emptyEvent());
   success.value = "";
@@ -187,6 +190,7 @@ async function setCurrent() {
 
 async function archiveSelected() {
   if (!window.confirm(`确认归档“${selectedEvent.value?.name}”？归档后将不再作为当前赛事。`)) return;
+  if (!window.confirm("请再次确认：归档会关闭该届赛事的管理入口，确定继续吗？")) return;
   await perform(() => api(`/api/admin/events/${selectedId.value}/archive`, { method: "POST" }), "赛事已归档");
 }
 
@@ -239,7 +243,7 @@ onMounted(() => loadEvents({ preserveSelection: false }));
     <p v-if="pageError" class="message danger-message">{{ pageError }}</p>
     <p v-if="success" class="message success-message">{{ success }}</p>
     <p v-if="loading" class="panel">正在加载赛事…</p>
-    <p v-else-if="events.length === 0 && !selectedId" class="panel">暂无赛事，请先新建草稿。</p>
+    <p v-else-if="events.length === 0 && !creating" class="panel">暂无赛事，请先新建草稿。</p>
 
     <div v-else class="event-layout">
       <section class="panel event-list-panel">

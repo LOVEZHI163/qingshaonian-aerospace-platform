@@ -1,6 +1,6 @@
 import { ref } from "vue";
 
-import { api, setUnauthorizedHandler } from "../lib/api.js";
+import { api, setPasswordChangeRequiredHandler, setUnauthorizedHandler } from "../lib/api.js";
 
 const user = ref(null);
 const organizations = ref([]);
@@ -16,7 +16,12 @@ function clear() {
   organizations.value = [];
 }
 
+function requirePasswordChange() {
+  if (user.value) user.value = { ...user.value, mustChangePassword: true };
+}
+
 setUnauthorizedHandler(clear);
+setPasswordChangeRequiredHandler(requirePasswordChange);
 
 async function restore() {
   restoring.value = true;

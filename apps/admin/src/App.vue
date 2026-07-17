@@ -613,6 +613,10 @@ async function resetTemporaryPassword(user) {
   const password = window.prompt(`请输入 ${user.name} 的临时密码（至少 8 位，含字母和数字）`, "");
   if (!password) return;
   message.value = "";
+  if (!/^(?=.*[A-Za-z])(?=.*\d).{8,64}$/.test(password)) {
+    message.value = "临时密码至少 8 位且必须同时包含字母和数字";
+    return;
+  }
   try {
     await api(`/api/admin/users/${user.id}/reset-password`, {
       method: "POST",
@@ -751,17 +755,6 @@ onMounted(async () => {
       <label>新密码<input v-model="passwordChangeForm.newPassword" type="password" placeholder="至少 8 位，含字母和数字" /></label>
       <button class="primary">修改密码并进入系统</button>
       <p v-if="message" class="message">{{ message }}</p>
-
-      <EventManagementPage
-        v-if="currentUser.type === 'admin' && ['events', 'projects'].includes(currentView)"
-        @event-changed="loadEvent"
-      />
-
-      <section v-else-if="currentUser.type === 'admin' && currentView === 'overview'" class="panel admin-overview">
-        <h3>管理概览</h3>
-        <p>从左侧进入赛事管理、赛项与组别、报名、证书或用户管理。</p>
-        <div class="overview-metrics"><span>报名 {{ rows.length }} 条</span><span>证书 {{ certificates.length }} 张</span><span>用户 {{ users.length }} 个</span></div>
-      </section>
     </form>
   </section>
 
@@ -801,6 +794,17 @@ onMounted(async () => {
       </header>
 
       <p v-if="message" class="message">{{ message }}</p>
+
+      <EventManagementPage
+        v-if="currentUser.type === 'admin' && ['events', 'projects'].includes(currentView)"
+        @event-changed="loadEvent"
+      />
+
+      <section v-else-if="currentUser.type === 'admin' && currentView === 'overview'" class="panel admin-overview">
+        <h3>管理概览</h3>
+        <p>从左侧进入赛事管理、赛项与组别、报名、证书或用户管理。</p>
+        <div class="overview-metrics"><span>报名 {{ rows.length }} 条</span><span>证书 {{ certificates.length }} 张</span><span>用户 {{ users.length }} 个</span></div>
+      </section>
 
       <section v-if="currentView === 'registration' && currentUser.type !== 'admin'" class="content-grid">
         <form class="panel form-panel" @submit.prevent="submitRegistration">
@@ -973,7 +977,7 @@ onMounted(async () => {
         </div>
       </section>
 
-      <section v-else-if="currentView === 'users' && currentUser.type === 'admin'" class="content-grid">
+      <section v-else-if="['users', 'organizations'].includes(currentView) && currentUser.type === 'admin'" class="content-grid">
         <form class="panel form-panel" @submit.prevent="saveUser">
           <div class="panel-title">
             <h3>{{ userForm.id ? "编辑用户" : "新增用户" }}</h3>

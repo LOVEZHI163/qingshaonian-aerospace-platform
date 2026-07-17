@@ -36,6 +36,8 @@ describe("App session integration", () => {
     session.restore.mockClear();
     session.login.mockReset();
     session.logout.mockReset();
+    session.setUser.mockClear();
+    session.clear.mockClear();
     apiMock.mockImplementation(async (path) => {
       if (path === "/api/public/event") return publicData();
       if (path === "/api/public/features") return { smsPasswordResetEnabled: false };
@@ -65,6 +67,73 @@ describe("App session integration", () => {
     const ordinary = mount(App);
     await flushPromises();
     expect(ordinary.find('[data-testid="admin-shell"]').exists()).toBe(false);
+  });
+
+  it("shows overview by default and exposes event and project workflows", async () => {
+    sessionUser.value = { id: "A1", type: "admin", name: "管理员", mustChangePassword: false };
+    const wrapper = mount(App);
+    await flushPromises();
+
+    expect(wrapper.get(".admin-overview").text()).toContain("管理概览");
+    await wrapper.get('[data-nav="events"]').trigger("click");
+    await flushPromises();
+    expect(wrapper.find(".event-management").exists()).toBe(true);
+    await wrapper.get('[data-nav="projects"]').trigger("click");
+    await flushPromises();
+    expect(wrapper.find(".event-management").exists()).toBe(true);
+  });
+
+  it("switches an active user to the non-skippable password screen", async () => {
+    sessionUser.value = { id: "A1", type: "admin", name: "管理员", mustChangePassword: false };
+    const wrapper = mount(App);
+    await flushPromises();
+
+    sessionUser.value = { ...sessionUser.value, mustChangePassword: true };
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("首次登录请修改密码");
+    expect(wrapper.find('[data-testid="admin-shell"]').exists()).toBe(false);
+    expect(wrapper.find(".admin-overview").exists()).toBe(false);
+  });
+
+  it("maps organization navigation to a working administrator user view", async () => {
+    sessionUser.value = { id: "A1", type: "admin", name: "管理员", mustChangePassword: false };
+    const wrapper = mount(App);
+    await flushPromises();
+
+    await wrapper.get('[data-nav="organizations"]').trigger("click");
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("用户列表");
+    expect(wrapper.find(".user-table").exists()).toBe(true);
+  });
+
+  it("rejects an invalid administrator temporary password before calling the API", async () => {
+    sessionUser.value = { id: "A1", type: "admin", name: "管理员", mustChangePassword: false };
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/public/event") return publicData();
+      if (path === "/api/public/features") return { smsPasswordResetEnabled: false };
+      if (path === "/api/organizations") return { rows: [] };
+      if (path === "/api/me/A1") return { memberships: [] };
+      if (path === "/api/users") return { rows: [
+        { id: "A1", name: "管理员", phone: "13900000000", type: "admin", status: "active" },
+        { id: "U1", name: "张三", phone: "13800000001", type: "ordinary", status: "active" }
+      ] };
+      if (path === "/api/registrations" || path === "/api/admin/certificates") return { rows: [] };
+      return { rows: [] };
+    });
+    vi.spyOn(window, "prompt").mockReturnValue("short1");
+    const wrapper = mount(App);
+    await flushPromises();
+    await wrapper.get('[data-nav="users"]').trigger("click");
+    await flushPromises();
+
+    const resetButton = wrapper.findAll("button").find((button) => button.text() === "重置临时密码");
+    await resetButton.trigger("click");
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("至少 8 位且必须同时包含字母和数字");
+    expect(apiMock.mock.calls.some(([path]) => path === "/api/admin/users/U1/reset-password")).toBe(false);
   });
 
   it("returns to login after registration instead of creating a fake session", async () => {

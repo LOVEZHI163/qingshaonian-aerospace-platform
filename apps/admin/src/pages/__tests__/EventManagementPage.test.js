@@ -95,4 +95,51 @@ describe("EventManagementPage", () => {
     expect(wrapper.find('[data-action="delete-project"]').exists()).toBe(false);
     expect(wrapper.get('[data-action="disable-project"]').text()).toContain("停用");
   });
+
+  it("opens the form and creates the first event from an empty state", async () => {
+    const rows = [];
+    apiMock.mockImplementation(async (path, options = {}) => {
+      if (path === "/api/admin/events" && options.method === "POST") {
+        const row = { id: "E1", ...JSON.parse(options.body), status: "draft", isCurrent: false };
+        rows.push(row);
+        return { row };
+      }
+      if (path === "/api/admin/events") return { rows, projects: [] };
+      if (path === "/api/registrations") return { rows: [] };
+      return { row: event };
+    });
+    const wrapper = mount(EventManagementPage);
+    await flushPromises();
+
+    const createButton = wrapper.findAll("button").find((button) => button.text().includes("新建赛事草稿"));
+    await createButton.trigger("click");
+    const form = wrapper.get("form.event-form");
+    const inputs = form.findAll("input");
+    await inputs[0].setValue("首届赛事");
+    await inputs[1].setValue("航空创新");
+    await inputs[2].setValue("2027年5月1日");
+    await inputs[3].setValue("温州");
+    await inputs[4].setValue("组委会 0577-12345678");
+    await inputs[5].setValue("2027-04-01T08:00");
+    await inputs[6].setValue("2027-04-30T18:00");
+    await form.trigger("submit");
+    await flushPromises();
+
+    expect(apiMock).toHaveBeenCalledWith("/api/admin/events", expect.objectContaining({ method: "POST" }));
+    expect(wrapper.text()).toContain("赛事草稿已创建");
+  });
+
+  it("requires two confirmations before archiving an event", async () => {
+    mockLoads();
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const wrapper = mount(EventManagementPage);
+    await flushPromises();
+
+    const archiveButton = wrapper.findAll("button").find((button) => button.text() === "归档");
+    await archiveButton.trigger("click");
+    await flushPromises();
+
+    expect(confirm).toHaveBeenCalledTimes(2);
+    expect(apiMock).toHaveBeenCalledWith("/api/admin/events/E1/archive", { method: "POST" });
+  });
 });

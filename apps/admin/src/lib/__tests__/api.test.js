@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ApiError, api, setUnauthorizedHandler } from "../api.js";
+import { ApiError, api, setPasswordChangeRequiredHandler, setUnauthorizedHandler } from "../api.js";
 
 afterEach(() => {
   vi.unstubAllGlobals();
   setUnauthorizedHandler(null);
+  setPasswordChangeRequiredHandler(null);
 });
 
 describe("api", () => {
@@ -32,9 +33,11 @@ describe("api", () => {
     expect(fetchMock.mock.calls[0][1].headers).toEqual({});
   });
 
-  it("throws a structured error and only clears a session for 401", async () => {
+  it("routes 401 to logout and 428 to forced password change", async () => {
     const unauthorized = vi.fn();
+    const passwordChangeRequired = vi.fn();
     setUnauthorizedHandler(unauthorized);
+    setPasswordChangeRequiredHandler(passwordChangeRequired);
     vi.stubGlobal("fetch", vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({ error: "请登录", code: "AUTH_REQUIRED" }), { status: 401 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ error: "请先修改密码", code: "PASSWORD_CHANGE_REQUIRED" }), { status: 428 })));
@@ -46,5 +49,6 @@ describe("api", () => {
     expect(first).toMatchObject({ status: 401, code: "AUTH_REQUIRED", message: "请登录" });
     expect(second).toMatchObject({ status: 428, code: "PASSWORD_CHANGE_REQUIRED" });
     expect(unauthorized).toHaveBeenCalledTimes(1);
+    expect(passwordChangeRequired).toHaveBeenCalledTimes(1);
   });
 });
