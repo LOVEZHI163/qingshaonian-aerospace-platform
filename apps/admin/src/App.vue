@@ -209,7 +209,7 @@ async function loadData() {
     certificates.value = [];
   } else if (currentUser.value.type === "admin") {
     const [registrationRes, certificateRes] = await Promise.all([
-      api("/api/registrations"),
+      api("/api/admin/registrations?pageSize=100"),
       api("/api/admin/certificates")
     ]);
     rows.value = registrationRes.rows;

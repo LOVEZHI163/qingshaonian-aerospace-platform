@@ -103,5 +103,54 @@ test("admin registration listing filters and paginates rows with actual grade an
     assert.equal(payload.rows[0].athlete.grade, "初二");
     assert.equal(payload.rows[0].awardName, "");
     assert.equal(payload.rows[0].score, "");
+
+    const legacyResponse = await fetch(`${baseUrl}/api/registrations?q=%E7%8E%8B%E8%80%81%E5%B8%88&pageSize=10`, withSession(admin.cookie));
+    assert.equal(legacyResponse.status, 200);
+    const legacyPayload = await json(legacyResponse);
+    assert.equal(legacyPayload.total, 1);
+    assert.equal(legacyPayload.pageSize, 10);
+    assert.match(legacyPayload.refreshedAt, /^\d{4}-\d{2}-\d{2}T/);
+  });
+});
+
+test("registration status changes enforce the owner's event window while administrators bypass it", async () => {
+  await withServer(async (baseUrl) => {
+    const ordinary = await loginAs(baseUrl, "13800000001", "123456");
+    const admin = await loginAs(baseUrl, "13900000000", "admin123");
+    const status = (id, payload, cookie) => fetch(`${baseUrl}/api/registrations/${id}/status`, withSession(cookie, {
+      method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload)
+    }));
+
+    assert.equal((await fetch(`${baseUrl}/api/admin/events/wz-aerospace-2026`, withSession(admin.cookie, {
+      method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ registrationMode: "force_closed" })
+    }))).status, 200);
+    assert.equal((await status("R20260627001", { status: "cancelled" }, ordinary.cookie)).status, 409);
+    assert.equal((await status("R20260627002", { status: "rejected" }, admin.cookie)).status, 200);
+
+    assert.equal((await fetch(`${baseUrl}/api/admin/events/wz-aerospace-2026`, withSession(admin.cookie, {
+      method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ registrationMode: "automatic" })
+    }))).status, 200);
+    assert.equal((await status("R20260627001", { status: "cancelled" }, ordinary.cookie)).status, 409);
+
+    await openRegistration(baseUrl, admin.cookie);
+    assert.equal((await status("R20260627002", { status: "cancelled" }, ordinary.cookie)).status, 403);
+    assert.equal((await status("R20260627001", { status: "approved" }, ordinary.cookie)).status, 403);
+    assert.equal((await status("R20260627001", { status: "cancelled" }, ordinary.cookie)).status, 200);
+  });
+});
+
+test("ordinary registration edits require an active membership while administrators may use any operational organization", async () => {
+  await withServer(async (baseUrl) => {
+    const ordinary = await loginAs(baseUrl, "13800000001", "123456");
+    const admin = await loginAs(baseUrl, "13900000000", "admin123");
+    await openRegistration(baseUrl, admin.cookie);
+    const patch = (path, payload, cookie) => fetch(`${baseUrl}${path}`, withSession(cookie, {
+      method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload)
+    }));
+
+    assert.equal((await patch("/api/registrations/R20260627001", { organizationId: "O1002" }, ordinary.cookie)).status, 403);
+    const adminResponse = await patch("/api/admin/registrations/R20260627001", { organizationId: "O1002" }, admin.cookie);
+    assert.equal(adminResponse.status, 200);
+    assert.equal((await json(adminResponse)).row.organizationId, "O1002");
   });
 });

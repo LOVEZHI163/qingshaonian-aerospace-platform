@@ -4,9 +4,11 @@ import {
   findSchools,
   listAdminRegistrations,
   prepareAdminRegistrationUpdate,
+  prepareOrdinaryRegistrationUpdate,
   prepareRegistrationCreate,
   registrationDuplicateCheck,
-  registrationContextPayload
+  registrationContextPayload,
+  updateRegistrationStatus
 } from "../services/registrations.js";
 
 export function createRegistrationsRouter({ store, requireUser, requireAdmin, requirePasswordReady, asyncRoute, makeId, now, clock = () => new Date() }) {
@@ -25,6 +27,11 @@ export function createRegistrationsRouter({ store, requireUser, requireAdmin, re
   }));
 
   router.get("/admin/registrations", ...admin, asyncRoute(async (req, res) => {
+    const db = await store.readDb();
+    res.json(listAdminRegistrations(db, req.query, clock));
+  }));
+
+  router.get("/registrations", ...admin, asyncRoute(async (req, res) => {
     const db = await store.readDb();
     res.json(listAdminRegistrations(db, req.query, clock));
   }));
@@ -64,6 +71,32 @@ export function createRegistrationsRouter({ store, requireUser, requireAdmin, re
       certificate.userId = row.userId || null;
       certificate.organizationId = row.organizationId || null;
     }
+    await store.writeDb(db);
+    res.json({ row });
+  }));
+
+  router.patch("/registrations/:id", ...user, asyncRoute(async (req, res) => {
+    const db = await store.readDb();
+    const row = db.registrations.find((item) => item.id === req.params.id);
+    if (!row) return res.status(404).json({ error: "报名记录不存在" });
+    const prepared = prepareOrdinaryRegistrationUpdate(db, row, req.body, req.user.id);
+    Object.assign(row, {
+      organizationId: prepared.organizationId, organization: prepared.organization?.name || "", athlete: prepared.athlete,
+      athleteKey: prepared.validation.athleteKey, group: prepared.group, projectId: prepared.project.id,
+      projectName: prepared.project.name, projectType: prepared.validation.projectType, instructor: prepared.instructor, updatedAt: now()
+    });
+    const certificate = db.certificates.find((item) => item.registrationId === row.id);
+    if (certificate) certificate.organizationId = row.organizationId || null;
+    await store.writeDb(db);
+    res.json({ row });
+  }));
+
+  router.patch("/registrations/:id/status", ...user, asyncRoute(async (req, res) => {
+    const db = await store.readDb();
+    const row = db.registrations.find((item) => item.id === req.params.id);
+    if (!row) return res.status(404).json({ error: "报名记录不存在" });
+    updateRegistrationStatus(db, row, req.body, req.user);
+    row.updatedAt = now();
     await store.writeDb(db);
     res.json({ row });
   }));

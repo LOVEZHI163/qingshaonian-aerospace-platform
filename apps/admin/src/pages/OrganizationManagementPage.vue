@@ -70,7 +70,7 @@ async function openPreview(row) {
 async function loadOrganizations() {
   loading.value = true; error.value = "";
   try {
-    const [organizationPayload, userPayload, registrationPayload] = await Promise.all([api("/api/admin/organizations"), api("/api/users"), api("/api/registrations")]);
+    const [organizationPayload, userPayload, registrationPayload] = await Promise.all([api("/api/admin/organizations"), api("/api/users"), api("/api/admin/registrations?pageSize=100")]);
     organizations.value = organizationPayload.rows || [];
     users.value = userPayload.rows || [];
     registrations.value = registrationPayload.rows || [];

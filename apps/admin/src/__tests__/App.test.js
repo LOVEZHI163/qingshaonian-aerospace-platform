@@ -119,7 +119,7 @@ describe("App session integration", () => {
         { id: "A1", name: "管理员", phone: "13900000000", type: "admin", status: "active" },
         { id: "U1", name: "张三", phone: "13800000001", type: "ordinary", status: "active" }
       ] };
-      if (path === "/api/registrations" || path === "/api/admin/certificates") return { rows: [] };
+      if (path === "/api/admin/registrations?pageSize=100" || path === "/api/admin/certificates") return { rows: [] };
       return { rows: [] };
     });
     vi.spyOn(window, "prompt").mockReturnValue("short1");

@@ -34,7 +34,7 @@ const project = {
 function mockLoads(registrations = []) {
   apiMock.mockImplementation(async (path) => {
     if (path === "/api/admin/events") return { rows: [event], projects: [project] };
-    if (path === "/api/registrations") return { rows: registrations };
+    if (path === "/api/admin/registrations?pageSize=100") return { rows: registrations, total: registrations.length, page: 1, pageSize: 100 };
     return { row: event };
   });
 }
@@ -105,7 +105,7 @@ describe("EventManagementPage", () => {
         return { row };
       }
       if (path === "/api/admin/events") return { rows, projects: [] };
-      if (path === "/api/registrations") return { rows: [] };
+      if (path === "/api/admin/registrations?pageSize=100") return { rows: [], total: 0, page: 1, pageSize: 100 };
       return { row: event };
     });
     const wrapper = mount(EventManagementPage);

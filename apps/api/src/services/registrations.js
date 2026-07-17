@@ -89,6 +89,22 @@ function validateProjectForCurrentEvent(db, event, projectId, group) {
   return project;
 }
 
+function validateProjectForRegistration(db, eventId, projectId, group) {
+  const project = db.projects.find((row) => row.id === projectId);
+  if (!project || project.eventId !== eventId) throw businessError(422, "赛项不属于报名赛事");
+  if (!project.enabled) throw businessError(422, "赛项已停用");
+  if (!project.allowedGroups.includes(group)) throw businessError(422, "所选组别不能报名该赛项");
+  return project;
+}
+
+function assertRegistrationWindowOpen(db, eventId) {
+  const event = db.events.find((row) => row.id === eventId);
+  if (!event) throw businessError(422, "赛事不存在");
+  const window = isRegistrationOpen(event);
+  if (!window.open) throw businessError(409, window.reason, "REGISTRATION_CLOSED");
+  return event;
+}
+
 export function validateRegistration(input, existingRows, project, eventId, ignoreId = null) {
   const athlete = input.athlete || {};
   const errors = [];
@@ -166,6 +182,39 @@ export function prepareAdminRegistrationUpdate(db, row, input) {
   const validation = validateRegistration(next, db.registrations, project, row.eventId, row.id);
   if (!validation.ok) throw Object.assign(businessError(422, validation.errors[0]), { validation });
   return { athlete, group, project, organizationId, organization, instructor: next.instructor || "", validation };
+}
+
+export function prepareOrdinaryRegistrationUpdate(db, row, input, userId) {
+  if (row.userId !== userId) throw businessError(403, "无权修改该报名");
+  assertRegistrationWindowOpen(db, row.eventId);
+  const athlete = input.athlete || row.athlete;
+  requireText(athlete.name, "姓名");
+  requireText(athlete.school, "学校");
+  requireText(athlete.grade, "年级");
+  requireText(athlete.phone, "手机号/家长手机号");
+  const group = groupForGrade(athlete.grade);
+  if (!group) throw businessError(422, "实际年级不合法");
+  const projectId = input.projectId || row.projectId;
+  const project = validateProjectForRegistration(db, row.eventId, projectId, group);
+  const organizationId = Object.hasOwn(input, "organizationId") ? input.organizationId || null : row.organizationId;
+  const organization = validateOrganizationForUser(db, userId, organizationId);
+  const next = { ...row, athlete, group, projectId, organizationId, instructor: input.instructor ?? row.instructor };
+  const validation = validateRegistration(next, db.registrations, project, row.eventId, row.id);
+  if (!validation.ok) throw Object.assign(businessError(422, validation.errors[0]), { validation });
+  return { athlete, group, project, organizationId, organization, instructor: next.instructor || "", validation };
+}
+
+export function updateRegistrationStatus(db, row, input, user) {
+  const status = String(input?.status || "");
+  if (!new Set(["approved", "rejected", "cancelled", "pending"]).has(status)) throw businessError(422, "状态不合法");
+  if (user.type !== "admin") {
+    if (row.userId !== user.id) throw businessError(403, "无权修改该报名");
+    if (status !== "cancelled") throw businessError(403, "普通用户只能取消自己的报名");
+    assertRegistrationWindowOpen(db, row.eventId);
+  }
+  row.status = status;
+  row.rejectReason = status === "rejected" ? String(input?.rejectReason || "信息需补充") : "";
+  return row;
 }
 
 export function listAdminRegistrations(db, query, clock = () => new Date()) {

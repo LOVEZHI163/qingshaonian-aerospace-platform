@@ -580,11 +580,6 @@ app.patch("/api/memberships/:id", requireUser, requirePasswordReady, mutationAsy
   res.json({ row });
 }));
 
-app.get("/api/registrations", requireAdmin, requirePasswordReady, asyncRoute(async (_req, res) => {
-  const db = await readDb();
-  res.json({ rows: db.registrations });
-}));
-
 app.get("/api/admin/certificates", requireAdmin, requirePasswordReady, asyncRoute(async (_req, res) => {
   const db = await readDb();
   const rows = db.certificates.map((certificate) => certificatePayload(certificate, db.registrations.find((row) => row.id === certificate.registrationId)));
@@ -887,25 +882,6 @@ app.get("/api/certificates/:id/download", requireUser, requirePasswordReady, asy
     return res.status(403).json({ error: "无权下载该证书" });
   }
   res.download(certificate.filePath, certificate.fileName);
-}));
-
-app.patch("/api/registrations/:id/status", requireUser, requirePasswordReady, mutationAsyncRoute(async (req, res) => {
-  const db = await readDb();
-  const row = db.registrations.find((item) => item.id === req.params.id);
-  if (!row) return res.status(404).json({ error: "报名记录不存在" });
-
-  const allowed = ["approved", "rejected", "cancelled", "pending"];
-  if (!allowed.includes(req.body.status)) return res.status(422).json({ error: "状态不合法" });
-  if (req.user.type !== "admin") {
-    if (row.userId !== req.user.id) return res.status(403).json({ error: "无权修改该报名" });
-    if (req.body.status !== "cancelled") return res.status(403).json({ error: "普通用户只能取消自己的报名" });
-  }
-
-  row.status = req.body.status;
-  row.rejectReason = req.body.status === "rejected" ? String(req.body.rejectReason || "信息需补充") : "";
-  row.updatedAt = now();
-  await writeDb(db);
-  res.json({ row });
 }));
 
 app.get("/api/registrations/export.csv", requireAdmin, requirePasswordReady, asyncRoute(async (_req, res) => {

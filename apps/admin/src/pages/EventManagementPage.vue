@@ -88,7 +88,7 @@ async function loadEvents({ preserveSelection = true } = {}) {
   try {
     const [eventPayload, registrationPayload] = await Promise.all([
       api("/api/admin/events"),
-      api("/api/registrations")
+      api("/api/admin/registrations?pageSize=100")
     ]);
     events.value = eventPayload.rows || [];
     projects.value = eventPayload.projects || [];
