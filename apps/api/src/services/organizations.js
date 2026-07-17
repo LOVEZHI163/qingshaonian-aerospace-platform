@@ -1,4 +1,5 @@
 import { deletePrivateFile, savePrivateFile } from "../files/storage.js";
+import { validateUpload } from "../files/policy.js";
 
 export const DOCUMENT_TYPES = new Set([
   "business_license",
@@ -14,6 +15,13 @@ export class OrganizationError extends Error {
 }
 
 const validationError = (message) => new OrganizationError(422, message);
+let organizationMutation = Promise.resolve();
+
+function coordinateOrganizationMutation(operation) {
+  const result = organizationMutation.then(operation, operation);
+  organizationMutation = result.catch(() => {});
+  return result;
+}
 
 function normalizedPhone(value) {
   return String(value || "").replace(/[^\d]/g, "");
@@ -35,6 +43,14 @@ function validateCredentialInput(input, file) {
   if (!DOCUMENT_TYPES.has(documentType)) throw validationError("资质类型无效");
   if (!file) throw validationError("资质文件不能为空");
   return { name, phone, password, organizationName, creditCode, documentType };
+}
+
+async function validateCredentialFile(file) {
+  try {
+    await validateUpload(file);
+  } catch (error) {
+    throw validationError(`资质文件无效：${error.message}`);
+  }
 }
 
 function validateOrdinaryInput(input) {
@@ -93,10 +109,15 @@ export async function registerOrdinary({ input, readDb, writeDb, hashPassword, v
   return { user, organization: null, document: null };
 }
 
-export async function registerOrganization({ input, file, readDb, writeDb, hashPassword, validatePassword, makeId, now, saveFile = savePrivateFile, removePrivateFile = deletePrivateFile }) {
+export function registerOrganization(input) {
+  return coordinateOrganizationMutation(() => registerOrganizationMutation(input));
+}
+
+async function registerOrganizationMutation({ input, file, readDb, writeDb, hashPassword, validatePassword, makeId, now, saveFile = savePrivateFile, removePrivateFile = deletePrivateFile }) {
   const values = validateCredentialInput(input, file);
   const passwordError = validatePassword(values.password);
   if (passwordError) throw validationError(passwordError);
+  await validateCredentialFile(file);
   const db = await readDb();
   assertAccountAvailable(db, values.phone, values.creditCode);
 
@@ -126,6 +147,7 @@ export async function registerOrganization({ input, file, readDb, writeDb, hashP
     return { user, organization, document };
   } catch (error) {
     await cleanup(stored, removePrivateFile);
+    if (error?.code === "23505") throw new OrganizationError(409, "统一社会信用代码已注册");
     throw error;
   }
 }
@@ -141,10 +163,29 @@ export function reviewOrganization(organization, input, reviewerId, currentTime)
   return organization;
 }
 
-export async function resubmitOrganization({ input, file, userId, readDb, writeDb, makeId, now, saveFile = savePrivateFile, removePrivateFile = deletePrivateFile }) {
+export function assertOrganizationReadyForApproval(organization, documents) {
+  if (!/^[0-9A-Z]{18}$/.test(String(organization.creditCode || ""))) {
+    throw validationError("统一社会信用代码无效");
+  }
+  const hasCredential = documents.some((document) =>
+    document.organizationId === organization.id
+    && !document.cleanedAt
+    && DOCUMENT_TYPES.has(document.documentType)
+    && String(document.filePath || "").trim()
+    && String(document.storedName || "").trim()
+  );
+  if (!hasCredential) throw validationError("组织缺少有效资质文件");
+}
+
+export function resubmitOrganization(input) {
+  return coordinateOrganizationMutation(() => resubmitOrganizationMutation(input));
+}
+
+async function resubmitOrganizationMutation({ input, file, userId, readDb, writeDb, makeId, now, saveFile = savePrivateFile, removePrivateFile = deletePrivateFile }) {
   const documentType = requiredText(input.documentType, "资质类型");
   if (!DOCUMENT_TYPES.has(documentType)) throw validationError("资质类型无效");
   if (!file) throw validationError("资质文件不能为空");
+  await validateCredentialFile(file);
   const db = await readDb();
   const organization = db.organizations.find((row) => row.ownerUserId === userId);
   const owner = organization && db.memberships.some((row) => row.userId === userId && row.organizationId === organization.id && row.role === "owner" && row.status === "active");

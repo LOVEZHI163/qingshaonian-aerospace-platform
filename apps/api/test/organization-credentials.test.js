@@ -23,15 +23,25 @@ function uploadedFile(buffer, originalname, mimetype = "application/octet-stream
   return { buffer, size: buffer.length, originalname, mimetype };
 }
 
-function organizationRegistration({ creditCode = "91330300TEST000001", documentType = "business_license", includeCredential = true } = {}) {
+function organizationRegistration({
+  creditCode = "91330300TEST000001",
+  documentType = "business_license",
+  includeCredential = true,
+  name = "组织负责人",
+  phone = "13600009991",
+  organizationName = "待审核航空学校",
+  credentialBuffer = pdfBuffer,
+  credentialName = "license.pdf",
+  credentialMime = "application/pdf"
+} = {}) {
   const form = new FormData();
-  form.set("name", "组织负责人");
-  form.set("phone", "13600009991");
+  form.set("name", name);
+  form.set("phone", phone);
   form.set("password", "Strong123");
-  form.set("organizationName", "待审核航空学校");
+  form.set("organizationName", organizationName);
   form.set("creditCode", creditCode);
   form.set("documentType", documentType);
-  if (includeCredential) form.set("credential", new Blob([pdfBuffer], { type: "application/pdf" }), "license.pdf");
+  if (includeCredential) form.set("credential", new Blob([credentialBuffer], { type: credentialMime }), credentialName);
   return form;
 }
 
@@ -151,6 +161,213 @@ test("organization registration removes the saved credential when its atomic dat
     /simulated database failure/
   );
   assert.deepEqual(cleaned, [saved.filePath]);
+});
+
+test("organization registrations reject pending, rejected, and disabled organizations without blocking personal registration", async () => {
+  await withTestServer(async ({ baseUrl, dbPath }) => {
+    const registered = await postOrganizationRegistration(baseUrl, { creditCode: "91330300TEST000020" });
+    const { organization } = await registered.json();
+    const owner = await loginAs(baseUrl, "13600009991", "Strong123");
+    const admin = await loginAs(baseUrl, "13900000000", "admin123");
+    await fetch(`${baseUrl}/api/admin/events/wz-aerospace-2026`, withSession(admin.cookie, {
+      method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ registrationMode: "force_open" })
+    }));
+    const registration = (phone) => fetch(`${baseUrl}/api/registrations`, withSession(owner.cookie, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        organizationId: organization.id,
+        athlete: { name: "组织代报名学生", school: "待审核学校", grade: "初二", phone },
+        group: "中学组", projectId: "drone-relay"
+      })
+    }));
+    assert.equal((await registration("13600009920")).status, 403);
+
+    const rejectReview = await fetch(`${baseUrl}/api/admin/organizations/${organization.id}/review`, withSession(admin.cookie, {
+      method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "rejected", reason: "资料需要补充" })
+    }));
+    assert.equal(rejectReview.status, 200);
+    assert.equal((await registration("13600009921")).status, 403);
+
+    const resubmitForm = organizationRegistration({ creditCode: "91330300TEST000020", documentType: "school_license" });
+    resubmitForm.delete("name"); resubmitForm.delete("phone"); resubmitForm.delete("password");
+    const resubmit = await fetch(`${baseUrl}/api/me/organization`, withSession(owner.cookie, { method: "PATCH", body: resubmitForm }));
+    assert.equal(resubmit.status, 200);
+    const approveReview = await fetch(`${baseUrl}/api/admin/organizations/${organization.id}/review`, withSession(admin.cookie, {
+      method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "approved", reason: "" })
+    }));
+    assert.equal(approveReview.status, 200);
+    const db = JSON.parse(await fs.readFile(dbPath, "utf8"));
+    db.organizations.find((row) => row.id === organization.id).status = "disabled";
+    await fs.writeFile(dbPath, JSON.stringify(db), "utf8");
+    assert.equal((await registration("13600009922")).status, 403);
+
+    const personalRegister = await fetch(`${baseUrl}/api/auth/register/ordinary`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "个人参赛家长", phone: "13600009923", password: "Strong123" })
+    });
+    assert.equal(personalRegister.status, 201);
+    const personal = await loginAs(baseUrl, "13600009923", "Strong123");
+    const personalRegistration = await fetch(`${baseUrl}/api/registrations`, withSession(personal.cookie, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        athlete: { name: "个人报名学生", school: "个人学校", grade: "初二", phone: "13600009924" },
+        group: "中学组", projectId: "drone-relay"
+      })
+    }));
+    assert.equal(personalRegistration.status, 201);
+  }, { prefix: "organization-registration-gate-" });
+});
+
+test("concurrent organization registrations preserve every committed user, organization, membership, document, and file", async () => {
+  await withTestServer(async ({ baseUrl, dbPath }) => {
+    const [first, second] = await Promise.all([
+      postOrganizationRegistration(baseUrl, { creditCode: "91330300TEST000030", phone: "13600009930", organizationName: "并发组织一" }),
+      postOrganizationRegistration(baseUrl, { creditCode: "91330300TEST000031", phone: "13600009931", organizationName: "并发组织二" })
+    ]);
+    assert.deepEqual([first.status, second.status], [201, 201]);
+    const firstPayload = await first.json();
+    const secondPayload = await second.json();
+    const db = JSON.parse(await fs.readFile(dbPath, "utf8"));
+    for (const payload of [firstPayload, secondPayload]) {
+      assert.ok(db.users.some((row) => row.id === payload.user.id));
+      assert.ok(db.organizations.some((row) => row.id === payload.organization.id));
+      assert.ok(db.memberships.some((row) => row.organizationId === payload.organization.id && row.userId === payload.user.id && row.role === "owner"));
+      const document = db.organizationDocuments.find((row) => row.id === payload.document.id);
+      assert.ok(document);
+      await fs.access(document.filePath);
+    }
+  }, { prefix: "organization-concurrent-" });
+});
+
+test("concurrent same-credit registrations return one conflict without an orphan credential", async () => {
+  await withTestServer(async ({ baseUrl, dbPath, tempDir }) => {
+    const [first, second] = await Promise.all([
+      postOrganizationRegistration(baseUrl, { creditCode: "91330300TEST000040", phone: "13600009940", organizationName: "重复信用代码组织一" }),
+      postOrganizationRegistration(baseUrl, { creditCode: "91330300TEST000040", phone: "13600009941", organizationName: "重复信用代码组织二" })
+    ]);
+    assert.deepEqual([first.status, second.status].sort(), [201, 409]);
+    const db = JSON.parse(await fs.readFile(dbPath, "utf8"));
+    assert.equal(db.organizations.filter((row) => row.creditCode === "91330300TEST000040").length, 1);
+    assert.equal(db.organizationDocuments.length, 1);
+    const directories = await fs.readdir(path.join(tempDir, "uploads", "organization-documents"));
+    assert.equal(directories.length, 1);
+    await fs.access(db.organizationDocuments[0].filePath);
+  }, { prefix: "organization-credit-race-" });
+});
+
+test("organization mutation coordinator preserves concurrent PostgreSQL store registrations", async () => {
+  const memory = newDb({ autoCreateForeignKeyIndices: true });
+  const { Pool } = memory.adapters.createPg();
+  const store = createPostgresStore(new Pool());
+  let sequence = 0;
+  const makeId = (prefix) => `${prefix}${++sequence}`;
+  const register = (creditCode, phone) => registerOrganization({
+    input: { name: "并发负责人", phone, password: "Strong123", organizationName: `组织-${creditCode}`, creditCode, documentType: "business_license" },
+    file: uploadedFile(pdfBuffer, "license.pdf", "application/pdf"),
+    readDb: () => store.readDb(),
+    writeDb: (db) => store.writeDb(db),
+    hashPassword: async () => "hash",
+    validatePassword: () => "",
+    makeId,
+    now: () => "2026-07-17T00:00:00.000Z",
+    saveFile: async ({ ownerId }) => ({
+      filePath: `/safe/uploads/organization-documents/${ownerId}/license.pdf`, originalName: "license.pdf", storedName: `${ownerId}.pdf`, mimeType: "application/pdf", size: pdfBuffer.length
+    })
+  });
+
+  try {
+    await store.initialize();
+    const [first, second] = await Promise.all([
+      register("91330300TEST000032", "13600009932"),
+      register("91330300TEST000033", "13600009933")
+    ]);
+    const db = await store.readDb();
+    for (const result of [first, second]) {
+      assert.ok(db.users.some((row) => row.id === result.user.id));
+      assert.ok(db.organizations.some((row) => row.id === result.organization.id));
+      assert.ok(db.organizationDocuments.some((row) => row.id === result.document.id));
+    }
+  } finally {
+    await store.close();
+  }
+});
+
+test("organization registration maps a PostgreSQL credit-code conflict to 409 and cleans its new file", async () => {
+  const saved = { filePath: "/safe/uploads/organization-documents/O2/license.pdf", originalName: "license.pdf", storedName: "license.pdf", mimeType: "application/pdf", size: pdfBuffer.length };
+  const cleaned = [];
+  const conflict = new Error("duplicate key");
+  conflict.code = "23505";
+  await assert.rejects(
+    () => registerOrganization({
+      input: { name: "冲突负责人", phone: "13600009942", password: "Strong123", organizationName: "冲突组织", creditCode: "91330300TEST000042", documentType: "business_license" },
+      file: uploadedFile(pdfBuffer, "license.pdf", "application/pdf"),
+      readDb: async () => ({ users: [], organizations: [], memberships: [], organizationDocuments: [] }),
+      writeDb: async () => { throw conflict; },
+      hashPassword: async () => "hash",
+      validatePassword: () => "",
+      makeId: (prefix) => `${prefix}2`,
+      now: () => "2026-07-17T00:00:00.000Z",
+      saveFile: async () => saved,
+      removePrivateFile: async (record) => { cleaned.push(record.filePath); }
+    }),
+    (error) => error.status === 409
+  );
+  assert.deepEqual(cleaned, [saved.filePath]);
+});
+
+test("deleting an organization owner with credential records is blocked before it can orphan private files", async () => {
+  await withTestServer(async ({ baseUrl }) => {
+    const registered = await postOrganizationRegistration(baseUrl, { creditCode: "91330300TEST000050", phone: "13600009950" });
+    const payload = await registered.json();
+    const admin = await loginAs(baseUrl, "13900000000", "admin123");
+    const deletion = await fetch(`${baseUrl}/api/admin/users/${payload.user.id}`, withSession(admin.cookie, { method: "DELETE" }));
+    assert.equal(deletion.status, 409);
+    const owner = await loginAs(baseUrl, "13600009950", "Strong123");
+    const credential = await fetch(`${baseUrl}/api/organizations/${payload.organization.id}/credential/${payload.document.id}`, withSession(owner.cookie));
+    assert.equal(credential.status, 200);
+  }, { prefix: "organization-owner-delete-" });
+});
+
+test("organization registration returns 422 with readable errors for forged or oversized credentials", async () => {
+  await withTestServer(async ({ baseUrl }) => {
+    const forged = await postOrganizationRegistration(baseUrl, {
+      creditCode: "91330300TEST000060", phone: "13600009960", credentialBuffer: Buffer.from("not-a-real-pdf"), credentialName: "forged.pdf"
+    });
+    assert.equal(forged.status, 422);
+    assert.match((await forged.json()).error, /签名|文件|支持|资质/i);
+
+    const oversized = await postOrganizationRegistration(baseUrl, {
+      creditCode: "91330300TEST000061", phone: "13600009961", credentialBuffer: Buffer.alloc(10 * 1024 * 1024 + 1), credentialName: "large.pdf"
+    });
+    assert.equal(oversized.status, 422);
+    assert.match((await oversized.json()).error, /大小|文件|资质/i);
+  }, { prefix: "organization-invalid-credential-" });
+});
+
+test("organization review cannot approve historical records missing a credential or valid credit code", async () => {
+  await withTestServer(async ({ baseUrl, dbPath }) => {
+    const admin = await loginAs(baseUrl, "13900000000", "admin123");
+    const withoutDocument = await postOrganizationRegistration(baseUrl, { creditCode: "91330300TEST000070", phone: "13600009970" });
+    const noDocumentPayload = await withoutDocument.json();
+    const dbWithoutDocument = JSON.parse(await fs.readFile(dbPath, "utf8"));
+    dbWithoutDocument.organizationDocuments = dbWithoutDocument.organizationDocuments.filter((row) => row.organizationId !== noDocumentPayload.organization.id);
+    await fs.writeFile(dbPath, JSON.stringify(dbWithoutDocument), "utf8");
+    const noDocumentApproval = await fetch(`${baseUrl}/api/admin/organizations/${noDocumentPayload.organization.id}/review`, withSession(admin.cookie, {
+      method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "approved", reason: "" })
+    }));
+    assert.equal(noDocumentApproval.status, 422);
+
+    const invalidCredit = await postOrganizationRegistration(baseUrl, { creditCode: "91330300TEST000071", phone: "13600009971" });
+    const invalidCreditPayload = await invalidCredit.json();
+    const dbInvalidCredit = JSON.parse(await fs.readFile(dbPath, "utf8"));
+    dbInvalidCredit.organizations.find((row) => row.id === invalidCreditPayload.organization.id).creditCode = "INVALID";
+    await fs.writeFile(dbPath, JSON.stringify(dbInvalidCredit), "utf8");
+    const invalidCreditApproval = await fetch(`${baseUrl}/api/admin/organizations/${invalidCreditPayload.organization.id}/review`, withSession(admin.cookie, {
+      method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "approved", reason: "" })
+    }));
+    assert.equal(invalidCreditApproval.status, 422);
+  }, { prefix: "organization-review-defense-" });
 });
 
 test("credential policy accepts real PNG and PDF and rejects disguised executables", async () => {

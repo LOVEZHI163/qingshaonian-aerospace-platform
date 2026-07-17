@@ -2,6 +2,7 @@ import express from "express";
 import multer from "multer";
 
 import {
+  assertOrganizationReadyForApproval,
   OrganizationError,
   registerOrdinary,
   registerOrganization,
@@ -39,6 +40,12 @@ export function createOrganizationsRouter({ store, requireUser, requireAdmin, re
   const router = express.Router();
   const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
   const deps = { readDb: () => store.readDb(), writeDb: (db) => store.writeDb(db), hashPassword, validatePassword, makeId, now };
+  const uploadCredential = (req, res, next) => upload.single("credential")(req, res, (error) => {
+    if (!error) return next();
+    return res.status(422).json({
+      error: error.code === "LIMIT_FILE_SIZE" ? "资质文件大小不能超过 10MB" : "资质文件上传无效"
+    });
+  });
 
   router.post("/auth/register/ordinary", asyncRoute(async (req, res, next) => {
     try {
@@ -47,7 +54,7 @@ export function createOrganizationsRouter({ store, requireUser, requireAdmin, re
     } catch (error) { respondError(error, res, next); }
   }));
 
-  router.post("/auth/register/organization", upload.single("credential"), asyncRoute(async (req, res, next) => {
+  router.post("/auth/register/organization", uploadCredential, asyncRoute(async (req, res, next) => {
     try {
       const result = await registerOrganization({ ...deps, input: req.body || {}, file: req.file });
       res.status(201).json({ user: publicUser(result.user), organization: publicOrganization(result.organization), document: publicDocument(result.document) });
@@ -76,13 +83,14 @@ export function createOrganizationsRouter({ store, requireUser, requireAdmin, re
       const db = await deps.readDb();
       const organization = db.organizations.find((row) => row.id === req.params.id);
       if (!organization) return res.status(404).json({ error: "组织不存在" });
+      if (req.body?.status === "approved") assertOrganizationReadyForApproval(organization, db.organizationDocuments);
       reviewOrganization(organization, req.body || {}, req.user.id, now());
       await deps.writeDb(db);
       res.json({ organization: publicOrganization(organization) });
     } catch (error) { respondError(error, res, next); }
   }));
 
-  router.patch("/me/organization", requireUser, requirePasswordReady, upload.single("credential"), asyncRoute(async (req, res, next) => {
+  router.patch("/me/organization", requireUser, requirePasswordReady, uploadCredential, asyncRoute(async (req, res, next) => {
     try {
       const result = await resubmitOrganization({ ...deps, input: req.body || {}, file: req.file, userId: req.user.id });
       res.json({ organization: publicOrganization(result.organization), document: publicDocument(result.document) });

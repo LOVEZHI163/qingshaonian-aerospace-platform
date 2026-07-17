@@ -403,6 +403,7 @@ app.post("/api/admin/users", requireAdmin, requirePasswordReady, asyncRoute(asyn
   const db = await readDb();
   const { name, phone, password, type = "ordinary", organizationName, organizationCode } = req.body;
   if (!name || !phone || !password) return res.status(422).json({ error: "姓名、手机号和密码不能为空" });
+  if (type === "organization") return res.status(422).json({ error: "组织必须通过资质注册并审核" });
   if (!["ordinary", "organization"].includes(type)) return res.status(422).json({ error: "账号类型不合法" });
   const passwordError = validatePassword(password);
   if (passwordError) return res.status(422).json({ error: passwordError });
@@ -424,6 +425,7 @@ app.patch("/api/admin/users/:id", requireAdmin, requirePasswordReady, asyncRoute
   const user = db.users.find((item) => item.id === req.params.id);
   if (!user) return res.status(404).json({ error: "用户不存在" });
   if (user.type === "admin" && req.body.type && req.body.type !== "admin") return res.status(422).json({ error: "不能修改超级管理员账号类型" });
+  if (req.body.type === "organization" && user.type !== "organization") return res.status(422).json({ error: "组织必须通过资质注册并审核" });
 
   if (req.body.phone) {
     const normalizedPhone = normalizePhone(req.body.phone);
@@ -456,6 +458,9 @@ app.delete("/api/admin/users/:id", requireAdmin, requirePasswordReady, asyncRout
   if (user.type === "admin") return res.status(422).json({ error: "不能删除超级管理员" });
 
   const ownedOrganizationIds = db.organizations.filter((org) => org.ownerUserId === user.id).map((org) => org.id);
+  if (db.organizationDocuments.some((document) => ownedOrganizationIds.includes(document.organizationId) && !document.cleanedAt)) {
+    return res.status(409).json({ error: "组织仍有资质文件，请先完成资源清理流程" });
+  }
   db.users = db.users.filter((item) => item.id !== user.id);
   db.organizations = db.organizations.filter((org) => org.ownerUserId !== user.id);
   db.memberships = db.memberships.filter((membership) => membership.userId !== user.id && !ownedOrganizationIds.includes(membership.organizationId));
@@ -653,6 +658,9 @@ app.post("/api/registrations", requireUser, requirePasswordReady, asyncRoute(asy
   const organization = db.organizations.find((item) => item.id === req.body.organizationId);
   if (req.body.organizationId && !organization) return res.status(404).json({ error: "组织不存在" });
   if (organization) {
+    if (organization.status !== "active" || organization.reviewStatus !== "approved") {
+      return res.status(403).json({ error: "组织尚未通过审核或已停用" });
+    }
     const activeMembership = db.memberships.some((item) =>
       item.userId === req.user.id && item.organizationId === organization.id && item.status === "active"
     );

@@ -44,7 +44,7 @@ test("admin can create, update, and delete an ordinary user", async () => {
   });
 });
 
-test("admin organization user CRUD creates and updates owned organization", async () => {
+test("admin user management rejects organization creation and conversion without credential review", async () => {
   await withServer(async (baseUrl) => {
     const admin = await loginAs(baseUrl, "13900000000", "admin123");
     const createRes = await fetch(`${baseUrl}/api/admin/users`, withSession(admin.cookie, {
@@ -59,22 +59,23 @@ test("admin organization user CRUD creates and updates owned organization", asyn
         organizationCode: "TEST-SCHOOL"
       })
     }));
-    assert.equal(createRes.status, 201);
-    const created = await asJson(createRes);
-    assert.equal(created.organization.name, "测试学校");
+    assert.equal(createRes.status, 422);
 
-    const updateRes = await fetch(`${baseUrl}/api/admin/users/${created.row.id}`, withSession(admin.cookie, {
+    const ordinaryRes = await fetch(`${baseUrl}/api/admin/users`, withSession(admin.cookie, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "待转换家长", phone: "13600003334", password: "Strong123", type: "ordinary" })
+    }));
+    assert.equal(ordinaryRes.status, 201);
+    const ordinary = await asJson(ordinaryRes);
+    const updateRes = await fetch(`${baseUrl}/api/admin/users/${ordinary.row.id}`, withSession(admin.cookie, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ organizationName: "测试学校改", organizationCode: "TEST-NEW" })
+      body: JSON.stringify({ type: "organization", organizationName: "测试学校改", organizationCode: "TEST-NEW" })
     }));
-    assert.equal(updateRes.status, 200);
-    const updated = await asJson(updateRes);
-    assert.equal(updated.organization.name, "测试学校改");
+    assert.equal(updateRes.status, 422);
 
-    const deleteRes = await fetch(`${baseUrl}/api/admin/users/${created.row.id}`, withSession(admin.cookie, { method: "DELETE" }));
-    assert.equal(deleteRes.status, 200);
     const orgs = await asJson(await fetch(`${baseUrl}/api/organizations`, withSession(admin.cookie)));
-    assert.equal(orgs.rows.some((org) => org.code === "TEST-NEW"), false);
+    assert.equal(orgs.rows.some((org) => org.code === "TEST-NEW" || org.code === "TEST-SCHOOL"), false);
   });
 });
