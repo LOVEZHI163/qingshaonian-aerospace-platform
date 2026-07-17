@@ -1,5 +1,20 @@
 import { api } from "./api.js";
 
+const PAGE_SIZE_LIMIT = 100;
+const MAX_PAGES = 1000;
+const ERROR_MESSAGE = "报名数据在加载期间发生变化，请刷新重试";
+
+export class AdminRegistrationPaginationError extends Error {
+  constructor() {
+    super(ERROR_MESSAGE);
+    this.name = "AdminRegistrationPaginationError";
+  }
+}
+
+function paginationError() {
+  return new AdminRegistrationPaginationError();
+}
+
 function requestPath(filters, page) {
   const params = new URLSearchParams();
   for (const [key, value] of Object.entries(filters || {})) {
@@ -8,36 +23,52 @@ function requestPath(filters, page) {
     }
   }
   if (page > 1) params.set("page", String(page));
-  params.set("pageSize", "100");
+  params.set("pageSize", String(PAGE_SIZE_LIMIT));
   return `/api/admin/registrations?${params}`;
 }
 
+function metadata(payload) {
+  const total = Number(payload?.total);
+  const page = Number(payload?.page);
+  const pageSize = Number(payload?.pageSize);
+  if (!Number.isSafeInteger(total) || total < 0
+    || !Number.isSafeInteger(page) || page < 1
+    || !Number.isSafeInteger(pageSize) || pageSize < 1 || pageSize > PAGE_SIZE_LIMIT) {
+    throw paginationError();
+  }
+  return { total, page, pageSize };
+}
+
+function pageRows(payload, pageSize) {
+  if (!Array.isArray(payload?.rows) || payload.rows.length > pageSize) throw paginationError();
+  return payload.rows;
+}
+
 export async function loadAdminRegistrations(filters = {}, request = api) {
+  const firstPayload = await request(requestPath(filters, 1));
+  const { total: initialTotal, page: initialPage, pageSize: initialPageSize } = metadata(firstPayload);
+  if (initialPage !== 1) throw paginationError();
+  const expectedPages = Math.ceil(initialTotal / initialPageSize);
+  if (expectedPages > MAX_PAGES) throw paginationError();
+
   const rows = [];
   const seen = new Set();
-  let page = 1;
-  let previousPage = 0;
-
-  while (true) {
-    const payload = await request(requestPath(filters, page));
-    const pageRows = Array.isArray(payload?.rows) ? payload.rows : [];
-    let added = 0;
-    for (const row of pageRows) {
+  for (let expectedPage = 1, payload = firstPayload; expectedPage <= Math.max(1, expectedPages); expectedPage += 1) {
+    if (expectedPage > 1) payload = await request(requestPath(filters, expectedPage));
+    const { total, page, pageSize } = metadata(payload);
+    if (total !== initialTotal || page !== expectedPage || pageSize !== initialPageSize) throw paginationError();
+    const currentRows = pageRows(payload, pageSize);
+    for (const row of currentRows) {
       const key = row?.id || JSON.stringify(row);
       if (!seen.has(key)) {
         seen.add(key);
         rows.push(row);
-        added += 1;
       }
     }
-
-    const total = Number(payload?.total);
-    const responsePage = Number(payload?.page);
-    const pageSize = Number(payload?.pageSize);
-    if (!Number.isFinite(total) || total <= rows.length || pageRows.length === 0 || added === 0) return rows;
-    if (!Number.isInteger(responsePage) || responsePage < page || responsePage <= previousPage) return rows;
-    if (!Number.isInteger(pageSize) || pageSize < 1) return rows;
-    previousPage = responsePage;
-    page = responsePage + 1;
+    if (rows.length > initialTotal) throw paginationError();
+    if (expectedPage < expectedPages && currentRows.length === 0) throw paginationError();
   }
+
+  if (rows.length !== initialTotal) throw paginationError();
+  return rows;
 }

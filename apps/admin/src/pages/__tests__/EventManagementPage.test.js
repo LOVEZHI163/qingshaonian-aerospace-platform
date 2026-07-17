@@ -112,6 +112,29 @@ describe("EventManagementPage", () => {
     expect(wrapper.get('[data-action="disable-project"]').text()).toContain("停用");
   });
 
+  it("shows an incomplete-data error and preserves existing project history when pagination fails", async () => {
+    let registrationRequests = 0;
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/admin/events") return { rows: [event], projects: [project] };
+      if (path === "/api/admin/registrations?pageSize=100") {
+        registrationRequests += 1;
+        return registrationRequests === 1
+          ? { rows: [{ id: "R1", projectId: "P1" }], total: 1, page: 1, pageSize: 100 }
+          : { rows: [], page: 1, pageSize: 100 };
+      }
+      return { row: event };
+    });
+    const wrapper = mount(EventManagementPage);
+    await flushPromises();
+    expect(wrapper.find('[data-action="delete-project"]').exists()).toBe(false);
+
+    await wrapper.get('[data-mode="force_closed"]').trigger("click");
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("报名数据在加载期间发生变化，请刷新重试");
+    expect(wrapper.find('[data-action="delete-project"]').exists()).toBe(false);
+  });
+
   it("opens the form and creates the first event from an empty state", async () => {
     const rows = [];
     apiMock.mockImplementation(async (path, options = {}) => {

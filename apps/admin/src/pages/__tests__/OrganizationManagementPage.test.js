@@ -15,6 +15,7 @@ const organization = {
 function mockOrganizations() {
   apiMock.mockImplementation(async (path, options = {}) => {
     if (path === "/api/admin/organizations" && !options.method) return { rows: [organization] };
+    if (path === "/api/admin/registrations?pageSize=100") return { rows: [], total: 0, page: 1, pageSize: 100 };
     if (path === "/api/admin/organizations/O1/review") return { organization: { ...organization, reviewStatus: JSON.parse(options.body).status } };
     return { rows: [] };
   });
