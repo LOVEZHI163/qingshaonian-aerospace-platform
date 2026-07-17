@@ -1,7 +1,14 @@
 ﻿<script setup>
 import { computed, onMounted, reactive, ref, watch } from "vue";
+import AdminShell from "./components/AdminShell.vue";
+import { api } from "./lib/api.js";
+import EventManagementPage from "./pages/EventManagementPage.vue";
+import { useSession } from "./state/session.js";
 
 const API = import.meta.env.VITE_API_URL || "";
+const session = useSession();
+const currentUser = session.user;
+const restoring = session.restoring;
 
 const statusText = {
   pending: "待审核",
@@ -25,9 +32,10 @@ const roleText = {
 };
 
 const eventData = ref({ event: {}, projects: [], grades: [] });
-const currentUser = ref(null);
 const currentView = ref("login");
 const message = ref("");
+const smsPasswordResetEnabled = ref(false);
+const resetStep = ref("request");
 const rows = ref([]);
 const users = ref([]);
 const organizations = ref([]);
@@ -42,15 +50,22 @@ const userSearch = ref("");
 const orgSearch = ref("");
 
 const loginForm = reactive({ phone: "13800000001", password: "123456" });
-const registerForm = reactive({
+const ordinaryRegisterForm = reactive({
   type: "ordinary",
+  name: "",
+  phone: "",
+  password: ""
+});
+const organizationRegisterForm = reactive({
+  type: "organization",
   name: "",
   phone: "",
   password: "",
   organizationName: "",
   organizationCode: ""
 });
-const resetForm = reactive({ name: "", phone: "", password: "" });
+const resetForm = reactive({ phone: "", code: "", password: "" });
+const passwordChangeForm = reactive({ currentPassword: "", newPassword: "" });
 
 const joinForm = reactive({ organizationId: "", note: "" });
 const inviteForm = reactive({ organizationId: "", name: "", phone: "", note: "" });
@@ -64,7 +79,7 @@ const registrationForm = reactive({
 const resultForm = reactive({});
 const certificateForm = reactive({});
 const batchUploadForm = reactive({ file: null });
-const userForm = reactive({ id: "", name: "", phone: "", password: "123456", type: "ordinary", status: "active", organizationName: "", organizationCode: "" });
+const userForm = reactive({ id: "", name: "", phone: "", password: "", type: "ordinary", status: "active", organizationName: "", organizationCode: "" });
 const registrationEditForm = reactive({
   id: "",
   organizationId: "",
@@ -164,6 +179,7 @@ const duplicateBlocksSelectedType = computed(() => {
   if (!duplicate.value || !selectedProject.value) return false;
   return selectedProject.value.type === "individual" ? duplicate.value.individualUsed : duplicate.value.teamUsed;
 });
+const adminActive = computed(() => currentView.value === "registration" ? "registrations" : currentView.value);
 
 function orgName(id) {
   return organizations.value.find((item) => item.id === id)?.name || "未关联组织";
@@ -177,25 +193,25 @@ function ownerOrganization(userId) {
   return organizations.value.find((item) => item.ownerUserId === userId);
 }
 
-async function api(path, options = {}) {
-  const isFormData = options.body instanceof FormData;
-  const res = await fetch(`${API}${path}`, {
-    ...options,
-    headers: isFormData ? (options.headers || {}) : { "Content-Type": "application/json", ...(options.headers || {}) }
-  });
-  const payload = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(payload.error || payload.errors?.join("；") || "请求失败");
-  return payload;
-}
-
 async function loadEvent() {
   eventData.value = await api("/api/public/event");
+  if (!eventData.value.grades?.includes(registrationForm.group)) {
+    registrationForm.group = eventData.value.grades?.[0] || "";
+  }
+  if (!eventData.value.projects?.some((project) => project.id === registrationForm.projectId)) {
+    registrationForm.projectId = eventData.value.projects?.[0]?.id || "";
+  }
 }
 
 async function loadData() {
-  const [orgRes, userRes] = await Promise.all([api("/api/organizations"), api("/api/users")]);
+  if (!currentUser.value || currentUser.value.mustChangePassword) return;
+  const [orgRes, profileRes, userRes] = await Promise.all([
+    api("/api/organizations"),
+    api(`/api/me/${currentUser.value.id}`),
+    currentUser.value.type === "admin" ? api("/api/users") : Promise.resolve({ rows: [currentUser.value] })
+  ]);
   organizations.value = orgRes.rows;
-  memberships.value = orgRes.memberships;
+  memberships.value = profileRes.memberships || [];
   users.value = userRes.rows;
 
   if (!currentUser.value) {
@@ -204,22 +220,22 @@ async function loadData() {
   } else if (currentUser.value.type === "admin") {
     const [registrationRes, certificateRes] = await Promise.all([
       api("/api/registrations"),
-      api(`/api/admin/certificates?actorUserId=${currentUser.value.id}`)
+      api("/api/admin/certificates")
     ]);
     rows.value = registrationRes.rows;
     certificates.value = certificateRes.rows;
   } else if (currentUser.value.type === "organization") {
     const orgIds = manageableOrganizations.value.map((org) => org.id);
     const [registrationResults, certificateResults] = await Promise.all([
-      Promise.all(orgIds.map((orgId) => api(`/api/organizations/${orgId}/registrations?actorUserId=${currentUser.value.id}`))),
-      Promise.all(orgIds.map((orgId) => api(`/api/organizations/${orgId}/certificates?actorUserId=${currentUser.value.id}`)))
+      Promise.all(orgIds.map((orgId) => api(`/api/organizations/${orgId}/registrations`))),
+      Promise.all(orgIds.map((orgId) => api(`/api/organizations/${orgId}/certificates`)))
     ]);
     rows.value = registrationResults.flatMap((result) => result.rows);
     certificates.value = certificateResults.flatMap((result) => result.rows);
   } else {
     const [registrationRes, certificateRes] = await Promise.all([
-      api(`/api/me/registrations?userId=${currentUser.value.id}`),
-      api(`/api/me/certificates?userId=${currentUser.value.id}`)
+      api("/api/me/registrations"),
+      api("/api/me/certificates")
     ]);
     rows.value = registrationRes.rows;
     certificates.value = certificateRes.rows;
@@ -233,17 +249,17 @@ async function loadData() {
 async function login() {
   message.value = "";
   try {
-    const payload = await api("/api/auth/login", { method: "POST", body: JSON.stringify(loginForm) });
-    currentUser.value = payload.user;
+    const user = await session.login(loginForm);
+    if (user.mustChangePassword) return;
     await loadData();
-    currentView.value = payload.user.type === "organization" ? "organization" : "registration";
+    currentView.value = user.type === "admin" ? "overview" : user.type === "organization" ? "organization" : "registration";
   } catch (error) {
     message.value = error.message;
   }
 }
 
 function resetUserForm() {
-  Object.assign(userForm, { id: "", name: "", phone: "", password: "123456", type: "ordinary", status: "active", organizationName: "", organizationCode: "" });
+  Object.assign(userForm, { id: "", name: "", phone: "", password: "", type: "ordinary", status: "active", organizationName: "", organizationCode: "" });
 }
 
 function resetRegistrationEditForm() {
@@ -273,7 +289,7 @@ async function saveRegistrationEdit() {
   try {
     await api(`/api/admin/registrations/${registrationEditForm.id}`, {
       method: "PATCH",
-      body: JSON.stringify({ actorUserId: currentUser.value.id, ...registrationEditForm })
+      body: JSON.stringify({ ...registrationEditForm })
     });
     resetRegistrationEditForm();
     await loadData();
@@ -299,9 +315,12 @@ function editUser(user) {
 
 async function saveUser() {
   message.value = "";
+  if (!userForm.id && !userForm.password) {
+    message.value = "创建用户时请设置至少 8 位、包含字母和数字的初始密码";
+    return;
+  }
   try {
     const body = {
-      actorUserId: currentUser.value.id,
       name: userForm.name,
       phone: userForm.phone,
       type: userForm.type,
@@ -314,7 +333,7 @@ async function saveUser() {
       await api(`/api/admin/users/${userForm.id}`, { method: "PATCH", body: JSON.stringify(body) });
       message.value = "用户已更新";
     } else {
-      await api("/api/admin/users", { method: "POST", body: JSON.stringify({ ...body, password: userForm.password || "123456" }) });
+      await api("/api/admin/users", { method: "POST", body: JSON.stringify(body) });
       message.value = "用户已创建";
     }
     resetUserForm();
@@ -328,7 +347,7 @@ async function deleteUser(user) {
   if (!window.confirm(`确认删除用户 ${user.name}？关联的组织关系会同步清理。`)) return;
   message.value = "";
   try {
-    await api(`/api/admin/users/${user.id}?actorUserId=${currentUser.value.id}`, { method: "DELETE" });
+    await api(`/api/admin/users/${user.id}`, { method: "DELETE" });
     await loadData();
     message.value = "用户已删除";
   } catch (error) {
@@ -336,39 +355,75 @@ async function deleteUser(user) {
   }
 }
 
-async function register() {
+async function register(form) {
   message.value = "";
   try {
-    const payload = await api("/api/auth/register", { method: "POST", body: JSON.stringify(registerForm) });
-    currentUser.value = payload.user;
-    await loadData();
-    currentView.value = payload.user.type === "organization" ? "organization" : "registration";
-    message.value = "注册成功";
-  } catch (error) {
-    message.value = error.message;
-  }
-}
-
-async function resetPassword() {
-  message.value = "";
-  try {
-    const payload = await api("/api/auth/reset-password", { method: "POST", body: JSON.stringify(resetForm) });
-    loginForm.phone = resetForm.phone;
-    loginForm.password = resetForm.password;
-    resetForm.name = "";
-    resetForm.phone = "";
-    resetForm.password = "";
+    await api("/api/auth/register", { method: "POST", body: JSON.stringify(form) });
+    loginForm.phone = form.phone;
+    loginForm.password = "";
     currentView.value = "login";
-    message.value = payload.message || "密码已重置";
+    message.value = "注册成功，请登录";
   } catch (error) {
     message.value = error.message;
   }
 }
 
-function logout() {
-  currentUser.value = null;
+async function requestPasswordReset() {
+  message.value = "";
+  try {
+    const payload = await api("/api/auth/password-reset/sms/request", {
+      method: "POST",
+      body: JSON.stringify({ phone: resetForm.phone })
+    });
+    resetStep.value = "confirm";
+    message.value = payload.message || "验证码已发送，请在 5 分钟内完成验证";
+  } catch (error) {
+    message.value = error.message;
+  }
+}
+
+async function confirmPasswordReset() {
+  message.value = "";
+  try {
+    const payload = await api("/api/auth/password-reset/sms/confirm", {
+      method: "POST",
+      body: JSON.stringify({ phone: resetForm.phone, code: resetForm.code, password: resetForm.password })
+    });
+    loginForm.phone = resetForm.phone;
+    Object.assign(resetForm, { phone: "", code: "", password: "" });
+    resetStep.value = "request";
+    currentView.value = "login";
+    message.value = payload.message || "密码已重置，请登录";
+  } catch (error) {
+    message.value = error.message;
+  }
+}
+
+async function changePassword() {
+  message.value = "";
+  try {
+    const payload = await api("/api/auth/change-password", {
+      method: "POST",
+      body: JSON.stringify(passwordChangeForm)
+    });
+    session.setUser(payload.user, session.organizations.value);
+    Object.assign(passwordChangeForm, { currentPassword: "", newPassword: "" });
+    await loadData();
+    currentView.value = payload.user.type === "admin" ? "overview" : payload.user.type === "organization" ? "organization" : "registration";
+    message.value = "密码修改成功";
+  } catch (error) {
+    message.value = error.message;
+  }
+}
+
+async function logout() {
+  await session.logout();
   currentView.value = "login";
   message.value = "";
+}
+
+function navigateAdmin(key) {
+  currentView.value = key === "registrations" ? "registration" : key;
 }
 
 async function checkDuplicate() {
@@ -377,7 +432,10 @@ async function checkDuplicate() {
     duplicate.value = null;
     return;
   }
-  duplicate.value = await api("/api/registrations/check", { method: "POST", body: JSON.stringify({ athlete }) });
+  duplicate.value = await api("/api/registrations/check", {
+    method: "POST",
+    body: JSON.stringify({ athlete, projectId: registrationForm.projectId, group: registrationForm.group })
+  });
 }
 
 async function submitRegistration() {
@@ -387,7 +445,6 @@ async function submitRegistration() {
       method: "POST",
       body: JSON.stringify({
         ...registrationForm,
-        userId: currentUser.value.id,
         source: currentUser.value.type === "organization" ? "组织用户" : "普通用户"
       })
     });
@@ -406,7 +463,7 @@ async function requestJoin() {
   try {
     await api("/api/organizations/request", {
       method: "POST",
-      body: JSON.stringify({ userId: currentUser.value.id, organizationId: joinForm.organizationId, note: joinForm.note })
+      body: JSON.stringify({ organizationId: joinForm.organizationId, note: joinForm.note })
     });
     joinForm.note = "";
     await loadData();
@@ -421,7 +478,7 @@ async function inviteUser() {
   try {
     await api("/api/organizations/invite", {
       method: "POST",
-      body: JSON.stringify({ ...inviteForm, senderUserId: currentUser.value.id })
+      body: JSON.stringify({ ...inviteForm })
     });
     inviteForm.name = "";
     inviteForm.phone = "";
@@ -438,7 +495,7 @@ async function updateMembership(row, status) {
   try {
     await api(`/api/memberships/${row.id}`, {
       method: "PATCH",
-      body: JSON.stringify({ actorUserId: currentUser.value.id, status })
+      body: JSON.stringify({ status })
     });
     await loadData();
   } catch (error) {
@@ -482,7 +539,7 @@ async function saveResult(row) {
   try {
     await api(`/api/admin/registrations/${row.id}/result`, {
       method: "POST",
-      body: JSON.stringify({ actorUserId: currentUser.value.id, ...resultDraft(row) })
+      body: JSON.stringify({ ...resultDraft(row) })
     });
     await loadData();
     message.value = "成绩奖项已保存";
@@ -500,7 +557,6 @@ async function uploadCertificate(row) {
   }
   try {
     const formData = new FormData();
-    formData.append("actorUserId", currentUser.value.id);
     formData.append("certificateNo", draft.certificateNo);
     formData.append("certificate", draft.file);
     await api(`/api/admin/registrations/${row.id}/certificate`, { method: "POST", body: formData });
@@ -517,7 +573,7 @@ async function publishCertificate(certificate, status) {
   try {
     await api(`/api/admin/certificates/${certificate.id}/publish`, {
       method: "PATCH",
-      body: JSON.stringify({ actorUserId: currentUser.value.id, status })
+      body: JSON.stringify({ status })
     });
     await loadData();
     message.value = status === "published" ? "证书已发布" : "证书已撤回";
@@ -535,7 +591,6 @@ async function uploadCertificateBatch() {
   }
   try {
     const formData = new FormData();
-    formData.append("actorUserId", currentUser.value.id);
     formData.append("zip", batchUploadForm.file);
     batchResult.value = await api("/api/admin/certificates/batch", { method: "POST", body: formData });
     batchUploadForm.file = null;
@@ -547,11 +602,26 @@ async function uploadCertificateBatch() {
 }
 
 function downloadCertificate(certificate) {
-  window.open(`${API}/api/certificates/${certificate.id}/download?actorUserId=${currentUser.value.id}`, "_blank");
+  window.open(`${API}/api/certificates/${certificate.id}/download`, "_blank");
 }
 
 function exportCsv() {
   window.open(`${API}/api/registrations/export.csv`, "_blank");
+}
+
+async function resetTemporaryPassword(user) {
+  const password = window.prompt(`请输入 ${user.name} 的临时密码（至少 8 位，含字母和数字）`, "");
+  if (!password) return;
+  message.value = "";
+  try {
+    await api(`/api/admin/users/${user.id}/reset-password`, {
+      method: "POST",
+      body: JSON.stringify({ password })
+    });
+    message.value = "临时密码已重置；请安全告知用户，用户首次登录必须修改。";
+  } catch (error) {
+    message.value = error.message;
+  }
 }
 
 watch(
@@ -578,13 +648,31 @@ watch(
 );
 
 onMounted(async () => {
-  await loadEvent();
-  await loadData();
+  try {
+    const [, features] = await Promise.all([
+      loadEvent(),
+      api("/api/public/features").catch(() => ({ smsPasswordResetEnabled: false }))
+    ]);
+    smsPasswordResetEnabled.value = Boolean(features.smsPasswordResetEnabled);
+  } catch (error) {
+    message.value = error.message;
+  }
+  await session.restore();
+  if (currentUser.value && !currentUser.value.mustChangePassword) {
+    currentView.value = currentUser.value.type === "admin" ? "overview" : currentUser.value.type === "organization" ? "organization" : "registration";
+    try {
+      await loadData();
+    } catch (error) {
+      message.value = error.message;
+    }
+  }
 });
 </script>
 
 <template>
-  <div v-if="!currentUser" class="auth-shell">
+  <div v-if="restoring" class="app-loading">正在恢复登录状态…</div>
+
+  <div v-else-if="!currentUser" class="auth-shell">
     <header class="auth-header">
       <div class="logo">航</div>
       <div>
@@ -594,14 +682,14 @@ onMounted(async () => {
     </header>
 
     <nav class="auth-tabs">
-      <button :class="{ active: currentView === 'login' }" @click="currentView = 'login'">登录</button>
-      <button :class="{ active: currentView === 'register' }" @click="currentView = 'register'">注册</button>
+      <button data-auth-tab="login" :class="{ active: currentView === 'login' }" @click="currentView = 'login'">登录</button>
+      <button data-auth-tab="register" :class="{ active: currentView === 'register' }" @click="currentView = 'register'">注册</button>
     </nav>
 
     <p v-if="message" class="message">{{ message }}</p>
 
     <section v-if="currentView === 'login'" class="auth-grid single">
-      <form class="panel auth-panel" @submit.prevent="login">
+      <form class="panel auth-panel" data-auth-form="login" @submit.prevent="login">
         <h3>账号登录</h3>
         <label>手机号<input v-model="loginForm.phone" /></label>
         <label>密码<input v-model="loginForm.password" type="password" /></label>
@@ -612,41 +700,83 @@ onMounted(async () => {
     </section>
 
     <section v-else-if="currentView === 'register'" class="auth-grid register-choice">
-      <form class="panel auth-panel" @submit.prevent="registerForm.type = 'ordinary'; register()">
+      <form class="panel auth-panel" data-register="ordinary" @submit.prevent="register(ordinaryRegisterForm)">
         <h3>普通用户注册</h3>
         <p class="hint">适合学生、家长、个人参赛者。注册后可以报名，也可以向组织发送加入申请。</p>
-        <label>姓名<input v-model="registerForm.name" placeholder="学生/家长/老师姓名" /></label>
-        <label>手机号<input v-model="registerForm.phone" placeholder="用于登录和查重" /></label>
-        <label>密码<input v-model="registerForm.password" type="password" /></label>
+        <label>姓名<input v-model="ordinaryRegisterForm.name" placeholder="学生/家长/老师姓名" /></label>
+        <label>手机号<input v-model="ordinaryRegisterForm.phone" placeholder="用于登录和查重" /></label>
+        <label>密码<input v-model="ordinaryRegisterForm.password" type="password" /></label>
         <button class="primary">注册普通用户</button>
       </form>
 
-      <form class="panel auth-panel org-register" @submit.prevent="registerForm.type = 'organization'; register()">
+      <form class="panel auth-panel org-register" data-register="organization" @submit.prevent="register(organizationRegisterForm)">
         <h3>组织用户注册</h3>
         <p class="hint">适合学校、青少年宫、科技馆、活动中心。注册后会创建组织，并成为组织负责人。</p>
-        <label>负责人姓名<input v-model="registerForm.name" placeholder="负责人/领队老师姓名" /></label>
-        <label>手机号<input v-model="registerForm.phone" placeholder="用于登录和组织联系" /></label>
-        <label>密码<input v-model="registerForm.password" type="password" /></label>
-        <label>组织名称<input v-model="registerForm.organizationName" placeholder="学校、青少年宫或活动中心" /></label>
-        <label>组织代码<input v-model="registerForm.organizationCode" placeholder="可选，如 WZ-SYXX" /></label>
+        <label>负责人姓名<input v-model="organizationRegisterForm.name" placeholder="负责人/领队老师姓名" /></label>
+        <label>手机号<input v-model="organizationRegisterForm.phone" placeholder="用于登录和组织联系" /></label>
+        <label>密码<input v-model="organizationRegisterForm.password" type="password" /></label>
+        <label>组织名称<input v-model="organizationRegisterForm.organizationName" placeholder="学校、青少年宫或活动中心" /></label>
+        <label>组织代码<input v-model="organizationRegisterForm.organizationCode" placeholder="可选，如 WZ-SYXX" /></label>
         <button class="primary">注册组织用户</button>
       </form>
     </section>
 
     <section v-else-if="currentView === 'forgot'" class="auth-grid single">
-      <form class="panel auth-panel" @submit.prevent="resetPassword">
+      <form v-if="smsPasswordResetEnabled && resetStep === 'request'" class="panel auth-panel" @submit.prevent="requestPasswordReset">
         <h3>找回密码</h3>
-        <p class="hint">当前原型用“姓名 + 手机号”确认账号。上线后建议接入短信验证码。</p>
-        <label>姓名<input v-model="resetForm.name" placeholder="注册时填写的姓名" /></label>
+        <p class="hint">验证码将发送到注册手机号，5 分钟内有效。</p>
         <label>手机号<input v-model="resetForm.phone" placeholder="注册手机号" /></label>
-        <label>新密码<input v-model="resetForm.password" type="password" placeholder="至少 6 位" /></label>
-        <button class="primary">重置密码</button>
+        <button class="primary">发送验证码</button>
       </form>
+      <form v-else-if="smsPasswordResetEnabled" class="panel auth-panel" @submit.prevent="confirmPasswordReset">
+        <h3>验证并重置密码</h3>
+        <label>手机号<input v-model="resetForm.phone" disabled /></label>
+        <label>短信验证码<input v-model="resetForm.code" inputmode="numeric" /></label>
+        <label>新密码<input v-model="resetForm.password" type="password" placeholder="至少 8 位，含字母和数字" /></label>
+        <button class="primary">确认重置</button>
+        <button type="button" class="link-button" @click="resetStep = 'request'">重新获取验证码</button>
+      </form>
+      <section v-else class="panel auth-panel">
+        <h3>找回密码</h3>
+        <p class="hint">短信找回暂未启用，请联系赛事管理员重置密码。</p>
+      </section>
     </section>
   </div>
 
-  <div v-else class="shell">
-    <aside>
+  <section v-else-if="currentUser.mustChangePassword" class="auth-shell force-password-shell">
+    <form class="panel auth-panel" @submit.prevent="changePassword">
+      <h3>首次登录请修改密码</h3>
+      <p class="hint">管理员为你设置的是临时密码。修改完成后才能进入系统，不能跳过此步骤。</p>
+      <label>当前临时密码<input v-model="passwordChangeForm.currentPassword" type="password" /></label>
+      <label>新密码<input v-model="passwordChangeForm.newPassword" type="password" placeholder="至少 8 位，含字母和数字" /></label>
+      <button class="primary">修改密码并进入系统</button>
+      <p v-if="message" class="message">{{ message }}</p>
+
+      <EventManagementPage
+        v-if="currentUser.type === 'admin' && ['events', 'projects'].includes(currentView)"
+        @event-changed="loadEvent"
+      />
+
+      <section v-else-if="currentUser.type === 'admin' && currentView === 'overview'" class="panel admin-overview">
+        <h3>管理概览</h3>
+        <p>从左侧进入赛事管理、赛项与组别、报名、证书或用户管理。</p>
+        <div class="overview-metrics"><span>报名 {{ rows.length }} 条</span><span>证书 {{ certificates.length }} 张</span><span>用户 {{ users.length }} 个</span></div>
+      </section>
+    </form>
+  </section>
+
+  <component
+    :is="currentUser.type === 'admin' ? AdminShell : 'div'"
+    v-else
+    :active="adminActive"
+    :class="{ shell: currentUser.type !== 'admin' }"
+    @navigate="navigateAdmin"
+  >
+    <template v-if="currentUser.type === 'admin'" #header>
+      <div><strong>{{ currentUser.name }}</strong><span>{{ eventData.event.name || "赛事管理平台" }}</span></div>
+      <button type="button" class="ghost" @click="logout">退出登录</button>
+    </template>
+    <aside v-if="currentUser.type !== 'admin'">
       <div class="logo">航</div>
       <h1>赛事报名系统</h1>
       <div class="user-card">
@@ -867,7 +997,7 @@ onMounted(async () => {
               </select>
             </label>
           </div>
-          <label>密码<input v-model="userForm.password" type="password" :placeholder="userForm.id ? '留空则不修改密码' : '默认 123456'" /></label>
+          <label v-if="!userForm.id">初始密码<input v-model="userForm.password" type="password" placeholder="至少 8 位，含字母和数字" required /></label>
           <template v-if="userForm.type === 'organization'">
             <label>组织名称<input v-model="userForm.organizationName" placeholder="学校、青少年宫或活动中心" /></label>
             <label>组织代码<input v-model="userForm.organizationCode" placeholder="如 WZ-SYXX" /></label>
@@ -901,6 +1031,7 @@ onMounted(async () => {
                   <td><em :class="user.status">{{ user.status === "disabled" ? "停用" : "启用" }}</em></td>
                   <td>
                     <button v-if="user.type !== 'admin'" class="mini" @click="editUser(user)">编辑</button>
+                    <button v-if="user.type !== 'admin'" class="mini" @click="resetTemporaryPassword(user)">重置临时密码</button>
                     <button v-if="user.type !== 'admin'" class="mini reject" @click="deleteUser(user)">删除</button>
                     <span v-else>系统账号</span>
                   </td>
@@ -1016,6 +1147,6 @@ onMounted(async () => {
         </div>
       </section>
     </main>
-  </div>
+  </component>
 </template>
 

@@ -23,10 +23,267 @@ body {
   margin: 0;
 }
 
+.app-loading {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  background: var(--bg);
+}
+
 button,
 input,
 select {
   font: inherit;
+}
+
+.admin-shell {
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr);
+  min-height: 100vh;
+  background: var(--bg);
+}
+
+.admin-sidebar {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  padding: 24px 16px;
+  color: #fff;
+  background: #102847;
+}
+
+.admin-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 24px;
+  font-size: 18px;
+}
+
+.admin-brand span {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  border-radius: 9px;
+  background: #1797d5;
+}
+
+.admin-sidebar nav {
+  display: grid;
+  gap: 7px;
+}
+
+.admin-sidebar nav button {
+  padding: 11px 13px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: #dbe8f7;
+  text-align: left;
+  background: transparent;
+  cursor: pointer;
+}
+
+.admin-sidebar nav button:hover,
+.admin-sidebar nav button.active {
+  border-color: rgba(255, 255, 255, 0.2);
+  color: #fff;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.admin-workspace {
+  min-width: 0;
+}
+
+.admin-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 72px;
+  padding: 14px 28px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.admin-header > div {
+  display: grid;
+  gap: 3px;
+}
+
+.admin-header span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.admin-main {
+  padding: 24px 28px 48px;
+}
+
+.admin-main > main {
+  margin: 0;
+  padding: 0;
+}
+
+.event-management {
+  display: grid;
+  gap: 16px;
+}
+
+.page-title-row,
+.event-layout,
+.form-actions,
+.registration-modes,
+.project-actions,
+.checkbox-row,
+.overview-metrics {
+  display: flex;
+  gap: 10px;
+}
+
+.page-title-row {
+  align-items: center;
+  justify-content: space-between;
+}
+
+.page-title-row h2,
+.page-title-row p {
+  margin: 0;
+}
+
+.page-title-row p {
+  margin-top: 5px;
+  color: var(--muted);
+}
+
+.event-layout {
+  align-items: flex-start;
+}
+
+.event-list-panel {
+  display: grid;
+  flex: 0 0 270px;
+  gap: 8px;
+}
+
+.event-list-item {
+  display: grid;
+  gap: 5px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  text-align: left;
+  background: #fff;
+  cursor: pointer;
+}
+
+.event-list-item.selected {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 2px rgba(23, 104, 201, 0.1);
+}
+
+.event-list-item span,
+.event-list-item small,
+.project-list span,
+.project-list small {
+  color: var(--muted);
+}
+
+.event-editor-stack {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  gap: 16px;
+}
+
+.event-form small,
+.danger-message {
+  color: var(--red);
+}
+
+.success-message {
+  color: var(--green);
+}
+
+.registration-modes {
+  margin: 14px 0;
+}
+
+.project-list {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+
+.project-list article {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.project-list article > div:first-child {
+  display: grid;
+  gap: 4px;
+}
+
+.checkbox-row {
+  flex-wrap: wrap;
+  margin: 12px 0;
+}
+
+.checkbox-row label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.checkbox-row input {
+  width: auto;
+}
+
+.force-password-shell .auth-panel {
+  max-width: 520px;
+  margin: 10vh auto 0;
+}
+
+.overview-metrics {
+  margin-top: 20px;
+  flex-wrap: wrap;
+}
+
+.overview-metrics span {
+  min-width: 140px;
+  padding: 16px;
+  border-radius: 8px;
+  background: #eef4fb;
+}
+
+@media (max-width: 900px) {
+  .admin-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-sidebar {
+    position: static;
+    height: auto;
+  }
+
+  .admin-sidebar nav {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .event-layout {
+    display: grid;
+  }
+
+  .event-list-panel {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  }
 }
 
 .auth-shell {

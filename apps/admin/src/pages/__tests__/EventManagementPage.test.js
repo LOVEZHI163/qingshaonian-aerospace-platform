@@ -1,0 +1,98 @@
+import { flushPromises, mount } from "@vue/test-utils";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const { apiMock } = vi.hoisted(() => ({ apiMock: vi.fn() }));
+vi.mock("../../lib/api.js", () => ({ api: apiMock }));
+
+import EventManagementPage from "../EventManagementPage.vue";
+
+const event = {
+  id: "E1",
+  name: "2026赛事",
+  theme: "航空创新",
+  dateLabel: "2026年11月21日",
+  venue: "温州",
+  contact: "组委会",
+  registrationStartAt: "2026-10-01T00:00:00.000Z",
+  registrationEndAt: "2026-11-01T00:00:00.000Z",
+  registrationMode: "automatic",
+  status: "published",
+  isCurrent: true
+};
+const project = {
+  id: "P1",
+  eventId: "E1",
+  name: "纸飞机",
+  type: "individual",
+  category: "航空模型",
+  enabled: true,
+  instructorRequired: false,
+  displayOrder: 1,
+  allowedGroups: ["小学低段", "小学高段"]
+};
+
+function mockLoads(registrations = []) {
+  apiMock.mockImplementation(async (path) => {
+    if (path === "/api/admin/events") return { rows: [event], projects: [project] };
+    if (path === "/api/registrations") return { rows: registrations };
+    return { row: event };
+  });
+}
+
+describe("EventManagementPage", () => {
+  beforeEach(() => {
+    apiMock.mockReset();
+    vi.restoreAllMocks();
+  });
+
+  it("shows the current event and all registration controls", async () => {
+    mockLoads();
+    const wrapper = mount(EventManagementPage);
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("2026赛事");
+    expect(wrapper.text()).toContain("当前赛事");
+    expect(wrapper.text()).toContain("自动");
+    expect(wrapper.text()).toContain("临时开放");
+    expect(wrapper.text()).toContain("临时关闭");
+  });
+
+  it("updates the registration mode, reloads and announces the event change", async () => {
+    mockLoads();
+    const wrapper = mount(EventManagementPage);
+    await flushPromises();
+
+    await wrapper.get('[data-mode="force_closed"]').trigger("click");
+    await flushPromises();
+
+    expect(apiMock).toHaveBeenCalledWith("/api/admin/events/E1", {
+      method: "PATCH",
+      body: JSON.stringify({ registrationMode: "force_closed" })
+    });
+    expect(wrapper.emitted("event-changed")).toHaveLength(1);
+  });
+
+  it("copies an event with the entered name", async () => {
+    mockLoads();
+    vi.spyOn(window, "prompt").mockReturnValue("2027赛事");
+    const wrapper = mount(EventManagementPage);
+    await flushPromises();
+
+    await wrapper.get('[data-action="copy-event"]').trigger("click");
+    await flushPromises();
+
+    expect(apiMock).toHaveBeenCalledWith("/api/admin/events/E1/copy", {
+      method: "POST",
+      body: JSON.stringify({ name: "2027赛事" })
+    });
+  });
+
+  it("offers disable instead of delete when a project has registrations", async () => {
+    mockLoads([{ id: "R1", projectId: "P1" }]);
+    const wrapper = mount(EventManagementPage);
+    await flushPromises();
+
+    expect(wrapper.find('[data-action="delete-project"]').exists()).toBe(false);
+    expect(wrapper.get('[data-action="disable-project"]').text()).toContain("停用");
+  });
+});

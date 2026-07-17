@@ -537,7 +537,9 @@ test("login upgrades a legacy password and restores the user from a session", as
 - Produces: `EventManagementPage` emits `event-changed`，供 App 刷新当前赛事。
 - Consumes: Task 4 的赛事 API。
 
-- [ ] **Step 1: 安装 Vue 测试依赖并写页面失败测试**
+现有单文件后台的所有请求也必须迁移到同一 `api()`：移除 `actorUserId`、`senderUserId` 和 query `userId`，登录后依赖 Cookie session；注册成功后回到登录而不是伪造已登录状态；旧的公开姓名手机号改密页面替换为短信验证码流程或“请联系管理员重置”。管理员用户列表提供临时密码重置入口，临时密码用户先完成强制改密。
+
+- [x] **Step 1: 安装 Vue 测试依赖并写页面失败测试**
 
   Run: `npm install -D -w apps/admin vitest @vue/test-utils jsdom`
 
@@ -566,7 +568,7 @@ test("login upgrades a legacy password and restores the user from a session", as
 
   Expected: FAIL，页面和测试配置不存在。
 
-- [ ] **Step 2: 实现同源 API 与 session state**
+- [x] **Step 2: 实现同源 API 与 session state**
 
   `lib/api.js`：
 
@@ -588,7 +590,9 @@ test("login upgrades a legacy password and restores the user from a session", as
 
   `state/session.js` 使用模块级 `ref` 保存用户，首次启动调用 `/api/auth/me`；退出清空用户并回到登录页。
 
-- [ ] **Step 3: 实现后台外壳和赛事页面**
+  `api()` 对 401 清会话，对 `PASSWORD_CHANGE_REQUIRED` 保留错误码供 App 打开强制改密页；FormData 不手工设置 Content-Type。错误对象包含 status、code 和 payload，页面不得依赖字符串解析。
+
+- [x] **Step 3: 实现后台外壳和赛事页面**
 
   `AdminShell.vue` 提供“概览、赛事管理、赛项与组别、组织用户、报名管理、证书管理、普通用户管理”菜单和插槽。`EventManagementPage.vue` 包含赛事列表、基础资料表单、报名起止时间、三态按钮、当前赛事、复制、归档和赛项编辑区域。
 
@@ -605,11 +609,13 @@ test("login upgrades a legacy password and restores the user from a session", as
 
   已有报名的赛项隐藏“删除”，显示“停用”。四组使用固定复选框，不提供自由文本名称。
 
-- [ ] **Step 4: 在 App 中切换管理员新页面**
+  页面需要处理 loading、字段错误、API 错误和成功反馈；归档/删除二次确认。赛事与赛项表单发出的 payload 只包含 API 白名单字段，日期控件与 ISO 时间之间明确转换。
 
-  登录恢复后管理员默认进入后台概览；菜单切换到 `events` 时加载 `EventManagementPage`。非管理员不能渲染 `AdminShell`。保留普通用户和组织用户的现有页面，后续阶段再拆分。
+- [x] **Step 4: 在 App 中切换管理员新页面**
 
-- [ ] **Step 5: 运行测试、构建并提交**
+  登录恢复后管理员默认进入后台概览；菜单切换到 `events` 时加载 `EventManagementPage`。非管理员不能渲染 `AdminShell`。保留普通用户和组织用户的现有页面，后续阶段再拆分，但所有旧请求必须兼容 P1T3 的 session-only API。短信未配置时找回密码页面不显示验证码表单，只提示联系管理员。
+
+- [x] **Step 5: 运行测试、构建并提交**
 
   Run: `npm test -w apps/admin`
 

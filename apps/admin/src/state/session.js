@@ -1,0 +1,56 @@
+import { ref } from "vue";
+
+import { api, setUnauthorizedHandler } from "../lib/api.js";
+
+const user = ref(null);
+const organizations = ref([]);
+const restoring = ref(true);
+
+function setUser(nextUser, nextOrganizations = organizations.value) {
+  user.value = nextUser || null;
+  organizations.value = Array.isArray(nextOrganizations) ? nextOrganizations : [];
+}
+
+function clear() {
+  user.value = null;
+  organizations.value = [];
+}
+
+setUnauthorizedHandler(clear);
+
+async function restore() {
+  restoring.value = true;
+  try {
+    const payload = await api("/api/auth/me");
+    setUser(payload.user, payload.organizations);
+    return payload.user;
+  } catch (error) {
+    if (error.status === 401) clear();
+    return null;
+  } finally {
+    restoring.value = false;
+  }
+}
+
+async function login(credentials) {
+  const payload = await api("/api/auth/login", {
+    method: "POST",
+    body: JSON.stringify(credentials)
+  });
+  setUser(payload.user, payload.organizations);
+  return payload.user;
+}
+
+async function logout() {
+  try {
+    await api("/api/auth/logout", { method: "POST" });
+  } catch {
+    // Local state must always be cleared, including when the network is down.
+  } finally {
+    clear();
+  }
+}
+
+export function useSession() {
+  return { user, organizations, restoring, restore, login, logout, setUser, clear };
+}

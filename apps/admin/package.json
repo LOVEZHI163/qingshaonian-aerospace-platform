@@ -5,13 +5,18 @@
   "scripts": {
     "dev": "vite --host 0.0.0.0 --port 5174",
     "build": "vite build",
-    "preview": "vite preview --host 0.0.0.0 --port 4174"
+    "preview": "vite preview --host 0.0.0.0 --port 4174",
+    "test": "vitest run"
   },
   "dependencies": {
     "@vitejs/plugin-vue": "^5.2.1",
-    "vite": "^6.0.7",
     "typescript": "^5.7.2",
+    "vite": "^6.0.7",
     "vue": "^3.5.13"
   },
-  "devDependencies": {}
+  "devDependencies": {
+    "@vue/test-utils": "^2.4.11",
+    "jsdom": "^29.1.1",
+    "vitest": "^4.1.10"
+  }
 }
