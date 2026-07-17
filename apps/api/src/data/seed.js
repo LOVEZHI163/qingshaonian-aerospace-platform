@@ -1,3 +1,5 @@
+import { groupForGrade } from "../domain/grades.js";
+
 export const EVENT = {
   id: "wz-aerospace-2026",
   name: "2026年温州市青少年航空航天创新比赛",
@@ -79,7 +81,7 @@ export const seedDb = {
       organization: "温州市实验小学",
       athlete: { name: "陈宇航", school: "温州市实验小学", grade: "五年级", phone: "13800000001" },
       athleteKey: "陈宇航|温州市实验小学|五年级|13800000001",
-      group: "小学中高组（4-6年级）",
+      group: "小学高段",
       projectId: "paper-plane-gate",
       projectName: "遥控纸飞机穿龙门飞行比赛",
       projectType: "individual",
@@ -101,7 +103,7 @@ export const seedDb = {
       organization: "鹿城区青少年活动中心",
       athlete: { name: "周星言", school: "温州市第二实验中学", grade: "初二", phone: "13900000002" },
       athleteKey: "周星言|温州市第二实验中学|初二|13900000002",
-      group: "中学组（初中、高中、职高）",
+      group: "中学组",
       projectId: "drone-relay",
       projectName: "无人机竞速接力比赛",
       projectType: "team",
@@ -209,6 +211,7 @@ export function ensureDbShape(db) {
   }
   for (const row of db.registrations) {
     row.eventId ||= EVENT.id;
+    row.group = groupForGrade(row.athlete?.grade) || row.group;
     row.awardName ||= "";
     row.rank ||= "";
     row.score ||= "";

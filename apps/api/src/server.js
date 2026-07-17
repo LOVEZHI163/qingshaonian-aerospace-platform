@@ -13,6 +13,7 @@ import { createDataStore } from "./data/index.js";
 import { createMutationAsyncRoute } from "./data/mutation-lock.js";
 import { createEventsRouter } from "./routes/events.js";
 import { createOrganizationsRouter } from "./routes/organizations.js";
+import { createRegistrationsRouter } from "./routes/registrations.js";
 import { projectForHistoricalRegistration, registrationContext } from "./services/events.js";
 import { replayFileCleanupJournal } from "./services/organizations.js";
 
@@ -258,6 +259,16 @@ app.use("/api", createEventsRouter({
   requirePasswordReady,
   asyncRoute: mutationAsyncRoute,
   makeId: id
+}));
+
+app.use("/api", createRegistrationsRouter({
+  store: dataStore,
+  requireUser,
+  requireAdmin,
+  requirePasswordReady,
+  asyncRoute: mutationAsyncRoute,
+  makeId: id,
+  now
 }));
 
 app.get("/api/public/features", (_req, res) => {
