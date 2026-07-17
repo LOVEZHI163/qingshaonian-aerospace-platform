@@ -3,6 +3,7 @@ import test from "node:test";
 
 import ExcelJS from "exceljs";
 
+import { MAX_REGISTRATION_EXPORT_ROWS, buildBoundRegistrationWorkbook, contentDisposition } from "../src/exports/registration-workbook.js";
 import { withTestServer } from "../test-support/server.js";
 import { loginAs, withSession } from "./helpers/api-client.js";
 
@@ -46,4 +47,30 @@ test("certificate template includes only approved registrations and exactly two 
     assert.equal(sheet.getRow(2).height, 90);
     assert.equal(sheet.getCell("P2").fill.fgColor.argb, "FFFFF2CC");
   });
+});
+
+test("all exports require an existing event identifier", async () => {
+  await withServer(async (baseUrl) => {
+    const admin = await loginAs(baseUrl, "13900000000", "admin123");
+    const missing = await fetch(`${baseUrl}/api/admin/registrations/export.xlsx?scope=all`, withSession(admin.cookie));
+    const unknown = await fetch(`${baseUrl}/api/admin/registrations/export.xlsx?scope=all&eventId=missing`, withSession(admin.cookie));
+    assert.equal(missing.status, 422);
+    assert.equal(unknown.status, 404);
+  });
+});
+
+test("export row limit rejects 10001 rows before creating a workbook", () => {
+  let created = false;
+  assert.throws(() => buildBoundRegistrationWorkbook(Array.from({ length: MAX_REGISTRATION_EXPORT_ROWS + 1 }), {}, () => {
+    created = true;
+    return new ExcelJS.Workbook();
+  }), { status: 413 });
+  assert.equal(created, false);
+});
+
+test("attachment filenames include an RFC5987 value and safe ASCII fallback", () => {
+  const value = contentDisposition("赛事(总决赛)'*.xlsx");
+  assert.match(value, /filename="download\.xlsx"/);
+  assert.match(value, /filename\*=UTF-8''/);
+  assert.match(value, /%28.*%29.*%27.*%2A/);
 });

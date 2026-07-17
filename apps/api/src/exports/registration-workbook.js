@@ -1,5 +1,14 @@
 import ExcelJS from "exceljs";
 
+export const MAX_REGISTRATION_EXPORT_ROWS = 10_000;
+
+export class RegistrationExportLimitError extends Error {
+  constructor() {
+    super(`导出最多支持 ${MAX_REGISTRATION_EXPORT_ROWS} 条报名，请缩小筛选范围后重试`);
+    this.status = 413;
+  }
+}
+
 const BASE_COLUMNS = [
   ["报名编号", (row) => row.id],
   ["报名来源", (row) => row.source],
@@ -64,4 +73,19 @@ export function buildRegistrationWorkbook(rows, { mode = "registration" } = {}) 
   }
   sheet.autoFilter = { from: "A1", to: `${sheet.getColumn(headers.length).letter}${Math.max(1, sheet.rowCount)}` };
   return workbook;
+}
+
+export function buildBoundRegistrationWorkbook(rows, options = {}, build = buildRegistrationWorkbook) {
+  if (rows.length > MAX_REGISTRATION_EXPORT_ROWS) throw new RegistrationExportLimitError();
+  return build(rows, options);
+}
+
+function rfc5987Encode(value) {
+  return encodeURIComponent(value).replace(/[!'()*]/g, (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`);
+}
+
+export function contentDisposition(fileName) {
+  const extension = String(fileName).toLowerCase().endsWith(".xlsx") ? ".xlsx" : "";
+  const fallback = `download${extension || ".xlsx"}`;
+  return `attachment; filename="${fallback}"; filename*=UTF-8''${rfc5987Encode(fileName)}`;
 }

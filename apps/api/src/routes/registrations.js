@@ -1,6 +1,6 @@
 import express from "express";
 
-import { buildRegistrationWorkbook } from "../exports/registration-workbook.js";
+import { buildBoundRegistrationWorkbook, contentDisposition } from "../exports/registration-workbook.js";
 
 import {
   findSchools,
@@ -38,12 +38,14 @@ export function createRegistrationsRouter({ store, requireUser, requireAdmin, re
     const scope = req.query.scope || "filtered";
     if (!new Set(["filtered", "all"]).has(scope)) return res.status(422).json({ error: "导出范围不合法" });
     const db = await store.readDb();
+    if (scope === "all" && !String(req.query.eventId || "").trim()) return res.status(422).json({ error: "导出全部名单必须选择赛事" });
+    if (scope === "all" && !db.events.some((event) => event.id === req.query.eventId)) return res.status(404).json({ error: "赛事不存在" });
     const query = scope === "all" ? { eventId: req.query.eventId } : req.query;
-    const workbook = buildRegistrationWorkbook(filterAdminRegistrations(db, query));
+    const workbook = buildBoundRegistrationWorkbook(filterAdminRegistrations(db, query));
     const suffix = scope === "all" ? "全部名单" : "筛选名单";
     const fileName = `报名${suffix}.xlsx`;
     res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
-    res.setHeader("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent(fileName)}`);
+    res.setHeader("Content-Disposition", contentDisposition(fileName));
     await workbook.xlsx.write(res);
     res.end();
   }));
@@ -53,10 +55,10 @@ export function createRegistrationsRouter({ store, requireUser, requireAdmin, re
     const event = db.events.find((item) => item.id === req.params.eventId);
     if (!event) return res.status(404).json({ error: "赛事不存在" });
     const rows = filterAdminRegistrations(db, { eventId: event.id, status: "approved" });
-    const workbook = buildRegistrationWorkbook(rows, { mode: "certificate-template" });
+    const workbook = buildBoundRegistrationWorkbook(rows, { mode: "certificate-template" });
     const fileName = `${event.name}-证书模板.xlsx`;
     res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
-    res.setHeader("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent(fileName)}`);
+    res.setHeader("Content-Disposition", contentDisposition(fileName));
     await workbook.xlsx.write(res);
     res.end();
   }));

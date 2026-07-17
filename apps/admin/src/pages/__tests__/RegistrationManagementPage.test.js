@@ -1,5 +1,5 @@
 import { flushPromises, mount } from "@vue/test-utils";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { apiMock, apiBlobMock } = vi.hoisted(() => ({ apiMock: vi.fn(), apiBlobMock: vi.fn() }));
 vi.mock("../../lib/api.js", () => ({ api: apiMock, apiBlob: apiBlobMock }));
@@ -24,6 +24,7 @@ function mockLoads() {
 
 describe("RegistrationManagementPage", () => {
   beforeEach(() => { apiMock.mockReset(); apiBlobMock.mockReset(); mockLoads(); });
+  afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
 
   it("renders filters, instructor, refresh timestamp, pagination and management entries", async () => {
     const wrapper = mount(RegistrationManagementPage);
@@ -50,5 +51,25 @@ describe("RegistrationManagementPage", () => {
 
     expect(apiMock.mock.calls.filter(([path]) => path.startsWith("/api/admin/registrations?")).length).toBeGreaterThan(1);
     expect(wrapper.text()).not.toContain("证书编号");
+  });
+
+  it("releases successful Blob downloads on unmount and does not create a URL for failures", async () => {
+    vi.useFakeTimers();
+    URL.createObjectURL = vi.fn(() => "blob:download"); URL.revokeObjectURL = vi.fn();
+    apiBlobMock.mockResolvedValueOnce({});
+    const wrapper = mount(RegistrationManagementPage);
+    await flushPromises();
+    await wrapper.get('[data-action="export-all"]').trigger("click");
+    await flushPromises();
+    expect(URL.createObjectURL).toHaveBeenCalledTimes(1);
+    wrapper.unmount();
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:download");
+
+    apiBlobMock.mockRejectedValueOnce(new Error("denied"));
+    const failed = mount(RegistrationManagementPage);
+    await flushPromises();
+    await failed.get('[data-action="export-all"]').trigger("click");
+    await flushPromises();
+    expect(URL.createObjectURL).toHaveBeenCalledTimes(1);
   });
 });

@@ -1,7 +1,8 @@
 <script setup>
-import { computed, onMounted, reactive, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from "vue";
 
 import { api, apiBlob } from "../lib/api.js";
+import { createBlobDownloadManager } from "../lib/download.js";
 
 const emit = defineEmits(["open-certificates"]);
 const events = ref([]); const projects = ref([]); const organizations = ref([]); const rows = ref([]);
@@ -10,6 +11,7 @@ const filters = reactive({ eventId: "", status: "", group: "", projectId: "", or
 const editRow = ref(null); const resultRow = ref(null);
 const edit = reactive({ organizationId: "", athlete: { name: "", school: "", grade: "", phone: "" }, projectId: "", instructor: "" });
 const result = reactive({ awardName: "", rank: "", score: "" });
+const downloads = createBlobDownloadManager();
 const eventProjects = computed(() => projects.value.filter((project) => !filters.eventId || project.eventId === filters.eventId));
 const groups = computed(() => [...new Set(eventProjects.value.flatMap((project) => project.allowedGroups || []))]);
 const pageCount = computed(() => Math.max(1, Math.ceil(total.value / filters.pageSize)));
@@ -50,10 +52,11 @@ async function download(kind) {
   const eventId = selectedEventId.value; if (!eventId) return;
   const path = kind === "template" ? `/api/admin/events/${eventId}/certificate-template.xlsx` : `/api/admin/registrations/export.xlsx?${kind === "all" ? `eventId=${encodeURIComponent(eventId)}&scope=all` : `${query({ includePaging: false, scope: "filtered" })}`}`;
   try {
-    const blob = await apiBlob(path); const url = URL.createObjectURL(blob); const link = document.createElement("a"); link.href = url; link.download = kind === "template" ? "证书模板.xlsx" : "报名名单.xlsx"; link.click(); URL.revokeObjectURL(url);
+    const blob = await apiBlob(path); downloads.save(blob, kind === "template" ? "证书模板.xlsx" : "报名名单.xlsx");
   } catch (cause) { error.value = cause.message || "下载失败"; }
 }
 onMounted(loadPage);
+onBeforeUnmount(() => downloads.dispose());
 </script>
 
 <template>

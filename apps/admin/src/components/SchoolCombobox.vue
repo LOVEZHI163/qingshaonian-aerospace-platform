@@ -7,16 +7,30 @@ const props = defineProps({ modelValue: { type: String, default: "" } });
 const emit = defineEmits(["update:modelValue"]);
 const options = ref([]);
 let timer;
+let controller = null;
+let requestId = 0;
 
 watch(() => props.modelValue, (value) => {
   clearTimeout(timer);
+  controller?.abort();
+  controller = null;
+  const currentRequestId = ++requestId;
   const query = String(value || "").trim();
   if (!query) { options.value = []; return; }
   timer = setTimeout(async () => {
-    try { options.value = (await api(`/api/schools?q=${encodeURIComponent(query)}`)).rows || []; } catch { options.value = []; }
+    const activeController = new AbortController();
+    controller = activeController;
+    try {
+      const payload = await api(`/api/schools?q=${encodeURIComponent(query)}`, { signal: activeController.signal });
+      if (currentRequestId === requestId) options.value = payload.rows || [];
+    } catch (error) {
+      if (error?.name !== "AbortError" && currentRequestId === requestId) options.value = [];
+    } finally {
+      if (controller === activeController) controller = null;
+    }
   }, 300);
 });
-onBeforeUnmount(() => clearTimeout(timer));
+onBeforeUnmount(() => { clearTimeout(timer); controller?.abort(); controller = null; requestId += 1; });
 </script>
 
 <template>
