@@ -24,41 +24,30 @@ export function setPasswordChangeRequiredHandler(handler) {
 async function readPayload(response) {
   const text = await response.text().catch(() => "");
   if (!text) return {};
-  try {
-    return JSON.parse(text);
-  } catch {
-    return { message: text };
-  }
+  try { return JSON.parse(text); } catch { return { message: text }; }
+}
+
+function apiFailure(response, payload) {
+  const code = payload.code || "";
+  const passwordChangeRequired = response.status === 428 || code === "PASSWORD_CHANGE_REQUIRED";
+  if (passwordChangeRequired) passwordChangeRequiredHandler?.();
+  else if (response.status === 401) unauthorizedHandler?.();
+  const message = payload.error || payload.message || payload.errors?.join("，") || `请求失败 (${response.status})`;
+  return new ApiError(message, { status: response.status, code, payload });
 }
 
 export async function api(path, options = {}) {
   const formData = typeof FormData !== "undefined" && options.body instanceof FormData;
-  const headers = formData
-    ? { ...(options.headers || {}) }
-    : { "Content-Type": "application/json", ...(options.headers || {}) };
-  const response = await fetch(`${API_BASE}${path}`, {
-    ...options,
-    credentials: "include",
-    headers
-  });
+  const headers = formData ? { ...(options.headers || {}) } : { "Content-Type": "application/json", ...(options.headers || {}) };
+  const response = await fetch(`${API_BASE}${path}`, { ...options, credentials: "include", headers });
   const payload = await readPayload(response);
-  if (!response.ok) {
-    const code = payload.code || "";
-    const passwordChangeRequired = response.status === 428 || code === "PASSWORD_CHANGE_REQUIRED";
-    if (passwordChangeRequired) passwordChangeRequiredHandler?.();
-    else if (response.status === 401) unauthorizedHandler?.();
-    const message = payload.error || payload.message || payload.errors?.join("；") || `请求失败 (${response.status})`;
-    throw new ApiError(message, { status: response.status, code, payload });
-  }
+  if (!response.ok) throw apiFailure(response, payload);
   return payload;
 }
 
 export async function apiBlob(path, options = {}) {
   const response = await fetch(`${API_BASE}${path}`, { ...options, credentials: "include" });
-  if (!response.ok) {
-    const payload = await readPayload(response);
-    throw new ApiError(payload.error || payload.message || `请求失败 (${response.status})`, { status: response.status, code: payload.code, payload });
-  }
+  if (!response.ok) throw apiFailure(response, await readPayload(response));
   return response.blob();
 }
 

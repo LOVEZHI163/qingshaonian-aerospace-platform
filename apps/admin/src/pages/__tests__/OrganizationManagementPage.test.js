@@ -20,9 +20,17 @@ function mockOrganizations() {
   });
 }
 
+function deferred() {
+  let resolve;
+  let reject;
+  return { promise: new Promise((nextResolve, nextReject) => { resolve = nextResolve; reject = nextReject; }), resolve, reject };
+}
+
 describe("OrganizationManagementPage", () => {
   beforeEach(() => {
+    vi.restoreAllMocks();
     apiMock.mockReset();
+    apiBlobMock.mockReset();
     mockOrganizations();
   });
 
@@ -71,9 +79,59 @@ describe("OrganizationManagementPage", () => {
     await flushPromises();
     await wrapper.get('[data-action="preview-O1"]').trigger("click");
     await flushPromises();
-    expect(apiBlobMock).toHaveBeenCalledWith("/api/organizations/O1/credential/D1");
+    expect(apiBlobMock).toHaveBeenCalledWith("/api/organizations/O1/credential/D1", expect.objectContaining({ signal: expect.any(AbortSignal) }));
     expect(wrapper.get('[data-testid="credential-preview"]').attributes("src")).toBe("blob:credential");
     await wrapper.get('[data-action="close-preview"]').trigger("click");
     expect(revoke).toHaveBeenCalledWith("blob:credential");
+  });
+
+  it("revokes a late credential URL when the preview closes before its request resolves", async () => {
+    const request = deferred();
+    const create = vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:late");
+    const revoke = vi.spyOn(URL, "revokeObjectURL");
+    apiBlobMock.mockReturnValue(request.promise);
+    const wrapper = mount(OrganizationManagementPage);
+    await flushPromises();
+    await wrapper.get('[data-action="preview-O1"]').trigger("click");
+    await wrapper.get('[data-action="close-preview"]').trigger("click");
+    request.resolve(new Blob(["late"], { type: "application/pdf" }));
+    await flushPromises();
+
+    expect(wrapper.find('[data-testid="credential-preview"]').exists()).toBe(false);
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(revoke).toHaveBeenCalledWith("blob:late");
+  });
+
+  it("keeps only the newest credential preview when earlier requests resolve later", async () => {
+    const first = deferred();
+    const second = deferred();
+    vi.spyOn(URL, "createObjectURL").mockReturnValueOnce("blob:new").mockReturnValueOnce("blob:old");
+    const revoke = vi.spyOn(URL, "revokeObjectURL");
+    apiBlobMock.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+    const wrapper = mount(OrganizationManagementPage);
+    await flushPromises();
+    await wrapper.get('[data-action="preview-O1"]').trigger("click");
+    await wrapper.get('[data-action="preview-O1"]').trigger("click");
+    second.resolve(new Blob(["new"], { type: "application/pdf" }));
+    await flushPromises();
+    first.resolve(new Blob(["old"], { type: "application/pdf" }));
+    await flushPromises();
+
+    expect(wrapper.get('[data-testid="credential-preview"]').attributes("src")).toBe("blob:new");
+    expect(revoke).toHaveBeenCalledWith("blob:old");
+  });
+
+  it("cancels pending previews on unmount and ignores AbortError", async () => {
+    const request = deferred();
+    const revoke = vi.spyOn(URL, "revokeObjectURL");
+    apiBlobMock.mockReturnValue(request.promise);
+    const wrapper = mount(OrganizationManagementPage);
+    await flushPromises();
+    await wrapper.get('[data-action="preview-O1"]').trigger("click");
+    wrapper.unmount();
+    request.reject(Object.assign(new Error("cancelled"), { name: "AbortError" }));
+    await flushPromises();
+
+    expect(revoke).not.toHaveBeenCalled();
   });
 });

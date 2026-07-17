@@ -58,4 +58,19 @@ describe("api", () => {
     expect(unauthorized).toHaveBeenCalledTimes(1);
     expect(passwordChangeRequired).toHaveBeenCalledTimes(1);
   });
+
+  it("routes apiBlob 401 and 428 through the same session handlers", async () => {
+    const unauthorized = vi.fn();
+    const passwordChangeRequired = vi.fn();
+    setUnauthorizedHandler(unauthorized);
+    setPasswordChangeRequiredHandler(passwordChangeRequired);
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: "请登录", code: "AUTH_REQUIRED" }), { status: 401 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: "请先修改密码", code: "PASSWORD_CHANGE_REQUIRED" }), { status: 428 })));
+
+    await expect(apiBlob("/api/credential")).rejects.toMatchObject({ status: 401, code: "AUTH_REQUIRED" });
+    await expect(apiBlob("/api/credential")).rejects.toMatchObject({ status: 428, code: "PASSWORD_CHANGE_REQUIRED" });
+    expect(unauthorized).toHaveBeenCalledTimes(1);
+    expect(passwordChangeRequired).toHaveBeenCalledTimes(1);
+  });
 });
