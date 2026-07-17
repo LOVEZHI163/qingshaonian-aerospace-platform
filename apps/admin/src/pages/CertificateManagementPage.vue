@@ -5,10 +5,12 @@ import CertificateImportPanel from "../components/CertificateImportPanel.vue";
 import CertificateSlotEditor from "../components/CertificateSlotEditor.vue";
 import FilePreviewDialog from "../components/FilePreviewDialog.vue";
 import { api, apiBlob } from "../lib/api.js";
+import { loadAdminRegistrations } from "../lib/admin-registrations.js";
 import { createBlobDownloadManager } from "../lib/download.js";
 
 const props = defineProps({
-  initialRegistrationId: { type: String, default: "" }
+  initialRegistrationId: { type: String, default: "" },
+  initialEventId: { type: String, default: "" }
 });
 
 const events = ref([]);
@@ -19,6 +21,7 @@ const selectedIds = ref([]);
 const selectedRegistrationId = ref("");
 const previewTarget = ref(null);
 const loading = ref(false);
+const registrationLoading = ref(false);
 const bulkLoading = ref(false);
 const resultLoading = ref(false);
 const error = ref("");
@@ -26,6 +29,7 @@ const success = ref("");
 const filters = reactive({ eventId: "", status: "", group: "", projectId: "", q: "" });
 const result = reactive({ awardName: "", rank: "", score: "" });
 const downloads = createBlobDownloadManager();
+let pageReady = false;
 
 const eventProjects = computed(() => projects.value.filter((project) => !filters.eventId || project.eventId === filters.eventId));
 const groups = computed(() => [...new Set(eventProjects.value.flatMap((project) => project.allowedGroups || []))]);
@@ -70,20 +74,50 @@ watch(filteredRegistrations, (rows) => {
   if (!rows.some((row) => row.id === selectedRegistrationId.value)) selectedRegistrationId.value = rows[0].id;
 });
 
+function registrationFilters(eventId = filters.eventId) {
+  return eventId ? { eventId } : {};
+}
+
+async function loadRegistrations(eventId = filters.eventId) {
+  registrations.value = await loadAdminRegistrations(registrationFilters(eventId));
+}
+
+watch(() => filters.eventId, async (eventId, previousEventId) => {
+  if (eventId === previousEventId) return;
+  filters.group = "";
+  filters.projectId = "";
+  selectedRegistrationId.value = "";
+  if (!pageReady) return;
+  registrationLoading.value = true;
+  error.value = "";
+  success.value = "";
+  try {
+    await loadRegistrations(eventId);
+  } catch (cause) {
+    registrations.value = [];
+    error.value = cause.message || "报名列表加载失败，请稍后重试。";
+  } finally {
+    registrationLoading.value = false;
+  }
+});
+
 async function loadPage() {
   loading.value = true;
   error.value = "";
   try {
-    const [eventPayload, registrationPayload, certificatePayload] = await Promise.all([
+    pageReady = false;
+    const [eventPayload, certificatePayload] = await Promise.all([
       api("/api/admin/events"),
-      api("/api/admin/registrations?pageSize=100"),
       api("/api/admin/certificates")
     ]);
     events.value = eventPayload.rows || [];
     projects.value = eventPayload.projects || [];
-    registrations.value = registrationPayload.rows || [];
     certificates.value = certificatePayload.rows || [];
-    if (!filters.eventId) filters.eventId = events.value.find((event) => event.isCurrent)?.id || events.value[0]?.id || "";
+    const requestedEventId = props.initialEventId && events.value.some((event) => event.id === props.initialEventId)
+      ? props.initialEventId
+      : "";
+    if (!filters.eventId) filters.eventId = requestedEventId || events.value.find((event) => event.isCurrent)?.id || events.value[0]?.id || "";
+    await loadRegistrations(filters.eventId);
     const requested = props.initialRegistrationId && registrations.value.some((row) => row.id === props.initialRegistrationId)
       ? props.initialRegistrationId
       : "";
@@ -92,32 +126,37 @@ async function loadPage() {
   } catch (cause) {
     error.value = cause.message || "证书管理页面加载失败，请稍后重试。";
   } finally {
+    pageReady = true;
     loading.value = false;
   }
 }
 
 async function refreshCertificates() {
-  const [registrationPayload, certificatePayload] = await Promise.all([
-    api("/api/admin/registrations?pageSize=100"),
+  const [registrationRows, certificatePayload] = await Promise.all([
+    loadAdminRegistrations(registrationFilters()),
     api("/api/admin/certificates")
   ]);
-  registrations.value = registrationPayload.rows || [];
+  registrations.value = registrationRows;
   certificates.value = certificatePayload.rows || [];
 }
 
 async function afterImport() {
+  success.value = "";
   error.value = "";
   try {
     await refreshCertificates();
+    success.value = "已保存为未发布证书，证书与报名列表已刷新。";
   } catch (cause) {
     error.value = cause.message || "导入已完成，但列表刷新失败；请手动刷新。";
   }
 }
 
-async function afterCertificateChanged() {
+async function afterCertificateChanged(change) {
+  success.value = "";
   error.value = "";
   try {
     await refreshCertificates();
+    success.value = change?.message || "证书操作完成，列表已刷新。";
   } catch (cause) {
     error.value = cause.message || "操作已提交，但列表刷新失败；请手动刷新。";
   }
@@ -134,9 +173,9 @@ async function bulkPublish() {
       method: "POST",
       body: JSON.stringify({ ids, status: "published" })
     });
+    await refreshCertificates();
     selectedIds.value = [];
     success.value = `已批量发布 ${ids.length} 张证书。`;
-    await refreshCertificates();
   } catch (cause) {
     error.value = cause.message || "批量发布失败，请稍后重试。";
   } finally {
@@ -154,8 +193,8 @@ async function saveResult() {
       method: "POST",
       body: JSON.stringify({ awardName: result.awardName, rank: result.rank, score: result.score })
     });
-    success.value = "成绩已保存，证书列表已刷新。";
     await refreshCertificates();
+    success.value = "成绩已保存，证书列表已刷新。";
   } catch (cause) {
     error.value = cause.message || "成绩保存失败，请稍后重试。";
   } finally {
@@ -194,6 +233,7 @@ onBeforeUnmount(() => downloads.dispose());
     <p v-if="error" class="message" role="alert">{{ error }}</p>
     <p v-if="success" class="success-message">{{ success }}</p>
     <p v-if="loading" class="hint">正在加载证书…</p>
+    <p v-else-if="registrationLoading" class="hint">正在加载所选赛事的全部报名…</p>
 
     <CertificateImportPanel :event-id="filters.eventId" @committed="afterImport" />
 
@@ -223,7 +263,7 @@ onBeforeUnmount(() => downloads.dispose());
               <td>{{ certificate.awardName || registrationFor(certificate).awardName || '-' }}<br><span>名次 {{ certificate.rank || registrationFor(certificate).rank || '-' }} · 成绩 {{ certificate.score || registrationFor(certificate).score || '-' }}</span></td>
               <td><em :class="certificate.status">{{ certificate.status === 'published' ? '已发布' : '未发布' }}</em></td>
               <td>
-                <span v-if="certificate.cleanedAt" class="unavailable-file">文件已清理，不可下载</span>
+                <span v-if="certificate.cleanedAt" class="unavailable-file">原文件已清理，可替换</span>
                 <template v-else>
                   <button v-if="certificate.previewUrl" type="button" class="mini" :data-action="`preview-${certificate.id}`" @click="previewTarget = certificate">预览</button>
                   <button v-if="certificate.downloadUrl" type="button" class="mini" :data-action="`download-${certificate.id}`" @click="downloadCertificate(certificate)">下载</button>
@@ -254,7 +294,7 @@ onBeforeUnmount(() => downloads.dispose());
             <label>成绩 / 分数<input v-model="result.score" data-result="score"></label>
             <button type="button" class="dark" data-action="save-result" :disabled="resultLoading" @click="saveResult">{{ resultLoading ? "正在保存…" : "保存成绩" }}</button>
           </form>
-          <CertificateSlotEditor :registration="selectedRegistration" :certificates="selectedCertificates" @changed="afterCertificateChanged" />
+          <CertificateSlotEditor :key="selectedRegistration.id" :registration="selectedRegistration" :certificates="selectedCertificates" @changed="afterCertificateChanged" />
         </div>
         <p v-else class="hint empty-state registration-certificate-detail">请选择一条报名记录。</p>
       </div>

@@ -11,7 +11,11 @@ vi.mock("../../lib/api.js", () => ({
 import CertificateManagementPage from "../CertificateManagementPage.vue";
 
 const event = { id: "E1", name: "2026 青少年航空赛", isCurrent: true };
+const historicalEvent = { id: "E0", name: "2025 青少年航空赛", isCurrent: false };
+const eventTwo = { id: "E2", name: "2027 青少年航空赛", isCurrent: false };
 const project = { id: "P1", eventId: "E1", name: "纸飞机", allowedGroups: ["小学低段"] };
+const historicalProject = { id: "P0", eventId: "E0", name: "历史纸飞机", allowedGroups: ["小学低段"] };
+const projectTwo = { id: "P2", eventId: "E2", name: "橡筋飞机", allowedGroups: ["中学组"] };
 const registration = {
   id: "R1",
   eventId: "E1",
@@ -23,6 +27,19 @@ const registration = {
   rank: "2",
   score: "96",
   athlete: { name: "张三", school: "实验小学", grade: "三年级" }
+};
+const registrationTwo = {
+  ...registration,
+  id: "R2",
+  athlete: { name: "李四", school: "第二小学", grade: "四年级" }
+};
+const historicalRegistration = {
+  ...registration,
+  id: "R-HISTORICAL",
+  eventId: "E0",
+  projectId: "P0",
+  projectName: "历史纸飞机",
+  athlete: { name: "历史选手", school: "历史学校", grade: "六年级" }
 };
 const certificateOne = {
   id: "C1",
@@ -71,10 +88,20 @@ const preview = {
   errors: [{ rowNumber: 3, registrationId: "R-UNKNOWN", message: "报名编号不存在" }]
 };
 
-function installApi({ certificates = [certificateOne, certificateTwo], previewPayload = preview } = {}) {
+function isRegistrationRequest(path) {
+  return path === "/api/admin/registrations?pageSize=100" || path.startsWith("/api/admin/registrations?eventId=");
+}
+
+function installApi({
+  certificates = [certificateOne, certificateTwo],
+  previewPayload = preview,
+  registrationRows = [registration],
+  eventRows = [event],
+  projectRows = [project]
+} = {}) {
   apiMock.mockImplementation(async (path, options = {}) => {
-    if (path === "/api/admin/events") return { rows: [event], projects: [project] };
-    if (path === "/api/admin/registrations?pageSize=100") return { rows: [registration], total: 1 };
+    if (path === "/api/admin/events") return { rows: eventRows, projects: projectRows };
+    if (isRegistrationRequest(path)) return { rows: registrationRows, total: registrationRows.length, page: 1, pageSize: 100 };
     if (path === "/api/admin/certificates") return { rows: certificates };
     if (path === "/api/admin/certificate-imports/preview" && options.method === "POST") return previewPayload;
     if (path === "/api/admin/certificate-imports/B1/commit" && options.method === "POST") {
@@ -152,6 +179,18 @@ describe("CertificateManagementPage", () => {
     expect(wrapper.get('[data-action="commit-import"]').attributes()).toHaveProperty("disabled");
   });
 
+  it("已有预检查批次时锁定文件选择并显示该批次的服务端文件名", async () => {
+    installApi({ previewPayload: { ...preview, originalName: "服务端确认批次.xlsx" } });
+    const wrapper = mount(CertificateManagementPage);
+    await flushPromises();
+    await chooseFile(wrapper, '[data-import-file]', new File(["xlsx"], "本地名称.xlsx"));
+    await wrapper.get('[data-action="preview-import"]').trigger("click");
+    await flushPromises();
+
+    expect(wrapper.get('[data-import-file]').attributes()).toHaveProperty("disabled");
+    expect(wrapper.get(".selected-file-name").text()).toBe("服务端确认批次.xlsx");
+  });
+
   it("选择两张未发布证书后批量发布，并严格提交两个证书 ID", async () => {
     const wrapper = mount(CertificateManagementPage);
     await flushPromises();
@@ -201,6 +240,144 @@ describe("CertificateManagementPage", () => {
     expect(uploadCall[1].body.get("certificate").name).toBe("第二张.pdf");
   });
 
+  it("切换报名时销毁上一报名的待上传文件、预览、删除确认和忙碌状态", async () => {
+    let releaseSave;
+    const pendingSave = new Promise((resolve) => { releaseSave = resolve; });
+    installApi({ registrationRows: [registration, registrationTwo] });
+    const originalImplementation = apiMock.getMockImplementation();
+    apiMock.mockImplementation((path, options = {}) => {
+      if (path === "/api/admin/certificates/C1" && options.method === "PATCH") return pendingSave;
+      return originalImplementation(path, options);
+    });
+    const wrapper = mount(CertificateManagementPage);
+    await flushPromises();
+
+    await chooseFile(wrapper, '[data-slot-file="2"]', new File(["A"], "A报名待上传.pdf", { type: "application/pdf" }));
+    const slotEditor = wrapper.get(".certificate-slot-editor");
+    await slotEditor.get('[data-action="preview-C1"]').trigger("click");
+    await slotEditor.get('[data-action="request-delete-C1"]').trigger("click");
+    const pendingTrigger = wrapper.get('[data-action="save-slot-1"]').trigger("click");
+    await flushPromises();
+    const secondRegistration = wrapper.findAll(".registration-picker button").find((button) => button.text().includes("R2"));
+    await secondRegistration.trigger("click");
+    await flushPromises();
+
+    expect(wrapper.find(".file-preview-dialog").exists()).toBe(false);
+    expect(wrapper.find('[aria-label="删除证书确认"]').exists()).toBe(false);
+    expect(wrapper.text()).not.toContain("A报名待上传.pdf");
+    expect(wrapper.get('[data-action="save-slot-1"]').attributes()).not.toHaveProperty("disabled");
+    await wrapper.get('[data-action="save-slot-2"]').trigger("click");
+    await flushPromises();
+    expect(apiMock.mock.calls.some(([path, options]) => path === "/api/admin/registrations/R2/certificates/2" && options?.method === "POST")).toBe(false);
+
+    releaseSave({ row: certificateOne });
+    await pendingTrigger;
+  });
+
+  it("历史赛事跳转先选中历史赛事，再定位目标报名", async () => {
+    apiMock.mockReset();
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/admin/events") return { rows: [event, historicalEvent], projects: [project, historicalProject] };
+      if (path === "/api/admin/certificates") return { rows: [] };
+      if (isRegistrationRequest(path)) return { rows: path.includes("eventId=E0") ? [historicalRegistration] : [registration], total: 1, page: 1, pageSize: 100 };
+      return {};
+    });
+    const historical = mount(CertificateManagementPage, {
+      props: { initialRegistrationId: "R-HISTORICAL", initialEventId: "E0" }
+    });
+    await flushPromises();
+    expect(historical.get(".certificate-filter-grid select").element.value).toBe("E0");
+    expect(historical.get(".registration-summary").text()).toContain("R-HISTORICAL");
+  });
+
+  it("分页加载所选赛事全部报名并可定位第二页目标", async () => {
+    const firstPage = Array.from({ length: 100 }, (_, index) => ({
+      ...registration,
+      id: `R${String(index + 1).padStart(3, "0")}`,
+      athlete: { ...registration.athlete, name: `选手${index + 1}` }
+    }));
+    const secondPageTarget = { ...registrationTwo, id: "R101", athlete: { ...registrationTwo.athlete, name: "第二页目标" } };
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/admin/events") return { rows: [event], projects: [project] };
+      if (path === "/api/admin/certificates") return { rows: [] };
+      if (path === "/api/admin/registrations?eventId=E1&pageSize=100") return { rows: firstPage, total: 101, page: 1, pageSize: 100 };
+      if (path === "/api/admin/registrations?eventId=E1&page=2&pageSize=100") return { rows: [secondPageTarget], total: 101, page: 2, pageSize: 100 };
+      if (path === "/api/admin/registrations?pageSize=100") return { rows: firstPage, total: 101, page: 1, pageSize: 100 };
+      return {};
+    });
+    const wrapper = mount(CertificateManagementPage, { props: { initialRegistrationId: "R101", initialEventId: "E1" } });
+    await flushPromises();
+
+    expect(apiMock).toHaveBeenCalledWith("/api/admin/registrations?eventId=E1&page=2&pageSize=100");
+    expect(wrapper.get(".registration-summary").text()).toContain("R101");
+    expect(wrapper.get(".registration-summary").text()).toContain("第二页目标");
+  });
+
+  it("所选赛事报名超过安全上限时明确报错且不继续翻页", async () => {
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/admin/events") return { rows: [event], projects: [project] };
+      if (path === "/api/admin/certificates") return { rows: [] };
+      if (path === "/api/admin/registrations?eventId=E1&pageSize=100") return { rows: [], total: 100001, page: 1, pageSize: 100 };
+      if (path === "/api/admin/registrations?pageSize=100") return { rows: [], total: 100001, page: 1, pageSize: 100 };
+      return {};
+    });
+    const wrapper = mount(CertificateManagementPage);
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("报名数据在加载期间发生变化，请刷新重试");
+    expect(apiMock.mock.calls.some(([path]) => path.includes("page=2"))).toBe(false);
+  });
+
+  it("管理员看到原文件已清理且可替换，但没有预览或下载入口", async () => {
+    const cleaned = { ...certificateOne, cleanedAt: "2026-07-17T12:00:00.000Z", previewUrl: undefined, downloadUrl: undefined };
+    installApi({ certificates: [cleaned] });
+    const wrapper = mount(CertificateManagementPage);
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("原文件已清理，可替换");
+    expect(wrapper.find('[data-action="preview-C1"]').exists()).toBe(false);
+    expect(wrapper.find('[data-action="download-C1"]').exists()).toBe(false);
+    expect(wrapper.get('[data-action="save-slot-1"]').text()).toContain("保存标题");
+  });
+
+  it("切换赛事时清空组别和赛项筛选并加载新赛事报名", async () => {
+    installApi({ eventRows: [event, eventTwo], projectRows: [project, projectTwo] });
+    const wrapper = mount(CertificateManagementPage);
+    await flushPromises();
+    const selects = wrapper.findAll(".certificate-filter-grid select");
+    await selects[2].setValue("小学低段");
+    await selects[3].setValue("P1");
+    await selects[0].setValue("E2");
+    await flushPromises();
+
+    expect(selects[2].element.value).toBe("");
+    expect(selects[3].element.value).toBe("");
+    expect(apiMock.mock.calls.some(([path]) => path.includes("eventId=E2"))).toBe(true);
+  });
+
+  it("批量发布后的列表刷新失败时不保留成功提示", async () => {
+    let registrationLoads = 0;
+    apiMock.mockImplementation(async (path, options = {}) => {
+      if (path === "/api/admin/events") return { rows: [event], projects: [project] };
+      if (path === "/api/admin/certificates") return { rows: [certificateOne] };
+      if (isRegistrationRequest(path)) {
+        registrationLoads += 1;
+        if (registrationLoads > 1) throw new Error("列表刷新失败");
+        return { rows: [registration], total: 1, page: 1, pageSize: 100 };
+      }
+      if (path === "/api/admin/certificates/bulk-status" && options.method === "POST") return { rows: [certificateOne] };
+      return {};
+    });
+    const wrapper = mount(CertificateManagementPage);
+    await flushPromises();
+    await wrapper.get('[data-certificate-select]').setValue(true);
+    await wrapper.get('[data-action="bulk-publish"]').trigger("click");
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("列表刷新失败");
+    expect(wrapper.text()).not.toContain("已批量发布 1 张证书");
+  });
+
   it("证书下载只使用接口返回的 downloadUrl", async () => {
     const wrapper = mount(CertificateManagementPage);
     await flushPromises();
@@ -213,7 +390,7 @@ describe("CertificateManagementPage", () => {
   it("删除使用页面内确认，接口失败时保留清晰错误且不调用 window.confirm", async () => {
     apiMock.mockImplementation(async (path, options = {}) => {
       if (path === "/api/admin/events") return { rows: [event], projects: [project] };
-      if (path === "/api/admin/registrations?pageSize=100") return { rows: [registration], total: 1 };
+      if (isRegistrationRequest(path)) return { rows: [registration], total: 1, page: 1, pageSize: 100 };
       if (path === "/api/admin/certificates") return { rows: [certificateOne] };
       if (path === "/api/admin/certificates/C1" && options.method === "DELETE") throw new Error("删除失败，请稍后重试");
       return {};
@@ -237,7 +414,7 @@ describe("CertificateManagementPage", () => {
   it("列表接口失败时结束加载并显示可理解的错误", async () => {
     apiMock.mockImplementation(async (path) => {
       if (path === "/api/admin/events") return { rows: [event], projects: [project] };
-      if (path === "/api/admin/registrations?pageSize=100") return { rows: [registration], total: 1 };
+      if (isRegistrationRequest(path)) return { rows: [registration], total: 1, page: 1, pageSize: 100 };
       if (path === "/api/admin/certificates") throw new Error("证书列表暂时无法加载");
       return {};
     });

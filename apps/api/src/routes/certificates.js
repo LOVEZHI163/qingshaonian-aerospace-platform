@@ -104,10 +104,12 @@ function certificatePayload(certificate, registration, { includePrivate = false 
     registration,
     athlete: registration?.athlete,
     projectName: registration?.projectName,
-    organization: registration?.organization || "",
-    previewUrl: `/api/certificates/${certificate.id}/file`,
-    downloadUrl: `/api/certificates/${certificate.id}/file?download=1`
+    organization: registration?.organization || ""
   };
+  if (!certificate.cleanedAt) {
+    payload.previewUrl = `/api/certificates/${certificate.id}/file`;
+    payload.downloadUrl = `/api/certificates/${certificate.id}/file?download=1`;
+  }
   if (includePrivate) return payload;
   const { filePath, storedName, ...safe } = payload;
   return safe;
@@ -284,7 +286,6 @@ export function createCertificatesRouter({
   router.get("/admin/certificates", ...admin, asyncRoute(async (_req, res) => {
     const db = await store.readDb();
     const rows = db.certificates
-      .filter((certificate) => !certificate.cleanedAt)
       .map((certificate) => certificatePayload(
         certificate,
         db.registrations.find((row) => row.id === certificate.registrationId),

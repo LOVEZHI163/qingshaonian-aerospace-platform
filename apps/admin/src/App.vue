@@ -42,16 +42,14 @@ const roleText = {
 const eventData = ref({ event: {}, projects: [], grades: [] });
 const currentView = ref("login");
 const certificateRegistrationId = ref("");
+const certificateEventId = ref("");
 const message = ref("");
 const rows = ref([]);
 const users = ref([]);
 const organizations = ref([]);
 const memberships = ref([]);
 const certificates = ref([]);
-const batchResult = ref(null);
 const duplicate = ref(null);
-const filter = ref("all");
-const registrationSearch = ref("");
 const userFilter = ref("all");
 const userSearch = ref("");
 const orgSearch = ref("");
@@ -69,18 +67,7 @@ const registrationForm = reactive({
   projectId: "paper-plane-gate",
   instructor: ""
 });
-const resultForm = reactive({});
-const certificateForm = reactive({});
-const batchUploadForm = reactive({ file: null });
 const userForm = reactive({ id: "", name: "", phone: "", password: "", type: "ordinary", status: "active", organizationName: "", organizationCode: "" });
-const registrationEditForm = reactive({
-  id: "",
-  organizationId: "",
-  athlete: { name: "", school: "", grade: "", phone: "" },
-  group: "",
-  projectId: "",
-  instructor: ""
-});
 
 const projects = computed(() => eventData.value.projects || []);
 const myOrganizations = computed(() => {
@@ -110,20 +97,6 @@ const canUseOrganizationConsole = computed(() => {
   return currentUser.value?.type === "organization" && owned?.reviewStatus === "approved" && owned.status === "active";
 });
 const selectedProject = computed(() => projects.value.find((item) => item.id === registrationForm.projectId));
-const filteredRows = computed(() => {
-  const keyword = registrationSearch.value.trim().toLowerCase();
-  return rows.value.filter((row) => {
-    const statusMatched = filter.value === "all" || row.status === filter.value;
-    if (!statusMatched) return false;
-    if (!keyword) return true;
-    return [row.id, row.athlete?.name, row.athlete?.school, row.athlete?.grade, row.athlete?.phone, row.organization, row.projectName]
-      .filter(Boolean)
-      .some((value) => String(value).toLowerCase().includes(keyword));
-  });
-});
-const certificateByRegistration = computed(() => {
-  return Object.fromEntries(certificates.value.map((item) => [item.registrationId, item]));
-});
 const myRegistrationRows = computed(() => {
   if (!currentUser.value) return [];
   return rows.value.filter((row) => row.userId === currentUser.value.id);
@@ -259,43 +232,6 @@ function resetUserForm() {
   Object.assign(userForm, { id: "", name: "", phone: "", password: "", type: "ordinary", status: "active", organizationName: "", organizationCode: "" });
 }
 
-function resetRegistrationEditForm() {
-  Object.assign(registrationEditForm, {
-    id: "",
-    organizationId: "",
-    athlete: { name: "", school: "", grade: "", phone: "" },
-    group: "",
-    projectId: "",
-    instructor: ""
-  });
-}
-
-function editRegistration(row) {
-  Object.assign(registrationEditForm, {
-    id: row.id,
-    organizationId: row.organizationId || "",
-    athlete: { ...row.athlete },
-    group: row.group,
-    projectId: row.projectId,
-    instructor: row.instructor || ""
-  });
-}
-
-async function saveRegistrationEdit() {
-  message.value = "";
-  try {
-    await api(`/api/admin/registrations/${registrationEditForm.id}`, {
-      method: "PATCH",
-      body: JSON.stringify({ ...registrationEditForm })
-    });
-    resetRegistrationEditForm();
-    await loadData();
-    message.value = "报名信息已修改";
-  } catch (error) {
-    message.value = error.message;
-  }
-}
-
 function editUser(user) {
   const org = ownerOrganization(user.id);
   Object.assign(userForm, {
@@ -383,12 +319,16 @@ async function organizationResubmitted() {
 }
 
 function navigateAdmin(key) {
-  if (key === "certificates") certificateRegistrationId.value = "";
+  if (key === "certificates") {
+    certificateRegistrationId.value = "";
+    certificateEventId.value = "";
+  }
   currentView.value = key === "registrations" ? "registration" : key;
 }
 
 function openCertificateManagement(registration) {
   certificateRegistrationId.value = registration?.id || "";
+  certificateEventId.value = registration?.eventId || "";
   currentView.value = "certificates";
 }
 
@@ -469,104 +409,6 @@ async function updateMembership(row, status) {
       body: JSON.stringify({ status })
     });
     await loadData();
-  } catch (error) {
-    message.value = error.message;
-  }
-}
-
-async function setRegistrationStatus(row, status) {
-  const rejectReason = status === "rejected" ? window.prompt("请输入驳回原因", "信息需补充") : "";
-  await api(`/api/registrations/${row.id}/status`, {
-    method: "PATCH",
-    body: JSON.stringify({ status, rejectReason })
-  });
-  await loadData();
-}
-
-function resultDraft(row) {
-  if (!resultForm[row.id]) {
-    resultForm[row.id] = { awardName: row.awardName || "", rank: row.rank || "", score: row.score || "" };
-  }
-  return resultForm[row.id];
-}
-
-function certificateDraft(row) {
-  if (!certificateForm[row.id]) {
-    certificateForm[row.id] = { title: certificateByRegistration.value[row.id]?.title || "获奖证书", file: null };
-  }
-  return certificateForm[row.id];
-}
-
-function setCertificateFile(row, event) {
-  certificateDraft(row).file = event.target.files?.[0] || null;
-}
-
-function setBatchFile(event) {
-  batchUploadForm.file = event.target.files?.[0] || null;
-}
-
-async function saveResult(row) {
-  message.value = "";
-  try {
-    await api(`/api/admin/registrations/${row.id}/result`, {
-      method: "POST",
-      body: JSON.stringify({ ...resultDraft(row) })
-    });
-    await loadData();
-    message.value = "成绩奖项已保存";
-  } catch (error) {
-    message.value = error.message;
-  }
-}
-
-async function uploadCertificate(row) {
-  message.value = "";
-  const draft = certificateDraft(row);
-  if (!draft.file) {
-    message.value = "请先选择证书 PDF";
-    return;
-  }
-  try {
-    const formData = new FormData();
-    formData.append("title", draft.title);
-    formData.append("certificate", draft.file);
-    await api(`/api/admin/registrations/${row.id}/certificates/1`, { method: "POST", body: formData });
-    draft.file = null;
-    await loadData();
-    message.value = "证书已上传，当前为未发布";
-  } catch (error) {
-    message.value = error.message;
-  }
-}
-
-async function publishCertificate(certificate, status) {
-  message.value = "";
-  try {
-    await api("/api/admin/certificates/bulk-status", {
-      method: "POST",
-      body: JSON.stringify({ ids: [certificate.id], status })
-    });
-    await loadData();
-    message.value = status === "published" ? "证书已发布" : "证书已撤回";
-  } catch (error) {
-    message.value = error.message;
-  }
-}
-
-async function uploadCertificateBatch() {
-  message.value = "";
-  batchResult.value = null;
-  if (!batchUploadForm.file) {
-    message.value = "请先选择 Excel 文件";
-    return;
-  }
-  try {
-    const formData = new FormData();
-    formData.append("workbook", batchUploadForm.file);
-    batchResult.value = await api("/api/admin/certificate-imports/preview", { method: "POST", body: formData });
-    batchUploadForm.file = null;
-    await loadData();
-    message.value = "批量导入已完成，请查看匹配结果";
   } catch (error) {
     message.value = error.message;
   }
@@ -734,6 +576,7 @@ onBeforeUnmount(() => certificateDownloads.dispose());
       <CertificateManagementPage
         v-else-if="currentView === 'certificates' && currentUser.type === 'admin'"
         :initial-registration-id="certificateRegistrationId"
+        :initial-event-id="certificateEventId"
       />
 
       <section v-else-if="currentView === 'registration' && currentUser.type !== 'admin'" class="content-grid">
@@ -975,110 +818,6 @@ onBeforeUnmount(() => certificateDownloads.dispose());
         </section>
       </section>
 
-      <section v-else-if="currentView === 'registration' && currentUser.type === 'admin'" class="panel">
-        <div class="panel-title">
-          <h3>报名管理</h3>
-          <div class="toolbar-inline">
-            <input v-model="registrationSearch" placeholder="搜索编号/姓名/学校/手机号/组织/赛项" />
-            <select v-model="filter">
-              <option value="all">全部状态</option>
-              <option value="pending">待审核</option>
-              <option value="approved">已通过</option>
-              <option value="rejected">已驳回</option>
-            </select>
-          </div>
-        </div>
-        <form v-if="registrationEditForm.id" class="edit-panel" @submit.prevent="saveRegistrationEdit">
-          <div class="panel-title">
-            <h3>修改报名信息</h3>
-            <button type="button" class="mini reject" @click="resetRegistrationEditForm">取消</button>
-          </div>
-          <div class="two">
-            <label>姓名<input v-model="registrationEditForm.athlete.name" required /></label>
-            <label>学校<input v-model="registrationEditForm.athlete.school" required /></label>
-          </div>
-          <div class="two">
-            <label>年级<input v-model="registrationEditForm.athlete.grade" required /></label>
-            <label>手机号/家长手机号<input v-model="registrationEditForm.athlete.phone" required /></label>
-          </div>
-          <div class="two">
-            <label>关联组织
-              <select v-model="registrationEditForm.organizationId">
-                <option value="">不关联组织</option>
-                <option v-for="org in organizations" :key="org.id" :value="org.id">{{ org.name }}</option>
-              </select>
-            </label>
-            <label>组别
-              <select v-model="registrationEditForm.group">
-                <option v-for="grade in eventData.grades" :key="grade">{{ grade }}</option>
-              </select>
-            </label>
-          </div>
-          <label>赛项
-            <select v-model="registrationEditForm.projectId">
-              <option v-for="project in projects" :key="project.id" :value="project.id">{{ project.name }}（{{ project.type === "team" ? "团体赛" : "个人赛" }}）</option>
-            </select>
-          </label>
-          <label>指导老师<input v-model="registrationEditForm.instructor" placeholder="选填" /></label>
-          <button class="primary">保存报名信息</button>
-        </form>
-        <form class="batch-panel" @submit.prevent="uploadCertificateBatch">
-          <div>
-            <strong>批量导入证书 PDF</strong>
-            <p class="hint">此旧区域已由证书管理页面的 Excel 预检查流程替代。</p>
-          </div>
-          <input type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" @change="setBatchFile" />
-          <button class="dark">预检查 Excel</button>
-        </form>
-        <div v-if="batchResult" class="batch-result">
-          <span>成功 {{ batchResult.matched.length }} 个</span>
-          <span>未匹配 {{ batchResult.unmatched.length }} 个</span>
-          <span>多重匹配 {{ batchResult.ambiguous.length }} 个</span>
-          <p v-if="batchResult.unmatched.length" class="hint">未匹配：{{ batchResult.unmatched.map(item => item.fileName).join("，") }}</p>
-          <p v-if="batchResult.ambiguous.length" class="hint">多重匹配：{{ batchResult.ambiguous.map(item => item.fileName).join("，") }}</p>
-        </div>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr><th>编号</th><th>姓名</th><th>学校/年级</th><th>组织</th><th>赛项</th><th>状态</th><th>审核</th><th>成绩/证书</th></tr>
-            </thead>
-            <tbody>
-              <tr v-for="row in filteredRows" :key="row.id">
-                <td>{{ row.id }}</td>
-                <td>{{ row.athlete.name }}</td>
-                <td>{{ row.athlete.school }}<br /><span>{{ row.athlete.grade }}</span></td>
-                <td>{{ row.organization || "个人报名" }}</td>
-                <td>{{ row.projectName }}<br /><span>{{ row.projectType === "team" ? "团体赛" : "个人赛" }}</span></td>
-                <td><em :class="row.status">{{ statusText[row.status] }}</em></td>
-                <td>
-                  <button class="mini" @click="editRegistration(row)">修改</button>
-                  <button class="mini" @click="setRegistrationStatus(row, 'approved')">通过</button>
-                  <button class="mini reject" @click="setRegistrationStatus(row, 'rejected')">驳回</button>
-                </td>
-                <td class="admin-actions">
-                  <div class="mini-form">
-                    <input v-model="resultDraft(row).awardName" placeholder="奖项/等级" />
-                    <input v-model="resultDraft(row).rank" placeholder="名次" />
-                    <input v-model="resultDraft(row).score" placeholder="成绩/分数" />
-                    <button class="mini" @click="saveResult(row)">保存成绩</button>
-                  </div>
-                  <div class="mini-form certificate-upload">
-                    <input v-model="certificateDraft(row).title" placeholder="证书标题" />
-                    <input type="file" accept="application/pdf,.pdf" @change="setCertificateFile(row, $event)" />
-                    <button class="mini" @click="uploadCertificate(row)">上传证书</button>
-                  </div>
-                  <div v-if="certificateByRegistration[row.id]" class="certificate-state">
-                    <span>{{ certificateByRegistration[row.id].title }} · {{ certificateStatusText[certificateByRegistration[row.id].status] }}</span>
-                    <button v-if="certificateByRegistration[row.id].status !== 'published'" class="mini" @click="publishCertificate(certificateByRegistration[row.id], 'published')">发布</button>
-                    <button v-else class="mini reject" @click="publishCertificate(certificateByRegistration[row.id], 'draft')">撤回</button>
-                    <button class="mini" @click="downloadCertificate(certificateByRegistration[row.id])">下载</button>
-                  </div>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
     </main>
   </component>
 </template>

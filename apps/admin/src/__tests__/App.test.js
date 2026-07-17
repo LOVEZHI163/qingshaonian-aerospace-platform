@@ -19,6 +19,7 @@ vi.mock("../state/session.js", async () => {
 });
 
 import App from "../App.vue";
+import appSource from "../App.vue?raw";
 import { testSession as session } from "../state/session.js";
 
 const sessionUser = session.user;
@@ -95,6 +96,53 @@ describe("App session integration", () => {
     expect(wrapper.text()).toContain("Excel 导入证书");
     expect(wrapper.text()).not.toContain("证书编号");
     expect(wrapper.text()).not.toContain("ZIP");
+  });
+
+  it("opens a historical registration in its own event instead of the current event", async () => {
+    const current = { id: "E1", name: "当前赛事", isCurrent: true };
+    const historical = { id: "E0", name: "历史赛事", isCurrent: false };
+    const historicalRegistration = {
+      id: "R-HISTORICAL", eventId: "E0", status: "approved", group: "中学组", projectId: "P0", projectName: "历史赛项",
+      athlete: { name: "历史选手", school: "历史学校", grade: "六年级" }
+    };
+    sessionUser.value = { id: "A1", type: "admin", name: "管理员", mustChangePassword: false };
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/public/event") return publicData();
+      if (path === "/api/public/features") return { smsPasswordResetEnabled: false };
+      if (path === "/api/organizations" || path === "/api/admin/organizations") return { rows: [], memberships: [] };
+      if (path === "/api/me/A1") return { memberships: [] };
+      if (path === "/api/users") return { rows: [] };
+      if (path === "/api/admin/events") return {
+        rows: [current, historical],
+        projects: [
+          { id: "P1", eventId: "E1", name: "当前赛项", allowedGroups: ["中学组"] },
+          { id: "P0", eventId: "E0", name: "历史赛项", allowedGroups: ["中学组"] }
+        ]
+      };
+      if (path === "/api/admin/certificates") return { rows: [] };
+      if (path === "/api/admin/registrations?pageSize=100") return { rows: [], total: 0, page: 1, pageSize: 100 };
+      if (path.includes("/api/admin/registrations?") && path.includes("eventId=E0")) {
+        return { rows: [historicalRegistration], total: 1, page: 1, pageSize: path.includes("pageSize=25") ? 25 : 100, refreshedAt: "2026-07-17T08:00:00.000Z" };
+      }
+      if (path.includes("/api/admin/registrations?")) return { rows: [], total: 0, page: 1, pageSize: path.includes("pageSize=25") ? 25 : 100 };
+      return { rows: [] };
+    });
+    const wrapper = mount(App);
+    await flushPromises();
+    await wrapper.get('[data-nav="registrations"]').trigger("click");
+    await flushPromises();
+    await wrapper.get('[data-filter="eventId"]').setValue("E0");
+    await flushPromises();
+    await wrapper.get('[data-action="manage-certificates"]').trigger("click");
+    await flushPromises();
+
+    expect(wrapper.get(".certificate-filter-grid select").element.value).toBe("E0");
+    expect(wrapper.get(".registration-summary").text()).toContain("R-HISTORICAL");
+  });
+
+  it("does not retain the unreachable legacy single-slot and batch certificate implementation", () => {
+    expect(appSource).not.toMatch(/uploadCertificateBatch|batchUploadForm|certificateDraft|registrationEditForm/);
+    expect(appSource.match(/currentView === 'registration' && currentUser\.type === 'admin'/g)).toHaveLength(1);
   });
 
   it("switches an active user to the non-skippable password screen", async () => {

@@ -69,15 +69,15 @@ async function saveSlot(slot) {
       body.append("certificate", forms[slot].file);
       await api(`/api/admin/registrations/${props.registration.id}/certificates/${slot}`, { method: "POST", body });
       forms[slot].file = null;
-      success.value = current ? `证书位置 ${slot} 已替换。` : `证书位置 ${slot} 已上传并保存为未发布。`;
+      success.value = "";
     } else {
       await api(`/api/admin/certificates/${current.id}`, {
         method: "PATCH",
         body: JSON.stringify({ title: forms[slot].title.trim() })
       });
-      success.value = `证书位置 ${slot} 的标题已保存。`;
+      success.value = "";
     }
-    emit("changed");
+    emit("changed", { message: `证书位置 ${slot} 已保存。` });
   } catch (cause) {
     error.value = cause.message || `证书位置 ${slot} 保存失败，请稍后重试。`;
   } finally {
@@ -94,8 +94,8 @@ async function changeStatus(certificate, status) {
       method: "POST",
       body: JSON.stringify({ ids: [certificate.id], status })
     });
-    success.value = status === "published" ? "证书已发布。" : "证书已撤回为未发布。";
-    emit("changed");
+    success.value = "";
+    emit("changed", { message: status === "published" ? "证书已发布。" : "证书已撤回为未发布。" });
   } catch (cause) {
     error.value = cause.message || "证书状态更新失败，请稍后重试。";
   } finally {
@@ -123,8 +123,8 @@ async function confirmDelete() {
   try {
     await api(`/api/admin/certificates/${certificate.id}`, { method: "DELETE" });
     deleteTarget.value = null;
-    success.value = "证书已删除。";
-    emit("changed");
+    success.value = "";
+    emit("changed", { message: "证书已删除。" });
   } catch (cause) {
     error.value = cause.message || "证书删除失败，请稍后重试。";
   } finally {
@@ -147,7 +147,7 @@ onBeforeUnmount(() => downloads.dispose());
           <input :data-slot-file="slot" type="file" :accept="certificateAccept" :disabled="busySlot === slot" @change="chooseFile(slot, $event)">
         </label>
         <p class="hint">{{ forms[slot].file?.name || certificateFor(slot)?.fileName || "支持 PDF、PNG、JPG、WEBP，最大 10 MB" }}</p>
-        <p v-if="certificateFor(slot)?.cleanedAt" class="message">文件已清理，当前不可预览或下载；可选择新文件替换。</p>
+        <p v-if="certificateFor(slot)?.cleanedAt" class="message">原文件已清理，可替换；当前不可预览或下载。</p>
         <div class="form-actions certificate-slot-actions">
           <button type="button" class="primary" :data-action="`save-slot-${slot}`" :disabled="busySlot === slot" @click="saveSlot(slot)">
             {{ busySlot === slot ? "正在保存…" : certificateFor(slot) && forms[slot].file ? "替换文件" : certificateFor(slot) ? "保存标题" : "上传文件" }}

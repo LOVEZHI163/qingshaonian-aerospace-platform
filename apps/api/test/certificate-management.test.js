@@ -138,6 +138,30 @@ test("manual certificate management uploads both slots, edits, replaces, deletes
     assert.deepEqual(await fs.readFile(first.filePath), ONE_PIXEL_PNG);
     assert.deepEqual(await fs.readFile(second.filePath), PDF);
 
+    const resultUpdate = await fetch(`${baseUrl}/api/admin/registrations/R20260627001/result`, jsonRequest("POST", {
+      awardName: "特等奖",
+      rank: "1",
+      score: "99.9"
+    }, admin.cookie));
+    assert.equal(resultUpdate.status, 200);
+    const resultPayload = await responseJson(resultUpdate);
+    assert.deepEqual(resultPayload.certificates.map((row) => ({
+      id: row.id,
+      awardName: row.awardName,
+      rank: row.rank,
+      score: row.score
+    })).sort((left, right) => left.id.localeCompare(right.id)), [first.id, second.id].sort().map((id) => ({
+      id,
+      awardName: "特等奖",
+      rank: "1",
+      score: "99.9"
+    })));
+
+    const resultCertificates = (await responseJson(await fetch(`${baseUrl}/api/admin/certificates`, withSession(admin.cookie)))).rows
+      .filter((row) => row.registrationId === "R20260627001");
+    assert.equal(resultCertificates.length, 2);
+    assert.equal(resultCertificates.every((row) => row.awardName === "特等奖" && row.rank === "1" && row.score === "99.9"), true);
+
     const metadata = await fetch(`${baseUrl}/api/admin/certificates/${first.id}`, jsonRequest("PATCH", {
       title: "  金奖证书  ",
       awardName: "一等奖",
@@ -245,6 +269,8 @@ test("manual certificate management applies the same file authorization to previ
 test("manual certificate management rejects invalid uploads and never serves a cleaned file", async () => {
   await withTestServer(async ({ baseUrl, dbPath, tempDir }) => {
     const admin = await loginAs(baseUrl, "13900000000", "admin123");
+    const athleteOwner = await loginAs(baseUrl, "13800000001", "123456");
+    const organizationOwner = await loginAs(baseUrl, "13800000011", "123456");
 
     const invalidSlot = await uploadCertificate(baseUrl, admin.cookie, "R20260627001", 3);
     assert.equal(invalidSlot.status, 422);
@@ -268,10 +294,25 @@ test("manual certificate management rejects invalid uploads and never serves a c
     const valid = await uploadCertificate(baseUrl, admin.cookie, "R20260627001", 1, { title: "待清理证书" });
     assert.equal(valid.status, 201);
     const certificate = (await responseJson(valid)).row;
+    const publish = await fetch(`${baseUrl}/api/admin/certificates/bulk-status`, jsonRequest("POST", {
+      ids: [certificate.id], status: "published"
+    }, admin.cookie));
+    assert.equal(publish.status, 200);
     const db = JSON.parse(await fs.readFile(dbPath, "utf8"));
     db.certificates.find((row) => row.id === certificate.id).cleanedAt = "2026-07-17T12:00:00.000Z";
     await fs.writeFile(dbPath, JSON.stringify(db, null, 2), "utf8");
     assert.equal((await fetch(`${baseUrl}/api/certificates/${certificate.id}/file`, withSession(admin.cookie))).status, 404);
+
+    const adminRows = (await responseJson(await fetch(`${baseUrl}/api/admin/certificates`, withSession(admin.cookie)))).rows;
+    const cleaned = adminRows.find((row) => row.id === certificate.id);
+    assert.ok(cleaned);
+    assert.equal(cleaned.cleanedAt, "2026-07-17T12:00:00.000Z");
+    assert.equal(Object.hasOwn(cleaned, "previewUrl"), false);
+    assert.equal(Object.hasOwn(cleaned, "downloadUrl"), false);
+    const ownRows = (await responseJson(await fetch(`${baseUrl}/api/me/certificates`, withSession(athleteOwner.cookie)))).rows;
+    assert.equal(ownRows.some((row) => row.id === certificate.id), false);
+    const organizationRows = (await responseJson(await fetch(`${baseUrl}/api/organizations/O1001/certificates`, withSession(organizationOwner.cookie)))).rows;
+    assert.equal(organizationRows.some((row) => row.id === certificate.id), false);
 
     const files = await fs.readdir(path.join(tempDir, "uploads", "certificates"));
     assert.equal(files.length, 1);

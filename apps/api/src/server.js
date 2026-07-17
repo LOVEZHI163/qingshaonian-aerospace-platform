@@ -634,10 +634,10 @@ app.post("/api/admin/registrations/:id/result", requireAdmin, requirePasswordRea
   row.score = String(req.body.score || "");
   row.resultRecordedAt = now();
   row.updatedAt = now();
-  const certificate = findCertificateByRegistration(db, row.id);
-  if (certificate) updateCertificateFromRegistration(certificate, row);
+  const certificates = db.certificates.filter((certificate) => certificate.registrationId === row.id);
+  for (const certificate of certificates) updateCertificateFromRegistration(certificate, row);
   await writeDb(db);
-  res.json({ row, certificate });
+  res.json({ row, certificate: certificates[0] || null, certificates });
 }));
 
 app.patch("/api/admin/registrations/:id", requireAdmin, requirePasswordReady, mutationAsyncRoute(async (req, res) => {

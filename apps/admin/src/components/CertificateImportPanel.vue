@@ -20,6 +20,7 @@ const downloads = createBlobDownloadManager();
 const xlsxAccept = ".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
 function chooseFile(event) {
+  if (preview.value) return;
   error.value = "";
   success.value = "";
   const file = event.target.files?.[0] || null;
@@ -90,7 +91,6 @@ async function commitImport() {
   error.value = "";
   try {
     const committed = await api(`/api/admin/certificate-imports/${preview.value.id}/commit`, { method: "POST" });
-    success.value = `导入完成：${preview.value.validCount} 条有效记录已保存为未发布证书。`;
     preview.value = null;
     selectedFile.value = null;
     if (fileInput.value) fileInput.value.value = "";
@@ -130,9 +130,9 @@ onBeforeUnmount(() => downloads.dispose());
     </div>
     <div class="certificate-import-actions">
       <label class="file-picker">2. 选择 Excel 文件
-        <input ref="fileInput" data-import-file type="file" :accept="xlsxAccept" :disabled="loading || action === 'commit'" @change="chooseFile">
+        <input ref="fileInput" data-import-file type="file" :accept="xlsxAccept" :disabled="loading || Boolean(preview) || action === 'commit'" @change="chooseFile">
       </label>
-      <span class="selected-file-name">{{ selectedFile?.name || "尚未选择文件" }}</span>
+      <span class="selected-file-name">{{ preview?.originalName || selectedFile?.name || "尚未选择文件" }}</span>
       <button type="button" class="dark" data-action="preview-import" :disabled="!selectedFile || loading || Boolean(preview)" @click="previewImport">
         {{ action === "preview" ? "正在预检查…" : "3. 开始预检查" }}
       </button>
