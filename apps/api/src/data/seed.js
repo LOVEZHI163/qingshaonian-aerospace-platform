@@ -144,10 +144,13 @@ export function ensureDbShape(db) {
     user.mustChangePassword ??= false;
   }
   db.organizations ||= [];
+  const isLegacyOrganizationShape = !Array.isArray(db.organizationDocuments);
   db.organizationDocuments ||= [];
   for (const organization of db.organizations) {
-    organization.creditCode ||= `LEGACY-${organization.id}`;
-    organization.reviewStatus ||= "approved";
+    if (isLegacyOrganizationShape && !organization.creditCode) {
+      organization.creditCode = `LEGACY-${organization.id}`;
+    }
+    organization.reviewStatus ||= isLegacyOrganizationShape ? "approved" : "pending";
     organization.rejectReason ||= "";
     organization.reviewedBy ??= null;
     organization.reviewedAt ??= null;

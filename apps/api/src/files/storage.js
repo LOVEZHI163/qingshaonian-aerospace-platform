@@ -36,17 +36,26 @@ function resolvePrivatePath(root, category, ownerId, storedName) {
   return filePath;
 }
 
-export async function savePrivateFile({ category, ownerId, file }) {
+export async function savePrivateFile({ category, ownerId, file, fileSystem = fs }) {
   const safeCategory = safePathComponent(category, "category");
   const safeOwnerId = safePathComponent(ownerId, "owner");
   const detected = await validateUpload(file, CREDENTIAL_POLICY);
   const root = uploadRoot();
-  const directory = resolvePrivatePath(root, safeCategory, safeOwnerId, "placeholder");
   const storedName = `${crypto.randomUUID()}.${detected.ext}`;
   const filePath = resolvePrivatePath(root, safeCategory, safeOwnerId, storedName);
 
-  await fs.mkdir(path.dirname(directory), { recursive: true });
-  await fs.writeFile(filePath, file.buffer, { flag: "wx" });
+  await fileSystem.mkdir(path.dirname(filePath), { recursive: true });
+  try {
+    await fileSystem.writeFile(filePath, file.buffer, { flag: "wx" });
+  } catch (error) {
+    if (error?.code === "EEXIST") throw error;
+    try {
+      await fileSystem.unlink(filePath);
+    } catch (cleanupError) {
+      if (cleanupError?.code !== "ENOENT") error.cleanupError = cleanupError;
+    }
+    throw error;
+  }
   return {
     storedName,
     filePath,
