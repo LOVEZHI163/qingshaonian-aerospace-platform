@@ -1,8 +1,11 @@
 ﻿<script setup>
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import AdminShell from "./components/AdminShell.vue";
+import OrganizationRegistrationForm from "./components/OrganizationRegistrationForm.vue";
 import { api } from "./lib/api.js";
+import AuthPage from "./pages/AuthPage.vue";
 import EventManagementPage from "./pages/EventManagementPage.vue";
+import OrganizationManagementPage from "./pages/OrganizationManagementPage.vue";
 import { useSession } from "./state/session.js";
 
 const API = import.meta.env.VITE_API_URL || "";
@@ -34,8 +37,6 @@ const roleText = {
 const eventData = ref({ event: {}, projects: [], grades: [] });
 const currentView = ref("login");
 const message = ref("");
-const smsPasswordResetEnabled = ref(false);
-const resetStep = ref("request");
 const rows = ref([]);
 const users = ref([]);
 const organizations = ref([]);
@@ -49,23 +50,8 @@ const userFilter = ref("all");
 const userSearch = ref("");
 const orgSearch = ref("");
 
-const loginForm = reactive({ phone: "13800000001", password: "123456" });
-const ordinaryRegisterForm = reactive({
-  type: "ordinary",
-  name: "",
-  phone: "",
-  password: ""
-});
-const organizationRegisterForm = reactive({
-  type: "organization",
-  name: "",
-  phone: "",
-  password: "",
-  organizationName: "",
-  organizationCode: ""
-});
-const resetForm = reactive({ phone: "", code: "", password: "" });
 const passwordChangeForm = reactive({ currentPassword: "", newPassword: "" });
+const resubmitOrganizationOpen = ref(false);
 
 const joinForm = reactive({ organizationId: "", note: "" });
 const inviteForm = reactive({ organizationId: "", name: "", phone: "", note: "" });
@@ -111,7 +97,11 @@ const filteredOrganizations = computed(() => {
       .some((value) => String(value).toLowerCase().includes(keyword));
   });
 });
-const canUseOrganizationConsole = computed(() => ["organization", "admin"].includes(currentUser.value?.type));
+const canUseOrganizationConsole = computed(() => {
+  if (currentUser.value?.type === "admin") return true;
+  const owned = organizations.value.find((organization) => organization.ownerUserId === currentUser.value?.id);
+  return currentUser.value?.type === "organization" && owned?.reviewStatus === "approved" && owned.status === "active";
+});
 const selectedProject = computed(() => projects.value.find((item) => item.id === registrationForm.projectId));
 const filteredRows = computed(() => {
   const keyword = registrationSearch.value.trim().toLowerCase();
@@ -246,10 +236,10 @@ async function loadData() {
   if (!registrationForm.organizationId && myOrganizations.value[0]) registrationForm.organizationId = myOrganizations.value[0].id;
 }
 
-async function login() {
+async function login(credentials) {
   message.value = "";
   try {
-    const user = await session.login(loginForm);
+    const user = await session.login(credentials);
     if (user.mustChangePassword) return;
     await loadData();
     currentView.value = user.type === "admin" ? "overview" : user.type === "organization" ? "organization" : "registration";
@@ -355,50 +345,6 @@ async function deleteUser(user) {
   }
 }
 
-async function register(form) {
-  message.value = "";
-  try {
-    await api("/api/auth/register", { method: "POST", body: JSON.stringify(form) });
-    loginForm.phone = form.phone;
-    loginForm.password = "";
-    currentView.value = "login";
-    message.value = "注册成功，请登录";
-  } catch (error) {
-    message.value = error.message;
-  }
-}
-
-async function requestPasswordReset() {
-  message.value = "";
-  try {
-    const payload = await api("/api/auth/password-reset/sms/request", {
-      method: "POST",
-      body: JSON.stringify({ phone: resetForm.phone })
-    });
-    resetStep.value = "confirm";
-    message.value = payload.message || "验证码已发送，请在 5 分钟内完成验证";
-  } catch (error) {
-    message.value = error.message;
-  }
-}
-
-async function confirmPasswordReset() {
-  message.value = "";
-  try {
-    const payload = await api("/api/auth/password-reset/sms/confirm", {
-      method: "POST",
-      body: JSON.stringify({ phone: resetForm.phone, code: resetForm.code, password: resetForm.password })
-    });
-    loginForm.phone = resetForm.phone;
-    Object.assign(resetForm, { phone: "", code: "", password: "" });
-    resetStep.value = "request";
-    currentView.value = "login";
-    message.value = payload.message || "密码已重置，请登录";
-  } catch (error) {
-    message.value = error.message;
-  }
-}
-
 async function changePassword() {
   message.value = "";
   try {
@@ -420,6 +366,12 @@ async function logout() {
   await session.logout();
   currentView.value = "login";
   message.value = "";
+}
+
+async function organizationResubmitted() {
+  resubmitOrganizationOpen.value = false;
+  message.value = "组织资料已重新提交，等待管理员审核";
+  await loadData();
 }
 
 function navigateAdmin(key) {
@@ -636,9 +588,6 @@ watch(
 watch(
   () => [currentUser.value?.type, currentView.value],
   () => {
-    if (currentUser.value && currentView.value === "organization" && !canUseOrganizationConsole.value) {
-      currentView.value = "registration";
-    }
     if (currentUser.value && currentView.value === "admin" && currentUser.value.type !== "admin") {
       currentView.value = "registration";
     }
@@ -653,11 +602,7 @@ watch(
 
 onMounted(async () => {
   try {
-    const [, features] = await Promise.all([
-      loadEvent(),
-      api("/api/public/features").catch(() => ({ smsPasswordResetEnabled: false }))
-    ]);
-    smsPasswordResetEnabled.value = Boolean(features.smsPasswordResetEnabled);
+    await loadEvent();
   } catch (error) {
     message.value = error.message;
   }
@@ -676,76 +621,7 @@ onMounted(async () => {
 <template>
   <div v-if="restoring" class="app-loading">正在恢复登录状态…</div>
 
-  <div v-else-if="!currentUser" class="auth-shell">
-    <header class="auth-header">
-      <div class="logo">航</div>
-      <div>
-        <h1>赛事报名系统</h1>
-        <p>{{ eventData.event.name || "2026年温州市青少年航空航天创新比赛" }}</p>
-      </div>
-    </header>
-
-    <nav class="auth-tabs">
-      <button data-auth-tab="login" :class="{ active: currentView === 'login' }" @click="currentView = 'login'">登录</button>
-      <button data-auth-tab="register" :class="{ active: currentView === 'register' }" @click="currentView = 'register'">注册</button>
-    </nav>
-
-    <p v-if="message" class="message">{{ message }}</p>
-
-    <section v-if="currentView === 'login'" class="auth-grid single">
-      <form class="panel auth-panel" data-auth-form="login" @submit.prevent="login">
-        <h3>账号登录</h3>
-        <label>手机号<input v-model="loginForm.phone" /></label>
-        <label>密码<input v-model="loginForm.password" type="password" /></label>
-        <button class="primary">登录</button>
-        <button type="button" class="link-button" @click="currentView = 'forgot'">忘记密码？</button>
-        <p class="hint">测试账号：普通用户 13800000001 / 123456；组织用户 13800000011 / 123456；管理员 13900000000 / admin123。</p>
-      </form>
-    </section>
-
-    <section v-else-if="currentView === 'register'" class="auth-grid register-choice">
-      <form class="panel auth-panel" data-register="ordinary" @submit.prevent="register(ordinaryRegisterForm)">
-        <h3>普通用户注册</h3>
-        <p class="hint">适合学生、家长、个人参赛者。注册后可以报名，也可以向组织发送加入申请。</p>
-        <label>姓名<input v-model="ordinaryRegisterForm.name" placeholder="学生/家长/老师姓名" /></label>
-        <label>手机号<input v-model="ordinaryRegisterForm.phone" placeholder="用于登录和查重" /></label>
-        <label>密码<input v-model="ordinaryRegisterForm.password" type="password" /></label>
-        <button class="primary">注册普通用户</button>
-      </form>
-
-      <form class="panel auth-panel org-register" data-register="organization" @submit.prevent="register(organizationRegisterForm)">
-        <h3>组织用户注册</h3>
-        <p class="hint">适合学校、青少年宫、科技馆、活动中心。注册后会创建组织，并成为组织负责人。</p>
-        <label>负责人姓名<input v-model="organizationRegisterForm.name" placeholder="负责人/领队老师姓名" /></label>
-        <label>手机号<input v-model="organizationRegisterForm.phone" placeholder="用于登录和组织联系" /></label>
-        <label>密码<input v-model="organizationRegisterForm.password" type="password" /></label>
-        <label>组织名称<input v-model="organizationRegisterForm.organizationName" placeholder="学校、青少年宫或活动中心" /></label>
-        <label>组织代码<input v-model="organizationRegisterForm.organizationCode" placeholder="可选，如 WZ-SYXX" /></label>
-        <button class="primary">注册组织用户</button>
-      </form>
-    </section>
-
-    <section v-else-if="currentView === 'forgot'" class="auth-grid single">
-      <form v-if="smsPasswordResetEnabled && resetStep === 'request'" class="panel auth-panel" @submit.prevent="requestPasswordReset">
-        <h3>找回密码</h3>
-        <p class="hint">验证码将发送到注册手机号，5 分钟内有效。</p>
-        <label>手机号<input v-model="resetForm.phone" placeholder="注册手机号" /></label>
-        <button class="primary">发送验证码</button>
-      </form>
-      <form v-else-if="smsPasswordResetEnabled" class="panel auth-panel" @submit.prevent="confirmPasswordReset">
-        <h3>验证并重置密码</h3>
-        <label>手机号<input v-model="resetForm.phone" disabled /></label>
-        <label>短信验证码<input v-model="resetForm.code" inputmode="numeric" /></label>
-        <label>新密码<input v-model="resetForm.password" type="password" placeholder="至少 8 位，含字母和数字" /></label>
-        <button class="primary">确认重置</button>
-        <button type="button" class="link-button" @click="resetStep = 'request'">重新获取验证码</button>
-      </form>
-      <section v-else class="panel auth-panel">
-        <h3>找回密码</h3>
-        <p class="hint">短信找回暂未启用，请联系赛事管理员重置密码。</p>
-      </section>
-    </section>
-  </div>
+  <AuthPage v-else-if="!currentUser" :event-name="eventData.event.name" @login="login" />
 
   <section v-else-if="currentUser.mustChangePassword" class="auth-shell force-password-shell">
     <form class="panel auth-panel" @submit.prevent="changePassword">
@@ -800,13 +676,33 @@ onMounted(async () => {
         @event-changed="loadEvent"
       />
 
+      <OrganizationManagementPage v-else-if="currentUser.type === 'admin' && currentView === 'organizations'" />
+
       <section v-else-if="currentUser.type === 'admin' && currentView === 'overview'" class="panel admin-overview">
         <h3>管理概览</h3>
         <p>从左侧进入赛事管理、赛项与组别、报名、证书或用户管理。</p>
         <div class="overview-metrics"><span>报名 {{ rows.length }} 条</span><span>证书 {{ certificates.length }} 张</span><span>用户 {{ users.length }} 个</span></div>
       </section>
 
-      <section v-if="currentView === 'registration' && currentUser.type !== 'admin'" class="content-grid">
+      <section v-if="currentView === 'organization' && currentUser.type === 'organization' && !canUseOrganizationConsole" class="panel organization-review-progress">
+        <h3>组织审核进度</h3>
+        <p>当前组织：{{ ownerOrganization(currentUser.id)?.name || '组织资料加载中' }}</p>
+        <em :class="ownerOrganization(currentUser.id)?.reviewStatus">{{ statusText[ownerOrganization(currentUser.id)?.reviewStatus] || '待审核' }}</em>
+        <p v-if="ownerOrganization(currentUser.id)?.rejectReason" class="hint">驳回原因：{{ ownerOrganization(currentUser.id).rejectReason }}</p>
+        <p v-if="ownerOrganization(currentUser.id)?.reviewStatus === 'rejected'" class="hint">请根据驳回原因重新提交组织资料和资质文件。</p>
+        <button v-if="ownerOrganization(currentUser.id)?.reviewStatus === 'rejected'" type="button" class="dark" @click="resubmitOrganizationOpen = !resubmitOrganizationOpen">重新提交资质</button>
+        <OrganizationRegistrationForm
+          v-if="resubmitOrganizationOpen && ownerOrganization(currentUser.id)?.reviewStatus === 'rejected'"
+          endpoint="/api/me/organization"
+          submit-label="重新提交组织资料"
+          resubmission
+          :initial-form="{ name: currentUser.name, phone: currentUser.phone, organizationName: ownerOrganization(currentUser.id)?.name, creditCode: ownerOrganization(currentUser.id)?.creditCode }"
+          @registered="organizationResubmitted"
+          @error="message = $event"
+        />
+      </section>
+
+      <section v-else-if="currentView === 'registration' && currentUser.type !== 'admin'" class="content-grid">
         <form class="panel form-panel" @submit.prevent="submitRegistration">
           <div class="panel-title">
             <h3>报名端</h3>
@@ -977,7 +873,7 @@ onMounted(async () => {
         </div>
       </section>
 
-      <section v-else-if="['users', 'organizations'].includes(currentView) && currentUser.type === 'admin'" class="content-grid">
+      <section v-else-if="currentView === 'users' && currentUser.type === 'admin'" class="content-grid">
         <form class="panel form-panel" @submit.prevent="saveUser">
           <div class="panel-title">
             <h3>{{ userForm.id ? "编辑用户" : "新增用户" }}</h3>

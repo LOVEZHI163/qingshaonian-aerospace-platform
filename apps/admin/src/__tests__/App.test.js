@@ -96,7 +96,7 @@ describe("App session integration", () => {
     expect(wrapper.find(".admin-overview").exists()).toBe(false);
   });
 
-  it("maps organization navigation to a working administrator user view", async () => {
+  it("maps organization navigation to the administrator organization review view", async () => {
     sessionUser.value = { id: "A1", type: "admin", name: "管理员", mustChangePassword: false };
     const wrapper = mount(App);
     await flushPromises();
@@ -104,8 +104,8 @@ describe("App session integration", () => {
     await wrapper.get('[data-nav="organizations"]').trigger("click");
     await flushPromises();
 
-    expect(wrapper.text()).toContain("用户列表");
-    expect(wrapper.find(".user-table").exists()).toBe(true);
+    expect(wrapper.text()).toContain("组织审核");
+    expect(wrapper.find(".organization-management").exists()).toBe(true);
   });
 
   it("rejects an invalid administrator temporary password before calling the API", async () => {
@@ -140,7 +140,7 @@ describe("App session integration", () => {
     apiMock.mockImplementation(async (path) => {
       if (path === "/api/public/event") return publicData();
       if (path === "/api/public/features") return { smsPasswordResetEnabled: false };
-      if (path === "/api/auth/register") return { user: { id: "U2" } };
+      if (path === "/api/auth/register/ordinary") return { user: { id: "U2" } };
       return { rows: [], memberships: [] };
     });
     const wrapper = mount(App);

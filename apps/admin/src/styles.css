@@ -37,6 +37,17 @@ select {
   font: inherit;
 }
 
+textarea {
+  width: 100%;
+  min-height: 112px;
+  padding: 9px 11px;
+  color: var(--navy);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font: inherit;
+  resize: vertical;
+}
+
 .admin-shell {
   display: grid;
   grid-template-columns: 240px minmax(0, 1fr);
@@ -821,6 +832,67 @@ em.invited {
   color: var(--muted);
   font-size: 13px;
 }
+
+.organization-management {
+  display: grid;
+  gap: 16px;
+}
+
+.organization-tabs,
+.organization-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.organization-tabs button {
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  background: white;
+  cursor: pointer;
+}
+
+.organization-tabs button.active {
+  color: white;
+  border-color: var(--blue);
+  background: var(--blue);
+}
+
+.organization-toolbar {
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.organization-toolbar input { max-width: 520px; }
+.organization-toolbar span { color: var(--muted); }
+.organization-table { min-width: 1060px; }
+.credential-link { display: inline-block; text-decoration: none; }
+
+.dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(15, 23, 42, 0.5);
+}
+
+.organization-dialog {
+  width: min(100%, 600px);
+}
+
+.organization-dialog dl {
+  display: grid;
+  grid-template-columns: 150px 1fr;
+  gap: 12px;
+}
+
+.organization-dialog dt { color: var(--muted); }
+.organization-dialog dd { margin: 0; }
 
 @media (max-width: 1100px) {
   .shell,
