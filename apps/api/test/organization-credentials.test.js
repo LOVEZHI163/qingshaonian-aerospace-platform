@@ -10,6 +10,9 @@ import { CREDENTIAL_POLICY, validateUpload } from "../src/files/policy.js";
 import { deletePrivateFile, savePrivateFile } from "../src/files/storage.js";
 import { createPostgresStore } from "../src/data/postgres-store.js";
 import { ensureDbShape, seedDb } from "../src/data/seed.js";
+import { registerOrganization } from "../src/services/organizations.js";
+import { withTestServer } from "../test-support/server.js";
+import { loginAs, withSession } from "./helpers/api-client.js";
 
 const pngBuffer = Buffer.from("89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000a49444154789c63600000020001e221bc330000000049454e44ae426082", "hex");
 const pdfBuffer = Buffer.from("%PDF-1.7\n1 0 obj\n<<>>\nendobj\n%%EOF\n");
@@ -19,6 +22,136 @@ const executableBuffer = Buffer.from("4d5a90000300000004000000ffff0000b8000000",
 function uploadedFile(buffer, originalname, mimetype = "application/octet-stream") {
   return { buffer, size: buffer.length, originalname, mimetype };
 }
+
+function organizationRegistration({ creditCode = "91330300TEST000001", documentType = "business_license", includeCredential = true } = {}) {
+  const form = new FormData();
+  form.set("name", "组织负责人");
+  form.set("phone", "13600009991");
+  form.set("password", "Strong123");
+  form.set("organizationName", "待审核航空学校");
+  form.set("creditCode", creditCode);
+  form.set("documentType", documentType);
+  if (includeCredential) form.set("credential", new Blob([pdfBuffer], { type: "application/pdf" }), "license.pdf");
+  return form;
+}
+
+async function postOrganizationRegistration(baseUrl, options) {
+  return fetch(`${baseUrl}/api/auth/register/organization`, {
+    method: "POST",
+    body: organizationRegistration(options)
+  });
+}
+
+test("organization registration review keeps pending organizations outside organization capabilities", async () => {
+  await withTestServer(async ({ baseUrl }) => {
+    const ordinary = await fetch(`${baseUrl}/api/auth/register/ordinary`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "普通家长", phone: "13600009990", password: "Strong123", type: "organization" })
+    });
+    assert.equal(ordinary.status, 201);
+    assert.equal((await ordinary.json()).user.type, "ordinary");
+
+    const legacyOrganizationRegistration = await fetch(`${baseUrl}/api/auth/register`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "绕过审核", phone: "13600009989", password: "Strong123", type: "organization", organizationName: "无资质组织" })
+    });
+    assert.equal(legacyOrganizationRegistration.status, 422);
+
+    const register = await postOrganizationRegistration(baseUrl);
+    assert.equal(register.status, 201);
+    const payload = await register.json();
+    assert.equal(payload.organization.reviewStatus, "pending");
+    assert.equal(payload.organization.creditCode, "91330300TEST000001");
+    assert.equal(Object.hasOwn(payload.organization, "filePath"), false);
+
+    const owner = await loginAs(baseUrl, "13600009991", "Strong123");
+    const myOrganizations = await fetch(`${baseUrl}/api/me/organizations`, withSession(owner.cookie));
+    assert.equal(myOrganizations.status, 200);
+    assert.equal((await myOrganizations.json()).rows[0].reviewStatus, "pending");
+    const pendingConsole = await fetch(`${baseUrl}/api/organizations/${payload.organization.id}/members`, withSession(owner.cookie));
+    assert.equal(pendingConsole.status, 403);
+
+    const duplicate = await postOrganizationRegistration(baseUrl, { creditCode: "91330300TEST000001" });
+    assert.equal(duplicate.status, 409);
+    const missing = await postOrganizationRegistration(baseUrl, { creditCode: "91330300TEST000002", includeCredential: false });
+    assert.equal(missing.status, 422);
+    const invalidType = await postOrganizationRegistration(baseUrl, { creditCode: "91330300TEST000003", documentType: "invalid" });
+    assert.equal(invalidType.status, 422);
+
+    const nonAdminReview = await fetch(`${baseUrl}/api/admin/organizations/${payload.organization.id}/review`, withSession(owner.cookie, {
+      method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "approved", reason: "" })
+    }));
+    assert.equal(nonAdminReview.status, 403);
+
+    const admin = await loginAs(baseUrl, "13900000000", "admin123");
+    const blankRejection = await fetch(`${baseUrl}/api/admin/organizations/${payload.organization.id}/review`, withSession(admin.cookie, {
+      method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "rejected", reason: " " })
+    }));
+    assert.equal(blankRejection.status, 422);
+    const approve = await fetch(`${baseUrl}/api/admin/organizations/${payload.organization.id}/review`, withSession(admin.cookie, {
+      method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "approved", reason: "" })
+    }));
+    assert.equal(approve.status, 200);
+    const reviewedOrganizations = await fetch(`${baseUrl}/api/admin/organizations`, withSession(admin.cookie));
+    assert.equal(reviewedOrganizations.status, 200);
+    const reviewedOrganization = (await reviewedOrganizations.json()).rows.find((row) => row.id === payload.organization.id);
+    assert.equal(Object.hasOwn(reviewedOrganization, "filePath"), false);
+    assert.equal(reviewedOrganization.documents[0].id, payload.document.id);
+    assert.equal(Object.hasOwn(reviewedOrganization.documents[0], "filePath"), false);
+
+    const credential = await fetch(`${baseUrl}/api/organizations/${payload.organization.id}/credential/${payload.document.id}`, withSession(owner.cookie));
+    assert.equal(credential.status, 200);
+    assert.deepEqual(Buffer.from(await credential.arrayBuffer()), pdfBuffer);
+    const unrelatedUser = await loginAs(baseUrl, "13600009990", "Strong123");
+    const forbiddenCredential = await fetch(`${baseUrl}/api/organizations/${payload.organization.id}/credential/${payload.document.id}`, withSession(unrelatedUser.cookie));
+    assert.equal(forbiddenCredential.status, 403);
+  }, { prefix: "org-registration-review-" });
+});
+
+test("rejected owner can replace credentials and resubmit organization for review", async () => {
+  await withTestServer(async ({ baseUrl }) => {
+    const register = await postOrganizationRegistration(baseUrl, { creditCode: "91330300TEST000011" });
+    const { organization } = await register.json();
+    const admin = await loginAs(baseUrl, "13900000000", "admin123");
+    const rejected = await fetch(`${baseUrl}/api/admin/organizations/${organization.id}/review`, withSession(admin.cookie, {
+      method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "rejected", reason: "证照不清晰" })
+    }));
+    assert.equal(rejected.status, 200);
+    const owner = await loginAs(baseUrl, "13600009991", "Strong123");
+    const form = organizationRegistration({ creditCode: "91330300TEST000011", documentType: "school_license" });
+    form.delete("name"); form.delete("phone"); form.delete("password");
+    form.set("organizationName", "重新提交航空学校");
+    const resubmit = await fetch(`${baseUrl}/api/me/organization`, withSession(owner.cookie, { method: "PATCH", body: form }));
+    assert.equal(resubmit.status, 200);
+    const payload = await resubmit.json();
+    assert.equal(payload.organization.reviewStatus, "pending");
+    assert.equal(payload.organization.rejectReason, "");
+    assert.equal(payload.document.documentType, "school_license");
+  }, { prefix: "org-resubmit-" });
+});
+
+test("organization registration removes the saved credential when its atomic database write fails", async () => {
+  const saved = { filePath: "/safe/uploads/organization-documents/O1/license.pdf", originalName: "license.pdf", storedName: "license.pdf", mimeType: "application/pdf", size: pdfBuffer.length };
+  const cleaned = [];
+  await assert.rejects(
+    () => registerOrganization({
+      input: { name: "负责人", phone: "13600009992", password: "Strong123", organizationName: "失败组织", creditCode: "91330300TEST000012", documentType: "business_license" },
+      file: uploadedFile(pdfBuffer, "license.pdf", "application/pdf"),
+      readDb: async () => ({ users: [], organizations: [], memberships: [], organizationDocuments: [] }),
+      writeDb: async () => { throw new Error("simulated database failure"); },
+      hashPassword: async () => "hash",
+      validatePassword: () => "",
+      makeId: (prefix) => `${prefix}1`,
+      now: () => "2026-07-17T00:00:00.000Z",
+      saveFile: async () => saved,
+      removePrivateFile: async (record) => { cleaned.push(record.filePath); }
+    }),
+    /simulated database failure/
+  );
+  assert.deepEqual(cleaned, [saved.filePath]);
+});
 
 test("credential policy accepts real PNG and PDF and rejects disguised executables", async () => {
   const pngFile = uploadedFile(pngBuffer, "license.png", "image/png");

@@ -1,0 +1,104 @@
+import express from "express";
+import multer from "multer";
+
+import {
+  OrganizationError,
+  registerOrdinary,
+  registerOrganization,
+  resubmitOrganization,
+  reviewOrganization
+} from "../services/organizations.js";
+
+function publicDocument(document) {
+  if (!document) return null;
+  const { filePath, storedName, ...safe } = document;
+  return safe;
+}
+
+function publicOrganization(organization) {
+  if (!organization) return null;
+  return { ...organization };
+}
+
+function organizationWithDocuments(db, organization, membershipRole = null) {
+  return {
+    ...publicOrganization(organization),
+    ...(membershipRole ? { membershipRole } : {}),
+    documents: db.organizationDocuments
+      .filter((document) => document.organizationId === organization.id && !document.cleanedAt)
+      .map(publicDocument)
+  };
+}
+
+function respondError(error, res, next) {
+  if (error instanceof OrganizationError) return res.status(error.status).json({ error: error.message });
+  return next(error);
+}
+
+export function createOrganizationsRouter({ store, requireUser, requireAdmin, requirePasswordReady, asyncRoute, hashPassword, validatePassword, makeId, now, publicUser }) {
+  const router = express.Router();
+  const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
+  const deps = { readDb: () => store.readDb(), writeDb: (db) => store.writeDb(db), hashPassword, validatePassword, makeId, now };
+
+  router.post("/auth/register/ordinary", asyncRoute(async (req, res, next) => {
+    try {
+      const result = await registerOrdinary({ ...deps, input: req.body || {} });
+      res.status(201).json({ user: publicUser(result.user), organization: null });
+    } catch (error) { respondError(error, res, next); }
+  }));
+
+  router.post("/auth/register/organization", upload.single("credential"), asyncRoute(async (req, res, next) => {
+    try {
+      const result = await registerOrganization({ ...deps, input: req.body || {}, file: req.file });
+      res.status(201).json({ user: publicUser(result.user), organization: publicOrganization(result.organization), document: publicDocument(result.document) });
+    } catch (error) { respondError(error, res, next); }
+  }));
+
+  router.get("/me/organizations", requireUser, requirePasswordReady, asyncRoute(async (req, res) => {
+    const db = await deps.readDb();
+    const rows = db.memberships
+      .filter((membership) => membership.userId === req.user.id && membership.status === "active")
+      .map((membership) => {
+        const organization = db.organizations.find((row) => row.id === membership.organizationId);
+        return organization && organizationWithDocuments(db, organization, membership.role);
+      })
+      .filter(Boolean);
+    res.json({ rows });
+  }));
+
+  router.get("/admin/organizations", requireAdmin, requirePasswordReady, asyncRoute(async (_req, res) => {
+    const db = await deps.readDb();
+    res.json({ rows: db.organizations.map((organization) => organizationWithDocuments(db, organization)) });
+  }));
+
+  router.patch("/admin/organizations/:id/review", requireAdmin, requirePasswordReady, asyncRoute(async (req, res, next) => {
+    try {
+      const db = await deps.readDb();
+      const organization = db.organizations.find((row) => row.id === req.params.id);
+      if (!organization) return res.status(404).json({ error: "组织不存在" });
+      reviewOrganization(organization, req.body || {}, req.user.id, now());
+      await deps.writeDb(db);
+      res.json({ organization: publicOrganization(organization) });
+    } catch (error) { respondError(error, res, next); }
+  }));
+
+  router.patch("/me/organization", requireUser, requirePasswordReady, upload.single("credential"), asyncRoute(async (req, res, next) => {
+    try {
+      const result = await resubmitOrganization({ ...deps, input: req.body || {}, file: req.file, userId: req.user.id });
+      res.json({ organization: publicOrganization(result.organization), document: publicDocument(result.document) });
+    } catch (error) { respondError(error, res, next); }
+  }));
+
+  router.get("/organizations/:id/credential/:documentId", requireUser, requirePasswordReady, asyncRoute(async (req, res) => {
+    const db = await deps.readDb();
+    const document = db.organizationDocuments.find((row) => row.id === req.params.documentId && row.organizationId === req.params.id && !row.cleanedAt);
+    if (!document) return res.status(404).json({ error: "资质文件不存在" });
+    const isAdmin = req.user.type === "admin";
+    const isOwner = db.organizations.some((organization) => organization.id === req.params.id && organization.status === "active" && organization.ownerUserId === req.user.id)
+      && db.memberships.some((membership) => membership.organizationId === req.params.id && membership.userId === req.user.id && membership.role === "owner" && membership.status === "active");
+    if (!isAdmin && !isOwner) return res.status(403).json({ error: "无权下载该组织资质" });
+    res.type(document.mimeType).attachment(document.originalName).sendFile(document.filePath);
+  }));
+
+  return router;
+}

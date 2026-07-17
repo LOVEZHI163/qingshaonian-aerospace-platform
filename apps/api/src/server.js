@@ -11,6 +11,7 @@ import { asyncRoute, createSessionMiddleware, requireAdmin, requirePasswordReady
 import { createAliyunSmsProvider } from "./auth/sms.js";
 import { createDataStore } from "./data/index.js";
 import { createEventsRouter } from "./routes/events.js";
+import { createOrganizationsRouter } from "./routes/organizations.js";
 import { projectForHistoricalRegistration, registrationContext } from "./services/events.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -62,25 +63,35 @@ function publicUser(user) {
 
 const MANAGED_MEMBERSHIP_ROLES = ["manager", "member"];
 
+function isOrganizationOperational(db, organizationId) {
+  const organization = db.organizations.find((item) => item.id === organizationId);
+  return organization?.status === "active" && organization.reviewStatus === "approved";
+}
+
 function organizationRole(db, userId, organizationId) {
   const user = db.users.find((item) => item.id === userId);
   if (user?.type === "admin") return "admin";
+  const organization = db.organizations.find((item) => item.id === organizationId);
+  if (!organization || organization.status !== "active" || organization.reviewStatus !== "approved") return null;
   return db.memberships.find(
     (item) => item.userId === userId && item.organizationId === organizationId && item.status === "active"
   )?.role || null;
 }
 
 function canManageOrganization(db, userId, organizationId) {
-  return ["admin", "owner", "manager"].includes(organizationRole(db, userId, organizationId));
+  return isOrganizationOperational(db, organizationId)
+    && ["admin", "owner", "manager"].includes(organizationRole(db, userId, organizationId));
 }
 
 function canGrantOrganizationRole(db, userId, organizationId, role) {
+  if (!isOrganizationOperational(db, organizationId)) return false;
   const currentRole = organizationRole(db, userId, organizationId);
   if (["admin", "owner"].includes(currentRole)) return MANAGED_MEMBERSHIP_ROLES.includes(role);
   return currentRole === "manager" && role === "member";
 }
 
 function canManageMembership(db, userId, membership, nextRole) {
+  if (!isOrganizationOperational(db, membership.organizationId)) return false;
   if (membership.role === "owner") return false;
   const currentRole = organizationRole(db, userId, membership.organizationId);
   if (["admin", "owner"].includes(currentRole)) {
@@ -251,6 +262,19 @@ app.use(asyncRoute(async (req, _res, next) => {
   next();
 }));
 
+app.use("/api", createOrganizationsRouter({
+  store: dataStore,
+  requireUser,
+  requireAdmin,
+  requirePasswordReady,
+  asyncRoute,
+  hashPassword,
+  validatePassword,
+  makeId: id,
+  now,
+  publicUser
+}));
+
 app.use("/api", createEventsRouter({
   store: dataStore,
   requireAdmin,
@@ -265,9 +289,10 @@ app.get("/api/public/features", (_req, res) => {
 
 app.post("/api/auth/register", asyncRoute(async (req, res) => {
   const db = await readDb();
-  const { name, phone, password, type = "ordinary", organizationName, organizationCode } = req.body;
+  const { name, phone, password, type = "ordinary" } = req.body;
   if (!name || !phone || !password) return res.status(422).json({ error: "姓名、手机号和密码不能为空" });
-  if (!["ordinary", "organization"].includes(type)) return res.status(422).json({ error: "账号类型不合法" });
+  if (type === "organization") return res.status(422).json({ error: "组织注册请使用资质上传接口" });
+  if (type !== "ordinary") return res.status(422).json({ error: "账号类型不合法" });
   const passwordError = validatePassword(password);
   if (passwordError) return res.status(422).json({ error: passwordError });
   const normalizedPhone = normalizePhone(phone);
@@ -279,35 +304,8 @@ app.post("/api/auth/register", asyncRoute(async (req, res) => {
   };
   db.users.push(user);
 
-  let organization = null;
-  if (type === "organization") {
-    if (!organizationName) return res.status(422).json({ error: "组织用户注册时必须填写组织名称" });
-    organization = {
-      id: id("O"),
-      name: organizationName,
-      code: organizationCode || `ORG-${normalizedPhone.slice(-4)}`,
-      ownerUserId: user.id,
-      contactName: user.name,
-      contactPhone: user.phone,
-      status: "active",
-      createdAt: now()
-    };
-    db.organizations.push(organization);
-    db.memberships.push({
-      id: id("M"),
-      userId: user.id,
-      organizationId: organization.id,
-      role: "owner",
-      status: "active",
-      direction: "system",
-      note: "组织注册自动创建",
-      createdAt: now(),
-      updatedAt: now()
-    });
-  }
-
   await writeDb(db);
-  res.status(201).json({ user: publicUser(user), organization });
+  res.status(201).json({ user: publicUser(user), organization: null });
 }));
 
 app.post("/api/auth/login", asyncRoute(async (req, res) => {
@@ -493,6 +491,7 @@ app.post("/api/organizations/request", requireUser, requirePasswordReady, asyncR
   const user = db.users.find((item) => item.id === req.user.id);
   const organization = db.organizations.find((item) => item.id === req.body.organizationId);
   if (!user || !organization) return res.status(404).json({ error: "用户或组织不存在" });
+  if (organization.status !== "active" || organization.reviewStatus !== "approved") return res.status(403).json({ error: "组织尚未通过审核" });
   const existing = db.memberships.find((item) => item.userId === user.id && item.organizationId === organization.id && ["active", "pending"].includes(item.status));
   if (existing) return res.status(409).json({ error: "已经存在成员关系或待审核申请" });
 
@@ -550,6 +549,9 @@ app.patch("/api/memberships/:id", requireUser, requirePasswordReady, asyncRoute(
   const db = await readDb();
   const row = db.memberships.find((item) => item.id === req.params.id);
   if (!row) return res.status(404).json({ error: "成员关系不存在" });
+  if (!isOrganizationOperational(db, row.organizationId)) {
+    return res.status(403).json({ error: "组织尚未通过审核" });
+  }
 
   const currentUser = req.user;
   const acceptingSelfInvite = row.direction === "org_invite"
@@ -598,6 +600,12 @@ app.get("/api/me/certificates", requireUser, requirePasswordReady, asyncRoute(as
     .filter((certificate) => certificate.userId === req.user.id && certificate.status === "published")
     .map((certificate) => publicCertificatePayload(certificate, db.registrations.find((row) => row.id === certificate.registrationId)));
   res.json({ rows });
+}));
+
+app.get("/api/organizations/:id/members", requireUser, requirePasswordReady, asyncRoute(async (req, res) => {
+  const db = await readDb();
+  if (!canManageOrganization(db, req.user.id, req.params.id)) return res.status(403).json({ error: "无权查看该组织成员" });
+  res.json({ rows: db.memberships.filter((membership) => membership.organizationId === req.params.id) });
 }));
 
 app.get("/api/organizations/:id/registrations", requireUser, requirePasswordReady, asyncRoute(async (req, res) => {
