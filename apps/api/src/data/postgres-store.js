@@ -77,8 +77,13 @@ async function runSchema(pool) {
 }
 
 async function addApprovedGroups(pool) {
-  const projects = await pool.query("SELECT id FROM projects");
+  const [projects, existingGroups] = await Promise.all([
+    pool.query("SELECT id FROM projects"),
+    pool.query("SELECT DISTINCT project_id FROM project_groups")
+  ]);
+  const projectsWithGroups = new Set(existingGroups.rows.map((row) => row.project_id));
   for (const project of projects.rows) {
+    if (projectsWithGroups.has(project.id)) continue;
     for (const groupName of APPROVED_GROUP_NAMES) {
       await pool.query(
         `INSERT INTO project_groups (project_id, group_name)
@@ -117,16 +122,20 @@ export function createPostgresStore(pool) {
             ]
           );
         }
+        const insertedProjectIds = new Set();
         for (const project of PROJECTS) {
-          await client.query(
+          const existingProject = await client.query("SELECT 1 FROM projects WHERE id = $1", [project.id]);
+          if (existingProject.rowCount > 0) continue;
+          const inserted = await client.query(
             `INSERT INTO projects
               (id, event_id, name, type, category, enabled, instructor_required, display_order)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
              ON CONFLICT (id) DO NOTHING`,
             [project.id, project.eventId || EVENT.id, project.name, project.type, project.category, project.enabled, project.instructorRequired, project.displayOrder]
           );
+          if (inserted.rowCount > 0) insertedProjectIds.add(project.id);
         }
-        for (const project of PROJECTS) {
+        for (const project of PROJECTS.filter((row) => insertedProjectIds.has(row.id))) {
           for (const groupName of project.allowedGroups) {
             await client.query(
               `INSERT INTO project_groups (project_id, group_name)

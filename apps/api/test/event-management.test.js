@@ -83,6 +83,18 @@ test("event management creates, validates, copies, publishes, and archives event
       registrationStartAt: "not-a-date"
     }, admin.cookie));
     assert.equal(invalidDates.status, 422);
+    for (const registrationStartAt of [
+      "2027/08/01",
+      "2027-08-01",
+      "2027-08-01T00:00:00",
+      "2027-02-30T00:00:00.000Z"
+    ]) {
+      const looseDate = await fetch(`${baseUrl}/api/admin/events`, jsonOptions("POST", {
+        ...eventInput,
+        registrationStartAt
+      }, admin.cookie));
+      assert.equal(looseDate.status, 422, registrationStartAt);
+    }
     const invalidOrder = await fetch(`${baseUrl}/api/admin/events`, jsonOptions("POST", {
       ...eventInput,
       registrationStartAt: eventInput.registrationEndAt
@@ -153,6 +165,21 @@ test("event management creates, validates, copies, publishes, and archives event
     assert.equal(cannotRestoreImplicitly.status, 409);
     assert.equal((await fetch(`${baseUrl}/api/admin/events/missing/archive`, jsonOptions("POST", {}, admin.cookie))).status, 404);
     assert.equal((await fetch(`${baseUrl}/api/admin/events/missing/copy`, jsonOptions("POST", { name: "不存在" }, admin.cookie))).status, 404);
+  });
+});
+
+test("event management rejects non-object JSON bodies with validation errors", async () => {
+  await withServer(async (baseUrl) => {
+    const admin = await loginAs(baseUrl, "13900000000", "admin123");
+    for (const body of [null, [], "invalid"]) {
+      assert.equal((await fetch(`${baseUrl}/api/admin/events`, jsonOptions("POST", body, admin.cookie))).status, 422);
+      assert.equal((await fetch(`${baseUrl}/api/admin/events/wz-aerospace-2026`, jsonOptions("PATCH", body, admin.cookie))).status, 422);
+      assert.equal((await fetch(`${baseUrl}/api/admin/events/wz-aerospace-2026/copy`, jsonOptions("POST", body, admin.cookie))).status, 422);
+      assert.equal((await fetch(`${baseUrl}/api/admin/events/wz-aerospace-2026/projects`, jsonOptions("POST", body, admin.cookie))).status, 422);
+      assert.equal((await fetch(`${baseUrl}/api/admin/projects/rocket-duration`, jsonOptions("PATCH", body, admin.cookie))).status, 422);
+      assert.equal((await fetch(`${baseUrl}/api/auth/login`, jsonOptions("POST", body))).status, 422);
+      assert.equal((await fetch(`${baseUrl}/api/auth/register`, jsonOptions("POST", body))).status, 422);
+    }
   });
 });
 
@@ -312,5 +339,41 @@ test("public event and registration APIs use the current database event in real 
     const unavailable = await fetch(`${baseUrl}/api/public/event`);
     assert.equal(unavailable.status, 503);
     assert.match((await json(unavailable)).error, /当前赛事/);
+  });
+});
+
+test("archived registrations remain editable but cannot be moved across events", async () => {
+  await withServer(async (baseUrl) => {
+    const admin = await loginAs(baseUrl, "13900000000", "admin123");
+    const nextResponse = await fetch(`${baseUrl}/api/admin/events`, jsonOptions("POST", eventInput, admin.cookie));
+    const nextEvent = (await json(nextResponse)).row;
+    const nextProjectResponse = await fetch(`${baseUrl}/api/admin/events/${nextEvent.id}/projects`, jsonOptions("POST", {
+      name: "下一届跨届测试项目",
+      type: "individual",
+      category: "测试",
+      enabled: true,
+      instructorRequired: false,
+      displayOrder: 0,
+      allowedGroups: ["小学高段"]
+    }, admin.cookie));
+    const nextProject = (await json(nextProjectResponse)).row;
+
+    assert.equal((await fetch(`${baseUrl}/api/admin/events/${nextEvent.id}/current`, jsonOptions("POST", {}, admin.cookie))).status, 200);
+    assert.equal((await fetch(`${baseUrl}/api/admin/events/wz-aerospace-2026/archive`, jsonOptions("POST", {}, admin.cookie))).status, 200);
+
+    const editArchived = await fetch(`${baseUrl}/api/admin/registrations/R20260627001`, jsonOptions("PATCH", {
+      projectId: "rocket-duration",
+      group: "小学高段",
+      instructor: "新指导老师"
+    }, admin.cookie));
+    assert.equal(editArchived.status, 200);
+    assert.equal((await json(editArchived)).row.projectId, "rocket-duration");
+
+    const crossEvent = await fetch(`${baseUrl}/api/admin/registrations/R20260627001`, jsonOptions("PATCH", {
+      projectId: nextProject.id,
+      group: "小学高段"
+    }, admin.cookie));
+    assert.equal(crossEvent.status, 422);
+    assert.match((await json(crossEvent)).error, /其他赛事/);
   });
 });

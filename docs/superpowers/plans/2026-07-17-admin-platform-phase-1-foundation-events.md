@@ -480,7 +480,9 @@ test("login upgrades a legacy password and restores the user from a session", as
 
 - [ ] **Step 3: 建立 Router 和输入校验**
 
-  路由统一使用 `requireAdmin` 和 `requirePasswordReady`。赛事写入只接受允许字段；起止时间必须是有效 ISO 时间且开始早于截止；报名模式和值域严格校验。项目 `allowedGroups` 必须是四个固定组别的非空子集，项目类型只允许 `individual/team`。已有报名的项目不可硬删除，但可停用。
+  路由统一使用 `requireAdmin` 和 `requirePasswordReady`。赛事写入只接受允许字段；起止时间必须是严格 ISO 8601 时间且开始早于截止；`null`/非对象请求体返回 422；报名模式和值域严格校验。项目 `allowedGroups` 必须是四个固定组别的非空子集，项目类型只允许 `individual/team`。已有报名的项目不可硬删除，但可停用。
+
+  PostgreSQL 启动兼容只为“完全没有 project_groups”的旧赛项一次性补齐四组；已由管理员保存的子集不得在重启/initialize 后被补回。种子组别也只在项目首次创建时写入。
 
   ```js
   router.patch("/events/:id", async (req, res, next) => {

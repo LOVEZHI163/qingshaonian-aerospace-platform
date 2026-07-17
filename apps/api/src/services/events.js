@@ -21,9 +21,16 @@ const PROJECT_EDITABLE_FIELDS = [
   "displayOrder",
   "allowedGroups"
 ];
+const STRICT_ISO_8601 = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d+))?)?(Z|([+-])(\d{2}):(\d{2}))$/;
 
 export function businessError(status, message, code) {
   return Object.assign(new Error(message), { status, ...(code ? { code } : {}) });
+}
+
+function assertObjectInput(input) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw businessError(422, "请求内容必须是 JSON 对象");
+  }
 }
 
 function requireNonEmpty(value, label) {
@@ -32,13 +39,30 @@ function requireNonEmpty(value, label) {
 }
 
 function normalizeIso(value, label) {
-  if (typeof value !== "string" || !value.trim()) throw businessError(422, `${label}必须是有效 ISO 时间`);
+  const match = typeof value === "string" ? value.match(STRICT_ISO_8601) : null;
+  if (!match) {
+    throw businessError(422, `${label}必须是严格 ISO 8601 时间`);
+  }
+  const [, yearText, monthText, dayText, hourText, minuteText, secondText = "0", , , , offsetHourText, offsetMinuteText] = match;
+  const year = Number(yearText);
+  const month = Number(monthText);
+  const day = Number(dayText);
+  const hour = Number(hourText);
+  const minute = Number(minuteText);
+  const second = Number(secondText);
+  const offsetHour = offsetHourText === undefined ? 0 : Number(offsetHourText);
+  const offsetMinute = offsetMinuteText === undefined ? 0 : Number(offsetMinuteText);
+  const daysInMonth = month >= 1 && month <= 12 ? new Date(Date.UTC(year, month, 0)).getUTCDate() : 0;
+  if (day < 1 || day > daysInMonth || hour > 23 || minute > 59 || second > 59 || offsetHour > 23 || offsetMinute > 59) {
+    throw businessError(422, `${label}必须是严格 ISO 8601 时间`);
+  }
   const timestamp = Date.parse(value);
-  if (!Number.isFinite(timestamp)) throw businessError(422, `${label}必须是有效 ISO 时间`);
+  if (!Number.isFinite(timestamp)) throw businessError(422, `${label}必须是严格 ISO 8601 时间`);
   return new Date(timestamp).toISOString();
 }
 
 function normalizeEventFields(input, current = {}) {
+  assertObjectInput(input);
   const next = { ...current };
   for (const field of EVENT_EDITABLE_FIELDS) {
     if (Object.hasOwn(input, field)) next[field] = input[field];
@@ -60,6 +84,7 @@ function normalizeEventFields(input, current = {}) {
 }
 
 function assertNoEventSystemFields(input) {
+  assertObjectInput(input);
   const field = EVENT_SYSTEM_FIELDS.find((name) => Object.hasOwn(input, name));
   if (field) throw businessError(422, `不能设置系统字段 ${field}`);
 }
@@ -74,6 +99,7 @@ function normalizeAllowedGroups(value) {
 }
 
 function normalizeProjectFields(input, current = {}) {
+  assertObjectInput(input);
   const next = { ...current };
   for (const field of PROJECT_EDITABLE_FIELDS) {
     if (Object.hasOwn(input, field)) next[field] = input[field];
@@ -121,6 +147,7 @@ export function updateEvent(db, eventId, input, { clock }) {
 }
 
 export function copyEvent(db, sourceId, input, { makeId, clock }) {
+  assertObjectInput(input);
   const source = db.events.find((row) => row.id === sourceId);
   if (!source) throw businessError(404, "赛事不存在");
   const name = requireNonEmpty(input.name, "新赛事名称");
@@ -186,6 +213,7 @@ export function createProject(db, eventId, input, { makeId }) {
 }
 
 export function updateProject(db, projectId, input) {
+  assertObjectInput(input);
   if (Object.hasOwn(input, "id") || Object.hasOwn(input, "eventId")) {
     throw businessError(422, "不能修改赛项归属或系统编号");
   }
@@ -245,6 +273,7 @@ export function publicEventPayload(db, clock = () => new Date()) {
 }
 
 export function registrationContext(db, input, clock = () => new Date()) {
+  assertObjectInput(input);
   const event = currentPublishedEvent(db);
   const window = isRegistrationOpen(event, clock());
   if (!window.open) throw businessError(409, window.reason, "REGISTRATION_CLOSED");

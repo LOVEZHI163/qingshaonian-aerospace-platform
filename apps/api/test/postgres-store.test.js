@@ -116,6 +116,36 @@ test("PostgreSQL store switches the unique current event and removes projects wi
   });
 });
 
+test("PostgreSQL restart preserves an administrator-selected project group subset", async () => {
+  const memory = newDb({ autoCreateForeignKeyIndices: true });
+  const { Pool } = memory.adapters.createPg();
+  const first = createPostgresStore(new Pool());
+  let second;
+
+  try {
+    await first.initialize();
+    const data = await first.readDb();
+    const project = data.projects.find((row) => row.id === "rocket-duration");
+    project.allowedGroups = ["小学低段"];
+    data.projectGroups = data.projectGroups.filter((row) => row.projectId !== project.id);
+    data.projectGroups.push({ projectId: project.id, groupName: "小学低段" });
+    await first.writeDb(data);
+    await first.close();
+
+    second = createPostgresStore(new Pool());
+    await second.initialize();
+    await second.initialize();
+    const restarted = await second.readDb();
+    assert.deepEqual(restarted.projects.find((row) => row.id === project.id).allowedGroups, ["小学低段"]);
+    assert.deepEqual(restarted.projectGroups.filter((row) => row.projectId === project.id), [
+      { projectId: project.id, groupName: "小学低段" }
+    ]);
+  } finally {
+    if (second) await second.close();
+    else await first.close();
+  }
+});
+
 test("PostgreSQL schema enforces unique phone and registration foreign keys", async () => {
   await withStore(async (_store, pool) => {
     await assert.rejects(

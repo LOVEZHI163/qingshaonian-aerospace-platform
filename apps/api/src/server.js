@@ -230,7 +230,14 @@ const app = express();
 app.set("trust proxy", 1);
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 app.use(cors());
-app.use(express.json({ limit: "5mb" }));
+app.use(express.json({ limit: "5mb", strict: false }));
+app.use((req, res, next) => {
+  if (req.is("application/json") && req.body !== undefined
+    && (!req.body || typeof req.body !== "object" || Array.isArray(req.body))) {
+    return res.status(422).json({ error: "请求内容必须是 JSON 对象" });
+  }
+  next();
+});
 app.use(createSessionMiddleware({ env: process.env, dataStore }));
 app.use(asyncRoute(async (req, _res, next) => {
   if (req.session.userId) {
