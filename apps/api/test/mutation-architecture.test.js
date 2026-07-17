@@ -8,6 +8,7 @@ import express from "express";
 import { newDb } from "pg-mem";
 
 import * as mutationLock from "../src/data/mutation-lock.js";
+import { createFileStore } from "../src/data/file-store.js";
 import { createPostgresStore } from "../src/data/postgres-store.js";
 import { createOrganizationsRouter } from "../src/routes/organizations.js";
 import * as organizations from "../src/services/organizations.js";
@@ -161,40 +162,96 @@ test("PostgreSQL advisory-lock errors outside the explicit pg-mem unsupported ca
   await store.withMutationLock(async () => {});
 });
 
-test("mutation-aware route wrapper releases its lock after handler errors and early response close", async () => {
-  assert.equal(typeof mutationLock.createMutationAsyncRoute, "function");
-  let active = false;
-  const store = {
-    async withMutationLock(handler) {
-      assert.equal(active, false);
-      active = true;
-      try { return await handler(); } finally { active = false; }
-    }
-  };
+test("response close keeps the mutation lock until its running handler settles", async () => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "mutation-close-"));
+  const store = createFileStore(path.join(tempDir, "db.json"));
   const route = mutationLock.createMutationAsyncRoute(store);
-  const invoke = (handler, { close = false } = {}) => new Promise((resolve) => {
-    const req = { method: "POST", aborted: false };
-    const res = new EventEmitter();
-    res.destroyed = false;
-    route(handler)(req, res, (error) => resolve(error));
-    if (close) {
-      res.destroyed = true;
-      res.emit("close");
-      setTimeout(() => resolve(), 10);
-    }
-  });
+  let resumeFirst;
+  let markFirstStarted;
+  let markFirstFinished;
+  const firstMayFinish = new Promise((resolve) => { resumeFirst = resolve; });
+  const firstStarted = new Promise((resolve) => { markFirstStarted = resolve; });
+  const firstFinished = new Promise((resolve) => { markFirstFinished = resolve; });
+  let secondStarted = false;
+  let firstError;
+  let secondError;
 
+  const firstReq = { method: "POST", aborted: false };
+  const firstRes = new EventEmitter();
+  firstRes.destroyed = false;
+  const firstRequest = route(async () => {
+    try {
+      const db = await store.readDb();
+      markFirstStarted();
+      await firstMayFinish;
+      db.users.push({ id: "U-CLOSE-FIRST", name: "First", phone: "13100000011", password: "x", type: "ordinary", status: "active", sessionVersion: 0, mustChangePassword: false, createdAt: "2026-07-17T00:00:00.000Z" });
+      await store.writeDb(db);
+    } finally {
+      markFirstFinished();
+    }
+  })(firstReq, firstRes, (error) => { firstError = error; });
+
+  try {
+    await firstStarted;
+    firstRes.destroyed = true;
+    firstRes.emit("close");
+
+    const secondReq = { method: "POST", aborted: false };
+    const secondRes = new EventEmitter();
+    secondRes.destroyed = false;
+    const secondRequest = route(async () => {
+      secondStarted = true;
+      const db = await store.readDb();
+      db.users.push({ id: "U-CLOSE-SECOND", name: "Second", phone: "13100000012", password: "x", type: "ordinary", status: "active", sessionVersion: 0, mustChangePassword: false, createdAt: "2026-07-17T00:00:01.000Z" });
+      await store.writeDb(db);
+    })(secondReq, secondRes, (error) => { secondError = error; });
+
+    await new Promise((resolve) => setImmediate(resolve));
+    const secondWaited = !secondStarted;
+    resumeFirst();
+    await Promise.all([firstRequest, firstFinished, secondRequest]);
+
+    assert.equal(secondWaited, true);
+    assert.ifError(firstError);
+    assert.ifError(secondError);
+    const persisted = await store.readDb();
+    assert.equal(persisted.users.some((user) => user.id === "U-CLOSE-FIRST"), true);
+    assert.equal(persisted.users.some((user) => user.id === "U-CLOSE-SECOND"), true);
+  } finally {
+    resumeFirst();
+    await firstFinished;
+    await store.close();
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("mutation handler errors release the lock for the next request", async () => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "mutation-error-"));
+  const store = createFileStore(path.join(tempDir, "db.json"));
+  const route = mutationLock.createMutationAsyncRoute(store);
   const expected = new Error("route failed");
-  assert.equal(await invoke(async () => { throw expected; }), expected);
-  assert.equal(active, false);
-  await invoke(() => new Promise(() => {}), { close: true });
-  assert.equal(active, false);
-  const completed = await new Promise((resolve) => {
-    const req = { method: "POST", aborted: false };
-    const res = new EventEmitter();
-    route(async () => resolve(true))(req, res, resolve);
-  });
-  assert.equal(completed, true);
+  let forwarded;
+
+  try {
+    const failedReq = { method: "POST", aborted: false };
+    const failedRes = new EventEmitter();
+    failedRes.destroyed = false;
+    await route(async () => { throw expected; })(failedReq, failedRes, (error) => { forwarded = error; });
+    assert.equal(forwarded, expected);
+
+    const nextReq = { method: "POST", aborted: false };
+    const nextRes = new EventEmitter();
+    nextRes.destroyed = false;
+    await route(async () => {
+      const db = await store.readDb();
+      db.users.push({ id: "U-AFTER-ERROR", name: "Recovered", phone: "13100000013", password: "x", type: "ordinary", status: "active", sessionVersion: 0, mustChangePassword: false, createdAt: "2026-07-17T00:00:00.000Z" });
+      await store.writeDb(db);
+    })(nextReq, nextRes, (error) => { throw error; });
+    assert.equal((await store.readDb()).users.some((user) => user.id === "U-AFTER-ERROR"), true);
+  } finally {
+    await store.close();
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
 });
 
 test("cleanup journal replay removes orphan files and markers but never deletes referenced documents", async () => {
