@@ -7,7 +7,7 @@ import multer from "multer";
 import AdmZip from "adm-zip";
 import { hashPassword, isLegacyPassword, validatePassword, verifyLoginPassword } from "./auth/passwords.js";
 import { createSmsPasswordResetService, sendPasswordResetError } from "./auth/password-reset.js";
-import { asyncRoute, createSessionMiddleware, requireAdmin, requireUser } from "./auth/session.js";
+import { asyncRoute, createSessionMiddleware, requireAdmin, requirePasswordReady, requireUser } from "./auth/session.js";
 import { createAliyunSmsProvider } from "./auth/sms.js";
 import { createDataStore } from "./data/index.js";
 import { EVENT, GRADES, PROJECTS } from "./data/seed.js";
@@ -71,13 +71,9 @@ function canManageOrganization(db, userId, organizationId) {
   );
 }
 
-function isAdmin(db, userId) {
-  return db.users.some((item) => item.id === userId && item.type === "admin");
-}
-
-function activeMemberIdsForManagedOrganizations(db, actorUserId, organizationId = null) {
+function activeMemberIdsForManagedOrganizations(db, userId, organizationId = null) {
   const orgIds = db.organizations
-    .filter((organization) => (!organizationId || organization.id === organizationId) && canManageOrganization(db, actorUserId, organization.id))
+    .filter((organization) => (!organizationId || organization.id === organizationId) && canManageOrganization(db, userId, organization.id))
     .map((organization) => organization.id);
   const memberIds = db.memberships
     .filter((membership) => orgIds.includes(membership.organizationId) && membership.status === "active" && membership.userId)
@@ -85,18 +81,23 @@ function activeMemberIdsForManagedOrganizations(db, actorUserId, organizationId 
   return [...new Set(memberIds)];
 }
 
-function canAccessRegistration(db, actorUserId, registration) {
+function canAccessRegistration(db, userId, registration) {
   if (!registration) return false;
-  if (isAdmin(db, actorUserId)) return true;
-  if (registration.userId === actorUserId) return true;
-  return activeMemberIdsForManagedOrganizations(db, actorUserId).includes(registration.userId);
+  if (db.users.some((item) => item.id === userId && item.type === "admin")) return true;
+  if (registration.userId === userId) return true;
+  if (!registration.organizationId || !canManageOrganization(db, userId, registration.organizationId)) return false;
+  return db.memberships.some((membership) =>
+    membership.userId === registration.userId
+    && membership.organizationId === registration.organizationId
+    && membership.status === "active"
+  );
 }
 
-function canAccessCertificate(db, actorUserId, certificate, { includeDraft = false } = {}) {
+function canAccessCertificate(db, userId, certificate, { includeDraft = false } = {}) {
   if (!certificate) return false;
   if (!includeDraft && certificate.status !== "published") return false;
   const registration = db.registrations.find((row) => row.id === certificate.registrationId);
-  return canAccessRegistration(db, actorUserId, registration);
+  return canAccessRegistration(db, userId, registration);
 }
 
 function certificatePayload(certificate, registration) {
@@ -211,21 +212,17 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 
 app.use(cors());
 app.use(express.json({ limit: "5mb" }));
 app.use(createSessionMiddleware({ env: process.env, dataStore }));
-app.use(async (req, _res, next) => {
-  try {
-    if (req.session.userId) {
-      const db = await readDb();
-      req.user = db.users.find((user) =>
-        user.id === req.session.userId
-        && user.status === "active"
-        && user.sessionVersion === req.session.sessionVersion
-      );
-    }
-    next();
-  } catch (error) {
-    next(error);
+app.use(asyncRoute(async (req, _res, next) => {
+  if (req.session.userId) {
+    const db = await readDb();
+    req.user = db.users.find((user) =>
+      user.id === req.session.userId
+      && user.status === "active"
+      && user.sessionVersion === req.session.sessionVersion
+    );
   }
-});
+  next();
+}));
 
 app.get("/api/public/event", (_req, res) => {
   res.json({ event: EVENT, projects: PROJECTS, grades: GRADES });
@@ -313,6 +310,23 @@ app.get("/api/auth/me", requireUser, asyncRoute(async (req, res) => {
   res.json({ user: publicUser(req.user), organizations: userOrganizations(db, req.user.id) });
 }));
 
+app.post("/api/auth/change-password", requireUser, asyncRoute(async (req, res) => {
+  const db = await readDb();
+  const user = db.users.find((item) => item.id === req.user.id);
+  if (!user || !(await verifyLoginPassword(req.body.currentPassword, user.password))) {
+    return res.status(401).json({ error: "当前密码错误" });
+  }
+  const passwordError = validatePassword(req.body.newPassword);
+  if (passwordError) return res.status(422).json({ error: passwordError });
+  user.password = await hashPassword(req.body.newPassword);
+  user.sessionVersion += 1;
+  user.mustChangePassword = false;
+  await writeDb(db);
+  req.session.sessionVersion = user.sessionVersion;
+  await new Promise((resolve, reject) => req.session.save((error) => error ? reject(error) : resolve()));
+  res.json({ user: publicUser(user) });
+}));
+
 app.post("/api/auth/logout", asyncRoute(async (req, res) => {
   await new Promise((resolve, reject) => req.session.destroy((error) => error ? reject(error) : resolve()));
   res.clearCookie("aerogp.sid", { path: "/", httpOnly: true, sameSite: "lax", secure: req.secure });
@@ -335,12 +349,12 @@ app.post("/api/auth/password-reset/sms/confirm", asyncRoute(async (req, res) => 
   }
 }));
 
-app.get("/api/users", requireAdmin, asyncRoute(async (_req, res) => {
+app.get("/api/users", requireAdmin, requirePasswordReady, asyncRoute(async (_req, res) => {
   const db = await readDb();
   res.json({ rows: db.users.map(publicUser) });
 }));
 
-app.post("/api/admin/users/:id/reset-password", requireAdmin, asyncRoute(async (req, res) => {
+app.post("/api/admin/users/:id/reset-password", requireAdmin, requirePasswordReady, asyncRoute(async (req, res) => {
   const passwordError = validatePassword(req.body.password);
   if (passwordError) return res.status(422).json({ error: passwordError });
   const db = await readDb();
@@ -353,9 +367,8 @@ app.post("/api/admin/users/:id/reset-password", requireAdmin, asyncRoute(async (
   res.json({ user: publicUser(user) });
 }));
 
-app.post("/api/admin/users", asyncRoute(async (req, res) => {
+app.post("/api/admin/users", requireAdmin, requirePasswordReady, asyncRoute(async (req, res) => {
   const db = await readDb();
-  if (!isAdmin(db, req.body.actorUserId)) return res.status(403).json({ error: "只有管理员可以创建用户" });
   const { name, phone, password, type = "ordinary", organizationName, organizationCode } = req.body;
   if (!name || !phone || !password) return res.status(422).json({ error: "姓名、手机号和密码不能为空" });
   if (!["ordinary", "organization"].includes(type)) return res.status(422).json({ error: "账号类型不合法" });
@@ -374,9 +387,8 @@ app.post("/api/admin/users", asyncRoute(async (req, res) => {
   res.status(201).json({ row: publicUser(user), organization });
 }));
 
-app.patch("/api/admin/users/:id", asyncRoute(async (req, res) => {
+app.patch("/api/admin/users/:id", requireAdmin, requirePasswordReady, asyncRoute(async (req, res) => {
   const db = await readDb();
-  if (!isAdmin(db, req.body.actorUserId)) return res.status(403).json({ error: "只有管理员可以修改用户" });
   const user = db.users.find((item) => item.id === req.params.id);
   if (!user) return res.status(404).json({ error: "用户不存在" });
   if (user.type === "admin" && req.body.type && req.body.type !== "admin") return res.status(422).json({ error: "不能修改超级管理员账号类型" });
@@ -405,9 +417,8 @@ app.patch("/api/admin/users/:id", asyncRoute(async (req, res) => {
   res.json({ row: publicUser(user), organization });
 }));
 
-app.delete("/api/admin/users/:id", asyncRoute(async (req, res) => {
+app.delete("/api/admin/users/:id", requireAdmin, requirePasswordReady, asyncRoute(async (req, res) => {
   const db = await readDb();
-  if (!isAdmin(db, req.query.actorUserId)) return res.status(403).json({ error: "只有管理员可以删除用户" });
   const user = db.users.find((item) => item.id === req.params.id);
   if (!user) return res.status(404).json({ error: "用户不存在" });
   if (user.type === "admin") return res.status(422).json({ error: "不能删除超级管理员" });
@@ -422,27 +433,30 @@ app.delete("/api/admin/users/:id", asyncRoute(async (req, res) => {
   res.json({ ok: true });
 }));
 
-app.get("/api/organizations", async (_req, res) => {
+app.get("/api/organizations", requireUser, requirePasswordReady, asyncRoute(async (_req, res) => {
   const db = await readDb();
-  res.json({ rows: db.organizations, memberships: db.memberships });
-});
+  res.json({
+    rows: db.organizations.map(({ ownerUserId, ...organization }) => organization)
+  });
+}));
 
-app.get("/api/me/:userId", async (req, res, next) => {
+app.get("/api/me/:userId", requireUser, requirePasswordReady, asyncRoute(async (req, res, next) => {
   if (["registrations", "certificates"].includes(req.params.userId)) return next();
   const db = await readDb();
   const user = db.users.find((item) => item.id === req.params.userId);
   if (!user) return res.status(404).json({ error: "用户不存在" });
+  if (req.user.type !== "admin" && user.id !== req.user.id) return res.status(403).json({ error: "无权查看该用户" });
   res.json({
     user: publicUser(user),
     organizations: userOrganizations(db, user.id),
     memberships: db.memberships.filter((item) => item.userId === user.id || item.invitedPhone === user.phone),
     registrations: db.registrations.filter((item) => item.userId === user.id)
   });
-});
+}));
 
-app.post("/api/organizations/request", async (req, res) => {
+app.post("/api/organizations/request", requireUser, requirePasswordReady, asyncRoute(async (req, res) => {
   const db = await readDb();
-  const user = db.users.find((item) => item.id === req.body.userId);
+  const user = db.users.find((item) => item.id === req.user.id);
   const organization = db.organizations.find((item) => item.id === req.body.organizationId);
   if (!user || !organization) return res.status(404).json({ error: "用户或组织不存在" });
   const existing = db.memberships.find((item) => item.userId === user.id && item.organizationId === organization.id && ["active", "pending"].includes(item.status));
@@ -462,11 +476,11 @@ app.post("/api/organizations/request", async (req, res) => {
   db.memberships.unshift(membership);
   await writeDb(db);
   res.status(201).json({ row: membership });
-});
+}));
 
-app.post("/api/organizations/invite", async (req, res) => {
+app.post("/api/organizations/invite", requireUser, requirePasswordReady, asyncRoute(async (req, res) => {
   const db = await readDb();
-  if (!canManageOrganization(db, req.body.senderUserId, req.body.organizationId)) return res.status(403).json({ error: "无权邀请该组织成员" });
+  if (!canManageOrganization(db, req.user.id, req.body.organizationId)) return res.status(403).json({ error: "无权邀请该组织成员" });
   const phone = normalizePhone(req.body.phone);
   const user = db.users.find((item) => normalizePhone(item.phone) === phone);
   const existing = db.memberships.find(
@@ -490,98 +504,102 @@ app.post("/api/organizations/invite", async (req, res) => {
   db.memberships.unshift(membership);
   await writeDb(db);
   res.status(201).json({ row: membership });
-});
+}));
 
-app.patch("/api/memberships/:id", async (req, res) => {
+app.patch("/api/memberships/:id", requireUser, requirePasswordReady, asyncRoute(async (req, res) => {
   const db = await readDb();
   const row = db.memberships.find((item) => item.id === req.params.id);
   if (!row) return res.status(404).json({ error: "成员关系不存在" });
 
-  const actor = db.users.find((item) => item.id === req.body.actorUserId);
-  const approvingSelfInvite = row.direction === "org_invite" && actor && (row.userId === actor.id || normalizePhone(row.invitedPhone) === normalizePhone(actor.phone));
-  const managingOrg = canManageOrganization(db, req.body.actorUserId, row.organizationId);
+  const currentUser = req.user;
+  const approvingSelfInvite = row.direction === "org_invite"
+    && (row.userId === currentUser.id || normalizePhone(row.invitedPhone) === normalizePhone(currentUser.phone));
+  const managingOrg = canManageOrganization(db, currentUser.id, row.organizationId);
   if (!approvingSelfInvite && !managingOrg) return res.status(403).json({ error: "无权处理该关系" });
 
   if (!["active", "rejected", "removed"].includes(req.body.status)) return res.status(422).json({ error: "状态不合法" });
   row.status = req.body.status;
-  if (!row.userId && actor && normalizePhone(row.invitedPhone) === normalizePhone(actor.phone) && req.body.status === "active") row.userId = actor.id;
+  if (!row.userId && normalizePhone(row.invitedPhone) === normalizePhone(currentUser.phone) && req.body.status === "active") row.userId = currentUser.id;
   row.updatedAt = now();
   await writeDb(db);
   res.json({ row });
-});
+}));
 
-app.get("/api/registrations", async (_req, res) => {
+app.get("/api/registrations", requireAdmin, requirePasswordReady, asyncRoute(async (_req, res) => {
   const db = await readDb();
   res.json({ rows: db.registrations });
-});
+}));
 
-app.get("/api/admin/certificates", async (req, res) => {
+app.get("/api/admin/certificates", requireAdmin, requirePasswordReady, asyncRoute(async (_req, res) => {
   const db = await readDb();
-  if (!isAdmin(db, req.query.actorUserId)) return res.status(403).json({ error: "只有管理员可以查看全部证书" });
   const rows = db.certificates.map((certificate) => certificatePayload(certificate, db.registrations.find((row) => row.id === certificate.registrationId)));
   res.json({ rows });
-});
+}));
 
-app.get("/api/me/registrations", async (req, res) => {
+app.get("/api/me/registrations", requireUser, requirePasswordReady, asyncRoute(async (req, res) => {
   const db = await readDb();
-  const user = db.users.find((item) => item.id === req.query.userId);
-  if (!user) return res.status(404).json({ error: "用户不存在" });
-  res.json({ rows: db.registrations.filter((item) => item.userId === user.id) });
-});
+  res.json({ rows: db.registrations.filter((item) => item.userId === req.user.id) });
+}));
 
-app.get("/api/me/certificates", async (req, res) => {
+app.get("/api/me/certificates", requireUser, requirePasswordReady, asyncRoute(async (req, res) => {
   const db = await readDb();
-  const user = db.users.find((item) => item.id === req.query.userId);
-  if (!user) return res.status(404).json({ error: "用户不存在" });
   const rows = db.certificates
-    .filter((certificate) => canAccessCertificate(db, user.id, certificate))
+    .filter((certificate) => certificate.userId === req.user.id && certificate.status === "published")
     .map((certificate) => certificatePayload(certificate, db.registrations.find((row) => row.id === certificate.registrationId)));
   res.json({ rows });
-});
+}));
 
-app.get("/api/organizations/:id/registrations", async (req, res) => {
+app.get("/api/organizations/:id/registrations", requireUser, requirePasswordReady, asyncRoute(async (req, res) => {
   const db = await readDb();
-  if (!canManageOrganization(db, req.query.actorUserId, req.params.id)) return res.status(403).json({ error: "无权查看该组织记录" });
-  const memberIds = activeMemberIdsForManagedOrganizations(db, req.query.actorUserId, req.params.id);
+  if (!canManageOrganization(db, req.user.id, req.params.id)) return res.status(403).json({ error: "无权查看该组织记录" });
+  const memberIds = activeMemberIdsForManagedOrganizations(db, req.user.id, req.params.id);
   res.json({ rows: db.registrations.filter((row) => memberIds.includes(row.userId)) });
-});
+}));
 
-app.get("/api/organizations/:id/certificates", async (req, res) => {
+app.get("/api/organizations/:id/certificates", requireUser, requirePasswordReady, asyncRoute(async (req, res) => {
   const db = await readDb();
-  if (!canManageOrganization(db, req.query.actorUserId, req.params.id)) return res.status(403).json({ error: "无权查看该组织证书" });
-  const memberIds = activeMemberIdsForManagedOrganizations(db, req.query.actorUserId, req.params.id);
+  if (!canManageOrganization(db, req.user.id, req.params.id)) return res.status(403).json({ error: "无权查看该组织证书" });
+  const memberIds = activeMemberIdsForManagedOrganizations(db, req.user.id, req.params.id);
   const registrationIds = db.registrations.filter((row) => memberIds.includes(row.userId)).map((row) => row.id);
   const rows = db.certificates
     .filter((certificate) => certificate.status === "published" && registrationIds.includes(certificate.registrationId))
     .map((certificate) => certificatePayload(certificate, db.registrations.find((row) => row.id === certificate.registrationId)));
   res.json({ rows });
-});
+}));
 
-app.post("/api/registrations/check", async (req, res) => {
+app.post("/api/registrations/check", requireUser, requirePasswordReady, asyncRoute(async (req, res) => {
   const db = await readDb();
   const athlete = req.body.athlete || req.body;
   const key = athleteKey(athlete);
   const matches = db.registrations.filter((row) => row.athleteKey === key && row.status !== "cancelled");
   res.json({
-    athleteKey: key,
     duplicate: matches.length > 0,
+    duplicateCount: matches.length,
     individualUsed: matches.some((row) => row.projectType === "individual"),
-    teamUsed: matches.some((row) => row.projectType === "team"),
-    matches
+    teamUsed: matches.some((row) => row.projectType === "team")
   });
-});
+}));
 
-app.post("/api/registrations", async (req, res) => {
+app.post("/api/registrations", requireUser, requirePasswordReady, asyncRoute(async (req, res) => {
   const db = await readDb();
   const validation = validateRegistration(req.body, db.registrations);
   if (!validation.ok) return res.status(422).json(validation);
 
   const project = PROJECTS.find((item) => item.id === req.body.projectId);
   const organization = db.organizations.find((item) => item.id === req.body.organizationId);
+  if (req.body.organizationId && !organization) return res.status(404).json({ error: "组织不存在" });
+  if (organization) {
+    const activeMembership = db.memberships.some((item) =>
+      item.userId === req.user.id && item.organizationId === organization.id && item.status === "active"
+    );
+    if (!activeMembership && !canManageOrganization(db, req.user.id, organization.id)) {
+      return res.status(403).json({ error: "无权使用该组织报名" });
+    }
+  }
   const row = {
     id: id("R"),
     source: req.body.source || "普通用户",
-    userId: req.body.userId || null,
+    userId: req.user.id,
     organizationId: req.body.organizationId || null,
     organization: organization?.name || req.body.organization || "",
     athlete: req.body.athlete,
@@ -600,11 +618,10 @@ app.post("/api/registrations", async (req, res) => {
   db.registrations.unshift(row);
   await writeDb(db);
   res.status(201).json({ row, duplicateCount: validation.duplicateCount });
-});
+}));
 
-app.post("/api/admin/registrations/:id/result", async (req, res) => {
+app.post("/api/admin/registrations/:id/result", requireAdmin, requirePasswordReady, asyncRoute(async (req, res) => {
   const db = await readDb();
-  if (!isAdmin(db, req.body.actorUserId)) return res.status(403).json({ error: "只有管理员可以录入成绩奖项" });
   const row = db.registrations.find((item) => item.id === req.params.id);
   if (!row) return res.status(404).json({ error: "报名记录不存在" });
   row.awardName = String(req.body.awardName || "");
@@ -616,11 +633,10 @@ app.post("/api/admin/registrations/:id/result", async (req, res) => {
   if (certificate) updateCertificateFromRegistration(certificate, row);
   await writeDb(db);
   res.json({ row, certificate });
-});
+}));
 
-app.patch("/api/admin/registrations/:id", async (req, res) => {
+app.patch("/api/admin/registrations/:id", requireAdmin, requirePasswordReady, asyncRoute(async (req, res) => {
   const db = await readDb();
-  if (!isAdmin(db, req.body.actorUserId)) return res.status(403).json({ error: "只有管理员可以修改报名信息" });
   const row = db.registrations.find((item) => item.id === req.params.id);
   if (!row) return res.status(404).json({ error: "报名记录不存在" });
 
@@ -655,11 +671,10 @@ app.patch("/api/admin/registrations/:id", async (req, res) => {
   }
   await writeDb(db);
   res.json({ row });
-});
+}));
 
-app.post("/api/admin/registrations/:id/certificate", upload.single("certificate"), async (req, res) => {
+app.post("/api/admin/registrations/:id/certificate", requireAdmin, requirePasswordReady, upload.single("certificate"), asyncRoute(async (req, res) => {
   const db = await readDb();
-  if (!isAdmin(db, req.body.actorUserId)) return res.status(403).json({ error: "只有管理员可以上传证书" });
   const registration = db.registrations.find((item) => item.id === req.params.id);
   if (!registration) return res.status(404).json({ error: "报名记录不存在" });
 
@@ -702,7 +717,7 @@ app.post("/api/admin/registrations/:id/certificate", upload.single("certificate"
 
   await writeDb(db);
   res.status(201).json({ row: certificatePayload(certificate, registration) });
-});
+}));
 
 function matchCertificateFile(db, fileName) {
   const baseName = path.basename(fileName, path.extname(fileName));
@@ -720,9 +735,8 @@ function matchCertificateFile(db, fileName) {
   });
 }
 
-app.post("/api/admin/certificates/batch", upload.single("zip"), async (req, res) => {
+app.post("/api/admin/certificates/batch", requireAdmin, requirePasswordReady, upload.single("zip"), asyncRoute(async (req, res) => {
   const db = await readDb();
-  if (!isAdmin(db, req.body.actorUserId)) return res.status(403).json({ error: "只有管理员可以批量上传证书" });
   if (!req.file?.buffer) return res.status(422).json({ error: "请上传 ZIP 文件" });
 
   const zip = new AdmZip(req.file.buffer);
@@ -779,11 +793,10 @@ app.post("/api/admin/certificates/batch", upload.single("zip"), async (req, res)
 
   await writeDb(db);
   res.json({ matched, unmatched, ambiguous });
-});
+}));
 
-app.patch("/api/admin/certificates/:id/publish", async (req, res) => {
+app.patch("/api/admin/certificates/:id/publish", requireAdmin, requirePasswordReady, asyncRoute(async (req, res) => {
   const db = await readDb();
-  if (!isAdmin(db, req.body.actorUserId)) return res.status(403).json({ error: "只有管理员可以发布证书" });
   const certificate = db.certificates.find((item) => item.id === req.params.id);
   if (!certificate) return res.status(404).json({ error: "证书不存在" });
   if (!["draft", "published"].includes(req.body.status)) return res.status(422).json({ error: "状态不合法" });
@@ -791,33 +804,38 @@ app.patch("/api/admin/certificates/:id/publish", async (req, res) => {
   certificate.publishedAt = req.body.status === "published" ? now() : "";
   await writeDb(db);
   res.json({ row: certificatePayload(certificate, db.registrations.find((row) => row.id === certificate.registrationId)) });
-});
+}));
 
-app.get("/api/certificates/:id/download", async (req, res) => {
+app.get("/api/certificates/:id/download", requireUser, requirePasswordReady, asyncRoute(async (req, res) => {
   const db = await readDb();
   const certificate = db.certificates.find((item) => item.id === req.params.id);
-  if (!canAccessCertificate(db, req.query.actorUserId, certificate, { includeDraft: isAdmin(db, req.query.actorUserId) })) {
+  if (!certificate) return res.status(404).json({ error: "证书不存在" });
+  if (!canAccessCertificate(db, req.user.id, certificate, { includeDraft: req.user.type === "admin" })) {
     return res.status(403).json({ error: "无权下载该证书" });
   }
   res.download(certificate.filePath, certificate.fileName);
-});
+}));
 
-app.patch("/api/registrations/:id/status", async (req, res) => {
+app.patch("/api/registrations/:id/status", requireUser, requirePasswordReady, asyncRoute(async (req, res) => {
   const db = await readDb();
   const row = db.registrations.find((item) => item.id === req.params.id);
   if (!row) return res.status(404).json({ error: "报名记录不存在" });
 
   const allowed = ["approved", "rejected", "cancelled", "pending"];
   if (!allowed.includes(req.body.status)) return res.status(422).json({ error: "状态不合法" });
+  if (req.user.type !== "admin") {
+    if (row.userId !== req.user.id) return res.status(403).json({ error: "无权修改该报名" });
+    if (req.body.status !== "cancelled") return res.status(403).json({ error: "普通用户只能取消自己的报名" });
+  }
 
   row.status = req.body.status;
   row.rejectReason = req.body.status === "rejected" ? String(req.body.rejectReason || "信息需补充") : "";
   row.updatedAt = now();
   await writeDb(db);
   res.json({ row });
-});
+}));
 
-app.get("/api/registrations/export.csv", async (_req, res) => {
+app.get("/api/registrations/export.csv", requireAdmin, requirePasswordReady, asyncRoute(async (_req, res) => {
   const db = await readDb();
   const header = ["编号", "来源", "组织", "姓名", "学校", "年级", "手机号", "组别", "赛项", "类别", "指导老师", "状态"];
   const lines = db.registrations.map((row) => [
@@ -840,7 +858,7 @@ app.get("/api/registrations/export.csv", async (_req, res) => {
   res.setHeader("Content-Type", "text/csv; charset=utf-8");
   res.setHeader("Content-Disposition", "attachment; filename=registrations.csv");
   res.send(`\uFEFF${csv}`);
-});
+}));
 
 app.use((error, _req, res, next) => {
   if (res.headersSent) return next(error);

@@ -39,3 +39,13 @@ export function requireAdmin(req, res, next) {
   if (req.user.type !== "admin") return res.status(403).json({ error: "只有管理员可以执行此操作" });
   next();
 }
+
+export function requirePasswordReady(req, res, next) {
+  if (req.user?.mustChangePassword) {
+    return res.status(428).json({
+      error: "请先修改临时密码",
+      code: "PASSWORD_CHANGE_REQUIRED"
+    });
+  }
+  next();
+}

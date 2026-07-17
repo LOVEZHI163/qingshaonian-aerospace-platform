@@ -4,6 +4,7 @@ import test from "node:test";
 
 import { verifyPassword } from "../src/auth/passwords.js";
 import { withTestServer } from "../test-support/server.js";
+import { withSession } from "./helpers/api-client.js";
 
 const passwordResetModule = await import("../src/auth/password-reset.js").catch(() => ({}));
 const smsModule = await import("../src/auth/sms.js").catch(() => ({}));
@@ -31,11 +32,11 @@ test("users list requires an administrator session and legacy public reset is re
     assert.equal((await fetch(`${baseUrl}/api/users`, { headers: { Cookie: ordinaryCookie } })).status, 403);
     assert.equal((await fetch(`${baseUrl}/api/users`, { headers: { Cookie: adminCookie } })).status, 200);
 
-    const bypass = await fetch(`${baseUrl}/api/admin/users/U1001`, {
+    const bypass = await fetch(`${baseUrl}/api/admin/users/U1001`, withSession(adminCookie, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ actorUserId: "U9001", password: "Bypass123" })
-    });
+      body: JSON.stringify({ password: "Bypass123" })
+    }));
     assert.equal(bypass.status, 422);
 
     const legacyReset = await fetch(`${baseUrl}/api/auth/reset-password`, {

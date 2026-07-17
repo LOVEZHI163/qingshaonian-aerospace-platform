@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import test from "node:test";
 import { withTestServer } from "../test-support/server.js";
+import { loginAs, withSession } from "./helpers/api-client.js";
 
 async function withServer(fn) {
   await withTestServer(fn, { prefix: "aerogp-auth-" });
@@ -50,11 +51,12 @@ test("registration and admin creation persist hashes", async () => {
     assert.equal(register.status, 201);
     assert.equal("password" in (await register.json()).user, false);
 
-    const create = await fetch(`${baseUrl}/api/admin/users`, {
+    const admin = await loginAs(baseUrl, "13900000000", "admin123");
+    const create = await fetch(`${baseUrl}/api/admin/users`, withSession(admin.cookie, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ actorUserId: "U9001", name: "后台用户", phone: "13700000002", password: "Secret345" })
-    });
+      body: JSON.stringify({ name: "后台用户", phone: "13700000002", password: "Secret345" })
+    }));
     assert.equal(create.status, 201);
     const created = await create.json();
     assert.equal("password" in created.row, false);
@@ -138,6 +140,14 @@ test("logout destroys the current session", async () => {
 
     const me = await fetch(`${baseUrl}/api/auth/me`, { headers: { Cookie: cookie } });
     assert.equal(me.status, 401);
+  });
+});
+
+test("logout is idempotent without an existing session", async () => {
+  await withServer(async ({ baseUrl }) => {
+    const response = await fetch(`${baseUrl}/api/auth/logout`, { method: "POST" });
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { ok: true });
   });
 });
 

@@ -345,6 +345,7 @@ test("login upgrades a legacy password and restores the user from a session", as
 **Interfaces:**
 - Produces: `loginAs(baseUrl, phone, password): Promise<{ cookie: string, user: object }>`。
 - Produces: `GET /api/me/registrations`、`GET /api/me/certificates`，身份只来自 session。
+- Produces: `POST /api/auth/change-password`；临时密码用户完成改密前只能访问当前用户、退出和改密接口。
 - Consumes: Task 2 的 `requireUser`、`requireAdmin` 和 `req.user`。
 
 - [ ] **Step 1: 新建测试客户端并先改一个管理员用例**
@@ -385,6 +386,10 @@ test("login upgrades a legacy password and restores the user from a session", as
 
   组织成员接口通过 `requireUser` 后，再检查 `req.user` 是否是目标组织 active owner/manager 或 admin。证书下载不再读取 `actorUserId` 查询参数。
 
+  所有 `/api/admin/*`、全部报名列表/导出、证书管理和用户管理接口使用 `requireAdmin`。普通报名、重复检查、组织申请、本人报名/证书和证书下载使用 `requireUser`，写入的 `userId` 一律来自 `req.user.id`。`GET /api/organizations` 不再公开 memberships，只向已登录用户返回组织公开搜索字段。
+
+  增加 `requirePasswordReady`：当 `req.user.mustChangePassword=true` 时，除 `/api/auth/me`、`/api/auth/logout`、`/api/auth/change-password` 外，受保护接口返回 `428` 与稳定错误码 `PASSWORD_CHANGE_REQUIRED`。本人改密必须校验当前密码，成功后递增 `sessionVersion`、清除 `mustChangePassword`，使其他旧会话失效并更新当前 session 版本。
+
 - [ ] **Step 3: 更新所有 API 测试请求**
 
   管理员测试统一使用 `13900000000/admin123` 登录；组织负责人使用 `13800000011/123456`；普通用户使用 `13800000001/123456`。增加以下反向断言：
@@ -399,7 +404,7 @@ test("login upgrades a legacy password and restores the user from a session", as
 
   Run: `npm test -w apps/api`
 
-  Expected: 全部 PASS，测试代码中 `rg "actorUserId|\?userId=" apps/api/test` 无结果。
+  Expected: 全部 PASS，生产路由和测试代码中 `rg "actorUserId|\?userId=|req\.query\.userId|req\.body\.userId" apps/api/src/server.js apps/api/test` 无结果。覆盖未登录 401、普通用户访问管理员接口 403、跨用户证书下载 403、非组织管理者 403、临时密码用户 428 及成功改密后其他 session 失效。
 
   ```bash
   git add apps/api/src/server.js apps/api/test
