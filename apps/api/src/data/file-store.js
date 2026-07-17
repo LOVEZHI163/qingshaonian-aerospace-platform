@@ -19,7 +19,7 @@ export function createFileStore(dbPath) {
     },
     async writeDb(db) {
       await fs.mkdir(path.dirname(dbPath), { recursive: true });
-      await fs.writeFile(dbPath, JSON.stringify(db, null, 2), "utf8");
+      await fs.writeFile(dbPath, JSON.stringify(ensureDbShape(structuredClone(db)), null, 2), "utf8");
     },
     async close() {}
   };

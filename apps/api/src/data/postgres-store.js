@@ -22,6 +22,12 @@ async function runMigrations(pool) {
   const names = (await fs.readdir(migrationsUrl))
     .filter((name) => name.endsWith(".sql"))
     .sort();
+  let supportsPlpgsql = true;
+  try {
+    await pool.query("DO $$ BEGIN END $$;");
+  } catch {
+    supportsPlpgsql = false;
+  }
   for (const name of names) {
     let migration = await fs.readFile(new URL(name, migrationsUrl), "utf8");
     const projectGroups = await pool.query(`
@@ -31,8 +37,22 @@ async function runMigrations(pool) {
     if (projectGroups.rowCount > 0) {
       migration = migration.replace(/CREATE TABLE IF NOT EXISTS project_groups \([\s\S]*?\);\s*/, "");
     }
+    if (!supportsPlpgsql) {
+      migration = migration.replace(/DO \$\$[\s\S]*?END \$\$;/g, "");
+    }
     await pool.query(migration);
   }
+}
+
+async function runSchema(pool) {
+  let schema = await fs.readFile(schemaUrl, "utf8");
+  const tableRows = await pool.query(`
+    SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'
+  `);
+  for (const { table_name: tableName } of tableRows.rows) {
+    schema = schema.replace(new RegExp(`CREATE TABLE IF NOT EXISTS ${tableName} \\([\\s\\S]*?\\);\\s*`, "g"), "");
+  }
+  await pool.query(schema);
 }
 
 async function addApprovedGroups(pool) {
@@ -53,8 +73,7 @@ export function createPostgresStore(pool) {
   const store = {
     kind: "postgres",
     async initialize() {
-      const schema = await fs.readFile(schemaUrl, "utf8");
-      await pool.query(schema);
+      await runSchema(pool);
       await runMigrations(pool);
       await addApprovedGroups(pool);
 

@@ -25,6 +25,7 @@ export const PROJECTS = [
 const REGISTRATION_START_AT = "2026-10-01T00:00:00.000Z";
 const REGISTRATION_END_AT = "2026-11-01T15:59:59.000Z";
 export const APPROVED_GROUP_NAMES = ["小学低段", "小学高段", "中学组", "职高/高中组"];
+export const REGISTRATION_MODES = ["automatic", "force_open", "force_closed"];
 
 Object.assign(EVENT, {
   registrationStartAt: REGISTRATION_START_AT,
@@ -144,6 +145,14 @@ export function ensureDbShape(db) {
     event.archivedAt ??= null;
     event.createdAt ||= REGISTRATION_START_AT;
     event.updatedAt ||= event.createdAt;
+    if (!REGISTRATION_MODES.includes(event.registrationMode)) {
+      throw new Error(`Invalid registration mode: ${event.registrationMode}`);
+    }
+  }
+  for (const group of db.projectGroups) {
+    if (!APPROVED_GROUP_NAMES.includes(group.groupName)) {
+      throw new Error(`Invalid project group: ${group.groupName}`);
+    }
   }
   for (const project of db.projects) {
     project.eventId ||= EVENT.id;
@@ -153,6 +162,9 @@ export function ensureDbShape(db) {
     project.allowedGroups ||= db.projectGroups
       .filter((group) => group.projectId === project.id)
       .map((group) => group.groupName);
+    if (!project.allowedGroups.every((groupName) => APPROVED_GROUP_NAMES.includes(groupName))) {
+      throw new Error(`Invalid project group for ${project.id}`);
+    }
   }
   for (const row of db.registrations) {
     row.eventId ||= EVENT.id;

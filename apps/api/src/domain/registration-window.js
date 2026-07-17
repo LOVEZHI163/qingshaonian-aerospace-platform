@@ -5,6 +5,9 @@ export function isRegistrationOpen(event, now = new Date()) {
   const current = now.getTime();
   const start = new Date(event.registrationStartAt).getTime();
   const end = new Date(event.registrationEndAt).getTime();
+  if (!Number.isFinite(start) || !Number.isFinite(end) || start > end) {
+    return { open: false, reason: "报名配置错误" };
+  }
   if (current < start) return { open: false, reason: "报名尚未开始" };
   if (current > end) return { open: false, reason: "报名已截止" };
   return { open: true, reason: "报名进行中" };

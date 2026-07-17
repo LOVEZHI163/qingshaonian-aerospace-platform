@@ -44,7 +44,7 @@ CREATE TABLE IF NOT EXISTS events (
   contact TEXT NOT NULL,
   registration_start_at TIMESTAMPTZ NOT NULL,
   registration_end_at TIMESTAMPTZ NOT NULL,
-  registration_mode TEXT NOT NULL DEFAULT 'automatic',
+  registration_mode TEXT NOT NULL DEFAULT 'automatic' CHECK (registration_mode IN ('automatic', 'force_open', 'force_closed')),
   status TEXT NOT NULL DEFAULT 'published',
   is_current BOOLEAN NOT NULL DEFAULT FALSE,
   archived_at TIMESTAMPTZ,
@@ -65,7 +65,7 @@ CREATE TABLE IF NOT EXISTS projects (
 
 CREATE TABLE IF NOT EXISTS project_groups (
   project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-  group_name TEXT NOT NULL,
+  group_name TEXT NOT NULL CHECK (group_name IN ('小学低段', '小学高段', '中学组', '职高/高中组')),
   PRIMARY KEY (project_id, group_name)
 );
 
@@ -118,4 +118,3 @@ CREATE INDEX IF NOT EXISTS registrations_user_id_idx ON registrations(user_id);
 CREATE INDEX IF NOT EXISTS registrations_organization_id_idx ON registrations(organization_id);
 CREATE INDEX IF NOT EXISTS memberships_organization_id_idx ON memberships(organization_id);
 CREATE INDEX IF NOT EXISTS certificates_user_id_idx ON certificates(user_id);
-CREATE UNIQUE INDEX IF NOT EXISTS events_single_current_key ON events ((is_current)) WHERE is_current = TRUE;
