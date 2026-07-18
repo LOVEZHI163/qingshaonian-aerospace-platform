@@ -62,11 +62,20 @@ for service in postgres api web backup; do
   test "$state" = "running healthy" || fail "$service container is not healthy"
 done
 
-test -z "$(docker compose port api 4300 2>/dev/null || true)" \
-  || fail "API port 4300 must not be published"
-test -z "$(docker compose port postgres 5432 2>/dev/null || true)" \
-  || fail "PostgreSQL port 5432 must not be published"
-test -n "$(docker compose port web 80 2>/dev/null || true)" \
-  || fail "web port 80 must be published"
+compose_port_is_published() {
+  port_output="$(docker compose port "$1" "$2" 2>/dev/null || true)"
+  case "$port_output" in
+    *:[1-9][0-9]*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+if compose_port_is_published api 4300; then
+  fail "API port 4300 must not be published"
+fi
+if compose_port_is_published postgres 5432; then
+  fail "PostgreSQL port 5432 must not be published"
+fi
+compose_port_is_published web 80 || fail "web port 80 must be published"
 
 printf '%s\n' "Upgrade preflight passed."
