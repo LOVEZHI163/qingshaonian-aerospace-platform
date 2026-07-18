@@ -327,7 +327,7 @@ docker compose up -d --build
 ### 证书管理三模块增量部署
 
 - 实现版本：`2d3b262c199bdaa9b975e44b0890dc7a7038bc0a`（`fix: harden manual certificate editing`）。本次只增量安装 6 个生产文件：`apps/api/src/services/registrations.js`、`apps/api/src/routes/certificates.js`、`apps/admin/src/components/ManualCertificateEntryPanel.vue`、`apps/admin/src/components/CertificateSlotEditor.vue`、`apps/admin/src/pages/CertificateManagementPage.vue`、`apps/admin/src/styles/admin.css`；临时目录文件清单恰为这 6 个文件，且远端 SHA-256 与本地逐一一致。
-- 本地发布门禁：API 证书手动管理聚焦测试 9/9 通过；管理端 4 个证书管理测试文件 43/43 通过；管理端生产构建成功（37 个模块）；`deploy/verify-config.ps1` 通过；`git diff --check` 无输出。全量数量引用同一最终实现提交的部署前统一修复报告：API 184/184、管理端 118/118。
+- 本地发布门禁：API 证书手动管理聚焦测试 9/9 通过；管理端 4 个证书管理测试文件 43/43 通过；管理端生产构建成功（37 个模块）；`deploy/verify-config.ps1` 通过；`git diff --check` 无输出。Task 5 审查修复中亲自从仓库根目录运行 `npm.cmd test -w apps/admin`，exit 0，19 个测试文件、118/118 通过；运行 `npm.cmd test -w apps/api -- --test-concurrency=1` 时 npm 参数兼容并实际执行 `node --test --test-concurrency=1`，首轮业务断言完成后有 2 项仅因 Windows 清理临时 `db.json` 的 `EBUSY` 记为失败（182/184），用完全相同的包脚本串行命令完整重跑，exit 0，184/184 通过、0 失败。
 - 部署前数据库备份：`/backups/aerogp-20260718T140444Z.dump`，备份脚本退出码 0；只读复核大小 40,004 字节。
 - 部署前上传文件备份：`/backups/uploads/aerogp-uploads-20260718T140459Z-akPNNc.tar.gz`，脚本输出 `Uploads backup verified` 且退出码 0；只读复核大小 1,772,092 字节。
 - 预检：`deploy/preflight-admin-upgrade.sh` 退出码 0，输出 `Upgrade preflight passed.`；确认三道门禁后才建立 `/tmp/aerogp-certificate-sections` 并上传文件。
@@ -336,7 +336,9 @@ docker compose up -d --build
 - 认证冒烟：brief 原命令未注入 `ADMIN_TEST_PASSWORD`，因此第一次在任何业务断言前退出 1；随后通过 SSH 标准输入安全注入现有测试密码重跑，`home`、`admin`、`event-api`、`login`、`authenticated-admin-events` 均为 200，`unauthenticated-admin-events` 为预期 401。密码未出现在命令参数、输出或文档中。
 - HTTP：本机请求 `http://47.99.181.222/admin/` 返回 200。
 - 浏览器验收：刷新加载新 bundle 后，默认显示证书列表；“证书列表 / 手动录入 / 批量导入”三页签切换正确；按“周星言”查询得到带赛事、学校、组别、赛项和报名号的已通过报名；选中后成绩三个字段与两个证书位置均显示可编辑控件；从列表切到手动录入再切回后，状态 `未发布` 与姓名筛选 `周星言` 均保持。
-- 浏览器补充证据与未完成项：姓名查询对应请求明确携带 `status=approved` 并返回 200；模板下载按钮已触发，虽然浏览器控制通道未捕获 download event，Web 访问日志确认模板请求返回 200、响应 7,307 字节。线上现有数据没有同名多赛项样本，未实证该数据分支；为遵守“不上传测试文件”，未在真实页面提交工作簿预检查。页面无应用 error；相关预检查能力仍有本地全量与聚焦测试覆盖，但这些证据不替代真实页面未完成项。
+- 线上 approved 样本只读核对：按与生产服务一致的 `trim → 去全部空白 → lower` 规则标准化姓名后，approved 报名总数 1、标准化姓名数 1、拥有多个不同赛项的同名组数 0。因此没有可用于同名多赛项真实页面验收的样本；未创建或修改报名数据，该分支继续标记为未直接验收，等待用户是否授权临时造数。
+- 真实 Excel 预检查与取消：使用当前管理员认证下载线上模板（HTTP 200，7,288 字节），按 `spreadsheets:Spreadsheets` 技能在 `C:\tmp` 用加载器提供的 `@oai/artifact-tool` import/inspect/render 原模板，最小生成只含一个证书标题和一张普通 PNG 的临时工作簿；关键范围、drawing 和公式错误扫描通过，临时文件未加入仓库。artifact-tool 初次导出的 OOXML 使用 `x:` SpreadsheetML 主命名空间前缀，线上 ExcelJS 在建立批次前返回 500；只规范化 4 个 XML 条目的命名空间前缀、不改变单元格/样式/图片后，部署中的生产解析器本地验证为 1 个候选、0 错误、slot 1 `image/png`。唯一一次修正后线上预检查返回 201：批次 `CIB1784385356768174`、有效 1、错误 0、替换 1；图片预览返回 200、`image/png`、1,786,046 字节；recoverable 列表在取消前包含该批次，DELETE 返回 204，取消后列表返回 `rows: []`，数据库审计行状态为 `cancelled`。正式证书在流程前后均为 1 张 `draft`，没有提交导入或改变正式证书。
+- 页面错误：真实页面应用 error 0；仅有与站点无关的 Chrome 扩展 warning。
 
 本记录对应测试环境。正式域名上线前仍需完成备案、HTTPS 和测试账号更换。
 
