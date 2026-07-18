@@ -190,19 +190,139 @@ docker compose up -d --build
 
 ### 赛事设置导航增量部署
 
-- 已部署代码版本：`a78044c`（部署前执行 `git rev-parse --short HEAD` 的实际输出）
-- 本地回归：`npm.cmd test -w apps/admin` 通过，共 18 个测试文件、99 项测试；`npm.cmd run build` 成功完成 Web（34 个模块）和 Admin（36 个模块）两个 Vite 生产构建；`git diff --check` 无输出
-- 升级前数据库备份：`backups/aerogp-20260718T094845Z.dump`
-- 升级前上传文件备份：`backups/uploads/aerogp-uploads-20260718T094858Z-mNBGap.tar.gz`，脚本输出 `Uploads backup verified`
-- 升级预检：`deploy/preflight-admin-upgrade.sh` 输出 `Upgrade preflight passed.`
-- 增量文件：只上传并安装 `apps/admin/src/App.vue`、`apps/admin/src/components/AdminShell.vue`、`apps/admin/src/pages/EventManagementPage.vue`、`apps/admin/src/styles/admin.css`
-- 服务重建：只执行 `docker compose build web` 和 `docker compose up -d --no-deps web`；`web` 容器由 `a8dd1e50a5b4…` 更新为 `1f56c2a0e00b…`，`postgres` 仍为 `7cd1887860c0…`、`api` 仍为 `c2ee6753ff9d…`，确认 PostgreSQL、API 和数据卷均未重建或删除
-- 服务状态：`postgres`、`api`、`web`、`backup` 四个服务均为 `healthy`；`http://127.0.0.1/admin/` 返回 `200`；公网监听仍只有 TCP 22 和 80（本地 DNS stub 53 仅绑定 `127.0.0.53`）
-- 浏览器验收 1：管理员侧栏只有“赛事设置”，没有第二个“赛项与组别”入口，通过
-- 浏览器验收 2：进入“赛事设置”后默认选中并显示“赛事信息”，通过
-- 浏览器验收 3：点击内部“赛项与组别”后，首屏显示“管理赛事”选择器和 11 个赛项列表，通过
-- 浏览器验收 4：切回“赛事信息”后仍选中“2026年温州市青少年航空航天创新比赛”，通过
-- 浏览器验收 5：真实页面确认三个报名模式按钮、保存/复制/归档赛事操作、赛项名称/类别/类型/显示顺序、四个组别、“必须填写指导老师”，以及有报名赛项显示“停用”、无报名赛项显示“删除”的保护分支均存在；浏览器控制台与页面错误均为空。当前数据只有一届当前赛事，历史赛事资源清理入口不能直接在页面展开；已额外确认部署产物包含“历史赛事资源”“清理附件”“彻底删除赛事”，管理端全量测试中的对应组件回归也通过
+#### 本地发布门禁实际记录
+
+- `git rev-parse --short HEAD`：退出码 0，标准输出 `a78044c`；以下四个前端文件均来自该版本。
+- `npm.cmd test -w apps/admin`：受限文件系统内首次启动退出码 1，关键输出为 `Cannot read directory ... Access is denied`；获准在受限环境外以同一命令重跑，退出码 0，实际汇总为 `Test Files 18 passed (18)`、`Tests 99 passed (99)`。
+- `npm.cmd run build`：退出码 0；Web 输出 `34 modules transformed`、`built in 645ms`，Admin 输出 `36 modules transformed`、`built in 1.09s`。
+- `git diff --check`：退出码 0，无标准输出。
+
+#### 升级前备份和预检实际记录
+
+1. 数据库备份：
+
+   ```powershell
+   ssh aerogp 'cd /opt/aerogp && docker compose run --rm --no-deps -T backup /bin/sh /scripts/backup-postgres.sh once'
+   ```
+
+   退出码 0，关键标准输出：`Created /backups/aerogp-20260718T094845Z.dump`。
+
+2. 上传文件备份：
+
+   ```powershell
+   ssh aerogp 'cd /opt/aerogp && docker compose run --rm --no-deps -T backup /bin/sh /scripts/backup-uploads.sh once'
+   ```
+
+   退出码 0，关键标准输出为 `Uploads backup verified: .aerogp-upload-archive-jdGoOm` 和 `/backups/uploads/aerogp-uploads-20260718T094858Z-mNBGap.tar.gz`。
+
+3. 升级预检：
+
+   ```powershell
+   ssh aerogp 'cd /opt/aerogp && /bin/sh deploy/preflight-admin-upgrade.sh'
+   ```
+
+   退出码 0，标准输出包含 `Upgrade preflight passed.`；看到该输出后才继续上传。
+
+4. 部署后按 brief 读取备份文件名：
+
+   ```powershell
+   ssh aerogp 'cd /opt/aerogp && ls -1t backups/aerogp-*.dump | head -n 1 && ls -1t backups/uploads/aerogp-uploads-*.tar.gz | head -n 1'
+   ```
+
+   退出码 0，实际标准输出：
+
+   ```text
+   backups/aerogp-20260718T094845Z.dump
+   backups/uploads/aerogp-uploads-20260718T094858Z-mNBGap.tar.gz
+   ```
+
+   审查修订时只读执行 `ls -l` 再确认两文件存在，大小分别为 39,746 字节和 1,772,073 字节。
+
+#### 四文件上传和 Web 重建实际记录
+
+- 创建临时目录命令退出码 0，无标准输出：
+
+  ```powershell
+  ssh aerogp 'install -d -m 700 /tmp/aerogp-event-settings/apps/admin/src/components /tmp/aerogp-event-settings/apps/admin/src/pages /tmp/aerogp-event-settings/apps/admin/src/styles'
+  ```
+
+- 四次上传均退出码 0，均无标准输出：
+
+  ```powershell
+  scp apps/admin/src/App.vue aerogp:/tmp/aerogp-event-settings/apps/admin/src/App.vue
+  scp apps/admin/src/components/AdminShell.vue aerogp:/tmp/aerogp-event-settings/apps/admin/src/components/AdminShell.vue
+  scp apps/admin/src/pages/EventManagementPage.vue aerogp:/tmp/aerogp-event-settings/apps/admin/src/pages/EventManagementPage.vue
+  scp apps/admin/src/styles/admin.css aerogp:/tmp/aerogp-event-settings/apps/admin/src/styles/admin.css
+  ```
+
+- 安装四文件并重建 Web 的实际命令：
+
+  ```powershell
+  ssh aerogp 'cd /opt/aerogp && install -m 644 /tmp/aerogp-event-settings/apps/admin/src/App.vue apps/admin/src/App.vue && install -m 644 /tmp/aerogp-event-settings/apps/admin/src/components/AdminShell.vue apps/admin/src/components/AdminShell.vue && install -m 644 /tmp/aerogp-event-settings/apps/admin/src/pages/EventManagementPage.vue apps/admin/src/pages/EventManagementPage.vue && install -m 644 /tmp/aerogp-event-settings/apps/admin/src/styles/admin.css apps/admin/src/styles/admin.css && docker compose build web && docker compose up -d --no-deps web'
+  ```
+
+  退出码 0；构建关键输出为 Web `34 modules transformed`、Admin `36 modules transformed`、`Image aerogp-web Built`；启动关键输出为 `Container aerogp-web-1 Recreate`、`Recreated`、`Starting`、`Started`。这条实际执行命令只把 `web` 作为 build/up 目标，且 up 使用 `--no-deps`；命令中没有数据卷删除操作。
+
+- 重建前只读取得的容器身份：
+
+  ```text
+  /aerogp-postgres-1 7cd1887860c04f4f68d190b130af95ba2ea8ef2906bab547811ff67d6a1b9b1b 2026-07-16T12:07:30.717746772Z
+  /aerogp-api-1 c2ee6753ff9d5c21c5d64a066925963e65f8e4fcb86d68fecce00060cb83cea5 2026-07-18T08:52:57.551357111Z
+  /aerogp-web-1 a8dd1e50a5b4019ad6690dc4aa6005cf81aeba75943dac43d543efe14bef395e 2026-07-18T08:52:58.515392109Z
+  ```
+
+- 重建后只读取得的容器身份：
+
+  ```text
+  /aerogp-postgres-1 7cd1887860c04f4f68d190b130af95ba2ea8ef2906bab547811ff67d6a1b9b1b 2026-07-16T12:07:30.717746772Z
+  /aerogp-api-1 c2ee6753ff9d5c21c5d64a066925963e65f8e4fcb86d68fecce00060cb83cea5 2026-07-18T08:52:57.551357111Z
+  /aerogp-web-1 1f56c2a0e00b717860eb92e69ba3c47da2f17dcd5bc80e847f74da4f873b4510 2026-07-18T09:50:48.176456883Z
+  ```
+
+  在该部署观察窗口内，PostgreSQL 和 API 的容器 ID/创建时间前后相同，Web 的容器 ID/创建时间发生变化；这支撑“记录中的命令只重建了 Web”，不延伸为对记录外服务器操作的全局审计结论。
+
+#### 部署后及审查修订时的只读状态
+
+- 部署后 brief 健康检查命令退出码 0；当时 `docker compose ps` 显示 `postgres`、`api`、`web`、`backup` 均为 `healthy`，管理端状态码为 `200`，`ss -lnt` 未显示宿主机监听 4300 或 5432。
+- 审查修订时再次只读执行 `ssh aerogp 'cd /opt/aerogp && docker compose ps'`，退出码 0，实际输出：
+
+  ```text
+  NAME                IMAGE                                                COMMAND                  SERVICE    CREATED             STATUS                       PORTS
+  aerogp-api-1        aerogp-api                                           "docker-entrypoint.s…"   api        About an hour ago   Up About an hour (healthy)   4300/tcp
+  aerogp-backup-1     m.daocloud.io/docker.io/library/postgres:16-alpine   "docker-entrypoint.s…"   backup     About an hour ago   Up About an hour (healthy)   5432/tcp
+  aerogp-postgres-1   m.daocloud.io/docker.io/library/postgres:16-alpine   "docker-entrypoint.s…"   postgres   46 hours ago        Up 46 hours (healthy)        5432/tcp
+  aerogp-web-1        aerogp-web                                           "/docker-entrypoint.…"   web        9 minutes ago       Up 9 minutes (healthy)       0.0.0.0:80->80/tcp, [::]:80->80/tcp
+  ```
+
+- 审查修订时再次只读执行 `ssh aerogp 'curl -fsS -o /dev/null -w "%{http_code}" http://127.0.0.1/admin/'`，退出码 0，标准输出 `200`。
+- 审查修订时再次只读执行 `ssh aerogp 'ss -lnt'`，退出码 0，实际输出：
+
+  ```text
+  State  Recv-Q Send-Q Local Address:Port Peer Address:PortProcess
+  LISTEN 0      4096         0.0.0.0:80        0.0.0.0:*
+  LISTEN 0      128          0.0.0.0:22        0.0.0.0:*
+  LISTEN 0      4096   127.0.0.53%lo:53        0.0.0.0:*
+  LISTEN 0      4096            [::]:80           [::]:*
+  LISTEN 0      128             [::]:22           [::]:*
+  ```
+
+  以上当前输出显示对外地址监听 22 和 80；53 仅绑定本地 DNS stub `127.0.0.53`。
+
+#### 浏览器五项验收实际结果
+
+1. 通过：管理员侧栏只有“赛事设置”，没有第二个“赛项与组别”入口。
+2. 通过：进入“赛事设置”后默认选中并显示“赛事信息”。
+3. 通过：点击内部“赛项与组别”后，首屏显示“管理赛事”选择器和 11 个赛项列表。
+4. 通过：切回“赛事信息”后仍选中“2026年温州市青少年航空航天创新比赛”；页面列表选中项、表单赛事名和赛项页选择器一致。
+5. 原功能逐项结果：
+   - 报名模式：通过；真实页面显示“自动”“临时开放”“临时关闭”三个按钮。
+   - 赛事操作：通过；真实页面显示“保存赛事”“复制”“归档”。
+   - 赛项字段：通过；真实页面显示“赛项名称”“类别”“类型”“显示顺序”。
+   - 组别：通过；真实页面显示“小学低段”“小学高段”“中学组”“职高/高中组”。
+   - 指导老师：通过；真实页面显示“必须填写指导老师”。
+   - 停用/删除保护：通过；11 个赛项中有报名项显示“停用”，无报名项显示“删除”，两种分支均可见；未点击这些数据修改操作。
+   - 资源清理：**线上数据条件未满足，未直接验收**。线上只有一届当前赛事，没有满足“已归档且非当前”条件的赛事；为避免修改赛事数据，未新增、复制、归档或删除赛事。补充证据仅为：已部署生产 bundle 包含“历史赛事资源”“清理附件”“彻底删除赛事”三个字符串，管理端全量测试中的 `ResourceCleanupPanel` 组件测试通过；这些补充证据不等价替代真实页面验收。
+   - 页面与控制台错误：通过；页面错误消息 0 条，浏览器控制台 error 0 条。
 
 本记录对应测试环境。正式域名上线前仍需完成备案、HTTPS 和测试账号更换。
 
