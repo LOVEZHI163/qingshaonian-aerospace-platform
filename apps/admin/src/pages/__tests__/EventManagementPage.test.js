@@ -57,6 +57,65 @@ describe("EventManagementPage", () => {
     expect(wrapper.text()).toContain("临时关闭");
   });
 
+  it("switches real panels without reloading and keeps the selected event", async () => {
+    mockLoads();
+    const wrapper = mount(EventManagementPage);
+    await flushPromises();
+    const initialEventLoads = apiMock.mock.calls.filter(([path]) => path === "/api/admin/events").length;
+
+    expect(wrapper.get('[data-section="event"]').classes()).toContain("active");
+    expect(wrapper.find('[data-section-panel="event"]').exists()).toBe(true);
+    expect(wrapper.find('[data-section-panel="projects"]').exists()).toBe(false);
+    await wrapper.get("form.event-form").findAll("input")[1].setValue("未保存主题");
+
+    await wrapper.get('[data-section="projects"]').trigger("click");
+    await flushPromises();
+
+    expect(wrapper.find('[data-section-panel="event"]').exists()).toBe(false);
+    expect(wrapper.get('[data-section-panel="projects"]').text()).toContain("纸飞机");
+    expect(wrapper.get('[data-project-event]').element.value).toBe("E1");
+    expect(apiMock.mock.calls.filter(([path]) => path === "/api/admin/events")).toHaveLength(initialEventLoads);
+    await wrapper.get("form.project-form").findAll("input")[0].setValue("未保存赛项");
+
+    await wrapper.get('[data-section="event"]').trigger("click");
+    expect(wrapper.get(".event-list-item.selected").text()).toContain("2026赛事");
+    expect(wrapper.get("form.event-form").findAll("input")[1].element.value).toBe("未保存主题");
+    await wrapper.get('[data-section="projects"]').trigger("click");
+    expect(wrapper.get("form.project-form").findAll("input")[0].element.value).toBe("未保存赛项");
+  });
+
+  it("shows a project empty state when no event exists", async () => {
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/admin/events") return { rows: [], projects: [] };
+      if (path === "/api/admin/registrations?pageSize=100") return { rows: [], total: 0, page: 1, pageSize: 100 };
+      return { rows: [] };
+    });
+    const wrapper = mount(EventManagementPage);
+    await flushPromises();
+
+    await wrapper.get('[data-section="projects"]').trigger("click");
+    expect(wrapper.text()).toContain("请先创建或选择赛事");
+  });
+
+  it("changes the shared event selection from the projects section", async () => {
+    const secondEvent = { ...event, id: "E2", name: "2027赛事", isCurrent: false };
+    const secondProject = { ...project, id: "P2", eventId: "E2", name: "无人机竞速" };
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/admin/events") return { rows: [event, secondEvent], projects: [project, secondProject] };
+      if (path === "/api/admin/registrations?pageSize=100") return { rows: [], total: 0, page: 1, pageSize: 100 };
+      return { rows: [] };
+    });
+    const wrapper = mount(EventManagementPage);
+    await flushPromises();
+
+    await wrapper.get('[data-section="projects"]').trigger("click");
+    await wrapper.get('[data-project-event]').setValue("E2");
+
+    expect(wrapper.get('[data-section-panel="projects"]').text()).toContain("无人机竞速");
+    await wrapper.get('[data-section="event"]').trigger("click");
+    expect(wrapper.get(".event-list-item.selected").text()).toContain("2027赛事");
+  });
+
   it("updates the registration mode, reloads and announces the event change", async () => {
     mockLoads();
     const wrapper = mount(EventManagementPage);
@@ -91,6 +150,7 @@ describe("EventManagementPage", () => {
     mockLoads([{ id: "R1", projectId: "P1" }]);
     const wrapper = mount(EventManagementPage);
     await flushPromises();
+    await wrapper.get('[data-section="projects"]').trigger("click");
 
     expect(wrapper.find('[data-action="delete-project"]').exists()).toBe(false);
     expect(wrapper.get('[data-action="disable-project"]').text()).toContain("停用");
@@ -106,6 +166,7 @@ describe("EventManagementPage", () => {
     });
     const wrapper = mount(EventManagementPage);
     await flushPromises();
+    await wrapper.get('[data-section="projects"]').trigger("click");
 
     expect(apiMock).toHaveBeenCalledWith("/api/admin/registrations?page=2&pageSize=100");
     expect(wrapper.find('[data-action="delete-project"]').exists()).toBe(false);
@@ -126,10 +187,13 @@ describe("EventManagementPage", () => {
     });
     const wrapper = mount(EventManagementPage);
     await flushPromises();
+    await wrapper.get('[data-section="projects"]').trigger("click");
     expect(wrapper.find('[data-action="delete-project"]').exists()).toBe(false);
 
+    await wrapper.get('[data-section="event"]').trigger("click");
     await wrapper.get('[data-mode="force_closed"]').trigger("click");
     await flushPromises();
+    await wrapper.get('[data-section="projects"]').trigger("click");
 
     expect(wrapper.text()).toContain("报名数据在加载期间发生变化，请刷新重试");
     expect(wrapper.find('[data-action="delete-project"]').exists()).toBe(false);
