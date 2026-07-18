@@ -117,13 +117,15 @@ test("admin registration listing filters athleteName only against the athlete na
   await withServer(async (baseUrl) => {
     const admin = await loginAs(baseUrl, "13900000000", "admin123");
     const response = await fetch(
-      `${baseUrl}/api/admin/registrations?eventId=wz-aerospace-2026&status=approved&athleteName=${encodeURIComponent("周星语")}&pageSize=10`,
+      `${baseUrl}/api/admin/registrations?eventId=wz-aerospace-2026&status=approved&athleteName=${encodeURIComponent("周星言")}&pageSize=10`,
       withSession(admin.cookie)
     );
     assert.equal(response.status, 200);
     const payload = await json(response);
+    assert.equal(payload.total, 1);
+    assert.deepEqual(payload.rows.map((row) => row.id), ["R20260627002"]);
     assert.equal(payload.rows.every((row) => row.status === "approved"), true);
-    assert.equal(payload.rows.every((row) => row.athlete.name.includes("周星语")), true);
+    assert.equal(payload.rows.every((row) => row.athlete.name.includes("周星言")), true);
 
     const noFalsePositive = await fetch(
       `${baseUrl}/api/admin/registrations?athleteName=${encodeURIComponent("王老师")}&pageSize=10`,
