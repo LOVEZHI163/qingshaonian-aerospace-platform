@@ -6,9 +6,10 @@ import test from "node:test";
 const root = path.resolve(import.meta.dirname, "../../..");
 
 test("deployment paths use same-origin API and the /admin/ base", async () => {
-  const [web, admin, adminVite] = await Promise.all([
+  const [web, admin, adminApi, adminVite] = await Promise.all([
     fs.readFile(path.join(root, "apps/web/src/main.jsx"), "utf8"),
     fs.readFile(path.join(root, "apps/admin/src/App.vue"), "utf8"),
+    fs.readFile(path.join(root, "apps/admin/src/lib/api.js"), "utf8"),
     fs.readFile(path.join(root, "apps/admin/vite.config.js"), "utf8")
   ]);
 
@@ -18,7 +19,8 @@ test("deployment paths use same-origin API and the /admin/ base", async () => {
   assert.match(web, /href=["']\/admin\/["']/);
 
   assert.equal(admin.includes("localhost:4300"), false);
-  assert.match(admin, /VITE_API_URL\s*\|\|\s*["']{2}/);
+  assert.equal(adminApi.includes("localhost:4300"), false);
+  assert.match(adminApi, /VITE_API_URL\s*\|\|\s*["']{2}/);
   assert.match(adminVite, /base:\s*["']\/admin\/["']/);
 });
 
