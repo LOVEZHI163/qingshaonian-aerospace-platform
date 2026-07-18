@@ -174,6 +174,22 @@ docker compose up -d --build
 
 恢复上传文件前，先停止 API、额外备份当前上传卷，并再次运行 `verify-uploads-backup.sh`。验证通过后只能把归档解压到空的临时目录，人工核对文件清单后再复制到上传卷；不要直接对正在使用的卷执行覆盖解压。归档校验会拒绝绝对路径和包含 `..` 路径段的文件。
 
+## 2026-07-18 测试环境部署记录
+
+- 服务器：阿里云 ECS `47.99.181.222`，部署目录 `/opt/aerogp`
+- 应用版本：`726aedc`（`codex/admin-platform-deep-development`）
+- 数据保留：沿用现有 PostgreSQL 与上传文件命名卷，部署过程未删除或重建数据卷
+- 部署前数据库备份：`backups/aerogp-20260718T084428Z.dump`，已通过 `pg_restore --list` 校验
+- 部署前上传文件备份：`backups/uploads/aerogp-uploads-20260718T084428Z.tar.gz`，已通过归档校验
+- 部署前源码备份：`backups/source-before-admin-upgrade-20260718T084428Z.tgz`
+- 自动数据库备份：`backups/aerogp-20260718T085309Z.dump`
+- 服务状态：`postgres`、`api`、`web`、`backup` 均健康；公网只监听 SSH 22 与 HTTP 80
+- 接口验收：首页、管理端、公开赛事接口、管理员登录和已认证管理接口均返回 200；匿名管理接口返回 401
+- 页面验收：管理员、普通用户、组织用户三种角色的菜单和页面均正常
+- 证书验收：使用 Excel 内嵌 PNG 完成预检查（有效 1、错误 0），导入为未发布证书后由管理员批量发布成功
+
+本记录对应测试环境。正式域名上线前仍需完成备案、HTTPS 和测试账号更换。
+
 ## 域名上线前
 
 正式使用 `aerogp.cn` 前需要：完成 ICP 备案、添加 DNS 解析、配置 HTTPS、更换应用测试账号及明文业务密码，并进行正式安全审查。
