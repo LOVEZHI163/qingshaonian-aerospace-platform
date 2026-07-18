@@ -33,17 +33,17 @@ unset session_secret
 latest_dump="$(find "$backups_dir" -maxdepth 1 -type f -name 'aerogp-*.dump' -print | sort | tail -n 1)"
 test -n "$latest_dump" || fail "no database dump was found"
 test -s "$latest_dump" || fail "latest database dump is empty"
-docker compose exec -T backup pg_restore --list "/backups/$(basename "$latest_dump")" >/dev/null \
+docker compose run --rm --no-deps -T backup pg_restore --list "/backups/$(basename "$latest_dump")" >/dev/null \
   || fail "latest database dump is unreadable"
 
 latest_uploads="$(find "$backups_dir/uploads" -maxdepth 1 -type f -name 'aerogp-uploads-*.tar.gz' -print | sort | tail -n 1)"
 test -n "$latest_uploads" || fail "no uploads backup was found"
 test -s "$latest_uploads" || fail "latest uploads backup is empty"
-docker compose exec -T backup /bin/sh /scripts/verify-uploads-backup.sh \
+docker compose run --rm --no-deps -T backup /bin/sh /scripts/verify-uploads-backup.sh \
   "/backups/uploads/$(basename "$latest_uploads")" >/dev/null \
   || fail "latest uploads backup is unreadable or unsafe"
 
-uploads_kb="$(docker compose exec -T backup du -sk /uploads | awk 'NR == 1 { print $1 }')"
+uploads_kb="$(docker compose run --rm --no-deps -T backup du -sk /uploads | awk 'NR == 1 { print $1 }')"
 case "$uploads_kb" in
   ''|*[!0-9]*) fail "could not measure uploads volume" ;;
 esac
