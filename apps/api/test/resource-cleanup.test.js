@@ -158,6 +158,40 @@ test("resource cleanup requires disabled organization and exact name before clea
   }, { prefix: "resource-cleanup-organization-" });
 });
 
+test("resource cleanup rejects an archived event that is still current without changing data or files", async () => {
+  await withTestServer(async ({ baseUrl, dbPath, tempDir }) => {
+    const admin = await loginAs(baseUrl, "13900000000", "admin123");
+    const fixture = await writeFixture(dbPath, tempDir);
+    const before = JSON.parse(await fs.readFile(dbPath, "utf8"));
+    const targetEvent = before.events.find((row) => row.id === "E-OLD");
+    targetEvent.isCurrent = true;
+    await fs.writeFile(dbPath, JSON.stringify(before, null, 2), "utf8");
+    const expectedSnapshot = structuredClone(before);
+
+    const response = await fetch(`${baseUrl}/api/admin/events/E-OLD/cleanup`, jsonRequest("POST", {
+      categories: ["certificates", "imports"]
+    }, admin.cookie));
+    assert.equal(response.status, 409);
+
+    const persisted = JSON.parse(await fs.readFile(dbPath, "utf8"));
+    assert.deepEqual(persisted, expectedSnapshot);
+    assert.deepEqual(persisted.fileCleanupJournal, expectedSnapshot.fileCleanupJournal);
+    assert.deepEqual(persisted.auditLogs, expectedSnapshot.auditLogs);
+    assert.deepEqual(
+      persisted.certificates.filter((row) => ["C-OLD", "C-OLD-MISSING"].includes(row.id)),
+      expectedSnapshot.certificates.filter((row) => ["C-OLD", "C-OLD-MISSING"].includes(row.id))
+    );
+    assert.deepEqual(
+      persisted.certificateImportBatches.find((row) => row.id === "B-OLD"),
+      expectedSnapshot.certificateImportBatches.find((row) => row.id === "B-OLD")
+    );
+    assert.equal(await exists(fixture.paths.targetCertificate), true);
+    assert.equal(await exists(fixture.paths.targetImport), true);
+    assert.equal(await exists(fixture.paths.otherCertificate), true);
+    assert.equal(await exists(fixture.paths.credential), true);
+  }, { prefix: "resource-cleanup-current-archived-" });
+});
+
 test("resource cleanup thoroughly deletes only a confirmed non-current archived event", async () => {
   await withTestServer(async ({ baseUrl, dbPath, tempDir }) => {
     const admin = await loginAs(baseUrl, "13900000000", "admin123");

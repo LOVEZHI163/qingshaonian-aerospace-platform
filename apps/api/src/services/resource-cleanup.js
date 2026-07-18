@@ -134,7 +134,7 @@ function stageCleanupFiles(db, files, dependencies, scopeCategory) {
 export async function cleanupArchivedEventResources({ store, eventId, categories: categoryInput, actor, makeId, now = () => new Date().toISOString(), statFile = fs.stat, removeFile = deletePrivateFile }) {
   const db = await store.readDb();
   const event = eventOrThrow(db, eventId);
-  if (event.status !== "archived") throw businessError(409, "只有已归档赛事可以清理附件");
+  if (event.status !== "archived" || event.isCurrent) throw businessError(409, "只有非当前的已归档赛事可以清理附件");
   const categories = normalizeCategories(categoryInput);
   const resources = eventResources(db, eventId, categories);
   const sizes = await Promise.all(resources.files.map((file) => byteSize(file, statFile)));
