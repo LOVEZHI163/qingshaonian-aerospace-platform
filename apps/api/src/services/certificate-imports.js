@@ -512,7 +512,12 @@ export async function listActiveCertificateImportPreviews({
 }) {
   const selectedEventId = String(eventId || "").trim();
   if (!selectedEventId) throw importError(422, "请选择赛事");
-  await cleanupExpiredCertificateImportPreviews({ store, makeId, now, storage });
+  await store.withMutationLock(() => cleanupExpiredCertificateImportPreviews({
+    store,
+    makeId,
+    now,
+    storage
+  }));
   const db = await store.readDb();
   selectedEventOrError(db, selectedEventId);
   return db.certificateImportBatches

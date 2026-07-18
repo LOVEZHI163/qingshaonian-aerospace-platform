@@ -183,6 +183,32 @@ test("PostgreSQL schema enforces unique phone and registration foreign keys", as
   });
 });
 
+test("PostgreSQL store repairs a missing certificate slot check after migration 003 was already recorded", async () => {
+  await withStore(async (store, pool) => {
+    const migration003 = await pool.query(
+      "SELECT 1 FROM schema_migrations WHERE name = '003-certificate-slots-imports.sql'"
+    );
+    assert.equal(migration003.rowCount, 1);
+
+    await pool.query("ALTER TABLE certificates DROP CONSTRAINT IF EXISTS certificates_slot_check");
+    await pool.query(
+      "DELETE FROM schema_migrations WHERE name = '003a-certificate-slot-check.sql'"
+    );
+
+    await store.initialize();
+
+    const compensation = await pool.query(
+      "SELECT 1 FROM schema_migrations WHERE name = '003a-certificate-slot-check.sql'"
+    );
+    assert.equal(compensation.rowCount, 1);
+    await assert.rejects(pool.query(`
+      INSERT INTO certificates
+        (id, registration_id, slot, title, file_name, stored_name, file_path, status, source, uploaded_at)
+      VALUES ('C-REPAIRED-INVALID-SLOT', 'R20260627001', 3, 'invalid slot', 'invalid.pdf', 'invalid.pdf', '/tmp/invalid.pdf', 'draft', 'manual', NOW())
+    `), /check/i);
+  });
+});
+
 test("PostgreSQL auth state atomically enforces limits and consumes challenges once across instances", async () => {
   await withStore(async (store, pool) => {
     const now = Date.parse("2026-07-17T00:00:00.000Z");

@@ -1334,3 +1334,205 @@ test("certificate import expiry cleanup clears preview data and staging with an 
   assert.deepEqual(removed, ["B-EXPIRED"]);
   assert.equal(persisted.certificateImportErrors.some((row) => row.batchId === "B-EXPIRED"), true);
 });
+
+test("certificate import list cleanup cannot overwrite a concurrent commit", async () => {
+  let persisted = serviceDb();
+  persisted.certificateImportBatches.push({
+    id: "B-RACE",
+    eventId: "E1",
+    createdBy: "U9001",
+    originalName: "race.xlsx",
+    status: "preview",
+    previewJson: [],
+    validCount: 0,
+    errorCount: 0,
+    replaceCount: 0,
+    createdAt: "2026-07-17T00:00:00.000Z",
+    committedAt: null
+  });
+
+  let mutationTail = Promise.resolve();
+  let pauseFirstRead = true;
+  let releaseCommitRead;
+  let commitReadStarted;
+  const commitReadGate = new Promise((resolve) => { releaseCommitRead = resolve; });
+  const commitReadStartedGate = new Promise((resolve) => { commitReadStarted = resolve; });
+  let releaseExpiredWrite;
+  const expiredWriteGate = new Promise((resolve) => { releaseExpiredWrite = resolve; });
+  const store = {
+    async withMutationLock(handler) {
+      let release;
+      const previous = mutationTail;
+      mutationTail = new Promise((resolve) => { release = resolve; });
+      await previous;
+      try {
+        return await handler();
+      } finally {
+        release();
+      }
+    },
+    async readDb() {
+      const snapshot = structuredClone(persisted);
+      if (pauseFirstRead) {
+        pauseFirstRead = false;
+        commitReadStarted();
+        await commitReadGate;
+      }
+      return snapshot;
+    },
+    async writeDb(next) {
+      if (next.certificateImportBatches.find((batch) => batch.id === "B-RACE")?.status === "expired") {
+        await expiredWriteGate;
+      }
+      persisted = structuredClone(next);
+    }
+  };
+  const storage = {
+    removeStagingBatch: async () => {},
+    resolveStagingPath: (_batchId, relativePath) => `C:/uploads/import-staging/${relativePath}`
+  };
+
+  const commit = store.withMutationLock(() => commitCertificateImport({
+    batchId: "B-RACE",
+    store,
+    makeId: sequentialIds(),
+    now: () => "2026-07-18T12:00:00.000Z",
+    storage
+  }));
+  await commitReadStartedGate;
+  const list = certificateImports.listActiveCertificateImportPreviews({
+    eventId: "E1",
+    store,
+    makeId: sequentialIds(),
+    now: () => "2026-07-18T12:00:00.000Z",
+    storage
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  releaseCommitRead();
+  await commit;
+  releaseExpiredWrite();
+  await list;
+
+  assert.equal(
+    persisted.certificateImportBatches.find((batch) => batch.id === "B-RACE").status,
+    "committed"
+  );
+});
+
+test("certificate import list cleanup serializes with concurrent preview creation and cancellation", async () => {
+  const scenarios = [
+    {
+      name: "preview creation",
+      mutate(db) {
+        db.certificateImportBatches.push({
+          id: "B-NEW",
+          eventId: "E1",
+          createdBy: "U9001",
+          originalName: "new.xlsx",
+          status: "preview",
+          previewJson: [],
+          validCount: 0,
+          errorCount: 0,
+          replaceCount: 0,
+          createdAt: "2026-07-18T11:59:00.000Z",
+          committedAt: null
+        });
+      },
+      verify(db) {
+        assert.equal(db.certificateImportBatches.some((batch) => batch.id === "B-NEW"), true);
+      }
+    },
+    {
+      name: "cancellation",
+      mutate(db) {
+        const batch = db.certificateImportBatches.find((row) => row.id === "B-RACE");
+        batch.status = "cancelled";
+        batch.previewJson = [];
+      },
+      verify(db) {
+        assert.equal(db.certificateImportBatches.find((batch) => batch.id === "B-RACE").status, "cancelled");
+      }
+    }
+  ];
+
+  for (const scenario of scenarios) {
+    let persisted = serviceDb();
+    persisted.certificateImportBatches.push({
+      id: "B-RACE",
+      eventId: "E1",
+      createdBy: "U9001",
+      originalName: "race.xlsx",
+      status: "preview",
+      previewJson: [],
+      validCount: 0,
+      errorCount: 0,
+      replaceCount: 0,
+      createdAt: "2026-07-17T00:00:00.000Z",
+      committedAt: null
+    });
+
+    let mutationTail = Promise.resolve();
+    let pauseFirstRead = true;
+    let releaseMutationRead;
+    let mutationReadStarted;
+    const mutationReadGate = new Promise((resolve) => { releaseMutationRead = resolve; });
+    const mutationReadStartedGate = new Promise((resolve) => { mutationReadStarted = resolve; });
+    let releaseExpiredWrite;
+    const expiredWriteGate = new Promise((resolve) => { releaseExpiredWrite = resolve; });
+    const store = {
+      async withMutationLock(handler) {
+        let release;
+        const previous = mutationTail;
+        mutationTail = new Promise((resolve) => { release = resolve; });
+        await previous;
+        try {
+          return await handler();
+        } finally {
+          release();
+        }
+      },
+      async readDb() {
+        const snapshot = structuredClone(persisted);
+        if (pauseFirstRead) {
+          pauseFirstRead = false;
+          mutationReadStarted();
+          await mutationReadGate;
+        }
+        return snapshot;
+      },
+      async writeDb(next) {
+        if (next.certificateImportBatches.find((batch) => batch.id === "B-RACE")?.status === "expired") {
+          await expiredWriteGate;
+        }
+        persisted = structuredClone(next);
+      }
+    };
+    const storage = {
+      removeStagingBatch: async () => {},
+      resolveStagingPath: (_batchId, relativePath) => `C:/uploads/import-staging/${relativePath}`
+    };
+
+    const mutation = store.withMutationLock(async () => {
+      const db = await store.readDb();
+      scenario.mutate(db);
+      await store.writeDb(db);
+    });
+    await mutationReadStartedGate;
+    const list = certificateImports.listActiveCertificateImportPreviews({
+      eventId: "E1",
+      store,
+      makeId: sequentialIds(),
+      now: () => "2026-07-18T12:00:00.000Z",
+      storage
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+
+    releaseMutationRead();
+    await mutation;
+    releaseExpiredWrite();
+    await list;
+
+    assert.doesNotThrow(() => scenario.verify(persisted), scenario.name);
+  }
+});
