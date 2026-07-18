@@ -11,6 +11,7 @@ import {
   updateCertificateMetadata,
   upsertCertificate
 } from "../services/certificates.js";
+import { recordAudit } from "../services/audit.js";
 
 export const defaultCertificateStorage = {
   saveFile: saveCertificateFile,
@@ -330,6 +331,14 @@ export function createCertificatesRouter({
     const certificate = removeCertificate(db, req.params.id);
     const marker = cleanupMarker({ makeId, filePath: certificate.filePath, category: "certificate-manual-deleted", now });
     db.fileCleanupJournal.push(marker);
+    recordAudit(db, {
+      actor: req.user,
+      action: "certificate.delete",
+      targetType: "certificate",
+      targetId: certificate.id,
+      summary: `删除证书：${certificate.title}`,
+      createdAt: now()
+    });
     await store.writeDb(db);
     await finishCommittedCleanup({ store, db, marker, file: certificate, storage, now });
     res.status(204).end();
@@ -338,6 +347,14 @@ export function createCertificatesRouter({
   router.post("/admin/certificates/bulk-status", ...admin, mutationAsyncRoute(async (req, res) => {
     const db = await store.readDb();
     const rows = setCertificateStatuses(db, req.body.ids, req.body.status, now());
+    recordAudit(db, {
+      actor: req.user,
+      action: req.body.status === "published" ? "certificate.publish" : "certificate.withdraw",
+      targetType: "certificate-batch",
+      targetId: rows.map((row) => row.id).sort().join(","),
+      summary: `${req.body.status === "published" ? "发布" : "撤回"} ${rows.length} 张证书`,
+      createdAt: now()
+    });
     await store.writeDb(db);
     res.json({
       rows: rows.map((certificate) => certificatePayload(

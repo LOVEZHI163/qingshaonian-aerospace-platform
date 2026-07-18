@@ -90,6 +90,15 @@ async function runMigrations(pool) {
       } else {
         migration = migration.replace("CREATE TABLE IF NOT EXISTS organization_documents", "CREATE TABLE organization_documents");
       }
+      const auditLogs = await client.query(`
+        SELECT 1 FROM information_schema.tables
+        WHERE table_schema = 'public' AND table_name = 'audit_logs'
+      `);
+      if (auditLogs.rowCount > 0) {
+        migration = migration.replace(/CREATE TABLE IF NOT EXISTS audit_logs \([\s\S]*?\);\s*/, "");
+      } else {
+        migration = migration.replace("CREATE TABLE IF NOT EXISTS audit_logs", "CREATE TABLE audit_logs");
+      }
       for (const tableName of ["auth_rate_buckets", "password_reset_challenges", "file_cleanup_journal", "certificate_import_batches", "certificate_import_errors"]) {
         const existing = await client.query(`
           SELECT 1 FROM information_schema.tables
@@ -304,7 +313,7 @@ export function createPostgresStore(pool) {
     },
     async readDb() {
       const executor = activeContext()?.client || pool;
-      const [events, projects, projectGroups, users, organizations, memberships, registrations, certificates, certificateImportBatches, certificateImportErrors, organizationDocuments, fileCleanupJournal] = await Promise.all([
+      const [events, projects, projectGroups, users, organizations, memberships, registrations, certificates, certificateImportBatches, certificateImportErrors, organizationDocuments, fileCleanupJournal, auditLogs] = await Promise.all([
         executor.query("SELECT * FROM events ORDER BY created_at, id"),
         executor.query("SELECT * FROM projects ORDER BY display_order, id"),
         executor.query("SELECT * FROM project_groups ORDER BY project_id, group_name"),
@@ -321,7 +330,8 @@ export function createPostgresStore(pool) {
         executor.query("SELECT * FROM certificate_import_batches ORDER BY created_at, id"),
         executor.query("SELECT * FROM certificate_import_errors ORDER BY batch_id, row_number, id"),
         executor.query("SELECT * FROM organization_documents ORDER BY uploaded_at DESC, id"),
-        executor.query("SELECT * FROM file_cleanup_journal ORDER BY created_at, id")
+        executor.query("SELECT * FROM file_cleanup_journal ORDER BY created_at, id"),
+        executor.query("SELECT * FROM audit_logs ORDER BY created_at DESC, id DESC")
       ]);
 
       const groupsByProject = projectGroups.rows.reduce((groups, row) => {
@@ -478,7 +488,17 @@ export function createPostgresStore(pool) {
           uploadedAt: iso(row.uploaded_at),
           cleanedAt: row.cleaned_at ? iso(row.cleaned_at) : null
         })),
-        fileCleanupJournal: fileCleanupJournal.rows.map((row) => ({ id: row.id, filePath: row.file_path, category: row.category, attempts: row.attempts, lastError: row.last_error, createdAt: iso(row.created_at), lastAttemptAt: iso(row.last_attempt_at) }))
+        fileCleanupJournal: fileCleanupJournal.rows.map((row) => ({ id: row.id, filePath: row.file_path, category: row.category, attempts: row.attempts, lastError: row.last_error, createdAt: iso(row.created_at), lastAttemptAt: iso(row.last_attempt_at) })),
+        auditLogs: auditLogs.rows.map((row) => ({
+          id: row.id,
+          actorUserId: row.actor_user_id,
+          actorName: row.actor_name,
+          action: row.action,
+          targetType: row.target_type,
+          targetId: row.target_id,
+          summary: row.summary,
+          createdAt: iso(row.created_at)
+        }))
       });
     },
     async writeDb(input) {
@@ -591,6 +611,23 @@ export function createPostgresStore(pool) {
               row.id, row.name, row.code, row.ownerUserId, row.contactName || "", row.contactPhone || "", row.status, row.createdAt,
               row.creditCode, row.reviewStatus, row.rejectReason || "", row.reviewedBy || null, row.reviewedAt || null, row.updatedAt, row.currentDocumentId || null
             ]
+          );
+        }
+
+        for (const row of db.auditLogs || []) {
+          await client.query(
+            `INSERT INTO audit_logs
+              (id, actor_user_id, actor_name, action, target_type, target_id, summary, created_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+             ON CONFLICT (id) DO UPDATE SET
+               actor_user_id = EXCLUDED.actor_user_id,
+               actor_name = EXCLUDED.actor_name,
+               action = EXCLUDED.action,
+               target_type = EXCLUDED.target_type,
+               target_id = EXCLUDED.target_id,
+               summary = EXCLUDED.summary,
+               created_at = EXCLUDED.created_at`,
+            [row.id, row.actorUserId || null, row.actorName, row.action, row.targetType, row.targetId, row.summary, row.createdAt]
           );
         }
 
@@ -758,6 +795,7 @@ export function createPostgresStore(pool) {
         await deleteMissing(client, "projects", "id", db.projects.map((row) => row.id));
         await deleteMissing(client, "memberships", "id", db.memberships.map((row) => row.id));
         await deleteMissing(client, "organizations", "id", db.organizations.map((row) => row.id));
+        await deleteMissing(client, "audit_logs", "id", (db.auditLogs || []).map((row) => row.id));
         await deleteMissing(client, "users", "id", db.users.map((row) => row.id));
 
         await client.query("COMMIT");

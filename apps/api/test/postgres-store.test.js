@@ -27,7 +27,7 @@ test("PostgreSQL store creates normalized tables and seeds an empty database", a
       WHERE table_schema = 'public'
     `);
     const tables = new Set(tableRows.rows.map((row) => row.table_name));
-    for (const name of ["users", "organizations", "memberships", "events", "projects", "project_groups", "registrations", "results", "certificates", "certificate_import_batches", "certificate_import_errors", "auth_rate_buckets", "password_reset_challenges"]) {
+    for (const name of ["users", "organizations", "memberships", "events", "projects", "project_groups", "registrations", "results", "certificates", "certificate_import_batches", "certificate_import_errors", "audit_logs", "auth_rate_buckets", "password_reset_challenges"]) {
       assert.equal(tables.has(name), true, `missing table ${name}`);
     }
 
@@ -57,6 +57,16 @@ test("PostgreSQL store persists mutations, results, and deletions", async () => 
     data.registrations[0].score = "98.5";
     data.registrations[0].resultRecordedAt = "2026-07-16T01:00:00.000Z";
     data.memberships = data.memberships.filter((row) => row.id !== "M1003");
+    data.auditLogs.push({
+      id: "A-PERSIST",
+      actorUserId: "U9001",
+      actorName: "赛事管理员",
+      action: "registration.review",
+      targetType: "registration",
+      targetId: "R20260627001",
+      summary: "报名审核为通过",
+      createdAt: "2026-07-18T08:00:00.000Z"
+    });
 
     await store.writeDb(data);
     const persisted = await store.readDb();
@@ -64,6 +74,16 @@ test("PostgreSQL store persists mutations, results, and deletions", async () => 
     assert.equal(persisted.registrations[0].awardName, "一等奖");
     assert.equal(persisted.registrations[0].score, "98.5");
     assert.equal(persisted.memberships.some((row) => row.id === "M1003"), false);
+    assert.deepEqual(persisted.auditLogs, [{
+      id: "A-PERSIST",
+      actorUserId: "U9001",
+      actorName: "赛事管理员",
+      action: "registration.review",
+      targetType: "registration",
+      targetId: "R20260627001",
+      summary: "报名审核为通过",
+      createdAt: "2026-07-18T08:00:00.000Z"
+    }]);
   });
 });
 

@@ -12,6 +12,7 @@ import { createRegistrationsRouter } from "./routes/registrations.js";
 import { createCertificateImportsRouter } from "./routes/certificate-imports.js";
 import { cleanupExpiredCertificateImportPreviews } from "./services/certificate-imports.js";
 import { createCertificatesRouter } from "./routes/certificates.js";
+import { createDashboardRouter } from "./routes/dashboard.js";
 import { projectForHistoricalRegistration, registrationContext } from "./services/events.js";
 import { replayFileCleanupJournal } from "./services/organizations.js";
 
@@ -243,6 +244,13 @@ app.use("/api", createCertificatesRouter({
   mutationAsyncRoute,
   makeId: id,
   now
+}));
+
+app.use("/api", createDashboardRouter({
+  store: dataStore,
+  requireAdmin,
+  requirePasswordReady,
+  asyncRoute
 }));
 
 app.get("/api/public/features", (_req, res) => {

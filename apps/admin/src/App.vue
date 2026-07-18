@@ -7,6 +7,7 @@ import { loadAdminRegistrations } from "./lib/admin-registrations.js";
 import { createBlobDownloadManager } from "./lib/download.js";
 import AuthPage from "./pages/AuthPage.vue";
 import CertificateManagementPage from "./pages/CertificateManagementPage.vue";
+import DashboardPage from "./pages/DashboardPage.vue";
 import EventManagementPage from "./pages/EventManagementPage.vue";
 import OrganizationManagementPage from "./pages/OrganizationManagementPage.vue";
 import RegistrationManagementPage from "./pages/RegistrationManagementPage.vue";
@@ -544,11 +545,10 @@ onBeforeUnmount(() => certificateDownloads.dispose());
 
       <OrganizationManagementPage v-else-if="currentUser.type === 'admin' && currentView === 'organizations'" />
 
-      <section v-else-if="currentUser.type === 'admin' && currentView === 'overview'" class="panel admin-overview">
-        <h3>管理概览</h3>
-        <p>从左侧进入赛事管理、赛项与组别、报名、证书或用户管理。</p>
-        <div class="overview-metrics"><span>报名 {{ rows.length }} 条</span><span>证书 {{ certificates.length }} 张</span><span>用户 {{ users.length }} 个</span></div>
-      </section>
+      <DashboardPage
+        v-else-if="currentUser.type === 'admin' && currentView === 'overview'"
+        @navigate="navigateAdmin"
+      />
 
       <section v-if="currentView === 'organization' && currentUser.type === 'organization' && !canUseOrganizationConsole" class="panel organization-review-progress">
         <h3>组织审核进度</h3>

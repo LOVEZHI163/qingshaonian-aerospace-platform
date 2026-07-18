@@ -10,6 +10,7 @@ import {
   reviewOrganization,
   validateCurrentCredentialFile
 } from "../services/organizations.js";
+import { recordAudit } from "../services/audit.js";
 
 function publicDocument(document, currentDocumentId = null) {
   if (!document) return null;
@@ -89,6 +90,14 @@ export function createOrganizationsRouter({ store, requireUser, requireAdmin, re
       if (!organization) return res.status(404).json({ error: "组织不存在" });
       organization.status = status;
       organization.updatedAt = now();
+      recordAudit(db, {
+        actor: req.user,
+        action: "organization.status",
+        targetType: "organization",
+        targetId: organization.id,
+        summary: `${organization.name}已${status === "active" ? "启用" : "停用"}`,
+        createdAt: now()
+      });
       await deps.writeDb(db);
       res.json({ organization: publicOrganization(organization) });
     } catch (error) { respondError(error, res, next); }
@@ -104,6 +113,14 @@ export function createOrganizationsRouter({ store, requireUser, requireAdmin, re
         await validateCurrentCredentialFile(credential);
       }
       reviewOrganization(organization, req.body || {}, req.user.id, now());
+      recordAudit(db, {
+        actor: req.user,
+        action: "organization.review",
+        targetType: "organization",
+        targetId: organization.id,
+        summary: `${organization.name}审核为${organization.reviewStatus === "approved" ? "通过" : "驳回"}`,
+        createdAt: now()
+      });
       await deps.writeDb(db);
       res.json({ organization: publicOrganization(organization) });
     } catch (error) { respondError(error, res, next); }

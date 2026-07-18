@@ -10,6 +10,7 @@ import {
   saveCertificateImportFile,
   saveImportStagingFile
 } from "../files/storage.js";
+import { recordAudit } from "./audit.js";
 
 export class CertificateImportError extends Error {
   constructor(status, message) {
@@ -534,6 +535,7 @@ export async function commitCertificateImport({
   store,
   makeId,
   now,
+  actor,
   storage = defaultCertificateImportStorage
 }) {
   const originalDb = await store.readDb();
@@ -620,6 +622,14 @@ export async function commitCertificateImport({
     batch.status = "committed";
     batch.committedAt = now();
     batch.previewJson = [];
+    recordAudit(db, {
+      actor,
+      action: "certificate-import.commit",
+      targetType: "certificate-import",
+      targetId: batch.id,
+      summary: `提交证书导入：新增 ${createdCount} 张，替换 ${replacedCount} 张`,
+      createdAt: batch.committedAt
+    });
     await store.writeDb(db);
   } catch (error) {
     if (error.cleanupTarget?.filePath && !savedFiles.some((file) => file.filePath === error.cleanupTarget.filePath)) {

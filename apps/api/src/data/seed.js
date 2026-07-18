@@ -120,7 +120,8 @@ export const seedDb = {
   ],
   certificates: [],
   certificateImportBatches: [],
-  certificateImportErrors: []
+  certificateImportErrors: [],
+  auditLogs: []
 };
 
 Object.assign(seedDb, {
@@ -182,6 +183,7 @@ export function ensureDbShape(db) {
   db.certificates ||= [];
   db.certificateImportBatches ||= [];
   db.certificateImportErrors ||= [];
+  db.auditLogs ||= [];
   for (const event of db.events) {
     event.dateLabel ||= event.date;
     event.registrationStartAt ||= event.createdAt || REGISTRATION_START_AT;

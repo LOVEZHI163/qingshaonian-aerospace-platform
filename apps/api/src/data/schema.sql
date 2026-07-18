@@ -10,6 +10,17 @@ CREATE TABLE IF NOT EXISTS users (
   created_at TIMESTAMPTZ NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS audit_logs (
+  id TEXT PRIMARY KEY,
+  actor_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  actor_name TEXT NOT NULL,
+  action TEXT NOT NULL,
+  target_type TEXT NOT NULL,
+  target_id TEXT NOT NULL,
+  summary TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS organizations (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
@@ -191,6 +202,8 @@ CREATE TABLE IF NOT EXISTS password_reset_challenges (
 
 CREATE INDEX IF NOT EXISTS auth_rate_buckets_updated_at_idx ON auth_rate_buckets(updated_at);
 CREATE INDEX IF NOT EXISTS password_reset_challenges_expires_at_idx ON password_reset_challenges(expires_at);
+CREATE INDEX IF NOT EXISTS audit_logs_created_at_idx ON audit_logs(created_at DESC);
+CREATE INDEX IF NOT EXISTS audit_logs_target_idx ON audit_logs(target_type, target_id);
 
 CREATE INDEX IF NOT EXISTS registrations_user_id_idx ON registrations(user_id);
 CREATE INDEX IF NOT EXISTS registrations_organization_id_idx ON registrations(organization_id);

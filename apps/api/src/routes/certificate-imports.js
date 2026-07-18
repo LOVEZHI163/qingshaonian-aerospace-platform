@@ -45,7 +45,7 @@ export function createCertificateImportsRouter({
   }));
 
   router.post("/admin/certificate-imports/:id/commit", ...admin, mutationAsyncRoute(async (req, res) => {
-    res.json(await commitCertificateImport({ ...deps, batchId: req.params.id }));
+    res.json(await commitCertificateImport({ ...deps, batchId: req.params.id, actor: req.user }));
   }));
 
   router.delete("/admin/certificate-imports/:id", ...admin, mutationAsyncRoute(async (req, res) => {

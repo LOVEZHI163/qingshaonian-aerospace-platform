@@ -15,6 +15,7 @@ import {
   registrationContextPayload,
   updateRegistrationStatus
 } from "../services/registrations.js";
+import { recordAudit } from "../services/audit.js";
 
 export function createRegistrationsRouter({ store, requireUser, requireAdmin, requirePasswordReady, asyncRoute, makeId, now, clock = () => new Date() }) {
   const router = express.Router();
@@ -136,6 +137,16 @@ export function createRegistrationsRouter({ store, requireUser, requireAdmin, re
     if (!row) return res.status(404).json({ error: "报名记录不存在" });
     updateRegistrationStatus(db, row, req.body, req.user);
     row.updatedAt = now();
+    if (req.user.type === "admin" && ["approved", "rejected"].includes(row.status)) {
+      recordAudit(db, {
+        actor: req.user,
+        action: "registration.review",
+        targetType: "registration",
+        targetId: row.id,
+        summary: `${row.athlete?.name || row.id}的${row.projectName}报名审核为${row.status === "approved" ? "通过" : "驳回"}`,
+        createdAt: now()
+      });
+    }
     await store.writeDb(db);
     res.json({ row });
   }));

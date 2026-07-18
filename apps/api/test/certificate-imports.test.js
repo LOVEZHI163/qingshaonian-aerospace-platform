@@ -169,6 +169,17 @@ test("certificate import preview keeps formal data unchanged, reports mixed rows
     assert.deepEqual(committedCertificates.map((row) => row.slot).sort(), [1, 2]);
     assert.equal(committedCertificates.every((row) => row.status === "draft" && row.source === "import" && row.importBatchId === preview.id), true);
     assert.equal(committedDb.certificateImportBatches.find((batch) => batch.id === preview.id).previewJson.length, 0);
+    assert.deepEqual(committedDb.auditLogs.map((row) => ({
+      actorUserId: row.actorUserId,
+      action: row.action,
+      targetType: row.targetType,
+      targetId: row.targetId
+    })), [{
+      actorUserId: "U9001",
+      action: "certificate-import.commit",
+      targetType: "certificate-import",
+      targetId: preview.id
+    }]);
     await assert.rejects(fs.access(stagingDir));
 
     const duplicateCommit = await fetch(`${baseUrl}/api/admin/certificate-imports/${preview.id}/commit`, withSession(admin.cookie, { method: "POST" }));
