@@ -33,11 +33,12 @@ escaped_phone="$(printf '%s' "$admin_phone" | sed 's/\\/\\\\/g; s/"/\\"/g')"
 escaped_password="$(printf '%s' "$admin_password" | sed 's/\\/\\\\/g; s/"/\\"/g')"
 login_payload="{\"phone\":\"${escaped_phone}\",\"password\":\"${escaped_password}\"}"
 
-assert_status "login" 200 \
-  -c "$cookie_jar" \
-  -H 'Content-Type: application/json' \
-  -d "$login_payload" \
-  "$base_url/api/auth/login"
+printf '%s' "$login_payload" | \
+  assert_status "login" 200 \
+    -c "$cookie_jar" \
+    -H 'Content-Type: application/json' \
+    --data-binary @- \
+    "$base_url/api/auth/login"
 
 unset admin_password escaped_password login_payload
 

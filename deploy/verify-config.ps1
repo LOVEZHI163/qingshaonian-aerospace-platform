@@ -74,6 +74,8 @@ Require-Match $backup '-mtime\s+\+7' "Backup script must remove dumps older than
 Require-Match $backup 'mv\s+(?:--\s+)?"?\$temp' "Backup script must atomically rename a completed dump"
 Require-Match $backup 'pg_restore\s+--list' "Backup script must verify each completed dump"
 Require-Match $backupUploads 'tar\s+-C\s+"\$uploads_dir"\s+-czf' "Uploads backup script must archive the uploads directory"
+Require-Match $backupUploads 'mktemp' "Uploads backup script must use invocation-unique temporary files"
+Require-Match $backupUploads 'ln\s+"\$temp"\s+"\$output"' "Uploads backup script must publish completed archives without overwriting"
 Require-Match $verifyUploadsBackup 'tar\s+-tzf' "Uploads backup verifier must list the archive"
 Require-Match $verifyUploadsBackup 'parts\[part_index\]\s*==\s*"\.\."' "Uploads backup verifier must reject parent traversal paths"
 Require-Match $verifyUploadsBackup 'symbolic or hard link' "Uploads backup verifier must reject links"
@@ -88,6 +90,8 @@ Require-NoMatch $bootstrapSecrets 'htpasswd|aerogp-test-credentials|BASIC_AUTH_U
 Require-NoMatch $remoteSmoke 'CREDENTIALS_FILE|(?m)^\s*auth=|\s-u\s' "Remote smoke tests must use unauthenticated HTTP requests"
 Require-Match $remoteSmoke 'ADMIN_TEST_PASSWORD' "Remote smoke tests must receive the administrator password from the environment"
 Require-Match $remoteSmoke 'cookie' "Remote smoke tests must preserve the authenticated session with a cookie jar"
+Require-Match $remoteSmoke '--data-binary\s+@-' "Remote smoke tests must send login credentials through curl stdin"
+Require-NoMatch $remoteSmoke '(?m)^\s*-d\s+"\$login_payload"' "Remote smoke tests must not put login credentials in curl argv"
 Require-Match $envExample '(?m)^POSTGRES_PASSWORD=' ".env.example must document POSTGRES_PASSWORD"
 Require-NoMatch $envExample '(?m)^BASIC_AUTH_' ".env.example must not document removed Basic Auth variables"
 if ([regex]::Matches($compose, 'image:\s+m\.daocloud\.io/docker\.io/library/postgres:16-alpine').Count -lt 2) {
