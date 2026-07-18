@@ -268,6 +268,9 @@ export function createCertificatesRouter({
     const db = structuredClone(originalDb);
     const registration = db.registrations.find((row) => row.id === req.params.id);
     if (!registration) throw new CertificateError(404, "报名记录不存在");
+    if (registration.status !== "approved") {
+      throw new CertificateError(409, "报名审核通过后才能录入证书");
+    }
     if (!req.file) throw new CertificateError(422, "证书文件不能为空");
 
     const slot = Number(req.params.slot);

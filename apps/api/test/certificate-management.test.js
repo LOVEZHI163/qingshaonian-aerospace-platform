@@ -48,10 +48,18 @@ async function responseJson(response) {
   return payload;
 }
 
+async function approveRegistration(dbPath, registrationId = "R20260627001") {
+  const db = JSON.parse(await fs.readFile(dbPath, "utf8"));
+  const registration = db.registrations.find((row) => row.id === registrationId);
+  registration.status = "approved";
+  await fs.writeFile(dbPath, JSON.stringify(db, null, 2));
+}
+
 function manualDb() {
   return {
     registrations: [{
       id: "R1",
+      status: "approved",
       userId: "U1",
       organizationId: null,
       athlete: { name: "测试运动员" },
@@ -163,6 +171,7 @@ test("admin certificate list filters, sorts stably, and returns bounded paging m
 test("manual certificate management uploads both slots, edits, replaces, deletes, and changes status in bulk", async () => {
   await withTestServer(async ({ baseUrl, dbPath }) => {
     const admin = await loginAs(baseUrl, "13900000000", "admin123");
+    await approveRegistration(dbPath);
 
     const firstUpload = await uploadCertificate(baseUrl, admin.cookie, "R20260627001", 1, { title: "一等奖图片" });
     const secondUpload = await uploadCertificate(baseUrl, admin.cookie, "R20260627001", 2, {
@@ -280,9 +289,27 @@ test("manual certificate management uploads both slots, edits, replaces, deletes
   }, { prefix: "manual-certificate-management-crud-" });
 });
 
-test("manual certificate management applies the same file authorization to preview and download", async () => {
-  await withTestServer(async ({ baseUrl }) => {
+test("manual certificate upload rejects a registration that is not approved", async () => {
+  await withTestServer(async ({ baseUrl, dbPath }) => {
     const admin = await loginAs(baseUrl, "13900000000", "admin123");
+    const db = JSON.parse(await fs.readFile(dbPath, "utf8"));
+    const registration = db.registrations.find((row) => row.id === "R20260627001");
+    registration.status = "pending";
+    await fs.writeFile(dbPath, JSON.stringify(db, null, 2));
+
+    const response = await uploadCertificate(baseUrl, admin.cookie, registration.id, 1, { title: "不应保存" });
+    assert.equal(response.status, 409);
+    assert.equal((await responseJson(response)).error, "报名审核通过后才能录入证书");
+
+    const persisted = JSON.parse(await fs.readFile(dbPath, "utf8"));
+    assert.equal(persisted.certificates.some((row) => row.registrationId === registration.id), false);
+  }, { prefix: "manual-certificate-approved-only-" });
+});
+
+test("manual certificate management applies the same file authorization to preview and download", async () => {
+  await withTestServer(async ({ baseUrl, dbPath }) => {
+    const admin = await loginAs(baseUrl, "13900000000", "admin123");
+    await approveRegistration(dbPath);
     const athleteOwner = await loginAs(baseUrl, "13800000001", "123456");
     const organizationOwner = await loginAs(baseUrl, "13800000011", "123456");
     const outsiderRegistration = await fetch(`${baseUrl}/api/auth/register`, {
@@ -340,6 +367,7 @@ test("manual certificate management applies the same file authorization to previ
 test("manual certificate management rejects invalid uploads, preserves cleaned history metadata, and never serves a cleaned file", async () => {
   await withTestServer(async ({ baseUrl, dbPath, tempDir }) => {
     const admin = await loginAs(baseUrl, "13900000000", "admin123");
+    await approveRegistration(dbPath);
     const athleteOwner = await loginAs(baseUrl, "13800000001", "123456");
     const organizationOwner = await loginAs(baseUrl, "13800000011", "123456");
 
@@ -488,6 +516,7 @@ test("manual certificate management rolls back a new file and journals it when d
 test("manual certificate management whitelists certificate fields in admin, owner, organization, and single payloads", async () => {
   await withTestServer(async ({ baseUrl, dbPath }) => {
     const admin = await loginAs(baseUrl, "13900000000", "admin123");
+    await approveRegistration(dbPath);
     const athleteOwner = await loginAs(baseUrl, "13800000001", "123456");
     const organizationOwner = await loginAs(baseUrl, "13800000011", "123456");
     const upload = await uploadCertificate(baseUrl, admin.cookie, "R20260627001", 1, { title: "白名单证书" });
