@@ -337,7 +337,7 @@ test("manual certificate management applies the same file authorization to previ
   }, { prefix: "manual-certificate-management-access-" });
 });
 
-test("manual certificate management rejects invalid uploads and never serves a cleaned file", async () => {
+test("manual certificate management rejects invalid uploads, preserves cleaned history metadata, and never serves a cleaned file", async () => {
   await withTestServer(async ({ baseUrl, dbPath, tempDir }) => {
     const admin = await loginAs(baseUrl, "13900000000", "admin123");
     const athleteOwner = await loginAs(baseUrl, "13800000001", "123456");
@@ -381,9 +381,15 @@ test("manual certificate management rejects invalid uploads and never serves a c
     assert.equal(Object.hasOwn(cleaned, "previewUrl"), false);
     assert.equal(Object.hasOwn(cleaned, "downloadUrl"), false);
     const ownRows = (await responseJson(await fetch(`${baseUrl}/api/me/certificates`, withSession(athleteOwner.cookie)))).rows;
-    assert.equal(ownRows.some((row) => row.id === certificate.id), false);
+    const ownCleaned = ownRows.find((row) => row.id === certificate.id);
+    assert.ok(ownCleaned);
+    assert.equal(ownCleaned.cleanedAt, "2026-07-17T12:00:00.000Z");
+    assert.equal(Object.hasOwn(ownCleaned, "downloadUrl"), false);
     const organizationRows = (await responseJson(await fetch(`${baseUrl}/api/organizations/O1001/certificates`, withSession(organizationOwner.cookie)))).rows;
-    assert.equal(organizationRows.some((row) => row.id === certificate.id), false);
+    const organizationCleaned = organizationRows.find((row) => row.id === certificate.id);
+    assert.ok(organizationCleaned);
+    assert.equal(organizationCleaned.cleanedAt, "2026-07-17T12:00:00.000Z");
+    assert.equal(Object.hasOwn(organizationCleaned, "downloadUrl"), false);
 
     const files = await fs.readdir(path.join(tempDir, "uploads", "certificates"));
     assert.equal(files.length, 1);

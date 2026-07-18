@@ -1,0 +1,14 @@
+.registration-records-page table,
+.my-certificates-page table,
+.user-detail-panel table {
+  min-width: 940px;
+}
+
+.user-management-page .user-table td:last-child {
+  min-width: 300px;
+}
+
+.unavailable-file {
+  color: var(--red);
+  font-size: 13px;
+}

@@ -1,0 +1,16 @@
+.user-filter-grid {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) repeat(2, minmax(130px, 180px));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.organization-console-page .inline-form {
+  margin-bottom: 18px;
+}
+
+@media (max-width: 760px) {
+  .user-filter-grid {
+    grid-template-columns: 1fr;
+  }
+}

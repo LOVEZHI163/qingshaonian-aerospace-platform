@@ -142,7 +142,7 @@ describe("App session integration", () => {
 
   it("does not retain the unreachable legacy single-slot and batch certificate implementation", () => {
     expect(appSource).not.toMatch(/uploadCertificateBatch|batchUploadForm|certificateDraft|registrationEditForm/);
-    expect(appSource.match(/currentView === 'registration' && currentUser\.type === 'admin'/g)).toHaveLength(1);
+    expect(appSource.match(/<RegistrationManagementPage/g)).toHaveLength(1);
   });
 
   it("switches an active user to the non-skippable password screen", async () => {

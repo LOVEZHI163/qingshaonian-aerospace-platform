@@ -376,7 +376,7 @@ export function createCertificatesRouter({
     const db = await store.readDb();
     const rows = db.certificates
       .filter((certificate) => {
-        if (certificate.cleanedAt || certificate.status !== "published") return false;
+        if (certificate.status !== "published") return false;
         return db.registrations.find((row) => row.id === certificate.registrationId)?.userId === req.user.id;
       })
       .map((certificate) => certificatePayload(certificate, db.registrations.find((row) => row.id === certificate.registrationId)));
@@ -391,7 +391,7 @@ export function createCertificatesRouter({
       .filter((row) => row.organizationId === req.params.id && memberIds.has(row.userId))
       .map((row) => row.id));
     const rows = db.certificates
-      .filter((certificate) => !certificate.cleanedAt && certificate.status === "published" && registrationIds.has(certificate.registrationId))
+      .filter((certificate) => certificate.status === "published" && registrationIds.has(certificate.registrationId))
       .map((certificate) => certificatePayload(certificate, db.registrations.find((row) => row.id === certificate.registrationId)));
     res.json({ rows });
   }));

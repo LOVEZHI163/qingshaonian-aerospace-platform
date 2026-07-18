@@ -1,0 +1,31 @@
+.user-shell > main {
+  min-width: 0;
+}
+
+.user-detail-panel,
+.organization-console-page,
+.organization-review-progress,
+.registration-records-page,
+.my-certificates-page {
+  margin-top: 18px;
+}
+
+.user-detail-panel h4,
+.organization-console-page h4 {
+  margin: 18px 0 10px;
+}
+
+.user-detail-panel ul {
+  margin: 0;
+  padding-left: 20px;
+}
+
+@media (max-width: 900px) {
+  .user-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .user-shell aside {
+    position: static;
+  }
+}
