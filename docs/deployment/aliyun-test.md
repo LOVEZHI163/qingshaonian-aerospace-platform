@@ -324,6 +324,20 @@ docker compose up -d --build
    - 资源清理：**线上数据条件未满足，未直接验收**。线上只有一届当前赛事，没有满足“已归档且非当前”条件的赛事；为避免修改赛事数据，未新增、复制、归档或删除赛事。补充证据仅为：已部署生产 bundle 包含“历史赛事资源”“清理附件”“彻底删除赛事”三个字符串，管理端全量测试中的 `ResourceCleanupPanel` 组件测试通过；这些补充证据不等价替代真实页面验收。
    - 页面与控制台错误：通过；页面错误消息 0 条，浏览器控制台 error 0 条。
 
+### 证书管理三模块增量部署
+
+- 实现版本：`2d3b262c199bdaa9b975e44b0890dc7a7038bc0a`（`fix: harden manual certificate editing`）。本次只增量安装 6 个生产文件：`apps/api/src/services/registrations.js`、`apps/api/src/routes/certificates.js`、`apps/admin/src/components/ManualCertificateEntryPanel.vue`、`apps/admin/src/components/CertificateSlotEditor.vue`、`apps/admin/src/pages/CertificateManagementPage.vue`、`apps/admin/src/styles/admin.css`；临时目录文件清单恰为这 6 个文件，且远端 SHA-256 与本地逐一一致。
+- 本地发布门禁：API 证书手动管理聚焦测试 9/9 通过；管理端 4 个证书管理测试文件 43/43 通过；管理端生产构建成功（37 个模块）；`deploy/verify-config.ps1` 通过；`git diff --check` 无输出。全量数量引用同一最终实现提交的部署前统一修复报告：API 184/184、管理端 118/118。
+- 部署前数据库备份：`/backups/aerogp-20260718T140444Z.dump`，备份脚本退出码 0；只读复核大小 40,004 字节。
+- 部署前上传文件备份：`/backups/uploads/aerogp-uploads-20260718T140459Z-akPNNc.tar.gz`，脚本输出 `Uploads backup verified` 且退出码 0；只读复核大小 1,772,092 字节。
+- 预检：`deploy/preflight-admin-upgrade.sh` 退出码 0，输出 `Upgrade preflight passed.`；确认三道门禁后才建立 `/tmp/aerogp-certificate-sections` 并上传文件。
+- 构建与启动：`docker compose build api web` 退出码 0，`aerogp-api` 与 `aerogp-web` 均 Built；`docker compose up -d --no-deps api web` 退出码 0，只重建 API/Web，未删除或重建 PostgreSQL、上传卷、备份或 `.env`。
+- 部署后状态：`postgres`、`api`、`web`、`backup` 均为 `healthy`。API 日志显示服务监听 4300，仅有既有 `pg` deprecation warning；Web 日志显示 nginx 正常启动，无应用错误。
+- 认证冒烟：brief 原命令未注入 `ADMIN_TEST_PASSWORD`，因此第一次在任何业务断言前退出 1；随后通过 SSH 标准输入安全注入现有测试密码重跑，`home`、`admin`、`event-api`、`login`、`authenticated-admin-events` 均为 200，`unauthenticated-admin-events` 为预期 401。密码未出现在命令参数、输出或文档中。
+- HTTP：本机请求 `http://47.99.181.222/admin/` 返回 200。
+- 浏览器验收：刷新加载新 bundle 后，默认显示证书列表；“证书列表 / 手动录入 / 批量导入”三页签切换正确；按“周星言”查询得到带赛事、学校、组别、赛项和报名号的已通过报名；选中后成绩三个字段与两个证书位置均显示可编辑控件；从列表切到手动录入再切回后，状态 `未发布` 与姓名筛选 `周星言` 均保持。
+- 浏览器补充证据与未完成项：姓名查询对应请求明确携带 `status=approved` 并返回 200；模板下载按钮已触发，虽然浏览器控制通道未捕获 download event，Web 访问日志确认模板请求返回 200、响应 7,307 字节。线上现有数据没有同名多赛项样本，未实证该数据分支；为遵守“不上传测试文件”，未在真实页面提交工作簿预检查。页面无应用 error；相关预检查能力仍有本地全量与聚焦测试覆盖，但这些证据不替代真实页面未完成项。
+
 本记录对应测试环境。正式域名上线前仍需完成备案、HTTPS 和测试账号更换。
 
 ## 域名上线前
