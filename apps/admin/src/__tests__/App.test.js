@@ -70,7 +70,7 @@ describe("App session integration", () => {
     expect(ordinary.find('[data-testid="admin-shell"]').exists()).toBe(false);
   });
 
-  it("shows overview by default and exposes event and project workflows", async () => {
+  it("shows overview by default and exposes the event settings workflow", async () => {
     sessionUser.value = { id: "A1", type: "admin", name: "管理员", mustChangePassword: false };
     const wrapper = mount(App);
     await flushPromises();
@@ -79,9 +79,8 @@ describe("App session integration", () => {
     await wrapper.get('[data-nav="events"]').trigger("click");
     await flushPromises();
     expect(wrapper.find(".event-management").exists()).toBe(true);
-    await wrapper.get('[data-nav="projects"]').trigger("click");
-    await flushPromises();
-    expect(wrapper.find(".event-management").exists()).toBe(true);
+    expect(wrapper.find('[data-nav="projects"]').exists()).toBe(false);
+    expect(appSource).not.toContain("['events', 'projects']");
   });
 
   it("opens the complete certificate management page from administrator navigation", async () => {

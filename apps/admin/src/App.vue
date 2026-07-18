@@ -139,7 +139,7 @@ onMounted(async () => {
     <template #header><div><strong>{{ currentUser.name }}</strong><span>{{ eventData.event.name || "赛事管理平台" }}</span></div><button type="button" class="ghost" @click="logout">退出登录</button></template>
     <p v-if="message" class="message">{{ message }}</p>
     <DashboardPage v-if="currentView === 'overview'" @navigate="navigateAdmin" />
-    <EventManagementPage v-else-if="['events', 'projects'].includes(currentView)" @event-changed="loadEvent" />
+    <EventManagementPage v-else-if="currentView === 'events'" @event-changed="loadEvent" />
     <OrganizationManagementPage v-else-if="currentView === 'organizations'" />
     <RegistrationManagementPage v-else-if="currentView === 'registration'" @open-certificates="openCertificateManagement" />
     <CertificateManagementPage v-else-if="currentView === 'certificates'" :initial-registration-id="certificateRegistrationId" :initial-event-id="certificateEventId" />

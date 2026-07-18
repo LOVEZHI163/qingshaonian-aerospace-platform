@@ -68,10 +68,10 @@ describe("role based application navigation", () => {
     mounted = [];
   });
 
-  it("shows all seven administrator modules", async () => {
+  it("shows all six administrator modules", async () => {
     const wrapper = await mountFor({ id: "A1", type: "admin", name: "管理员", mustChangePassword: false }); mounted.push(wrapper);
     const labels = wrapper.findAll("[data-nav]").map((item) => item.text());
-    expect(labels).toEqual(["概览", "赛事管理", "赛项与组别", "组织用户", "报名管理", "证书管理", "普通用户管理"]);
+    expect(labels).toEqual(["概览", "赛事设置", "组织用户", "报名管理", "证书管理", "普通用户管理"]);
   });
 
   it("limits ordinary users to registration, records and certificates", async () => {
