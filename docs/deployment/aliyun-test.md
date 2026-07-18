@@ -52,8 +52,10 @@ install -d -m 700 /opt/aerogp /opt/aerogp/backups
 cd /opt/aerogp
 umask 077
 DB_PASSWORD="$(openssl rand -hex 32)"
-printf 'POSTGRES_DB=aerogp\nPOSTGRES_USER=aerogp\nPOSTGRES_PASSWORD=%s\n' "$DB_PASSWORD" > .env
-unset DB_PASSWORD
+SESSION_SECRET="$(openssl rand -hex 32)"
+printf 'POSTGRES_DB=aerogp\nPOSTGRES_USER=aerogp\nPOSTGRES_PASSWORD=%s\nSESSION_SECRET=%s\n' \
+  "$DB_PASSWORD" "$SESSION_SECRET" > .env
+unset DB_PASSWORD SESSION_SECRET
 chmod 600 .env
 ```
 
@@ -102,7 +104,16 @@ docker compose ps
 docker compose logs --tail=200 api web
 ```
 
-更新应用：
+更新应用前必须先备份数据库和上传文件，并运行升级预检。预检只读取现状，不会启动或替换容器：
+
+```bash
+cd /opt/aerogp
+docker compose run --rm backup /bin/sh /scripts/backup-postgres.sh once
+docker compose run --rm backup /bin/sh /scripts/backup-uploads.sh once
+/bin/sh deploy/preflight-admin-upgrade.sh
+```
+
+只有看到 `Upgrade preflight passed.` 后才继续切换版本：
 
 ```bash
 cd /opt/aerogp
@@ -111,7 +122,7 @@ docker compose up -d
 docker compose ps
 ```
 
-手工生成一次备份并验证：
+手工生成并验证数据库与上传文件备份：
 
 ```bash
 cd /opt/aerogp
@@ -119,9 +130,28 @@ docker compose run --rm backup /bin/sh /scripts/backup-postgres.sh once
 latest="$(find backups -maxdepth 1 -type f -name 'aerogp-*.dump' | sort | tail -n 1)"
 test -n "$latest" && test -s "$latest"
 docker compose run --rm backup pg_restore --list "/backups/$(basename "$latest")"
+
+docker compose run --rm backup /bin/sh /scripts/backup-uploads.sh once
+latest_uploads="$(find backups/uploads -maxdepth 1 -type f -name 'aerogp-uploads-*.tar.gz' | sort | tail -n 1)"
+test -n "$latest_uploads" && test -s "$latest_uploads"
+docker compose run --rm backup /bin/sh /scripts/verify-uploads-backup.sh \
+  "/backups/uploads/$(basename "$latest_uploads")"
 ```
 
-常驻 `backup` 服务每天自动执行一次 `pg_dump`，并删除 7 天前的 `.dump` 文件。
+常驻 `backup` 服务每天自动执行一次 `pg_dump`，并删除 7 天前的 `.dump` 文件。上传文件在每次升级前手工备份；脚本同样删除 7 天前的上传归档。`backup` 容器以只读方式挂载上传卷，不能修改业务文件。
+
+部署完成后，用 root-only 环境变量传入测试管理员密码执行冒烟测试。命令和脚本都不会打印密码：
+
+```bash
+cd /opt/aerogp
+umask 077
+read -r -s -p '测试管理员密码: ' ADMIN_TEST_PASSWORD
+export ADMIN_TEST_PASSWORD
+/bin/sh deploy/remote-smoke-test.sh
+unset ADMIN_TEST_PASSWORD
+```
+
+脚本会检查首页、管理端和公开接口，随后使用 cookie 登录并验证管理接口，同时确认无 cookie 的请求返回 401。正式部署后必须更换默认管理员密码。
 
 ## 恢复与回滚
 
@@ -141,6 +171,8 @@ docker compose up -d --build
 ```
 
 不要删除 `aerogp_postgres_data` 或 `aerogp_uploads_data` volume。若数据库结构已经变化，必须先验证旧版应用是否兼容当前数据库。
+
+恢复上传文件前，先停止 API、额外备份当前上传卷，并再次运行 `verify-uploads-backup.sh`。验证通过后只能把归档解压到空的临时目录，人工核对文件清单后再复制到上传卷；不要直接对正在使用的卷执行覆盖解压。归档校验会拒绝绝对路径和包含 `..` 路径段的文件。
 
 ## 域名上线前
 

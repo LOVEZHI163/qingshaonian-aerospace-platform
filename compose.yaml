@@ -89,7 +89,8 @@ services:
     command: ["/bin/sh", "/scripts/backup-postgres.sh"]
     volumes:
       - ./deploy:/scripts:ro
-      - ./backups:/backups
+      - ./backups:/backups:rw
+      - uploads_data:/uploads:ro
     depends_on:
       postgres:
         condition: service_healthy

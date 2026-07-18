@@ -11,6 +11,7 @@ backup_once() {
   rm -f "$temp"
   pg_dump --format=custom --no-owner --no-privileges --file="$temp"
   test -s "$temp"
+  pg_restore --list "$temp" >/dev/null
   mv "$temp" "$target"
   find /backups -type f -name 'aerogp-*.dump' -mtime +7 -delete
   echo "Created $target"
