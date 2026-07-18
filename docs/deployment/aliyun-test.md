@@ -188,6 +188,22 @@ docker compose up -d --build
 - 页面验收：管理员、普通用户、组织用户三种角色的菜单和页面均正常
 - 证书验收：使用 Excel 内嵌 PNG 完成预检查（有效 1、错误 0），导入为未发布证书后由管理员批量发布成功
 
+### 赛事设置导航增量部署
+
+- 已部署代码版本：`a78044c`（部署前执行 `git rev-parse --short HEAD` 的实际输出）
+- 本地回归：`npm.cmd test -w apps/admin` 通过，共 18 个测试文件、99 项测试；`npm.cmd run build` 成功完成 Web（34 个模块）和 Admin（36 个模块）两个 Vite 生产构建；`git diff --check` 无输出
+- 升级前数据库备份：`backups/aerogp-20260718T094845Z.dump`
+- 升级前上传文件备份：`backups/uploads/aerogp-uploads-20260718T094858Z-mNBGap.tar.gz`，脚本输出 `Uploads backup verified`
+- 升级预检：`deploy/preflight-admin-upgrade.sh` 输出 `Upgrade preflight passed.`
+- 增量文件：只上传并安装 `apps/admin/src/App.vue`、`apps/admin/src/components/AdminShell.vue`、`apps/admin/src/pages/EventManagementPage.vue`、`apps/admin/src/styles/admin.css`
+- 服务重建：只执行 `docker compose build web` 和 `docker compose up -d --no-deps web`；`web` 容器由 `a8dd1e50a5b4…` 更新为 `1f56c2a0e00b…`，`postgres` 仍为 `7cd1887860c0…`、`api` 仍为 `c2ee6753ff9d…`，确认 PostgreSQL、API 和数据卷均未重建或删除
+- 服务状态：`postgres`、`api`、`web`、`backup` 四个服务均为 `healthy`；`http://127.0.0.1/admin/` 返回 `200`；公网监听仍只有 TCP 22 和 80（本地 DNS stub 53 仅绑定 `127.0.0.53`）
+- 浏览器验收 1：管理员侧栏只有“赛事设置”，没有第二个“赛项与组别”入口，通过
+- 浏览器验收 2：进入“赛事设置”后默认选中并显示“赛事信息”，通过
+- 浏览器验收 3：点击内部“赛项与组别”后，首屏显示“管理赛事”选择器和 11 个赛项列表，通过
+- 浏览器验收 4：切回“赛事信息”后仍选中“2026年温州市青少年航空航天创新比赛”，通过
+- 浏览器验收 5：真实页面确认三个报名模式按钮、保存/复制/归档赛事操作、赛项名称/类别/类型/显示顺序、四个组别、“必须填写指导老师”，以及有报名赛项显示“停用”、无报名赛项显示“删除”的保护分支均存在；浏览器控制台与页面错误均为空。当前数据只有一届当前赛事，历史赛事资源清理入口不能直接在页面展开；已额外确认部署产物包含“历史赛事资源”“清理附件”“彻底删除赛事”，管理端全量测试中的对应组件回归也通过
+
 本记录对应测试环境。正式域名上线前仍需完成备案、HTTPS 和测试账号更换。
 
 ## 域名上线前
