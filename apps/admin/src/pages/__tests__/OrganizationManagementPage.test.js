@@ -135,4 +135,27 @@ describe("OrganizationManagementPage", () => {
 
     expect(revoke).not.toHaveBeenCalled();
   });
+
+  it("allows credential cleanup only from a disabled organization detail with exact-name confirmation", async () => {
+    const disabled = { ...organization, status: "disabled", reviewStatus: "approved" };
+    apiMock.mockImplementation(async (path, options = {}) => {
+      if (path === "/api/admin/organizations" && !options.method) return { rows: [disabled] };
+      if (path === "/api/admin/registrations?pageSize=100") return { rows: [], total: 0, page: 1, pageSize: 100 };
+      if (path === "/api/users") return { rows: [] };
+      if (path === "/api/admin/organizations/O1/credential-cleanup") return { deletedFiles: 1, failedFiles: [] };
+      return { rows: [] };
+    });
+    const wrapper = mount(OrganizationManagementPage);
+    await flushPromises();
+    await wrapper.get("button.mini").trigger("click");
+    await wrapper.get('[data-action="open-credential-cleanup"]').trigger("click");
+    await wrapper.get('[data-testid="danger-confirm-name"]').setValue(disabled.name);
+    await wrapper.get('[data-action="confirm-danger"]').trigger("click");
+    await flushPromises();
+
+    expect(apiMock).toHaveBeenCalledWith("/api/admin/organizations/O1/credential-cleanup", {
+      method: "POST",
+      body: JSON.stringify({ confirmName: disabled.name })
+    });
+  });
 });

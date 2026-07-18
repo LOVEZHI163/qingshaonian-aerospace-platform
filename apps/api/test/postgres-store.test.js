@@ -136,6 +136,36 @@ test("PostgreSQL store switches the unique current event and removes projects wi
   });
 });
 
+test("PostgreSQL store removes events omitted by a committed snapshot", async () => {
+  await withStore(async (store, pool) => {
+    const data = await store.readDb();
+    data.events.push({
+      id: "event-removable",
+      name: "可彻底删除赛事",
+      theme: "历史赛事",
+      dateLabel: "2025年",
+      venue: "温州",
+      contact: "组委会",
+      registrationStartAt: "2025-01-01T00:00:00.000Z",
+      registrationEndAt: "2025-02-01T00:00:00.000Z",
+      registrationMode: "automatic",
+      status: "archived",
+      isCurrent: false,
+      archivedAt: "2025-03-01T00:00:00.000Z",
+      createdAt: "2025-01-01T00:00:00.000Z",
+      updatedAt: "2025-03-01T00:00:00.000Z"
+    });
+    await store.writeDb(data);
+
+    const next = await store.readDb();
+    next.events = next.events.filter((event) => event.id !== "event-removable");
+    await store.writeDb(next);
+
+    assert.equal((await pool.query("SELECT 1 FROM events WHERE id = $1", ["event-removable"])).rowCount, 0);
+    assert.equal((await store.readDb()).events.some((event) => event.id === "event-removable"), false);
+  });
+});
+
 test("PostgreSQL restart preserves an administrator-selected project group subset", async () => {
   const memory = newDb({ autoCreateForeignKeyIndices: true });
   const { Pool } = memory.adapters.createPg();

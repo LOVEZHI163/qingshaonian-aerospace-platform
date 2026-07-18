@@ -181,4 +181,19 @@ describe("EventManagementPage", () => {
     expect(confirm).toHaveBeenCalledTimes(2);
     expect(apiMock).toHaveBeenCalledWith("/api/admin/events/E1/archive", { method: "POST" });
   });
+
+  it("shows resource cleanup controls only for the selected archived event", async () => {
+    const archived = { ...event, id: "E-OLD", name: "2025赛事", status: "archived", isCurrent: false };
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/admin/events") return { rows: [archived], projects: [] };
+      if (path === "/api/admin/registrations?pageSize=100") return { rows: [], total: 0, page: 1, pageSize: 100 };
+      if (path === "/api/admin/events/E-OLD/storage") return { certificateFiles: 1, importFiles: 0, totalBytes: 100 };
+      return { row: archived };
+    });
+    const wrapper = mount(EventManagementPage);
+    await flushPromises();
+
+    expect(wrapper.get('[data-action="open-cleanup"]').exists()).toBe(true);
+    expect(wrapper.get('[data-action="open-delete"]').exists()).toBe(true);
+  });
 });

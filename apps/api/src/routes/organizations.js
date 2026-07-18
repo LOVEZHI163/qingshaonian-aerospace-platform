@@ -11,6 +11,7 @@ import {
   validateCurrentCredentialFile
 } from "../services/organizations.js";
 import { recordAudit } from "../services/audit.js";
+import { cleanupOrganizationCredentials } from "../services/resource-cleanup.js";
 
 function publicDocument(document, currentDocumentId = null) {
   if (!document) return null;
@@ -88,6 +89,12 @@ export function createOrganizationsRouter({ store, requireUser, requireAdmin, re
       const db = await deps.readDb();
       const organization = db.organizations.find((row) => row.id === req.params.id);
       if (!organization) return res.status(404).json({ error: "组织不存在" });
+      if (status === "active") {
+        const credential = db.organizationDocuments.find((row) => row.id === organization.currentDocumentId && !row.cleanedAt);
+        if (!credential || organization.reviewStatus !== "approved") {
+          throw new OrganizationError(409, "重新启用前必须上传新资质并重新审核通过");
+        }
+      }
       organization.status = status;
       organization.updatedAt = now();
       recordAudit(db, {
@@ -101,6 +108,17 @@ export function createOrganizationsRouter({ store, requireUser, requireAdmin, re
       await deps.writeDb(db);
       res.json({ organization: publicOrganization(organization) });
     } catch (error) { respondError(error, res, next); }
+  }));
+
+  router.post("/admin/organizations/:id/credential-cleanup", requireAdmin, requirePasswordReady, asyncRoute(async (req, res) => {
+    res.json(await cleanupOrganizationCredentials({
+      store,
+      organizationId: req.params.id,
+      confirmName: req.body?.confirmName,
+      actor: req.user,
+      makeId,
+      now
+    }));
   }));
 
   router.patch("/admin/organizations/:id/review", requireAdmin, requirePasswordReady, asyncRoute(async (req, res, next) => {

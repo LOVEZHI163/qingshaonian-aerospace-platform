@@ -885,6 +885,33 @@ em.invited {
   width: min(100%, 600px);
 }
 
+.danger-confirmation-dialog {
+  width: min(100%, 560px);
+}
+
+.resource-cleanup-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.resource-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.resource-summary span,
+.cleanup-confirmation {
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.resource-summary strong { display: block; font-size: 20px; }
+.cleanup-confirmation label { margin-right: 16px; }
+.cleanup-confirmation .form-actions { margin-top: 12px; }
+
 .organization-dialog dl {
   display: grid;
   grid-template-columns: 150px 1fr;
@@ -1003,6 +1030,10 @@ em.invited {
   .certificate-filter-grid { grid-template-columns: repeat(3, minmax(140px, 1fr)); }
   .result-editor { grid-template-columns: repeat(3, minmax(120px, 1fr)); }
   .result-editor button { grid-column: 1 / -1; }
+}
+
+@media (max-width: 760px) {
+  .resource-summary { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 760px) {

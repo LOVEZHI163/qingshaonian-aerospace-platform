@@ -3,6 +3,7 @@ import { computed, onMounted, reactive, ref } from "vue";
 
 import { ApiError, api } from "../lib/api.js";
 import { loadAdminRegistrations } from "../lib/admin-registrations.js";
+import ResourceCleanupPanel from "../components/ResourceCleanupPanel.vue";
 
 const emit = defineEmits(["event-changed"]);
 const GROUPS = ["小学低段", "小学高段", "中学组", "职高/高中组"];
@@ -195,6 +196,13 @@ async function archiveSelected() {
   await perform(() => api(`/api/admin/events/${selectedId.value}/archive`, { method: "POST" }), "赛事已归档");
 }
 
+async function eventDeleted() {
+  selectedId.value = "";
+  await loadEvents({ preserveSelection: false });
+  success.value = "历史赛事已彻底删除";
+  emit("event-changed");
+}
+
 function editProject(row) {
   Object.assign(projectForm, emptyProject(), row, { allowedGroups: [...(row.allowedGroups || [])] });
 }
@@ -319,6 +327,11 @@ onMounted(() => loadEvents({ preserveSelection: false }));
             <div class="form-actions"><button class="primary" :disabled="saving">{{ projectForm.id ? "保存赛项" : "新增赛项" }}</button><button v-if="projectForm.id" type="button" @click="Object.assign(projectForm, emptyProject())">取消编辑</button></div>
           </form>
         </section>
+        <ResourceCleanupPanel
+          v-if="selectedEvent"
+          :event="selectedEvent"
+          @deleted="eventDeleted"
+        />
       </div>
     </div>
   </section>

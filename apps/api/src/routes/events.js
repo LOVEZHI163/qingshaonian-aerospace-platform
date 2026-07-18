@@ -12,6 +12,7 @@ import {
   updateProject
 } from "../services/events.js";
 import { recordAudit } from "../services/audit.js";
+import { deleteArchivedEvent } from "../services/resource-cleanup.js";
 
 export function createEventsRouter({ store, requireAdmin, requirePasswordReady, asyncRoute, makeId, clock = () => new Date() }) {
   const router = express.Router();
@@ -83,6 +84,17 @@ export function createEventsRouter({ store, requireAdmin, requirePasswordReady, 
     });
     await store.writeDb(db);
     res.json({ row });
+  }));
+
+  router.delete("/admin/events/:id", ...admin, asyncRoute(async (req, res) => {
+    res.json(await deleteArchivedEvent({
+      store,
+      eventId: req.params.id,
+      confirmName: req.body?.confirmName,
+      actor: req.user,
+      makeId,
+      now: () => clock().toISOString()
+    }));
   }));
 
   router.post("/admin/events/:eventId/projects", ...admin, asyncRoute(async (req, res) => {

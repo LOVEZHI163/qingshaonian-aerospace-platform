@@ -793,6 +793,7 @@ export function createPostgresStore(pool) {
         await deleteMissing(client, "certificate_import_batches", "id", db.certificateImportBatches.map((row) => row.id));
         await deleteMissing(client, "registrations", "id", db.registrations.map((row) => row.id));
         await deleteMissing(client, "projects", "id", db.projects.map((row) => row.id));
+        await deleteMissing(client, "events", "id", db.events.map((row) => row.id));
         await deleteMissing(client, "memberships", "id", db.memberships.map((row) => row.id));
         await deleteMissing(client, "organizations", "id", db.organizations.map((row) => row.id));
         await deleteMissing(client, "audit_logs", "id", (db.auditLogs || []).map((row) => row.id));
