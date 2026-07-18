@@ -119,4 +119,3 @@ onMounted(loadStorage);
     />
   </section>
 </template>
-
