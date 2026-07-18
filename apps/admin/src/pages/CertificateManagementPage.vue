@@ -141,7 +141,8 @@ async function loadCertificateList({ propagate = false } = {}) {
     reconcileSelectedCertificates();
     return true;
   } catch (cause) {
-    if (generation === pageGeneration) error.value = cause.message || "证书列表加载失败，请稍后重试。";
+    if (generation !== pageGeneration) return false;
+    error.value = cause.message || "证书列表加载失败，请稍后重试。";
     if (propagate) throw cause;
     return false;
   } finally {
@@ -207,7 +208,7 @@ async function afterImport() {
   success.value = "";
   error.value = "";
   try {
-    await loadCertificateList({ propagate: true });
+    if (!await loadCertificateList({ propagate: true })) return;
     success.value = "已保存为未发布证书，证书列表已刷新。";
   } catch (cause) {
     error.value = cause.message || "导入已完成，但列表刷新失败；请手动刷新。";
@@ -218,7 +219,7 @@ async function afterManualChange(change) {
   success.value = "";
   error.value = "";
   try {
-    await loadCertificateList({ propagate: true });
+    if (!await loadCertificateList({ propagate: true })) return;
     success.value = change?.message || "证书操作完成，列表已刷新。";
   } catch (cause) {
     error.value = cause.message || "操作已提交，但列表刷新失败；请手动刷新。";
@@ -291,8 +292,8 @@ function goCertificatePage(page) {
   void loadCertificateList();
 }
 
-onMounted(() => {
-  void Promise.all([loadEventMetadata(), loadCertificateList()]);
+onMounted(async () => {
+  if (await loadEventMetadata()) await loadCertificateList();
 });
 onBeforeUnmount(() => {
   pageGeneration += 1;

@@ -145,6 +145,45 @@ describe("CertificateManagementPage final fixes", () => {
     expect(wrapper.text()).not.toContain("过期证书");
   });
 
+  it("先确定当前赛事，再请求该赛事的证书第一页并保持同一分页数据集", async () => {
+    const metadata = deferred();
+    const certificatePaths = [];
+    apiMock.mockImplementation((path) => {
+      if (path === "/api/admin/events") return metadata.promise;
+      if (isCertificateRequest(path)) {
+        certificatePaths.push(path);
+        const params = new URL(path, "http://admin.local").searchParams;
+        const page = Number(params.get("page") || "1");
+        return Promise.resolve({
+          rows: [{ ...draftCertificate, id: `C-${page}`, title: `第 ${page} 页证书` }],
+          total: 41,
+          page,
+          pageSize: 20
+        });
+      }
+      if (path === "/api/admin/certificate-imports?eventId=E1") return Promise.resolve({ rows: [] });
+      return Promise.resolve({});
+    });
+    const wrapper = mount(CertificateManagementPage);
+    await flushPromises();
+
+    expect(certificatePaths).toHaveLength(0);
+    metadata.resolve({ rows: [event], projects: [project] });
+    await flushPromises();
+
+    const firstPage = new URL(certificatePaths[0], "http://admin.local").searchParams;
+    expect(firstPage.get("eventId")).toBe("E1");
+    expect(firstPage.get("page")).toBe("1");
+    expect(wrapper.get("[data-certificate-page]").text()).toContain("共 41 张");
+
+    await wrapper.get('[data-action="certificate-next-page"]').trigger("click");
+    await flushPromises();
+    const secondPage = new URL(certificatePaths.at(-1), "http://admin.local").searchParams;
+    expect(secondPage.get("eventId")).toBe("E1");
+    expect(secondPage.get("page")).toBe("2");
+    expect(wrapper.get("[data-certificate-page]").text()).toContain("共 41 张");
+  });
+
   it("使用服务端分页，并在筛选变化后回到第 1 页", async () => {
     const certificatePaths = [];
     apiMock.mockImplementation(async (path) => {

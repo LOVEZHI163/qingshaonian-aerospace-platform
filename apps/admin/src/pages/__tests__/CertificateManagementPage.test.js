@@ -199,6 +199,46 @@ describe("CertificateManagementPage", () => {
     expect(wrapper.get("[data-list-query]").element.value).toBe("张三");
   });
 
+  it.each(["manual", "import"])("ignores a stale %s refresh failure after a newer filter succeeds", async (source) => {
+    const staleRefresh = deferred();
+    let certificateLoads = 0;
+    apiMock.mockImplementation((path) => {
+      if (path === "/api/admin/events") return Promise.resolve({ rows: [event], projects: [project] });
+      if (path.startsWith("/api/admin/certificate-imports?")) return Promise.resolve({ rows: [] });
+      if (isCertificateRequest(path)) {
+        certificateLoads += 1;
+        if (certificateLoads === 1) {
+          return Promise.resolve({ rows: [certificateOne], total: 1, page: 1, pageSize: 20 });
+        }
+        if (certificateLoads === 2) return staleRefresh.promise;
+        return Promise.resolve({
+          rows: [{ ...certificateOne, title: "较新筛选结果" }],
+          total: 1,
+          page: 1,
+          pageSize: 20
+        });
+      }
+      return Promise.resolve({});
+    });
+    const wrapper = mount(CertificateManagementPage);
+    await flushPromises();
+
+    if (source === "manual") {
+      wrapper.getComponent(ManualCertificateEntryPanel).vm.$emit("changed", { message: "手动录入完成" });
+    } else {
+      wrapper.getComponent(CertificateImportPanel).vm.$emit("committed", { id: "B1" });
+    }
+    await flushPromises();
+    await wrapper.get("[data-list-query]").setValue("张三");
+    await flushPromises();
+    staleRefresh.reject(new Error("旧刷新失败"));
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("较新筛选结果");
+    expect(wrapper.text()).not.toContain("旧刷新失败");
+    expect(wrapper.text()).not.toContain(source === "manual" ? "手动录入完成" : "已保存为未发布证书");
+  });
+
   it("previews import rows and refreshes the list after commit", async () => {
     const wrapper = mount(CertificateManagementPage);
     await flushPromises();
