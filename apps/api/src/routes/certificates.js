@@ -240,6 +240,15 @@ function listAdminCertificateRows(db, query) {
   };
 }
 
+function approvedManualCertificateRegistration(db, registrationId) {
+  const registration = db.registrations.find((row) => row.id === registrationId);
+  if (!registration) throw new CertificateError(404, "报名记录不存在");
+  if (registration.status !== "approved") {
+    throw new CertificateError(409, "报名审核通过后才能录入证书");
+  }
+  return registration;
+}
+
 export function createCertificatesRouter({
   store,
   requireUser,
@@ -262,15 +271,15 @@ export function createCertificatesRouter({
       error: tooLarge ? "证书文件不能超过 10 MB" : "证书文件上传无效"
     });
   });
+  const approvedManualUpload = asyncRoute(async (req, _res, next) => {
+    approvedManualCertificateRegistration(await store.readDb(), req.params.id);
+    next();
+  });
 
-  router.post("/admin/registrations/:id/certificates/:slot", ...admin, uploadOne, mutationAsyncRoute(async (req, res) => {
+  router.post("/admin/registrations/:id/certificates/:slot", ...admin, approvedManualUpload, uploadOne, mutationAsyncRoute(async (req, res) => {
     const originalDb = await store.readDb();
     const db = structuredClone(originalDb);
-    const registration = db.registrations.find((row) => row.id === req.params.id);
-    if (!registration) throw new CertificateError(404, "报名记录不存在");
-    if (registration.status !== "approved") {
-      throw new CertificateError(409, "报名审核通过后才能录入证书");
-    }
+    const registration = approvedManualCertificateRegistration(db, req.params.id);
     if (!req.file) throw new CertificateError(422, "证书文件不能为空");
 
     const slot = Number(req.params.slot);

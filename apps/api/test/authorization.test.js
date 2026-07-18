@@ -258,6 +258,9 @@ test("certificate downloads enforce ownership, publication, and organization man
     assert.equal((await fetch(`${baseUrl}/api/admin/events/wz-aerospace-2026`, jsonOptions("PATCH", {
       registrationMode: "force_open"
     }, admin.cookie))).status, 200);
+    assert.equal((await fetch(`${baseUrl}/api/registrations/R20260627001/status`, jsonOptions("PATCH", {
+      status: "approved"
+    }, admin.cookie))).status, 200);
     const upload = await uploadCertificate(baseUrl, "R20260627001", 1, admin.cookie, "草稿证书");
     assert.equal(upload.status, 201);
     const certificate = (await upload.json()).row;
@@ -283,6 +286,9 @@ test("certificate downloads enforce ownership, publication, and organization man
     }, ordinary.cookie));
     assert.equal(privateRegistration.status, 201);
     const privateRow = (await privateRegistration.json()).row;
+    assert.equal((await fetch(`${baseUrl}/api/registrations/${privateRow.id}/status`, jsonOptions("PATCH", {
+      status: "approved"
+    }, admin.cookie))).status, 200);
     const privateUpload = await uploadCertificate(baseUrl, privateRow.id, 1, admin.cookie, "私人证书");
     const privateCertificate = (await privateUpload.json()).row;
     await fetch(`${baseUrl}/api/admin/certificates/bulk-status`, jsonOptions("POST", { ids: [privateCertificate.id], status: "published" }, admin.cookie));

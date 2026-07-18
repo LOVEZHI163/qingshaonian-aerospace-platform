@@ -306,6 +306,36 @@ test("manual certificate upload rejects a registration that is not approved", as
   }, { prefix: "manual-certificate-approved-only-" });
 });
 
+test("manual certificate upload rejects a pending oversized file before parsing or storage", async () => {
+  let persisted = manualDb();
+  persisted.registrations[0].status = "pending";
+  let saveCalls = 0;
+  const store = {
+    readDb: async () => structuredClone(persisted),
+    writeDb: async (next) => { persisted = structuredClone(next); }
+  };
+  const storage = {
+    saveFile: async () => {
+      saveCalls += 1;
+      return { originalName: "unexpected.png", storedName: "unexpected.png", filePath: "/safe/certificates/unexpected.png" };
+    },
+    deleteFile: async () => {},
+    readFile: async () => ONE_PIXEL_PNG
+  };
+
+  await withCertificateRouter({ store, storage }, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/admin/registrations/R1/certificates/1`, {
+      method: "POST",
+      body: certificateForm(Buffer.alloc(10 * 1024 * 1024 + 1), "too-large.png", "image/png", { title: "不应保存" })
+    });
+    assert.equal(response.status, 409);
+    assert.equal((await responseJson(response)).error, "报名审核通过后才能录入证书");
+  });
+
+  assert.equal(saveCalls, 0);
+  assert.equal(persisted.certificates.length, 1);
+});
+
 test("manual certificate management applies the same file authorization to preview and download", async () => {
   await withTestServer(async ({ baseUrl, dbPath }) => {
     const admin = await loginAs(baseUrl, "13900000000", "admin123");
