@@ -46,7 +46,9 @@ const certificateOne = {
   slot: 1,
   title: "一等奖证书",
   status: "draft",
-  fileName: "one.pdf"
+  fileName: "one.pdf",
+  previewUrl: "/api/certificates/C1/file",
+  downloadUrl: "/api/certificates/C1/file?download=1"
 };
 
 const certificateTwo = {
@@ -148,6 +150,48 @@ describe("ManualCertificateEntryPanel", () => {
     expect(wrapper.get("[data-manual-result]").text()).toContain("R2");
   });
 
+  it("clears the previous registration and certificate editor as soon as a new search starts", async () => {
+    const nextSearch = deferred();
+    loadAdminRegistrationsMock
+      .mockResolvedValueOnce([sameNameProjectOne])
+      .mockReturnValueOnce(nextSearch.promise);
+    apiMock.mockResolvedValueOnce({ rows: [certificateOne] });
+    const wrapper = mount(ManualCertificateEntryPanel, { props: { events, initialEventId: "E1" } });
+    await wrapper.get("[data-manual-name]").setValue("张三");
+    await wrapper.get("form").trigger("submit");
+    await flushPromises();
+    await wrapper.get("[data-manual-result]").trigger("click");
+    await flushPromises();
+    expect(wrapper.findComponent(CertificateSlotEditor).exists()).toBe(true);
+
+    await wrapper.get("[data-manual-name]").setValue("李四");
+    await wrapper.get("form").trigger("submit");
+
+    expect(wrapper.findAll("[data-manual-result]")).toHaveLength(0);
+    expect(wrapper.find("[data-manual-selected]").exists()).toBe(false);
+    expect(wrapper.findComponent(CertificateSlotEditor).exists()).toBe(false);
+
+    nextSearch.resolve([sameNameProjectTwo]);
+    await flushPromises();
+  });
+
+  it("invalidates a pending search before rejecting an empty-name submission", async () => {
+    const pendingSearch = deferred();
+    loadAdminRegistrationsMock.mockReturnValueOnce(pendingSearch.promise);
+    const wrapper = mount(ManualCertificateEntryPanel, { props: { events, initialEventId: "E1" } });
+    await wrapper.get("[data-manual-name]").setValue("张三");
+    await wrapper.get("form").trigger("submit");
+
+    await wrapper.get("[data-manual-name]").setValue("");
+    await wrapper.get("form").trigger("submit");
+    expect(wrapper.get('[role="alert"]').text()).toContain("请输入学生姓名");
+
+    pendingSearch.resolve([sameNameProjectOne]);
+    await flushPromises();
+    expect(wrapper.findAll("[data-manual-result]")).toHaveLength(0);
+    expect(wrapper.find("[data-manual-selected]").exists()).toBe(false);
+  });
+
   it("shows the approved-registration empty state", async () => {
     loadAdminRegistrationsMock.mockResolvedValue([]);
     const wrapper = mount(ManualCertificateEntryPanel, { props: { events, initialEventId: "E1" } });
@@ -177,6 +221,81 @@ describe("ManualCertificateEntryPanel", () => {
       method: "POST",
       body: JSON.stringify({ awardName: "一等奖", rank: "1", score: "99" })
     });
+  });
+
+  it("does not expose direct publish or withdraw while preserving manual certificate operations", async () => {
+    loadAdminRegistrationsMock.mockResolvedValue([sameNameProjectOne]);
+    apiMock.mockResolvedValueOnce({ rows: [certificateOne] });
+    const wrapper = mount(ManualCertificateEntryPanel, { props: { events, initialEventId: "E1" } });
+    await wrapper.get("[data-manual-name]").setValue("张三");
+    await wrapper.get("form").trigger("submit");
+    await flushPromises();
+    await wrapper.get("[data-manual-result]").trigger("click");
+    await flushPromises();
+
+    const editor = wrapper.getComponent(CertificateSlotEditor);
+    const buttonTexts = editor.findAll("button").map((button) => button.text());
+    expect(editor.props("allowStatusChange")).toBe(false);
+    expect(buttonTexts).not.toContain("发布");
+    expect(buttonTexts).not.toContain("撤回");
+    expect(editor.get('[data-action="save-slot-1"]').text()).toContain("保存标题");
+    expect(editor.get('[data-action="save-slot-2"]').text()).toContain("上传文件");
+    expect(editor.get('[data-action="preview-C1"]').text()).toBe("预览");
+    expect(editor.get('[data-action="download-C1"]').text()).toBe("下载");
+    expect(editor.get('[data-action="request-delete-C1"]').text()).toBe("删除");
+    expect(editor.findAll("[data-slot-file]")).toHaveLength(2);
+
+    const replacement = editor.get('[data-slot-file="1"]');
+    Object.defineProperty(replacement.element, "files", {
+      configurable: true,
+      value: [new File(["pdf"], "replacement.pdf", { type: "application/pdf" })]
+    });
+    await replacement.trigger("change");
+    expect(editor.get('[data-action="save-slot-1"]').text()).toContain("替换文件");
+  });
+
+  it("keeps certificate editing hidden while the certificate request is pending", async () => {
+    const certificateRequest = deferred();
+    loadAdminRegistrationsMock.mockResolvedValue([sameNameProjectOne]);
+    apiMock.mockReturnValueOnce(certificateRequest.promise);
+    const wrapper = mount(ManualCertificateEntryPanel, { props: { events, initialEventId: "E1" } });
+    await wrapper.get("[data-manual-name]").setValue("张三");
+    await wrapper.get("form").trigger("submit");
+    await flushPromises();
+    await wrapper.get("[data-manual-result]").trigger("click");
+
+    expect(wrapper.text()).toContain("正在加载证书");
+    expect(wrapper.findComponent(CertificateSlotEditor).exists()).toBe(false);
+    expect(wrapper.find("[data-slot-file]").exists()).toBe(false);
+    expect(wrapper.find('[data-action^="save-slot-"]').exists()).toBe(false);
+    expect(wrapper.find('[data-action^="request-delete-"]').exists()).toBe(false);
+
+    certificateRequest.resolve({ rows: [] });
+    await flushPromises();
+  });
+
+  it("keeps certificate editing hidden after a load failure and exposes it only after retry succeeds", async () => {
+    loadAdminRegistrationsMock.mockResolvedValue([sameNameProjectOne]);
+    apiMock
+      .mockRejectedValueOnce(new Error("证书服务暂不可用"))
+      .mockResolvedValueOnce({ rows: [] });
+    const wrapper = mount(ManualCertificateEntryPanel, { props: { events, initialEventId: "E1" } });
+    await wrapper.get("[data-manual-name]").setValue("张三");
+    await wrapper.get("form").trigger("submit");
+    await flushPromises();
+    await wrapper.get("[data-manual-result]").trigger("click");
+    await flushPromises();
+
+    expect(wrapper.get('[role="alert"]').text()).toContain("证书服务暂不可用");
+    expect(wrapper.findComponent(CertificateSlotEditor).exists()).toBe(false);
+    expect(wrapper.find("[data-slot-file]").exists()).toBe(false);
+    expect(wrapper.find('[data-action^="save-slot-"]').exists()).toBe(false);
+    expect(wrapper.find('[data-action^="request-delete-"]').exists()).toBe(false);
+
+    await wrapper.get('[data-action="retry-certificates"]').trigger("click");
+    await flushPromises();
+    expect(wrapper.findComponent(CertificateSlotEditor).exists()).toBe(true);
+    expect(wrapper.findAll("[data-slot-file]")).toHaveLength(2);
   });
 
   it("preserves explicitly cleared result fields after saving", async () => {

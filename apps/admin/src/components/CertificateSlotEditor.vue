@@ -7,7 +7,8 @@ import FilePreviewDialog from "./FilePreviewDialog.vue";
 
 const props = defineProps({
   registration: { type: Object, required: true },
-  certificates: { type: Array, default: () => [] }
+  certificates: { type: Array, default: () => [] },
+  allowStatusChange: { type: Boolean, default: true }
 });
 
 const emit = defineEmits(["changed"]);
@@ -177,8 +178,8 @@ onBeforeUnmount(() => downloads.dispose());
           <template v-if="certificateFor(slot)">
             <button v-if="certificateFor(slot).previewUrl && !certificateFor(slot).cleanedAt" type="button" class="mini" :data-action="`preview-${certificateFor(slot).id}`" @click="previewTarget = certificateFor(slot)">预览</button>
             <button v-if="certificateFor(slot).downloadUrl && !certificateFor(slot).cleanedAt" type="button" class="mini" :data-action="`download-${certificateFor(slot).id}`" @click="download(certificateFor(slot))">下载</button>
-            <button v-if="certificateFor(slot).status !== 'published'" type="button" class="mini" :disabled="isSlotBusy(slot)" @click="changeStatus(certificateFor(slot), 'published')">发布</button>
-            <button v-else type="button" class="mini reject" :disabled="isSlotBusy(slot)" @click="changeStatus(certificateFor(slot), 'draft')">撤回</button>
+            <button v-if="allowStatusChange && certificateFor(slot).status !== 'published'" type="button" class="mini" :disabled="isSlotBusy(slot)" @click="changeStatus(certificateFor(slot), 'published')">发布</button>
+            <button v-else-if="allowStatusChange" type="button" class="mini reject" :disabled="isSlotBusy(slot)" @click="changeStatus(certificateFor(slot), 'draft')">撤回</button>
             <button type="button" class="mini reject" :data-action="`request-delete-${certificateFor(slot).id}`" :disabled="isSlotBusy(slot)" @click="deleteTarget = certificateFor(slot)">删除</button>
           </template>
         </div>

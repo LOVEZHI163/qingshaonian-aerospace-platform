@@ -36,6 +36,11 @@ describe("CertificateSlotEditor final fixes", () => {
     vi.restoreAllMocks();
   });
 
+  it("默认保留独立编辑器的证书状态操作", () => {
+    const wrapper = mount(CertificateSlotEditor, { props: { registration, certificates } });
+    expect(wrapper.findAll("button").map((button) => button.text()).filter((text) => text === "发布")).toHaveLength(2);
+  });
+
   it("并发保存两个位置时，一个完成不会提前解除另一个位置的忙碌状态", async () => {
     const slotOne = deferred();
     const slotTwo = deferred();

@@ -25,6 +25,8 @@ const searchLoading = ref(false);
 const certificateLoading = ref(false);
 const resultLoading = ref(false);
 const searchAttempted = ref(false);
+const certificateLoaded = ref(false);
+const certificateLoadFailed = ref(false);
 const error = ref("");
 const success = ref("");
 const result = reactive({ awardName: "", rank: "", score: "" });
@@ -40,6 +42,8 @@ function clearSelection() {
   resultLoading.value = false;
   selectedRegistrationId.value = "";
   selectedCertificates.value = [];
+  certificateLoaded.value = false;
+  certificateLoadFailed.value = false;
   Object.assign(result, { awardName: "", rank: "", score: "" });
 }
 
@@ -57,6 +61,16 @@ function changeEvent() {
 }
 
 async function searchByName() {
+  const generation = ++searchGeneration;
+  certificateGeneration += 1;
+  searchLoading.value = false;
+  certificateLoading.value = false;
+  searchRows.value = [];
+  searchAttempted.value = false;
+  error.value = "";
+  success.value = "";
+  clearSelection();
+
   if (!eventId.value) {
     error.value = "请先选择赛事后再查询。";
     return;
@@ -67,11 +81,8 @@ async function searchByName() {
     return;
   }
 
-  const generation = ++searchGeneration;
   searchLoading.value = true;
   searchAttempted.value = true;
-  error.value = "";
-  success.value = "";
   try {
     const rows = await loadAdminRegistrations({
       eventId: eventId.value,
@@ -80,8 +91,6 @@ async function searchByName() {
     });
     if (generation !== searchGeneration) return;
     searchRows.value = rows;
-    certificateGeneration += 1;
-    clearSelection();
   } catch (cause) {
     if (generation === searchGeneration) {
       searchRows.value = [];
@@ -107,19 +116,30 @@ function certificateListPath(registrationId) {
 async function loadSelectedCertificates(registrationId) {
   const generation = ++certificateGeneration;
   certificateLoading.value = true;
+  certificateLoaded.value = false;
+  certificateLoadFailed.value = false;
   try {
     const payload = await api(certificateListPath(registrationId));
     if (generation !== certificateGeneration || selectedRegistrationId.value !== registrationId) return false;
     selectedCertificates.value = Array.isArray(payload?.rows) ? payload.rows : [];
+    certificateLoaded.value = true;
     return true;
   } catch (cause) {
     if (generation !== certificateGeneration || selectedRegistrationId.value !== registrationId) return false;
     selectedCertificates.value = [];
+    certificateLoadFailed.value = true;
     error.value = cause.message || "所选报名的证书加载失败，请稍后重试。";
     return false;
   } finally {
     if (generation === certificateGeneration) certificateLoading.value = false;
   }
+}
+
+async function retrySelectedCertificates() {
+  if (!selectedRegistrationId.value) return;
+  error.value = "";
+  success.value = "";
+  await loadSelectedCertificates(selectedRegistrationId.value);
 }
 
 async function selectRegistration(row) {
@@ -266,10 +286,20 @@ onMounted(openDirectRegistration);
         </button>
       </div>
       <p v-if="certificateLoading">正在加载证书…</p>
+      <button
+        v-else-if="certificateLoadFailed"
+        type="button"
+        data-action="retry-certificates"
+        @click="retrySelectedCertificates"
+      >
+        重试加载证书
+      </button>
       <CertificateSlotEditor
+        v-if="certificateLoaded"
         :key="selectedRegistration.id"
         :registration="selectedRegistration"
         :certificates="selectedCertificates"
+        :allow-status-change="false"
         @changed="afterCertificateChanged"
       />
     </section>

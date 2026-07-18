@@ -115,7 +115,7 @@ function paginationDb() {
   };
 }
 
-async function withCertificateRouter({ store, storage }, fn) {
+async function withCertificateRouter({ store, storage, mutationAsyncRoute }, fn) {
   const app = express();
   const allow = (req, _res, next) => {
     req.user = { id: "ADMIN", type: "admin" };
@@ -130,7 +130,7 @@ async function withCertificateRouter({ store, storage }, fn) {
     requireAdmin: allow,
     requirePasswordReady: allow,
     asyncRoute: wrap,
-    mutationAsyncRoute: wrap,
+    mutationAsyncRoute: mutationAsyncRoute || wrap,
     makeId: (prefix) => `${prefix}${++sequence}`,
     now: () => "2026-07-17T12:00:00.000Z"
   }));
@@ -334,6 +334,60 @@ test("manual certificate upload rejects a pending oversized file before parsing 
 
   assert.equal(saveCalls, 0);
   assert.equal(persisted.certificates.length, 1);
+});
+
+test("manual certificate upload rechecks approval inside the mutation lock before saving", async () => {
+  const approved = manualDb();
+  approved.certificates = [];
+  let persisted = structuredClone(approved);
+  persisted.registrations[0].status = "pending";
+  let readCalls = 0;
+  let writeCalls = 0;
+  let saveCalls = 0;
+  let mutationLockActive = false;
+  const store = {
+    readDb: async () => {
+      readCalls += 1;
+      if (readCalls === 1) {
+        assert.equal(mutationLockActive, false);
+        return structuredClone(approved);
+      }
+      assert.equal(mutationLockActive, true);
+      return structuredClone(persisted);
+    },
+    writeDb: async (next) => {
+      writeCalls += 1;
+      persisted = structuredClone(next);
+    }
+  };
+  const storage = {
+    saveFile: async () => {
+      saveCalls += 1;
+      return { originalName: "unexpected.png", storedName: "unexpected.png", filePath: "/safe/certificates/unexpected.png" };
+    },
+    deleteFile: async () => {},
+    readFile: async () => ONE_PIXEL_PNG
+  };
+  const mutationAsyncRoute = (handler) => (req, res, next) => {
+    mutationLockActive = true;
+    return Promise.resolve(handler(req, res, next))
+      .catch(next)
+      .finally(() => { mutationLockActive = false; });
+  };
+
+  await withCertificateRouter({ store, storage, mutationAsyncRoute }, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/admin/registrations/R1/certificates/1`, {
+      method: "POST",
+      body: certificateForm(ONE_PIXEL_PNG, "should-not-save.png", "image/png", { title: "不应保存" })
+    });
+    assert.equal(response.status, 409);
+    assert.equal((await responseJson(response)).error, "报名审核通过后才能录入证书");
+  });
+
+  assert.equal(readCalls, 2);
+  assert.equal(saveCalls, 0);
+  assert.equal(writeCalls, 0);
+  assert.deepEqual(persisted.certificates, []);
 });
 
 test("manual certificate management applies the same file authorization to preview and download", async () => {
