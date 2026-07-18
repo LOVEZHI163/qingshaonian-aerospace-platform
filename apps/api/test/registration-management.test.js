@@ -113,6 +113,26 @@ test("admin registration listing filters and paginates rows with actual grade an
   });
 });
 
+test("admin registration listing filters athleteName only against the athlete name", async () => {
+  await withServer(async (baseUrl) => {
+    const admin = await loginAs(baseUrl, "13900000000", "admin123");
+    const response = await fetch(
+      `${baseUrl}/api/admin/registrations?eventId=wz-aerospace-2026&status=approved&athleteName=${encodeURIComponent("周星语")}&pageSize=10`,
+      withSession(admin.cookie)
+    );
+    assert.equal(response.status, 200);
+    const payload = await json(response);
+    assert.equal(payload.rows.every((row) => row.status === "approved"), true);
+    assert.equal(payload.rows.every((row) => row.athlete.name.includes("周星语")), true);
+
+    const noFalsePositive = await fetch(
+      `${baseUrl}/api/admin/registrations?athleteName=${encodeURIComponent("王老师")}&pageSize=10`,
+      withSession(admin.cookie)
+    );
+    assert.equal((await json(noFalsePositive)).total, 0);
+  });
+});
+
 test("registration status changes enforce the owner's event window while administrators bypass it", async () => {
   await withServer(async (baseUrl) => {
     const ordinary = await loginAs(baseUrl, "13800000001", "123456");

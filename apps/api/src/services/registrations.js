@@ -219,12 +219,14 @@ export function updateRegistrationStatus(db, row, input, user) {
 
 export function filterAdminRegistrations(db, query = {}) {
   const q = normalizeText(query.q);
+  const athleteName = normalizeText(query.athleteName);
   let rows = db.registrations.filter((row) => {
     if (query.eventId && row.eventId !== query.eventId) return false;
     if (query.status && row.status !== query.status) return false;
     if (query.group && row.group !== query.group) return false;
     if (query.projectId && row.projectId !== query.projectId) return false;
     if (query.organizationId && row.organizationId !== query.organizationId) return false;
+    if (athleteName && !normalizeText(row.athlete?.name).includes(athleteName)) return false;
     if (!q) return true;
     return [row.id, row.athlete?.name, row.athlete?.school, row.athlete?.phone, row.organization, row.projectName, row.instructor]
       .some((value) => normalizeText(value).includes(q));
