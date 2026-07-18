@@ -1,19 +1,25 @@
 import crypto from "node:crypto";
 
 const PHONE_NUMBER = /(?<!\d)1\d{10}(?!\d)/g;
-const WINDOWS_PATH = /\b[A-Za-z]:\\[^\s,，;；]+/g;
-const UNIX_PATH = /(?:^|\s)\/(?:[^\s,，;；/]+\/)+[^\s,，;；]*/g;
-const SECRET_VALUE = /\b(password|session|secret|token)\s*[:=]\s*[^\s,，;；]+/gi;
+const WINDOWS_PATH = /\b[A-Za-z]:[\\/][^\s"'`,;:{}()[\]]+/g;
+const UNIX_PATH = /(^|[\s="'(:,])\/(?:[^\s"'`,;:{}()[\]]+\/)+[^\s"'`,;:{}()[\]]*/g;
+const RELATIVE_UPLOAD_PATH = /(^|[\s="'(:,])uploads[\\/][^\s"'`,;:{}()[\]]+/gi;
+const SECRET_VALUE = /(["']?)(password|passwd|session(?:[_-]?id)?|secret|token|authorization|aerogp\.sid)\1\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s,;}\]]+)/gi;
 
-export function sanitizeAuditSummary(value) {
+function sanitizeAuditText(value, maximumLength) {
   return String(value || "")
     .replace(PHONE_NUMBER, (phone) => `${phone.slice(0, 3)}****${phone.slice(-4)}`)
+    .replace(SECRET_VALUE, (_match, quote, key) => `${quote}${key}${quote}=[已隐藏]`)
     .replace(WINDOWS_PATH, "[文件路径]")
-    .replace(UNIX_PATH, (path) => `${path.startsWith(" ") ? " " : ""}[文件路径]`)
-    .replace(SECRET_VALUE, "$1=[已隐藏]")
+    .replace(UNIX_PATH, (_path, prefix) => `${prefix}[文件路径]`)
+    .replace(RELATIVE_UPLOAD_PATH, (_path, prefix) => `${prefix}[文件路径]`)
     .replace(/\s+/g, " ")
     .trim()
-    .slice(0, 500);
+    .slice(0, maximumLength);
+}
+
+export function sanitizeAuditSummary(value) {
+  return sanitizeAuditText(value, 500);
 }
 export function recordAudit(db, {
   actor,
@@ -27,7 +33,7 @@ export function recordAudit(db, {
   const row = {
     id: `A${crypto.randomUUID()}`,
     actorUserId: actor?.id || null,
-    actorName: String(actor?.name || "系统").trim() || "系统",
+    actorName: sanitizeAuditText(actor?.name || "系统", 120) || "系统",
     action: String(action || "").trim(),
     targetType: String(targetType || "").trim(),
     targetId: String(targetId || "").trim(),
