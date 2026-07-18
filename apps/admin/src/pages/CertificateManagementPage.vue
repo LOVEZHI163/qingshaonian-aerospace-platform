@@ -240,7 +240,7 @@ async function bulkChangeStatus(status) {
       body: JSON.stringify({ ids, status })
     });
     selectedIds.value = [];
-    await loadCertificateList({ propagate: true });
+    if (!await loadCertificateList({ propagate: true })) return;
     success.value = status === "published"
       ? `已批量发布 ${ids.length} 张证书。`
       : `已批量撤回 ${ids.length} 张证书。`;

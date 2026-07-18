@@ -410,6 +410,44 @@ describe("CertificateManagementPage", () => {
     expect(wrapper.text()).not.toContain("已批量发布 1 张证书");
   });
 
+  it("does not show stale bulk success after a newer filter refresh succeeds", async () => {
+    const staleRefresh = deferred();
+    let certificateLoads = 0;
+    apiMock.mockImplementation((path, options = {}) => {
+      if (path === "/api/admin/events") return Promise.resolve({ rows: [event], projects: [project] });
+      if (path.startsWith("/api/admin/certificate-imports?")) return Promise.resolve({ rows: [] });
+      if (path === "/api/admin/certificates/bulk-status" && options.method === "POST") return Promise.resolve({ rows: [] });
+      if (isCertificateRequest(path)) {
+        certificateLoads += 1;
+        if (certificateLoads === 1) {
+          return Promise.resolve({ rows: [certificateOne], total: 1, page: 1, pageSize: 20 });
+        }
+        if (certificateLoads === 2) return staleRefresh.promise;
+        return Promise.resolve({
+          rows: [{ ...certificateOne, title: "较新筛选结果" }],
+          total: 1,
+          page: 1,
+          pageSize: 20
+        });
+      }
+      return Promise.resolve({});
+    });
+    const wrapper = mount(CertificateManagementPage);
+    await flushPromises();
+    await wrapper.get("[data-certificate-select]").setValue(true);
+
+    await wrapper.get('[data-action="bulk-publish"]').trigger("click");
+    await flushPromises();
+    await wrapper.get("[data-list-query]").setValue("张三");
+    await flushPromises();
+    staleRefresh.reject(new Error("旧批量刷新失败"));
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("较新筛选结果");
+    expect(wrapper.text()).not.toContain("旧批量刷新失败");
+    expect(wrapper.text()).not.toContain("已批量发布 1 张证书");
+  });
+
   it("downloads only from the returned certificate URL", async () => {
     const wrapper = mount(CertificateManagementPage);
     await flushPromises();
