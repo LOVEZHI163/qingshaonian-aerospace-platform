@@ -120,7 +120,7 @@ describe("CertificateManagementPage final fixes", () => {
     });
     const wrapper = mount(CertificateManagementPage);
     await flushPromises();
-    const reload = wrapper.vm.loadPage || wrapper.vm.$?.setupState?.loadPage;
+    const reload = wrapper.vm.loadCertificateList || wrapper.vm.$?.setupState?.loadCertificateList;
     expect(typeof reload).toBe("function");
     const newestRefresh = reload();
     await flushPromises();

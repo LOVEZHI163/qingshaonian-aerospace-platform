@@ -179,6 +179,32 @@ describe("ManualCertificateEntryPanel", () => {
     });
   });
 
+  it("preserves explicitly cleared result fields after saving", async () => {
+    const cleared = { ...sameNameProjectOne, awardName: "", rank: "", score: "" };
+    loadAdminRegistrationsMock.mockResolvedValue([sameNameProjectOne]);
+    apiMock.mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({ row: cleared });
+    const wrapper = mount(ManualCertificateEntryPanel, { props: { events, initialEventId: "E1" } });
+    await wrapper.get("[data-manual-name]").setValue("张三");
+    await wrapper.get("form").trigger("submit");
+    await flushPromises();
+    await wrapper.get("[data-manual-result]").trigger("click");
+    await flushPromises();
+
+    await wrapper.get('[data-result="awardName"]').setValue("");
+    await wrapper.get('[data-result="rank"]').setValue("");
+    await wrapper.get('[data-result="score"]').setValue("");
+    await wrapper.get('[data-action="save-result"]').trigger("click");
+    await flushPromises();
+
+    expect(apiMock).toHaveBeenCalledWith("/api/admin/registrations/R1/result", {
+      method: "POST",
+      body: JSON.stringify({ awardName: "", rank: "", score: "" })
+    });
+    expect(wrapper.get('[data-result="awardName"]').element.value).toBe("");
+    expect(wrapper.get('[data-result="rank"]').element.value).toBe("");
+    expect(wrapper.get('[data-result="score"]').element.value).toBe("");
+  });
+
   it("reloads the selected certificates before forwarding an editor change", async () => {
     loadAdminRegistrationsMock.mockResolvedValue([sameNameProjectOne]);
     apiMock

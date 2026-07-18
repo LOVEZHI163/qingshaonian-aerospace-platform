@@ -2,10 +2,9 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 
 import CertificateImportPanel from "../components/CertificateImportPanel.vue";
-import CertificateSlotEditor from "../components/CertificateSlotEditor.vue";
 import FilePreviewDialog from "../components/FilePreviewDialog.vue";
+import ManualCertificateEntryPanel from "../components/ManualCertificateEntryPanel.vue";
 import { api, apiBlob } from "../lib/api.js";
-import { loadAdminRegistrations } from "../lib/admin-registrations.js";
 import { createBlobDownloadManager } from "../lib/download.js";
 
 const props = defineProps({
@@ -13,62 +12,55 @@ const props = defineProps({
   initialEventId: { type: String, default: "" }
 });
 
+const activeSection = ref(props.initialRegistrationId ? "manual" : "list");
 const events = ref([]);
 const projects = ref([]);
-const registrations = ref([]);
+const metadataLoaded = ref(false);
 const certificates = ref([]);
-const selectedRegistrationCertificates = ref([]);
 const selectedIds = ref([]);
 const selectionStatus = ref("");
-const selectedRegistrationId = ref("");
 const previewTarget = ref(null);
 const loading = ref(false);
-const registrationLoading = ref(false);
 const bulkLoading = ref(false);
-const resultLoading = ref(false);
 const error = ref("");
 const success = ref("");
-const filters = reactive({ eventId: "", status: "", group: "", projectId: "", q: "" });
+const listFilters = reactive({ eventId: "", status: "", group: "", projectId: "", q: "" });
+const importEventId = ref("");
 const certificatePage = reactive({ page: 1, pageSize: 20, total: 0 });
-const result = reactive({ awardName: "", rank: "", score: "" });
 const downloads = createBlobDownloadManager();
 let pageGeneration = 0;
-let selectedCertificateRequestGeneration = 0;
+let metadataGeneration = 0;
 let suppressFilterReload = false;
 
-const eventProjects = computed(() => projects.value.filter((project) => !filters.eventId || project.eventId === filters.eventId));
+const eventProjects = computed(() => projects.value
+  .filter((project) => !listFilters.eventId || project.eventId === listFilters.eventId));
 const groups = computed(() => [...new Set(eventProjects.value.flatMap((project) => project.allowedGroups || []))]);
-const selectedRegistration = computed(() => registrations.value.find((row) => row.id === selectedRegistrationId.value) || null);
-const selectedCertificates = computed(() => selectedRegistrationCertificates.value
-  .filter((certificate) => certificate.registrationId === selectedRegistrationId.value));
+const certificatePageCount = computed(() => Math.max(1, Math.ceil(certificatePage.total / certificatePage.pageSize)));
+
+function registrationFor(certificate) {
+  return certificate.registration || {};
+}
+
+function matchesListFilters(certificate) {
+  const registration = registrationFor(certificate);
+  if (listFilters.status && certificate.status !== listFilters.status) return false;
+  if (listFilters.eventId && registration.eventId !== listFilters.eventId) return false;
+  if (listFilters.group && registration.group !== listFilters.group) return false;
+  if (listFilters.projectId && registration.projectId !== listFilters.projectId) return false;
+  const keyword = listFilters.q.trim().toLowerCase();
+  if (!keyword) return true;
+  return [certificate.registrationId, registration.athlete?.name, certificate.athlete?.name,
+    registration.athlete?.school, registration.group, certificate.projectName, registration.projectName]
+    .filter(Boolean)
+    .some((value) => String(value).toLowerCase().includes(keyword));
+}
+
+const filteredCertificates = computed(() => certificates.value.filter(matchesListFilters));
 const selectedCertificateRows = computed(() => {
   const byId = new Map(filteredCertificates.value.map((certificate) => [certificate.id, certificate]));
   return selectedIds.value.map((id) => byId.get(id)).filter(Boolean);
 });
 const selectedCertificateStatus = computed(() => selectionStatus.value || selectedCertificateRows.value[0]?.status || "");
-const certificatePageCount = computed(() => Math.max(1, Math.ceil(certificatePage.total / certificatePage.pageSize)));
-
-function registrationFor(certificate) {
-  return certificate.registration || registrations.value.find((row) => row.id === certificate.registrationId) || {};
-}
-
-function matchesSharedFilters(registration) {
-  if (filters.eventId && registration.eventId !== filters.eventId) return false;
-  if (filters.group && registration.group !== filters.group) return false;
-  if (filters.projectId && registration.projectId !== filters.projectId) return false;
-  const keyword = filters.q.trim().toLowerCase();
-  if (!keyword) return true;
-  return [registration.id, registration.athlete?.name, registration.athlete?.school, registration.group, registration.projectName]
-    .filter(Boolean)
-    .some((value) => String(value).toLowerCase().includes(keyword));
-}
-
-const filteredCertificates = computed(() => certificates.value.filter((certificate) => {
-  if (filters.status && certificate.status !== filters.status) return false;
-  return matchesSharedFilters(registrationFor(certificate));
-}));
-
-const filteredRegistrations = computed(() => registrations.value.filter(matchesSharedFilters));
 
 function reconcileSelectedCertificates() {
   const selectableById = new Map(filteredCertificates.value
@@ -106,50 +98,22 @@ watch(selectedIds, (ids) => {
   }
 }, { flush: "sync" });
 
-watch(selectedRegistration, (registration) => {
-  Object.assign(result, {
-    awardName: registration?.awardName || "",
-    rank: registration?.rank || "",
-    score: registration?.score || ""
-  });
-}, { immediate: true });
-
-watch(filteredRegistrations, (rows) => {
-  if (!rows.length) {
-    selectedRegistrationId.value = "";
-    return;
-  }
-  if (!rows.some((row) => row.id === selectedRegistrationId.value)) selectedRegistrationId.value = rows[0].id;
-}, { flush: "sync" });
-
-function registrationFilters(eventId = filters.eventId) {
-  return eventId ? { eventId } : {};
-}
-
-function isCurrentPageGeneration(generation) {
-  return generation === pageGeneration;
-}
-
-function certificateListPath({ registrationId = "", page = certificatePage.page, pageSize = certificatePage.pageSize } = {}) {
+function certificateListPath() {
   const params = new URLSearchParams();
-  if (registrationId) {
-    params.set("registrationId", registrationId);
-  } else {
-    const query = {
-      eventId: filters.eventId,
-      status: filters.status,
-      group: filters.group,
-      projectId: filters.projectId,
-      name: filters.q.trim()
-    };
-    for (const [key, value] of Object.entries(query)) {
-      if (value) params.set(key, value);
-    }
+  const query = {
+    eventId: listFilters.eventId,
+    status: listFilters.status,
+    group: listFilters.group,
+    projectId: listFilters.projectId,
+    name: listFilters.q.trim()
+  };
+  for (const [key, value] of Object.entries(query)) {
+    if (value) params.set(key, value);
   }
   params.set("sort", "uploadedAt");
   params.set("direction", "desc");
-  params.set("page", String(page));
-  params.set("pageSize", String(pageSize));
+  params.set("page", String(certificatePage.page));
+  params.set("pageSize", String(certificatePage.pageSize));
   return `/api/admin/certificates?${params}`;
 }
 
@@ -166,143 +130,95 @@ function applyCertificatePage(payload) {
     : certificatePage.pageSize;
 }
 
-async function loadSelectedRegistrationCertificates(registrationId = selectedRegistrationId.value, generation = pageGeneration) {
-  const requestGeneration = ++selectedCertificateRequestGeneration;
-  if (!registrationId) {
-    selectedRegistrationCertificates.value = [];
-    return false;
-  }
-  try {
-    const payload = await api(certificateListPath({ registrationId, page: 1, pageSize: 2 }));
-    if (requestGeneration !== selectedCertificateRequestGeneration
-      || !isCurrentPageGeneration(generation)
-      || registrationId !== selectedRegistrationId.value) return false;
-    selectedRegistrationCertificates.value = Array.isArray(payload?.rows) ? payload.rows : [];
-    return true;
-  } catch (cause) {
-    if (requestGeneration !== selectedCertificateRequestGeneration
-      || !isCurrentPageGeneration(generation)
-      || registrationId !== selectedRegistrationId.value) return false;
-    selectedRegistrationCertificates.value = [];
-    error.value = cause.message || "所选报名的证书加载失败，请稍后重试。";
-    return false;
-  }
-}
-
-async function loadRegistrations(eventId = filters.eventId, generation = pageGeneration) {
-  if (!isCurrentPageGeneration(generation)) return false;
-  registrationLoading.value = true;
-  try {
-    const rows = await loadAdminRegistrations(registrationFilters(eventId));
-    if (!isCurrentPageGeneration(generation)) return false;
-    registrations.value = rows;
-    return true;
-  } catch (cause) {
-    if (!isCurrentPageGeneration(generation)) return false;
-    throw cause;
-  } finally {
-    if (isCurrentPageGeneration(generation)) registrationLoading.value = false;
-  }
-}
-
-watch(selectedRegistrationId, (registrationId) => {
-  void loadSelectedRegistrationCertificates(registrationId);
-}, { flush: "sync" });
-
-watch(() => filters.eventId, (eventId, previousEventId) => {
-  if (eventId === previousEventId || suppressFilterReload) return;
-  suppressFilterReload = true;
-  filters.group = "";
-  filters.projectId = "";
-  selectedRegistrationId.value = "";
-  selectedIds.value = [];
-  certificatePage.page = 1;
-  suppressFilterReload = false;
-  error.value = "";
-  success.value = "";
-  void loadPage();
-}, { flush: "sync" });
-
-watch([
-  () => filters.status,
-  () => filters.group,
-  () => filters.projectId,
-  () => filters.q
-], () => {
-  if (suppressFilterReload) return;
-  certificatePage.page = 1;
-  selectedIds.value = [];
-  error.value = "";
-  success.value = "";
-  void loadPage();
-}, { flush: "sync" });
-
-async function loadPage({ propagate = false } = {}) {
+async function loadCertificateList({ propagate = false } = {}) {
   const generation = ++pageGeneration;
   loading.value = true;
   error.value = "";
   try {
-    const eventPayload = await api("/api/admin/events");
-    if (!isCurrentPageGeneration(generation)) return false;
-    events.value = eventPayload.rows || [];
-    projects.value = eventPayload.projects || [];
-    const requestedEventId = props.initialEventId && events.value.some((event) => event.id === props.initialEventId)
-      ? props.initialEventId
-      : "";
-    if (!filters.eventId) {
-      suppressFilterReload = true;
-      filters.eventId = requestedEventId || events.value.find((event) => event.isCurrent)?.id || events.value[0]?.id || "";
-      suppressFilterReload = false;
-    }
-    const eventId = filters.eventId;
-    const [certificatePayload, registrationsApplied] = await Promise.all([
-      api(certificateListPath()),
-      loadRegistrations(eventId, generation)
-    ]);
-    if (!isCurrentPageGeneration(generation) || !registrationsApplied) return false;
-    applyCertificatePage(certificatePayload);
-    const requested = props.initialRegistrationId && registrations.value.some((row) => row.id === props.initialRegistrationId)
-      ? props.initialRegistrationId
-      : "";
-    if (requested) selectedRegistrationId.value = requested;
-    else if (!registrations.value.some((row) => row.id === selectedRegistrationId.value)) selectedRegistrationId.value = filteredRegistrations.value[0]?.id || "";
-    await loadSelectedRegistrationCertificates(selectedRegistrationId.value, generation);
-    if (!isCurrentPageGeneration(generation)) return false;
+    const payload = await api(certificateListPath());
+    if (generation !== pageGeneration) return false;
+    applyCertificatePage(payload);
     reconcileSelectedCertificates();
     return true;
   } catch (cause) {
-    if (!isCurrentPageGeneration(generation)) return false;
-    error.value = cause.message || "证书管理页面加载失败，请稍后重试。";
+    if (generation === pageGeneration) error.value = cause.message || "证书列表加载失败，请稍后重试。";
     if (propagate) throw cause;
     return false;
   } finally {
-    if (isCurrentPageGeneration(generation)) {
-      loading.value = false;
-      registrationLoading.value = false;
-    }
+    if (generation === pageGeneration) loading.value = false;
   }
 }
 
-async function refreshCertificates() {
-  return loadPage({ propagate: true });
+async function loadEventMetadata() {
+  const generation = ++metadataGeneration;
+  try {
+    const payload = await api("/api/admin/events");
+    if (generation !== metadataGeneration) return false;
+    events.value = payload.rows || [];
+    projects.value = payload.projects || [];
+    const requestedEventId = props.initialEventId && events.value.some((event) => event.id === props.initialEventId)
+      ? props.initialEventId
+      : "";
+    const defaultEventId = requestedEventId
+      || events.value.find((event) => event.isCurrent)?.id
+      || events.value[0]?.id
+      || "";
+    suppressFilterReload = true;
+    if (!listFilters.eventId) listFilters.eventId = defaultEventId;
+    suppressFilterReload = false;
+    if (!importEventId.value) importEventId.value = defaultEventId;
+    metadataLoaded.value = true;
+    return true;
+  } catch (cause) {
+    if (generation === metadataGeneration) {
+      metadataLoaded.value = true;
+      error.value = cause.message || "赛事信息加载失败，请稍后重试。";
+    }
+    return false;
+  }
 }
+
+watch(() => listFilters.eventId, (eventId, previousEventId) => {
+  if (eventId === previousEventId || suppressFilterReload) return;
+  suppressFilterReload = true;
+  listFilters.group = "";
+  listFilters.projectId = "";
+  suppressFilterReload = false;
+  certificatePage.page = 1;
+  selectedIds.value = [];
+  success.value = "";
+  void loadCertificateList();
+}, { flush: "sync" });
+
+watch([
+  () => listFilters.status,
+  () => listFilters.group,
+  () => listFilters.projectId,
+  () => listFilters.q
+], () => {
+  if (suppressFilterReload) return;
+  certificatePage.page = 1;
+  selectedIds.value = [];
+  success.value = "";
+  void loadCertificateList();
+}, { flush: "sync" });
 
 async function afterImport() {
   success.value = "";
   error.value = "";
   try {
-    if (!await refreshCertificates()) return;
-    success.value = "已保存为未发布证书，证书与报名列表已刷新。";
+    await loadCertificateList({ propagate: true });
+    success.value = "已保存为未发布证书，证书列表已刷新。";
   } catch (cause) {
     error.value = cause.message || "导入已完成，但列表刷新失败；请手动刷新。";
   }
 }
 
-async function afterCertificateChanged(change) {
+async function afterManualChange(change) {
   success.value = "";
   error.value = "";
   try {
-    if (!await refreshCertificates()) return;
+    await loadCertificateList({ propagate: true });
     success.value = change?.message || "证书操作完成，列表已刷新。";
   } catch (cause) {
     error.value = cause.message || "操作已提交，但列表刷新失败；请手动刷新。";
@@ -323,7 +239,7 @@ async function bulkChangeStatus(status) {
       body: JSON.stringify({ ids, status })
     });
     selectedIds.value = [];
-    if (!await refreshCertificates()) return;
+    await loadCertificateList({ propagate: true });
     success.value = status === "published"
       ? `已批量发布 ${ids.length} 张证书。`
       : `已批量撤回 ${ids.length} 张证书。`;
@@ -342,25 +258,6 @@ function bulkWithdraw() {
   return bulkChangeStatus("draft");
 }
 
-async function saveResult() {
-  if (!selectedRegistration.value) return;
-  resultLoading.value = true;
-  error.value = "";
-  success.value = "";
-  try {
-    await api(`/api/admin/registrations/${selectedRegistration.value.id}/result`, {
-      method: "POST",
-      body: JSON.stringify({ awardName: result.awardName, rank: result.rank, score: result.score })
-    });
-    if (!await refreshCertificates()) return;
-    success.value = "成绩已保存，证书列表已刷新。";
-  } catch (cause) {
-    error.value = cause.message || "成绩保存失败，请稍后重试。";
-  } finally {
-    resultLoading.value = false;
-  }
-}
-
 async function downloadCertificate(certificate) {
   if (!certificate.downloadUrl || certificate.cleanedAt) return;
   error.value = "";
@@ -374,16 +271,15 @@ async function downloadCertificate(certificate) {
 
 function resetFilters() {
   suppressFilterReload = true;
-  filters.status = "";
-  filters.group = "";
-  filters.projectId = "";
-  filters.q = "";
+  listFilters.status = "";
+  listFilters.group = "";
+  listFilters.projectId = "";
+  listFilters.q = "";
   suppressFilterReload = false;
   certificatePage.page = 1;
   selectedIds.value = [];
-  error.value = "";
   success.value = "";
-  void loadPage();
+  void loadCertificateList();
 }
 
 function goCertificatePage(page) {
@@ -391,15 +287,16 @@ function goCertificatePage(page) {
   if (nextPage === certificatePage.page) return;
   certificatePage.page = nextPage;
   selectedIds.value = [];
-  error.value = "";
   success.value = "";
-  void loadPage();
+  void loadCertificateList();
 }
 
-onMounted(loadPage);
+onMounted(() => {
+  void Promise.all([loadEventMetadata(), loadCertificateList()]);
+});
 onBeforeUnmount(() => {
   pageGeneration += 1;
-  selectedCertificateRequestGeneration += 1;
+  metadataGeneration += 1;
   downloads.dispose();
 });
 </script>
@@ -408,16 +305,20 @@ onBeforeUnmount(() => {
   <section class="certificate-management-page">
     <div class="page-title-row">
       <div><h2>证书管理</h2><p>导入前先预检查；导入和手工上传默认均为未发布，可确认后批量发布。</p></div>
-      <button type="button" class="dark" data-action="refresh-certificates" :disabled="loading" @click="loadPage">{{ loading ? "正在刷新…" : "刷新" }}</button>
+      <button type="button" class="dark" data-action="refresh-certificates" :disabled="loading" @click="loadCertificateList">{{ loading ? "正在刷新…" : "刷新" }}</button>
     </div>
+
+    <nav class="certificate-section-tabs" role="tablist" aria-label="证书管理分类">
+      <button type="button" role="tab" data-certificate-section="list" :class="{ active: activeSection === 'list' }" :aria-selected="activeSection === 'list'" @click="activeSection = 'list'">证书列表</button>
+      <button type="button" role="tab" data-certificate-section="manual" :class="{ active: activeSection === 'manual' }" :aria-selected="activeSection === 'manual'" @click="activeSection = 'manual'">手动录入</button>
+      <button type="button" role="tab" data-certificate-section="import" :class="{ active: activeSection === 'import' }" :aria-selected="activeSection === 'import'" @click="activeSection = 'import'">批量导入</button>
+    </nav>
+
     <p v-if="error" class="message" role="alert">{{ error }}</p>
     <p v-if="success" class="success-message">{{ success }}</p>
     <p v-if="loading" class="hint">正在加载证书…</p>
-    <p v-else-if="registrationLoading" class="hint">正在加载所选赛事的全部报名…</p>
 
-    <CertificateImportPanel :event-id="filters.eventId" @committed="afterImport" />
-
-    <section class="panel certificate-list-panel">
+    <section v-show="activeSection === 'list'" class="panel certificate-list-panel" data-section-panel="list">
       <div class="page-title-row">
         <div><h3>证书列表</h3><p>可按赛事、状态、组别、赛项和姓名筛选。</p></div>
         <div class="bulk-actions">
@@ -427,11 +328,11 @@ onBeforeUnmount(() => {
         </div>
       </div>
       <div class="certificate-filter-grid">
-        <label>赛事<select v-model="filters.eventId"><option value="">全部赛事</option><option v-for="event in events" :key="event.id" :value="event.id">{{ event.name }}</option></select></label>
-        <label>状态<select v-model="filters.status"><option value="">全部状态</option><option value="draft">未发布</option><option value="published">已发布</option></select></label>
-        <label>组别<select v-model="filters.group"><option value="">全部组别</option><option v-for="group in groups" :key="group" :value="group">{{ group }}</option></select></label>
-        <label>赛项<select v-model="filters.projectId"><option value="">全部赛项</option><option v-for="project in eventProjects" :key="project.id" :value="project.id">{{ project.name }}</option></select></label>
-        <label>姓名或报名信息<input v-model="filters.q" placeholder="输入姓名、报名编号、学校"></label>
+        <label>赛事<select v-model="listFilters.eventId" data-list-event><option value="">全部赛事</option><option v-for="event in events" :key="event.id" :value="event.id">{{ event.name }}</option></select></label>
+        <label>状态<select v-model="listFilters.status"><option value="">全部状态</option><option value="draft">未发布</option><option value="published">已发布</option></select></label>
+        <label>组别<select v-model="listFilters.group"><option value="">全部组别</option><option v-for="group in groups" :key="group" :value="group">{{ group }}</option></select></label>
+        <label>赛项<select v-model="listFilters.projectId"><option value="">全部赛项</option><option v-for="project in eventProjects" :key="project.id" :value="project.id">{{ project.name }}</option></select></label>
+        <label>姓名或报名信息<input v-model="listFilters.q" data-list-query placeholder="输入姓名、报名编号、学校"></label>
         <button type="button" class="ghost" @click="resetFilters">清空筛选</button>
       </div>
 
@@ -466,27 +367,23 @@ onBeforeUnmount(() => {
       </div>
     </section>
 
-    <section class="panel registration-certificate-panel">
-      <div class="page-title-row"><div><h3>报名详情与双证书</h3><p>先选择报名，再分别维护两个证书位置；成绩三个字段互不合并。</p></div><span>{{ filteredRegistrations.length }} 条报名</span></div>
-      <div class="registration-detail-layout">
-        <aside class="registration-picker" aria-label="报名列表">
-          <button v-for="row in filteredRegistrations" :key="row.id" type="button" :class="{ active: selectedRegistrationId === row.id }" @click="selectedRegistrationId = row.id">
-            <strong>{{ row.athlete?.name || '-' }}</strong><span>{{ row.id }}</span><small>{{ row.group }} · {{ row.projectName }}</small>
-          </button>
-          <p v-if="filteredRegistrations.length === 0" class="hint empty-state">当前筛选条件下暂无报名。</p>
-        </aside>
-        <div v-if="selectedRegistration" class="registration-certificate-detail">
-          <div class="registration-summary"><strong>{{ selectedRegistration.athlete?.name }}</strong><span>{{ selectedRegistration.id }} · {{ selectedRegistration.athlete?.school }} · {{ selectedRegistration.group }} · {{ selectedRegistration.projectName }}</span></div>
-          <form class="result-editor" @submit.prevent="saveResult">
-            <label>奖项 / 等级<input v-model="result.awardName" data-result="awardName"></label>
-            <label>名次<input v-model="result.rank" data-result="rank"></label>
-            <label>成绩 / 分数<input v-model="result.score" data-result="score"></label>
-            <button type="button" class="dark" data-action="save-result" :disabled="resultLoading" @click="saveResult">{{ resultLoading ? "正在保存…" : "保存成绩" }}</button>
-          </form>
-          <CertificateSlotEditor :key="selectedRegistration.id" :registration="selectedRegistration" :certificates="selectedCertificates" @changed="afterCertificateChanged" />
-        </div>
-        <p v-else class="hint empty-state registration-certificate-detail">请选择一条报名记录。</p>
-      </div>
+    <ManualCertificateEntryPanel
+      v-if="metadataLoaded"
+      v-show="activeSection === 'manual'"
+      data-section-panel="manual"
+      :events="events"
+      :initial-event-id="initialEventId"
+      :initial-registration-id="initialRegistrationId"
+      @changed="afterManualChange"
+    />
+
+    <section v-show="activeSection === 'import'" class="certificate-import-section" data-section-panel="import">
+      <label>导入赛事
+        <select v-model="importEventId" data-import-event>
+          <option v-for="event in events" :key="event.id" :value="event.id">{{ event.name }}</option>
+        </select>
+      </label>
+      <CertificateImportPanel :event-id="importEventId" @committed="afterImport" />
     </section>
 
     <FilePreviewDialog :file="previewTarget" @close="previewTarget = null" />

@@ -135,8 +135,8 @@ describe("App session integration", () => {
     await wrapper.get('[data-action="manage-certificates"]').trigger("click");
     await flushPromises();
 
-    expect(wrapper.get(".certificate-filter-grid select").element.value).toBe("E0");
-    expect(wrapper.get(".registration-summary").text()).toContain("R-HISTORICAL");
+    expect(wrapper.get("[data-list-event]").element.value).toBe("E0");
+    expect(wrapper.get("[data-manual-selected]").text()).toContain("R-HISTORICAL");
   });
 
   it("does not retain the unreachable legacy single-slot and batch certificate implementation", () => {

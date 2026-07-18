@@ -974,6 +974,15 @@ em.invited {
 }
 
 .certificate-management-page { display: grid; gap: 22px; }
+.certificate-section-tabs { display: flex; gap: 8px; flex-wrap: wrap; }
+.certificate-section-tabs button { border: 1px solid #cbd5e1; background: #fff; color: #334155; border-radius: 8px; padding: 10px 18px; font-weight: 700; }
+.certificate-section-tabs button.active { border-color: #1677ff; background: #eaf3ff; color: #0b63ce; }
+.manual-certificate-search,
+[data-section-panel="manual"] > form { display: grid; grid-template-columns: minmax(180px, 280px) minmax(220px, 1fr) auto; gap: 12px; align-items: end; }
+.manual-registration-results,
+[data-section-panel="manual"] > div { display: grid; gap: 8px; margin-top: 16px; }
+.manual-registration-results button,
+[data-section-panel="manual"] [data-manual-result] { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 16px; text-align: left; }
 .certificate-management-page > .page-title-row h2,
 .certificate-management-page .panel h3,
 .certificate-slot-card h4 { margin: 0; }
@@ -1080,6 +1089,10 @@ em.invited {
   .certificate-slot-grid,
   .registration-detail-layout,
   .import-certificate-previews { grid-template-columns: 1fr; }
+  .manual-certificate-search,
+  [data-section-panel="manual"] > form,
+  .manual-registration-results button,
+  [data-section-panel="manual"] [data-manual-result] { grid-template-columns: 1fr; }
   .import-certificate-previews figure { grid-template-columns: 72px 1fr; }
   .import-certificate-previews img { width: 72px; height: 54px; }
   .registration-picker { grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); max-height: none; }

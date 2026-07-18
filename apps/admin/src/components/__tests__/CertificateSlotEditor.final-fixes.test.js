@@ -64,4 +64,38 @@ describe("CertificateSlotEditor final fixes", () => {
     await flushPromises();
     expect(saveTwo.attributes()).not.toHaveProperty("disabled");
   });
+
+  it("第二位置使用 multipart 上传文件且不要求证书编号", async () => {
+    apiMock.mockResolvedValue({ row: certificates[1] });
+    const wrapper = mount(CertificateSlotEditor, { props: { registration, certificates } });
+    const input = wrapper.get('[data-slot-file="2"]');
+    const file = new File(["pdf"], "第二张.pdf", { type: "application/pdf" });
+    Object.defineProperty(input.element, "files", { configurable: true, value: [file] });
+    await input.trigger("change");
+    await wrapper.get('[data-action="save-slot-2"]').trigger("click");
+    await flushPromises();
+
+    const upload = apiMock.mock.calls.find(([path, options]) => path === "/api/admin/registrations/R1/certificates/2" && options?.method === "POST");
+    expect(upload?.[1].body).toBeInstanceOf(FormData);
+    expect(upload?.[1].body.get("certificate").name).toBe("第二张.pdf");
+    expect(wrapper.find('input[placeholder="证书编号"]').exists()).toBe(false);
+  });
+
+  it("删除使用页面内确认，失败时保留错误且不调用 window.confirm", async () => {
+    apiMock.mockRejectedValue(new Error("删除失败，请稍后重试"));
+    const nativeConfirm = vi.spyOn(window, "confirm");
+    const wrapper = mount(CertificateSlotEditor, { props: { registration, certificates } });
+
+    await wrapper.get('[data-action="request-delete-C1"]').trigger("click");
+    expect(wrapper.text()).toContain("确认删除证书一？");
+    expect(nativeConfirm).not.toHaveBeenCalled();
+    await wrapper.get('[data-action="cancel-delete"]').trigger("click");
+    expect(apiMock).not.toHaveBeenCalled();
+
+    await wrapper.get('[data-action="request-delete-C1"]').trigger("click");
+    await wrapper.get('[data-action="confirm-delete"]').trigger("click");
+    await flushPromises();
+    expect(apiMock).toHaveBeenCalledWith("/api/admin/certificates/C1", { method: "DELETE" });
+    expect(wrapper.get('[role="alert"]').text()).toContain("删除失败，请稍后重试");
+  });
 });
