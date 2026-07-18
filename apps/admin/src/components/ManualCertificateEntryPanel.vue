@@ -30,11 +30,14 @@ const success = ref("");
 const result = reactive({ awardName: "", rank: "", score: "" });
 let searchGeneration = 0;
 let certificateGeneration = 0;
+let resultGeneration = 0;
 
 const selectedRegistration = computed(() => searchRows.value
   .find((row) => row.id === selectedRegistrationId.value) || null);
 
 function clearSelection() {
+  resultGeneration += 1;
+  resultLoading.value = false;
   selectedRegistrationId.value = "";
   selectedCertificates.value = [];
   Object.assign(result, { awardName: "", rank: "", score: "" });
@@ -54,6 +57,10 @@ function changeEvent() {
 }
 
 async function searchByName() {
+  if (!eventId.value) {
+    error.value = "请先选择赛事后再查询。";
+    return;
+  }
   const name = athleteName.value.trim();
   if (!name) {
     error.value = "请输入学生姓名后再查询。";
@@ -116,6 +123,8 @@ async function loadSelectedCertificates(registrationId) {
 }
 
 async function selectRegistration(row) {
+  resultGeneration += 1;
+  resultLoading.value = false;
   selectedRegistrationId.value = row.id;
   selectedCertificates.value = [];
   error.value = "";
@@ -159,11 +168,14 @@ async function openDirectRegistration() {
 async function saveResult() {
   const registration = selectedRegistration.value;
   if (!registration) return;
+  const registrationId = registration.id;
+  const eventIdSnapshot = eventId.value;
+  const generation = ++resultGeneration;
   resultLoading.value = true;
   error.value = "";
   success.value = "";
   try {
-    const payload = await api(`/api/admin/registrations/${registration.id}/result`, {
+    const payload = await api(`/api/admin/registrations/${registrationId}/result`, {
       method: "POST",
       body: JSON.stringify({
         awardName: result.awardName,
@@ -171,16 +183,30 @@ async function saveResult() {
         score: result.score
       })
     });
+    if (generation !== resultGeneration
+      || selectedRegistrationId.value !== registrationId
+      || eventId.value !== eventIdSnapshot) return;
     const saved = payload?.row || { ...registration, ...result };
-    const index = searchRows.value.findIndex((row) => row.id === registration.id);
+    const index = searchRows.value.findIndex((row) => row.id === registrationId);
     if (index >= 0) searchRows.value.splice(index, 1, saved);
     success.value = "成绩已保存。";
     emit("changed", { message: "成绩已保存。" });
   } catch (cause) {
-    error.value = cause.message || "成绩保存失败，请稍后重试。";
+    if (generation === resultGeneration
+      && selectedRegistrationId.value === registrationId
+      && eventId.value === eventIdSnapshot) {
+      error.value = cause.message || "成绩保存失败，请稍后重试。";
+    }
   } finally {
-    resultLoading.value = false;
+    if (generation === resultGeneration) resultLoading.value = false;
   }
+}
+
+function eventNameFor(row) {
+  return props.events.find((event) => event.id === row.eventId)?.name
+    || row.eventName
+    || row.eventId
+    || "未知赛事";
 }
 
 async function afterCertificateChanged(change) {
@@ -206,7 +232,7 @@ onMounted(openDirectRegistration);
         学生姓名
         <input v-model="athleteName" data-manual-name autocomplete="off">
       </label>
-      <button type="button" class="primary" data-action="search-student" :disabled="searchLoading" @click="searchByName">
+      <button type="button" class="primary" data-action="search-student" :disabled="searchLoading || !eventId" @click="searchByName">
         {{ searchLoading ? "正在查询…" : "查找已通过报名" }}
       </button>
     </form>
@@ -224,7 +250,7 @@ onMounted(openDirectRegistration);
         @click="selectRegistration(row)"
       >
         <strong>{{ row.athlete?.name || "-" }}</strong>
-        <span>{{ row.athlete?.school || "-" }} · {{ row.group || "-" }} · {{ row.projectName || "-" }} · {{ row.id }}</span>
+        <span>{{ eventNameFor(row) }} · {{ row.athlete?.school || "-" }} · {{ row.group || "-" }} · {{ row.projectName || "-" }} · {{ row.id }}</span>
       </button>
     </div>
 

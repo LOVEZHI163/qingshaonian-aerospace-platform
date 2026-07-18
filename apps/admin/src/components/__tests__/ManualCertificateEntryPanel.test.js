@@ -88,6 +88,16 @@ describe("ManualCertificateEntryPanel", () => {
     });
   });
 
+  it("does not search across events when no event is selected", async () => {
+    const wrapper = mount(ManualCertificateEntryPanel, { props: { events: [] } });
+    await wrapper.get("[data-manual-name]").setValue("张三");
+    expect(wrapper.get('[data-action="search-student"]').attributes()).toHaveProperty("disabled");
+
+    await wrapper.get("form").trigger("submit");
+    expect(loadAdminRegistrationsMock).not.toHaveBeenCalled();
+    expect(wrapper.get('[role="alert"]').text()).toContain("请先选择赛事");
+  });
+
   it("shows same-name project rows and loads the selected registration certificates", async () => {
     loadAdminRegistrationsMock.mockResolvedValue([sameNameProjectOne, sameNameProjectTwo]);
     const wrapper = mount(ManualCertificateEntryPanel, { props: { events, initialEventId: "E1" } });
@@ -101,6 +111,8 @@ describe("ManualCertificateEntryPanel", () => {
     expect(rows[0].text()).toContain("小学低段");
     expect(rows[0].text()).toContain("纸飞机");
     expect(rows[0].text()).toContain("R1");
+    expect(rows[0].text()).toContain("2026 青少年航空赛");
+    expect(rows[1].text()).toContain("2026 青少年航空赛");
 
     await rows[1].trigger("click");
     await flushPromises();
@@ -183,6 +195,32 @@ describe("ManualCertificateEntryPanel", () => {
     await flushPromises();
     expect(wrapper.getComponent(CertificateSlotEditor).props("certificates")).toEqual([certificateOne, certificateTwo]);
     expect(wrapper.emitted("changed")).toEqual([[{ message: "证书位置 2 已保存。" }]]);
+  });
+
+  it("ignores an older result save after the event context changes", async () => {
+    const olderSave = deferred();
+    loadAdminRegistrationsMock.mockResolvedValue([sameNameProjectOne]);
+    apiMock.mockImplementation((path, options = {}) => {
+      if (path === "/api/admin/registrations/R1/result" && options.method === "POST") return olderSave.promise;
+      return Promise.resolve({ rows: [] });
+    });
+    const wrapper = mount(ManualCertificateEntryPanel, { props: { events, initialEventId: "E1" } });
+    await wrapper.get("[data-manual-name]").setValue("张三");
+    await wrapper.get("form").trigger("submit");
+    await flushPromises();
+    await wrapper.get("[data-manual-result]").trigger("click");
+    await flushPromises();
+
+    await wrapper.get('[data-result="awardName"]').setValue("一等奖");
+    await wrapper.get('[data-action="save-result"]').trigger("click");
+    await wrapper.get("[data-manual-event]").setValue("E2");
+    await wrapper.get("form").trigger("submit");
+    expect(wrapper.get('[role="alert"]').text()).toContain("请输入学生姓名");
+
+    olderSave.resolve({ row: { ...sameNameProjectOne, awardName: "一等奖" } });
+    await flushPromises();
+    expect(wrapper.get('[role="alert"]').text()).toContain("请输入学生姓名");
+    expect(wrapper.text()).not.toContain("成绩已保存");
   });
 
   it("opens an approved direct registration by exact id", async () => {
