@@ -6,6 +6,7 @@ import AttachmentList from "../components/AttachmentList.jsx";
 import EventStatus from "../components/EventStatus.jsx";
 import { EventPicture } from "../components/FeaturedEvent.jsx";
 import ProjectGroups from "../components/ProjectGroups.jsx";
+import Seo from "../components/Seo.jsx";
 
 const contentLabels = {
   announcement: "赛事公告",
@@ -17,12 +18,15 @@ const contentLabels = {
 
 function ResourceNotFound() {
   return (
-    <section className="resource-state" aria-labelledby="event-not-found-title">
-      <p>404</p>
-      <h1 id="event-not-found-title">赛事不存在</h1>
-      <p>该赛事可能尚未公开或已经停止展示。</p>
-      <a className="button button-solid" href="/history">查看历届赛事</a>
-    </section>
+    <>
+      <Seo title="赛事不存在" description="该赛事可能尚未公开或已经停止展示。" />
+      <section className="resource-state" aria-labelledby="event-not-found-title">
+        <p>404</p>
+        <h1 id="event-not-found-title">赛事不存在</h1>
+        <p>该赛事可能尚未公开或已经停止展示。</p>
+        <a className="button button-solid" href="/history">查看历届赛事</a>
+      </section>
+    </>
   );
 }
 function EventContent({ rows = [] }) {
@@ -72,6 +76,12 @@ export default function EventDetailPage({ slug }) {
 
   return (
     <div className="content-page event-detail-page">
+      <Seo
+        title={event?.name || "赛事详情"}
+        description={event?.summary || "查看赛事介绍、时间地点、赛项组别和报名信息。"}
+        pathname={`/events/${encodeURIComponent(slug)}`}
+        image={event?.hero}
+      />
       <AsyncState status={state.status} onRetry={() => setAttempt((value) => value + 1)}>
         {event ? (
           <>

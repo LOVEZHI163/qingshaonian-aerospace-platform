@@ -134,5 +134,7 @@
   .event-content-grid,
   .history-event-grid { grid-template-columns: 1fr; }
   .attachment-list li { align-items: flex-start; flex-direction: column; }
+  .attachment-list a, .pagination button, .content-tabs button { min-height: 44px; }
+  .attachment-list a { width: 100%; text-align: center; }
   .pagination { flex-wrap: wrap; }
 }

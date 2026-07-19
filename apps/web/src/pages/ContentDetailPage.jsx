@@ -3,15 +3,19 @@ import React, { useEffect, useRef, useState } from "react";
 import { fetchJson } from "../api/client.js";
 import AsyncState from "../components/AsyncState.jsx";
 import AttachmentList from "../components/AttachmentList.jsx";
+import Seo from "../components/Seo.jsx";
 
 function ContentNotFound() {
   return (
-    <section className="resource-state" aria-labelledby="content-not-found-title">
-      <p>404</p>
-      <h1 id="content-not-found-title">内容不存在</h1>
-      <p>该内容可能尚未发布或已经停止展示。</p>
-      <a className="button button-solid" href="/news">返回内容列表</a>
-    </section>
+    <>
+      <Seo title="内容不存在" description="该内容可能尚未发布或已经停止展示。" />
+      <section className="resource-state" aria-labelledby="content-not-found-title">
+        <p>404</p>
+        <h1 id="content-not-found-title">内容不存在</h1>
+        <p>该内容可能尚未发布或已经停止展示。</p>
+        <a className="button button-solid" href="/news">返回内容列表</a>
+      </section>
+    </>
   );
 }
 
@@ -65,6 +69,13 @@ export default function ContentDetailPage({ slug }) {
 
   return (
     <article className="content-page content-detail-page">
+      <Seo
+        title={row?.title || "内容详情"}
+        description={row?.summary || "查看赛事公告、动态与优秀作品详情。"}
+        pathname={`/content/${encodeURIComponent(slug)}`}
+        image={row?.cover}
+        type="article"
+      />
       <AsyncState status={state.status} onRetry={() => setAttempt((value) => value + 1)}>
         {row ? (
           <>

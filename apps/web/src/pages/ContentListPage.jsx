@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 
 import { fetchJson } from "../api/client.js";
 import AsyncState from "../components/AsyncState.jsx";
+import Seo from "../components/Seo.jsx";
 import { navigatePublicListPage, navigatePublicListType, parsePublicListLocation, publicContentListPath } from "../router.js";
 
 const labels = { announcement: "公告", news: "动态", work: "优秀作品", recap: "赛事回顾" };
@@ -100,6 +101,11 @@ export default function ContentListPage({ mode = "announcements", location = win
 
   return (
     <section className="content-page content-list-page" aria-labelledby="content-list-title">
+      <Seo
+        title={newsMode ? "动态与优秀作品" : "赛事公告"}
+        description={newsMode ? "了解赛事动态，浏览青少年优秀航空航天作品。" : "查看平台及赛事最新通知。"}
+        pathname={newsMode ? "/news" : "/announcements"}
+      />
       <div className="content-page-heading">
         <p className="section-kicker">官方发布</p>
         <h1 id="content-list-title">{heading}</h1>

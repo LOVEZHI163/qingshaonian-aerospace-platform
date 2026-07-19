@@ -36,6 +36,7 @@
 }
 
 .featured-event-media img { object-fit: cover; }
+.featured-event-media { max-width: 100%; }
 .featured-event-media.media-placeholder { display: grid; place-items: center; font-size: 8rem; color: rgba(255, 255, 255, 0.14); }
 
 .featured-event-overlay {
@@ -149,6 +150,7 @@
 
 .content-card-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-3); }
 .content-card { overflow: hidden; }
+.content-card, .content-card-copy, .content-card h3 { min-width: 0; }
 .content-cover { display: block; width: 100%; aspect-ratio: 16 / 9; background: var(--color-brand-soft); }
 .content-cover img { width: 100%; height: 100%; object-fit: cover; }
 .content-cover.media-placeholder { display: grid; place-items: center; color: var(--color-brand); font-size: 3rem; }
@@ -188,6 +190,8 @@
   .history-list { grid-template-columns: 1fr; }
   .announcement-list li { grid-template-columns: auto 1fr; padding: var(--space-1) 0; }
   .announcement-list time { grid-column: 2; }
+  .button, .text-link { min-height: 44px; }
+  .button { width: 100%; }
 }
 
 @media (prefers-reduced-motion: no-preference) {

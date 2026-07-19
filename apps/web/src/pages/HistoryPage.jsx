@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 
 import { fetchJson } from "../api/client.js";
 import AsyncState from "../components/AsyncState.jsx";
+import Seo from "../components/Seo.jsx";
 import { navigatePublicListPage, parsePublicListLocation, publicContentListPath } from "../router.js";
 
 function uniqueEvents(bootstrap) {
@@ -39,6 +40,7 @@ export default function HistoryPage({ bootstrap, location = window.location.href
 
   return (
     <section className="content-page history-page" aria-labelledby="history-title">
+      <Seo title="历届赛事" description="回顾赛事历程、新闻记录和优秀成果。" pathname="/history" />
       <div className="content-page-heading">
         <p className="section-kicker">逐年回顾</p>
         <h1 id="history-title">历届赛事</h1>

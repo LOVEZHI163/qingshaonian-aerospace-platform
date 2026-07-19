@@ -1,22 +1,36 @@
-import React, { useEffect, useState } from "react";
+import React, { lazy, Suspense, useEffect, useState } from "react";
 import { fetchJson } from "./api/client.js";
 import { useRouter } from "./router.js";
 import AsyncState from "./components/AsyncState.jsx";
+import Seo from "./components/Seo.jsx";
 import SiteFooter from "./components/SiteFooter.jsx";
 import SiteHeader from "./components/SiteHeader.jsx";
-import ContentDetailPage from "./pages/ContentDetailPage.jsx";
-import ContentListPage from "./pages/ContentListPage.jsx";
-import EventDetailPage from "./pages/EventDetailPage.jsx";
-import HistoryPage from "./pages/HistoryPage.jsx";
-import HomePage from "./pages/HomePage.jsx";
+
+const ContentDetailPage = lazy(() => import("./pages/ContentDetailPage.jsx"));
+const ContentListPage = lazy(() => import("./pages/ContentListPage.jsx"));
+const EventDetailPage = lazy(() => import("./pages/EventDetailPage.jsx"));
+const HistoryPage = lazy(() => import("./pages/HistoryPage.jsx"));
+const HomePage = lazy(() => import("./pages/HomePage.jsx"));
+
+function RouteLoading() {
+  return (
+    <div className="route-loading" role="status" aria-live="polite" aria-label="正在加载页面">
+      <span className="loading-mark" aria-hidden="true" />
+      <p>正在加载页面…</p>
+    </div>
+  );
+}
 
 function NotFoundPage() {
   return (
-    <section className="page-skeleton not-found">
-      <p>404</p>
-      <h1>页面未找到</h1>
-      <a href="/">返回首页</a>
-    </section>
+    <>
+      <Seo title="页面未找到" description="您访问的页面不存在。" />
+      <section className="page-skeleton not-found">
+        <p>404</p>
+        <h1>页面未找到</h1>
+        <a href="/">返回首页</a>
+      </section>
+    </>
   );
 }
 
@@ -59,28 +73,37 @@ export default function App() {
 
   return (
     <div className="site-shell">
+      <a className="skip-link" href="#main-content">跳到主要内容</a>
       <SiteHeader routeKey={location} />
-      <main id="main-content">
-        {route.name === "not-found" ? (
-          <NotFoundPage />
-        ) : route.name === "home" ? (
-          <div className="home-route">
-            <h1 className="visually-hidden">首页</h1>
-            <AsyncState
-              status={bootstrap.status}
-              onRetry={() => setBootstrapAttempt((value) => value + 1)}
-            >
-              <HomePage data={bootstrap.data || {}} />
-            </AsyncState>
-          </div>
-        ) : (
-          <PublicRoute
-            key={`${route.name}:${route.params.slug || ""}`}
-            route={route}
-            bootstrap={bootstrap.data}
-            location={location}
-          />
-        )}
+      <main id="main-content" tabIndex="-1">
+        <Suspense fallback={<RouteLoading />}>
+          {route.name === "not-found" ? (
+            <NotFoundPage />
+          ) : route.name === "home" ? (
+            <div className="home-route">
+              <Seo
+                title={bootstrap.data?.site?.seoTitle || bootstrap.data?.site?.platformName || "温州市青少年航空航天创新比赛"}
+                description={bootstrap.data?.site?.seoDescription || bootstrap.data?.site?.platformIntro || "温州市青少年航空航天创新赛事、公告、动态与优秀作品平台。"}
+                pathname="/"
+                image={bootstrap.data?.site?.shareImage || bootstrap.data?.featuredEvent?.hero}
+              />
+              <h1 className="visually-hidden">首页</h1>
+              <AsyncState
+                status={bootstrap.status}
+                onRetry={() => setBootstrapAttempt((value) => value + 1)}
+              >
+                <HomePage data={bootstrap.data || {}} />
+              </AsyncState>
+            </div>
+          ) : (
+            <PublicRoute
+              key={`${route.name}:${route.params.slug || ""}`}
+              route={route}
+              bootstrap={bootstrap.data}
+              location={location}
+            />
+          )}
+        </Suspense>
       </main>
       <SiteFooter site={bootstrap.data?.site || {}} />
     </div>

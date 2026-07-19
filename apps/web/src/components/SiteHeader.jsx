@@ -12,11 +12,17 @@ const navigation = [
 export default function SiteHeader({ routeKey }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuButtonRef = useRef(null);
+  const navigationRef = useRef(null);
+  const currentPath = (() => {
+    try { return new URL(routeKey || "/", window.location.origin).pathname; }
+    catch { return "/"; }
+  })();
 
   useEffect(() => setMenuOpen(false), [routeKey]);
 
   useEffect(() => {
     if (!menuOpen) return undefined;
+    navigationRef.current?.querySelector("a[href]")?.focus();
     const handleKeyDown = (event) => {
       if (event.key !== "Escape") return;
       setMenuOpen(false);
@@ -45,11 +51,11 @@ export default function SiteHeader({ routeKey }) {
         <span aria-hidden="true">{menuOpen ? "×" : "☰"}</span>
       </button>
 
-      <div id="site-navigation" className="site-navigation" data-open={menuOpen || undefined}>
+      <div ref={navigationRef} id="site-navigation" className="site-navigation" data-open={menuOpen || undefined}>
         <p className="mobile-brand-name">{BRAND_NAME}</p>
         <nav aria-label="主导航">
           {navigation.map(([label, href]) => (
-            <a href={href} key={href}>{label}</a>
+            <a href={href} aria-current={currentPath === href ? "page" : undefined} key={href}>{label}</a>
           ))}
         </nav>
         <a className="registration-link" href="/#events">报名入口</a>
