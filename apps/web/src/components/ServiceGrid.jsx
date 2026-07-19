@@ -8,13 +8,39 @@ const serviceIcons = {
 };
 
 const eventScopedServices = new Set(["registration", "results", "certificates"]);
+const fallbackTarget = { href: "/history", available: false, isAdmin: false };
 
-function safeServiceHref(service) {
-  if (!service?.href || !service.href.startsWith("/")) return null;
-  if (!eventScopedServices.has(service.key) || !service.href.startsWith("/admin/")) return service.href;
-  if (!service.eventId) return null;
-  const url = new URL(service.href, "https://public.invalid");
-  return url.searchParams.get("eventId") === String(service.eventId) ? service.href : null;
+function resolveServiceTarget(service) {
+  if (service?.available !== true || typeof service.href !== "string" || !service.href) {
+    return fallbackTarget;
+  }
+
+  let url;
+  try {
+    url = new URL(service.href, window.location.origin);
+  } catch {
+    return fallbackTarget;
+  }
+
+  if (!["http:", "https:"].includes(url.protocol)
+    || url.origin !== window.location.origin
+    || url.username
+    || url.password) {
+    return fallbackTarget;
+  }
+
+  const isAdmin = url.pathname === "/admin" || url.pathname === "/admin/";
+  if (isAdmin) {
+    const eventIds = url.searchParams.getAll("eventId");
+    if (!eventScopedServices.has(service.key)
+      || !service.eventId
+      || eventIds.length !== 1
+      || eventIds[0] !== String(service.eventId)) {
+      return fallbackTarget;
+    }
+  }
+
+  return { href: service.href, available: true, isAdmin };
 }
 
 export default function ServiceGrid({ services = [] }) {
@@ -31,21 +57,19 @@ export default function ServiceGrid({ services = [] }) {
       </div>
       <div className="service-grid">
         {services.map((service) => {
-          const href = safeServiceHref(service);
-          const available = service.available === true && Boolean(href);
+          const target = resolveServiceTarget(service);
           const unavailableText = service.key === "registration" ? "暂无开放报名" : "暂未开放";
-          const unavailableLink = href || "/history";
           return (
             <article className="service-card" aria-label={service.label} key={service.key}>
               <span className="service-icon" aria-hidden="true">{serviceIcons[service.key] || "•"}</span>
               <h3>{service.label}</h3>
-              <p>{available ? "服务已开放" : unavailableText}</p>
+              <p>{target.available ? "服务已开放" : unavailableText}</p>
               <a
                 className="text-link"
-                href={available ? href : unavailableLink}
-                data-router-ignore={available && href.startsWith("/admin/") ? "true" : undefined}
+                href={target.href}
+                data-router-ignore={target.isAdmin ? "true" : undefined}
               >
-                {available ? `进入${service.label}` : service.key === "registration" ? "查看历史赛事" : "查看赛事信息"}
+                {target.available ? `进入${service.label}` : service.key === "registration" ? "查看历史赛事" : "查看赛事信息"}
                 <span aria-hidden="true"> →</span>
               </a>
             </article>

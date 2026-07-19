@@ -3,6 +3,7 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import App from "../App.jsx";
+import ServiceGrid from "../components/ServiceGrid.jsx";
 import HomePage from "../pages/HomePage.jsx";
 
 const jsonResponse = (body) => new Response(JSON.stringify(body), {
@@ -181,6 +182,67 @@ describe("adaptive public home", () => {
     expect(within(registration).getByText("暂无开放报名")).toBeInTheDocument();
     expect(within(registration).getByRole("link", { name: "查看历史赛事" })).toHaveAttribute("href", "/history");
     expect(within(registration).queryByRole("link", { name: "进入报名中心" })).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["Admin URL without eventId", "/admin?view=registration", true],
+    ["Admin URL with a different eventId", "/admin?view=registration&eventId=E2", true],
+    ["slash Admin URL with a different eventId", "/admin/?view=registration&eventId=E2", true],
+    ["protocol-relative external URL", "//attacker.example/admin?eventId=E1", true],
+    ["absolute external URL", "https://attacker.example/admin?eventId=E1", true],
+    ["javascript URL", "javascript:alert(1)", true],
+    ["data URL", "data:text/html,unsafe", true],
+    ["same-origin blob URL", `blob:${window.location.origin}/unsafe`, true],
+    ["unavailable Admin URL", "/admin/?view=registration&eventId=E1", false]
+  ])("falls back to history for an unsafe %s", (_label, href, available) => {
+    render(<ServiceGrid services={[{
+      key: "registration",
+      label: "报名中心",
+      eventId: "E1",
+      available,
+      href
+    }]} />);
+
+    const registration = screen.getByRole("article", { name: "报名中心" });
+    const fallback = within(registration).getByRole("link", { name: "查看历史赛事" });
+    expect(fallback).toHaveAttribute("href", "/history");
+    expect(fallback).not.toHaveAttribute("data-router-ignore");
+    expect(within(registration).queryByRole("link", { name: "进入报名中心" })).not.toBeInTheDocument();
+  });
+
+  it.each([
+    "/admin?view=registration&eventId=E1",
+    "/admin/?view=registration&eventId=E1"
+  ])("accepts a same-origin event-scoped Admin target %s", (href) => {
+    render(<ServiceGrid services={[{
+      key: "registration",
+      label: "报名中心",
+      eventId: "E1",
+      available: true,
+      href
+    }]} />);
+
+    const link = screen.getByRole("link", { name: "进入报名中心" });
+    expect(link).toHaveAttribute("href", href);
+    expect(link).toHaveAttribute("data-router-ignore", "true");
+  });
+
+  it.each([
+    "/events/event-e1",
+    "/history",
+    "/content/guide-e1"
+  ])("keeps a legal same-origin public target %s inside the public router", (href) => {
+    render(<ServiceGrid services={[{
+      key: "guide",
+      label: "参赛指南",
+      eventId: "E1",
+      available: true,
+      href
+    }]} />);
+
+    const link = screen.getByRole("link", { name: "进入参赛指南" });
+    expect(link).toHaveAttribute("href", href);
+    expect(link).not.toHaveAttribute("data-router-ignore");
   });
 
   it("shows stable placeholders when hero and card images are missing or fail", () => {
