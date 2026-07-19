@@ -1,5 +1,6 @@
 import { sanitizeContentHtml } from "../content/sanitize.js";
 import { normalizeContentInput } from "./content-publishing.js";
+import { eventProfileSlugIsLocked } from "./event-profile-publication.js";
 import { promoteContentMedia, promoteMedia } from "./site-media.js";
 
 const SETTINGS_FIELDS = new Set([
@@ -62,11 +63,6 @@ function versionAfterMutation(currentVersion, incrementVersion) {
   return incrementVersion ? currentVersion + 1 : currentVersion;
 }
 
-function eventSlugIsLocked(db, eventId) {
-  return (db.auditLogs || []).some((row) => row.action === "event.content-published" && row.targetId === eventId)
-    || (db.contentPosts || []).some((post) => post.eventId === eventId && post.status === "published");
-}
-
 function contentSlugIsLocked(db, post) {
   return ["published", "offline"].includes(post.status)
     || (db.auditLogs || []).some((row) => row.action === "content.publish" && row.targetId === post.id);
@@ -101,10 +97,10 @@ export function upsertEventPublicProfile(db, eventId, input, { now, incrementVer
   const current = profiles.find((row) => row.eventId === eventId);
   if (current) assertVersion(input, current, "EVENT_PROFILE_VERSION_CONFLICT");
   const slug = normalizeSlug(Object.hasOwn(input, "slug") ? input.slug : current?.slug);
-  assertUniqueSlug(profiles, slug, "eventId", eventId);
-  if (current && slug !== current.slug && eventSlugIsLocked(db, eventId)) {
-    fail(409, "已有公开内容的赛事不能更改slug", "EVENT_SLUG_STABLE");
+  if (current && slug !== current.slug && eventProfileSlugIsLocked(db, eventId)) {
+    fail(409, "已公开过的赛事不能更改slug", "EVENT_SLUG_STABLE");
   }
+  assertUniqueSlug(profiles, slug, "eventId", eventId);
   const next = current ? { ...current } : {
     eventId,
     slogan: "",

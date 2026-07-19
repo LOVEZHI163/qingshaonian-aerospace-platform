@@ -100,3 +100,23 @@ test("public history event pagination rejects invalid bounds", async () => {
     }
   }, { prefix: "aerogp-public-history-validation-" });
 });
+
+test("an archived event remains in public history when featuredEventId is stale", async () => {
+  await withTestServer(async ({ baseUrl, dbPath }) => {
+    await mutateDb(dbPath, (db) => {
+      db.events = [event("ARCHIVED-FEATURE", {
+        status: "archived",
+        archivedAt: "2001-01-02T00:00:00.000Z",
+        registrationEndAt: "2001-01-01T00:00:00.000Z"
+      })];
+      db.eventPublicProfiles = [profile("ARCHIVED-FEATURE")];
+      db.siteSettings.featuredEventId = "ARCHIVED-FEATURE";
+    });
+
+    const response = await fetch(`${baseUrl}/api/public/events?page=1&pageSize=20`);
+    assert.equal(response.status, 200);
+    const payload = await response.json();
+    assert.deepEqual(payload.rows.map((row) => row.id), ["ARCHIVED-FEATURE"]);
+    assert.deepEqual(payload.pagination, { page: 1, pageSize: 20, total: 1, totalPages: 1 });
+  }, { prefix: "aerogp-public-history-stale-featured-" });
+});

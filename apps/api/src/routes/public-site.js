@@ -143,8 +143,7 @@ function historicalEvents(db, now) {
   const selection = selectHomeEvents(db, now);
   const homepageEventIds = new Set([
     selection.featuredEvent?.id,
-    ...(selection.concurrentEvents || []).map((event) => event.id),
-    db.siteSettings?.featuredEventId
+    ...(selection.concurrentEvents || []).map((event) => event.id)
   ].filter(Boolean));
   return (db.events || [])
     .filter((event) => {

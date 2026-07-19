@@ -12,6 +12,7 @@ import {
   updateProject
 } from "../services/events.js";
 import { recordAudit } from "../services/audit.js";
+import { recordEventProfilePublication } from "../services/event-profile-publication.js";
 import { deleteArchivedEvent } from "../services/resource-cleanup.js";
 
 export function createEventsRouter({ store, requireAdmin, requirePasswordReady, asyncRoute, makeId, clock = () => new Date() }) {
@@ -67,6 +68,7 @@ export function createEventsRouter({ store, requireAdmin, requirePasswordReady, 
       summary: `${row.name}已设为当前发布赛事`,
       createdAt: clock().toISOString()
     });
+    recordEventProfilePublication(db, row.id, { actor: req.user, createdAt: clock().toISOString() });
     await store.writeDb(db);
     res.json({ row });
   }));
@@ -82,6 +84,7 @@ export function createEventsRouter({ store, requireAdmin, requirePasswordReady, 
       summary: `${row.name}已归档`,
       createdAt: clock().toISOString()
     });
+    recordEventProfilePublication(db, row.id, { actor: req.user, createdAt: clock().toISOString() });
     await store.writeDb(db);
     res.json({ row });
   }));

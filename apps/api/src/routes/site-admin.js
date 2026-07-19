@@ -1,6 +1,7 @@
 import express from "express";
 
 import { recordAudit } from "../services/audit.js";
+import { recordEventProfilePublication } from "../services/event-profile-publication.js";
 import {
   contentDetail,
   createContent,
@@ -58,10 +59,16 @@ export function createSiteAdminRouter({
   }));
 
   router.put("/admin/event-public-profiles/:eventId", ...admin, mutationAsyncRoute(async (req, res) => {
-    const { result, persisted } = await mutate((db) => upsertEventPublicProfile(db, req.params.eventId, req.body, {
-      now: now(),
-      incrementVersion: incrementsVersionsInSnapshot
-    }));
+    const { result, persisted } = await mutate((db) => {
+      const createdAt = now();
+      recordEventProfilePublication(db, req.params.eventId, { actor: req.user, createdAt });
+      const outcome = upsertEventPublicProfile(db, req.params.eventId, req.body, {
+        now: createdAt,
+        incrementVersion: incrementsVersionsInSnapshot
+      });
+      recordEventProfilePublication(db, req.params.eventId, { actor: req.user, createdAt });
+      return outcome;
+    });
     const row = persisted.eventPublicProfiles.find((profile) => profile.eventId === req.params.eventId);
     res.status(result.created ? 201 : 200).json({ row });
   }));
