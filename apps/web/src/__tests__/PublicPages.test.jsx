@@ -300,6 +300,38 @@ describe("public content lists", () => {
     expect(newsTab).toHaveFocus();
   });
 
+  it("keeps both controlled tab panels connected while visibility follows clicks and URL restoration", async () => {
+    window.history.replaceState({}, "", "/news?type=work&page=1&event=E1");
+    installApi({
+      "/api/public/content?type=news&page=1&pageSize=10&event=E1": page([content("N1", "news")]),
+      "/api/public/content?type=work&page=1&pageSize=10&event=E1": page([content("W1", "work")])
+    });
+
+    render(<App />);
+    expect(await screen.findByText("work-W1 标题")).toBeInTheDocument();
+    const newsTab = screen.getByRole("tab", { name: "动态" });
+    const workTab = screen.getByRole("tab", { name: "优秀作品" });
+    const newsPanelId = newsTab.getAttribute("aria-controls");
+    const workPanelId = workTab.getAttribute("aria-controls");
+    const newsPanel = document.getElementById(newsPanelId);
+    const workPanel = document.getElementById(workPanelId);
+    expect(newsPanel).toBeInTheDocument();
+    expect(workPanel).toBeInTheDocument();
+    expect(newsPanel).toHaveAttribute("hidden");
+    expect(workPanel).not.toHaveAttribute("hidden");
+
+    fireEvent.click(newsTab);
+    expect(await screen.findByText("news-N1 标题")).toBeInTheDocument();
+    expect(document.getElementById(newsPanelId)).not.toHaveAttribute("hidden");
+    expect(document.getElementById(workPanelId)).toHaveAttribute("hidden");
+
+    window.history.pushState({}, "", "/news?type=work&page=1&event=E1");
+    window.dispatchEvent(new PopStateEvent("popstate"));
+    expect(await screen.findByText("work-W1 标题")).toBeInTheDocument();
+    expect(document.getElementById(newsPanelId)).toHaveAttribute("hidden");
+    expect(document.getElementById(workPanelId)).not.toHaveAttribute("hidden");
+  });
+
   it("keeps one legal event filter on announcements and pagination requests", async () => {
     window.history.replaceState({}, "", "/announcements?event=E1&page=1");
     const request = installApi({

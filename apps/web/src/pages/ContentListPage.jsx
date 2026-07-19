@@ -126,20 +126,26 @@ export default function ContentListPage({ mode = "announcements", location = win
       ) : null}
 
       {newsMode ? (
-        <div
-          role="tabpanel"
-          id={`content-panel-${selectedType}`}
-          aria-labelledby={`content-tab-${selectedType}`}
-          tabIndex={0}
-        >
-          <AsyncState status={state.status} onRetry={() => setAttempt((value) => value + 1)}>
-            <ContentRows
-              payload={state.pages[selectedType]}
-              emptyText={selectedType === "work" ? "暂无公开优秀作品" : "暂无公开内容"}
-            />
-            <Pagination pagination={state.pages[selectedType]?.pagination} onPage={changePage} />
-          </AsyncState>
-        </div>
+        types.map((type) => (
+          <div
+            role="tabpanel"
+            id={`content-panel-${type}`}
+            aria-labelledby={`content-tab-${type}`}
+            tabIndex={0}
+            hidden={selectedType !== type}
+            key={type}
+          >
+            {selectedType === type ? (
+              <AsyncState status={state.status} onRetry={() => setAttempt((value) => value + 1)}>
+                <ContentRows
+                  payload={state.pages[type]}
+                  emptyText={type === "work" ? "暂无公开优秀作品" : "暂无公开内容"}
+                />
+                <Pagination pagination={state.pages[type]?.pagination} onPage={changePage} />
+              </AsyncState>
+            ) : null}
+          </div>
+        ))
       ) : (
         <div className="content-list-body">
           <AsyncState status={state.status} onRetry={() => setAttempt((value) => value + 1)}>
