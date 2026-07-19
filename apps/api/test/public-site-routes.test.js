@@ -264,6 +264,63 @@ test("public content list and detail never allow admin-cookie or preview draft b
   }, { prefix: "aerogp-public-content-" });
 });
 
+test("public content hides relationships to a non-public event without hiding the published post", async () => {
+  await withTestServer(async ({ baseUrl, dbPath }) => {
+    await mutateDb(dbPath, (db) => {
+      db.events = [event("SECRET-EVENT", {
+        status: "archived",
+        registrationMode: "force_closed",
+        registrationEndAt: "2026-06-01T00:00:00.000Z",
+        archivedAt: "2026-06-02T00:00:00.000Z"
+      })];
+      db.eventPublicProfiles = [profile("SECRET-EVENT", {
+        slug: "secret-event-slug",
+        isVisible: false
+      })];
+      db.contentPosts = [post("PUBLIC-CONTENT", {
+        slug: "public-content",
+        eventId: "SECRET-EVENT",
+        type: "news",
+        title: "公开文章"
+      })];
+      db.mediaAssets = [{
+        id: "PUBLIC-ATTACHMENT", eventId: "SECRET-EVENT", purpose: "attachment", visibility: "public",
+        originalName: "公开附件.pdf", storedName: "private.bin", filePath: "C:/secret/attachment.pdf",
+        mimeType: "application/pdf", sizeBytes: 100, width: null, height: null,
+        variants: {}, createdBy: "U9001", createdAt: "2026-01-01T00:00:00.000Z", cleanedAt: null
+      }];
+      db.contentAttachments = [{
+        contentId: "PUBLIC-CONTENT",
+        mediaId: "PUBLIC-ATTACHMENT",
+        label: "公开附件",
+        displayOrder: 0
+      }];
+    });
+
+    const home = await payload(await fetch(`${baseUrl}/api/public/home`));
+    assert.equal(home.news.length, 1);
+    assert.equal(home.news[0].eventId, null);
+    assert.equal(home.news[0].eventSlug, null);
+
+    const list = await payload(await fetch(`${baseUrl}/api/public/content?type=news`));
+    assert.equal(list.rows.length, 1);
+    assert.equal(list.rows[0].eventId, null);
+    assert.equal(list.rows[0].eventSlug, null);
+
+    const detail = await payload(await fetch(`${baseUrl}/api/public/content/public-content`));
+    assert.equal(detail.row.title, "公开文章");
+    assert.equal(detail.row.eventId, null);
+    assert.equal(detail.row.eventSlug, null);
+    assert.equal(detail.row.attachments.length, 1);
+    assert.equal(Object.hasOwn(detail.row.attachments[0], "eventId"), false);
+    assert.equal(Object.hasOwn(detail.row.attachments[0], "eventSlug"), false);
+
+    const serialized = JSON.stringify({ home: home.news, list: list.rows, detail });
+    assert.equal(serialized.includes("SECRET-EVENT"), false);
+    assert.equal(serialized.includes("secret-event-slug"), false);
+  }, { prefix: "aerogp-public-hidden-event-content-" });
+});
+
 test("public content validates filters and bounds pagination", async () => {
   await withTestServer(async ({ baseUrl, dbPath }) => {
     await mutateDb(dbPath, (db) => {

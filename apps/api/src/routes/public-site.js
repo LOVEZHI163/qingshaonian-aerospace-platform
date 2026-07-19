@@ -77,11 +77,12 @@ function visiblePosts(db, now) {
 }
 
 function contentSummary(db, row) {
-  const profile = (db.eventPublicProfiles || []).find((item) => item.eventId === row.eventId);
+  const event = (db.events || []).find((item) => item.id === row.eventId);
+  const profile = eventIsPublic(db, event) ? publicProfile(db, event.id) : null;
   return {
     id: row.id,
     slug: row.slug,
-    eventId: row.eventId,
+    eventId: profile ? event.id : null,
     eventSlug: profile?.slug || null,
     type: row.type,
     title: row.title,
