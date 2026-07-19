@@ -78,10 +78,8 @@ export default function App() {
       if (focusHashTarget(hash)) observer.disconnect();
     });
     observer.observe(document.getElementById("main-content") || document.body, { childList: true, subtree: true });
-    const timeout = window.setTimeout(() => observer.disconnect(), 2_000);
     return () => {
       observer.disconnect();
-      window.clearTimeout(timeout);
     };
   }, [location]);
 

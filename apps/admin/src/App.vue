@@ -33,6 +33,7 @@ const initialEventId = initialView && SAFE_EVENT_ID.test(initialParams.get("even
 const registrationEventId = ref(initialView === "registration" ? initialEventId : "");
 const recordsEventId = ref(initialView === "registrationRecords" ? initialEventId : "");
 const certificateEventId = ref(initialView === "certificates" ? initialEventId : "");
+const managementEventId = ref(["registration", "registrationRecords"].includes(initialView) ? initialEventId : "");
 const selectedRegistrationEvent = ref(null);
 const passwordChangeForm = reactive({ currentPassword: "", newPassword: "" });
 const roleText = { ordinary: "普通用户", organization: "组织用户", admin: "超级管理员" };
@@ -73,8 +74,9 @@ function defaultView(user = currentUser.value) {
 function targetView(user = currentUser.value) {
   if (!user || !initialView) return defaultView(user);
   if (user.type === "organization" && !approvedOrganization.value) return "organization";
+  if (user.type === "admin" && initialView === "registrationRecords") return "registration";
   const allowed = user.type === "admin"
-    ? new Set(["overview", "events", "siteContent", "organizations", "registration", "registrationRecords", "certificates", "users"])
+    ? new Set(["overview", "events", "siteContent", "organizations", "registration", "certificates", "users"])
     : user.type === "organization"
       ? new Set(["registration", "registrationRecords", "certificates", "organization"])
       : new Set(["registration", "registrationRecords", "certificates"]);
@@ -115,6 +117,7 @@ async function logout() {
 }
 
 function navigateAdmin(key) {
+  if (key === "registrations") managementEventId.value = "";
   if (key === "certificates") {
     certificateRegistrationId.value = "";
     certificateEventId.value = "";
@@ -190,8 +193,7 @@ onMounted(async () => {
     <EventManagementPage v-else-if="currentView === 'events'" @event-changed="loadEvent" />
     <SiteContentPage v-else-if="currentView === 'siteContent'" />
     <OrganizationManagementPage v-else-if="currentView === 'organizations'" />
-    <RegistrationManagementPage v-else-if="currentView === 'registration'" @open-certificates="openCertificateManagement" />
-    <RegistrationRecordsPage v-else-if="currentView === 'registrationRecords'" :event-id="recordsEventId" @error="handleError" />
+    <RegistrationManagementPage v-else-if="currentView === 'registration'" :initial-event-id="managementEventId" @open-certificates="openCertificateManagement" />
     <CertificateManagementPage v-else-if="currentView === 'certificates'" :initial-registration-id="certificateRegistrationId" :initial-event-id="certificateEventId" />
     <UserManagementPage v-else-if="currentView === 'users'" @error="handleError" />
   </AdminShell>
@@ -207,8 +209,8 @@ onMounted(async () => {
       <header class="topbar"><div><h2>{{ userHeaderEvent.name || "赛事报名平台" }}</h2><p>{{ userHeaderEvent.date }} · {{ userHeaderEvent.venue }} · 报名截止 {{ userHeaderEvent.registrationDeadline }}</p></div></header>
       <p v-if="message" class="message">{{ message }}</p>
       <RegistrationPage v-if="currentView === 'registration'" :event-id="registrationEventId" :fallback-context="{ projects: eventData.projects }" @context="useRegistrationEvent" @registered="message = '报名已提交，等待审核'" @error="handleError" />
-      <RegistrationRecordsPage v-else-if="currentView === 'registrationRecords'" :event-id="recordsEventId" @error="handleError" />
-      <MyCertificatesPage v-else-if="currentView === 'certificates'" :event-id="certificateEventId" @error="handleError" />
+      <RegistrationRecordsPage :key="`records:${recordsEventId}`" v-else-if="currentView === 'registrationRecords'" :event-id="recordsEventId" @error="handleError" />
+      <MyCertificatesPage :key="`certificates:${certificateEventId}`" v-else-if="currentView === 'certificates'" :event-id="certificateEventId" @error="handleError" />
       <OrganizationConsolePage v-else-if="currentView === 'organization'" @error="handleError" />
     </main>
   </div>

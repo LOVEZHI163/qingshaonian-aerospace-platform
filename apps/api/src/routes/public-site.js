@@ -140,9 +140,16 @@ function eventSummary(db, event, now) {
 }
 
 function historicalEvents(db, now) {
+  const selection = selectHomeEvents(db, now);
+  const homepageEventIds = new Set([
+    selection.featuredEvent?.id,
+    ...(selection.concurrentEvents || []).map((event) => event.id),
+    db.siteSettings?.featuredEventId
+  ].filter(Boolean));
   return (db.events || [])
     .filter((event) => {
       if (!eventIsPublic(db, event)) return false;
+      if (event.isCurrent === true || homepageEventIds.has(event.id)) return false;
       const endedAt = Date.parse(event.registrationEndAt);
       return event.status === "archived"
         || Boolean(event.archivedAt)

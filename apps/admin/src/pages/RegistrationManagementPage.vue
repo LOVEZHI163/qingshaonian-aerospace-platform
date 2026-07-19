@@ -4,6 +4,7 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref } from "vue";
 import { api, apiBlob } from "../lib/api.js";
 import { createBlobDownloadManager } from "../lib/download.js";
 
+const props = defineProps({ initialEventId: { type: String, default: "" } });
 const emit = defineEmits(["open-certificates"]);
 const events = ref([]); const projects = ref([]); const organizations = ref([]); const rows = ref([]);
 const total = ref(0); const refreshedAt = ref(""); const loading = ref(false); const error = ref(""); const success = ref("");
@@ -35,7 +36,9 @@ async function loadPage() {
   try {
     const [eventPayload, organizationPayload] = await Promise.all([api("/api/admin/events"), api("/api/admin/organizations")]);
     events.value = eventPayload.rows || []; projects.value = eventPayload.projects || []; organizations.value = organizationPayload.rows || [];
-    filters.eventId = events.value.find((event) => event.isCurrent)?.id || events.value[0]?.id || "";
+    filters.eventId = events.value.some((event) => event.id === props.initialEventId)
+      ? props.initialEventId
+      : events.value.find((event) => event.isCurrent)?.id || events.value[0]?.id || "";
     await loadRows();
   } catch (cause) { error.value = cause.message || "报名管理加载失败"; }
 }

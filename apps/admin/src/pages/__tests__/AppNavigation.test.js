@@ -160,6 +160,50 @@ describe("role based application navigation", () => {
     expect(apiMock.mock.calls.some(([path]) => path.includes("<script>"))).toBe(false);
   });
 
+  it("routes an administrator records deep link to event-filtered registration management", async () => {
+    window.history.replaceState({}, "", "/admin/?view=records&eventId=E2");
+    session.user.value = { id: "A1", type: "admin", name: "管理员", phone: "13900000000", mustChangePassword: false };
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/public/event") return { event: { id: "E1", name: "当前赛事 E1" }, projects: [], grades: [] };
+      if (path === "/api/admin/events") return {
+        rows: [{ id: "E1", name: "当前赛事", isCurrent: true }, { id: "E2", name: "目标赛事", isCurrent: false }],
+        projects: []
+      };
+      if (path === "/api/admin/organizations") return { rows: [] };
+      if (path.startsWith("/api/admin/registrations?")) return { rows: [], total: 0 };
+      return { rows: [] };
+    });
+
+    const wrapper = mount(App); mounted.push(wrapper);
+    await flushPromises();
+
+    expect(wrapper.find(".registration-management").exists()).toBe(true);
+    expect(wrapper.find('[data-testid="registration-records-page"]').exists()).toBe(false);
+    const request = apiMock.mock.calls.map(([path]) => path).find((path) => path.startsWith("/api/admin/registrations?"));
+    expect(new URLSearchParams(request.split("?")[1]).get("eventId")).toBe("E2");
+  });
+
+  it.each([
+    ["records", "registrationRecords", "/api/me/registrations?eventId=E2", "/api/me/registrations"],
+    ["certificates", "certificates", "/api/me/certificates?eventId=E2", "/api/me/certificates"]
+  ])("reloads %s without the deep-link event filter when its current navigation item is clicked", async (view, navigation, filteredPath, unfilteredPath) => {
+    window.history.replaceState({}, "", `/admin/?view=${view}&eventId=E2`);
+    session.user.value = { id: "U1", type: "ordinary", name: "普通用户", phone: "13800000001", mustChangePassword: false };
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/public/event") return { event: { id: "E1", name: "当前赛事 E1" }, projects: [], grades: [] };
+      if (path === filteredPath || path === unfilteredPath) return { rows: [] };
+      return { rows: [] };
+    });
+
+    const wrapper = mount(App); mounted.push(wrapper);
+    await flushPromises();
+    expect(apiMock).toHaveBeenCalledWith(filteredPath);
+
+    await wrapper.get(`[data-user-nav="${navigation}"]`).trigger("click");
+    await flushPromises();
+    expect(apiMock).toHaveBeenCalledWith(unfilteredPath);
+  });
+
   it("keeps a pending organization on review progress even when a registration deep link is requested", async () => {
     window.history.replaceState({}, "", "/admin/?view=registration&eventId=E2");
     const organization = { id: "O1", ownerUserId: "O1U", name: "待审核学校", reviewStatus: "pending", status: "active", membershipRole: "owner" };

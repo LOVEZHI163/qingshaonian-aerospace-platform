@@ -61,13 +61,17 @@ test("public history events are visible, historical and independently paginated 
           archivedAt: "2001-01-02T00:00:00.000Z"
         }),
         event("FORCED-ACTIVE", { registrationMode: "force_open" }),
+        event("CURRENT-ENDED", { isCurrent: true, registrationEndAt: "2005-01-01T00:00:00.000Z" }),
+        event("MANUAL-FEATURED", { registrationEndAt: "2006-01-01T00:00:00.000Z" }),
         event("HIDDEN", { registrationEndAt: "2003-01-01T00:00:00.000Z" }),
         event("DRAFT", { registrationEndAt: "2004-01-01T00:00:00.000Z", status: "draft" })
       ];
       db.eventPublicProfiles = [
         profile("ACTIVE"), profile("OLD-NEW"), profile("OLD-ARCHIVED"), profile("FORCED-ACTIVE"),
+        profile("CURRENT-ENDED"), profile("MANUAL-FEATURED"),
         profile("HIDDEN", { isVisible: false }), profile("DRAFT")
       ];
+      db.siteSettings.featuredEventId = "MANUAL-FEATURED";
     });
 
     const firstResponse = await fetch(`${baseUrl}/api/public/events?page=1&pageSize=1`);
@@ -81,6 +85,8 @@ test("public history events are visible, historical and independently paginated 
     assert.deepEqual(second.rows.map((row) => row.id), ["OLD-ARCHIVED"]);
     assert.equal(JSON.stringify({ first, second }).includes("ACTIVE"), false);
     assert.equal(JSON.stringify({ first, second }).includes("FORCED-ACTIVE"), false);
+    assert.equal(JSON.stringify({ first, second }).includes("CURRENT-ENDED"), false);
+    assert.equal(JSON.stringify({ first, second }).includes("MANUAL-FEATURED"), false);
     assert.equal(JSON.stringify({ first, second }).includes("HIDDEN"), false);
     assert.equal(JSON.stringify({ first, second }).includes("DRAFT"), false);
   }, { prefix: "aerogp-public-history-events-" });

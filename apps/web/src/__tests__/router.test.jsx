@@ -1,5 +1,5 @@
 import React from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import App from "../App.jsx";
 import { fetchJson } from "../api/client.js";
@@ -120,6 +120,30 @@ describe("public site router", () => {
     fireEvent.click(screen.getByRole("link", { name: "报名入口" }));
     await waitFor(() => expect(document.getElementById("registration")).toHaveFocus());
     expect(window.location.hash).toBe("#registration");
+  });
+
+  it("keeps cross-route hash focus pending for a target that appears after two seconds", async () => {
+    vi.useFakeTimers();
+    window.history.replaceState({}, "", "/news");
+    const scrollIntoView = vi.fn();
+    Element.prototype.scrollIntoView = scrollIntoView;
+    render(<App />);
+    const delayedLink = document.createElement("a");
+    delayedLink.href = "/#late-registration";
+    delayedLink.textContent = "延迟报名锚点";
+    document.body.append(delayedLink);
+
+    fireEvent.click(delayedLink);
+    await act(async () => { vi.advanceTimersByTime(2_500); });
+    const target = document.createElement("section");
+    target.id = "late-registration";
+    target.tabIndex = -1;
+    document.getElementById("main-content").append(target);
+    await act(async () => { await Promise.resolve(); });
+
+    expect(target).toHaveFocus();
+    expect(scrollIntoView).toHaveBeenCalled();
+    vi.useRealTimers();
   });
 
   it("loads the history skeleton from the public recap list API", () => {
