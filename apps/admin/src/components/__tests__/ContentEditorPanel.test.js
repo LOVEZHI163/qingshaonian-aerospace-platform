@@ -27,6 +27,12 @@ function installApi(overrides = {}) {
   });
 }
 
+function deferred() {
+  let resolve; let reject;
+  const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
+  return { promise, resolve, reject };
+}
+
 async function mountEditor(contentId = "POST-1") {
   const wrapper = mount(ContentEditorPanel, { props: { contentId, events } });
   await flushPromises();
@@ -166,10 +172,11 @@ describe("ContentEditorPanel", () => {
       return {};
     });
     const wrapper = await mountEditor();
-    await wrapper.get('[data-attachment="M1"] [data-action="delete-attachment-media"]').trigger("click");
+    await wrapper.get('[data-attachment="M1"] [data-action="detach-attachment-media"]').trigger("click");
+    await wrapper.get('[data-pending-media="M1"] [data-action="delete-pending-media"]').trigger("click");
     await flushPromises();
     expect(wrapper.text()).toContain("媒体仍被内容引用，请先解除引用并保存");
-    expect(wrapper.find('[data-attachment="M1"]').exists()).toBe(true);
+    expect(wrapper.find('[data-pending-media="M1"]').exists()).toBe(true);
   });
 
   it("closes confirmation with Escape and returns focus to its opener", async () => {
@@ -182,6 +189,154 @@ describe("ContentEditorPanel", () => {
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
     await wrapper.vm.$nextTick();
     expect(wrapper.find('[role="dialog"]').exists()).toBe(false);
+    expect(document.activeElement).toBe(opener.element);
+    wrapper.unmount();
+  });
+
+  it("clears stale content during loading and cannot patch it after the next load fails", async () => {
+    const nextLoad = deferred();
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/admin/content/POST-1") return { row: { ...row } };
+      if (path === "/api/admin/content/POST-2") return nextLoad.promise;
+      return {};
+    });
+    const wrapper = await mountEditor();
+    await wrapper.setProps({ contentId: "POST-2" });
+    await wrapper.vm.$nextTick();
+    expect(wrapper.text()).toContain("正在加载内容");
+    expect(wrapper.find('[data-content-field="title"]').exists()).toBe(false);
+    nextLoad.reject(new Error("第二篇加载失败"));
+    await flushPromises();
+    expect(wrapper.text()).toContain("第二篇加载失败");
+    expect(wrapper.find('[data-action="save-content"]').exists()).toBe(false);
+  });
+
+  it("discards an out-of-order response when content selection changes quickly", async () => {
+    const first = deferred(); const second = deferred();
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/admin/content/POST-1") return first.promise;
+      if (path === "/api/admin/content/POST-2") return second.promise;
+      return {};
+    });
+    const wrapper = mount(ContentEditorPanel, { props: { contentId: "POST-1", events } });
+    await wrapper.setProps({ contentId: "POST-2" });
+    second.resolve({ row: { ...row, id: "POST-2", title: "第二篇" } });
+    await flushPromises();
+    expect(wrapper.get('[data-content-field="title"]').element.value).toBe("第二篇");
+    first.resolve({ row: { ...row, id: "POST-1", title: "迟到的第一篇" } });
+    await flushPromises();
+    expect(wrapper.get('[data-content-field="title"]').element.value).toBe("第二篇");
+  });
+
+  it("creates only a draft, then enables scheduled PATCH after receiving an id", async () => {
+    apiMock.mockImplementation(async (path, options = {}) => {
+      if (path === "/api/admin/content" && options.method === "POST") return { row: { ...row, ...JSON.parse(options.body), id: "POST-NEW", status: "draft", publishAt: null } };
+      if (path === "/api/admin/content/POST-NEW" && options.method === "PATCH") return { row: { ...row, ...JSON.parse(options.body), id: "POST-NEW", version: 2 } };
+      return {};
+    });
+    const wrapper = await mountEditor(null);
+    expect(wrapper.get('[data-content-field="status"]').findAll("option").map((option) => option.attributes("value"))).toEqual(["draft"]);
+    expect(wrapper.text()).toContain("先保存草稿后才能设置定时发布");
+    await wrapper.get('[data-content-field="title"]').setValue("新内容");
+    await wrapper.get('[data-content-field="slug"]').setValue("new-content");
+    await wrapper.get('[data-action="save-content"]').trigger("click");
+    await flushPromises();
+    const create = apiMock.mock.calls.find(([path, options]) => path === "/api/admin/content" && options?.method === "POST");
+    expect(JSON.parse(create[1].body)).toMatchObject({ status: "draft", publishAt: null });
+    expect(wrapper.get('[data-content-field="status"]').findAll("option").map((option) => option.attributes("value"))).toContain("scheduled");
+    await wrapper.get('[data-content-field="status"]').setValue("scheduled");
+    await wrapper.get('[data-content-field="publishAt"]').setValue("2099-01-02T12:30");
+    await wrapper.get('[data-action="save-content"]').trigger("click");
+    await flushPromises();
+    const update = apiMock.mock.calls.find(([path, options]) => path === "/api/admin/content/POST-NEW" && options?.method === "PATCH");
+    expect(JSON.parse(update[1].body).publishAt).toBe(new Date("2099-01-02T12:30").toISOString());
+  });
+
+  it("keeps detached media reachable through save, 409, and retrying a successful DELETE", async () => {
+    let deleteAttempts = 0;
+    apiMock.mockImplementation(async (path, options = {}) => {
+      if (path === "/api/admin/content/POST-1" && options.method === "PATCH") return { row: { ...row, ...JSON.parse(options.body), attachments: [], version: 2 } };
+      if (path === "/api/admin/content/POST-1") return { row: { ...row, coverMediaId: "C1", attachments: [{ mediaId: "M1", label: "规程", displayOrder: 0, media: { id: "M1", originalName: "rules.pdf", mimeType: "application/pdf", sizeBytes: 100 } }] } };
+      if (["/api/admin/site-media/M1", "/api/admin/site-media/C1"].includes(path) && options.method === "DELETE") {
+        deleteAttempts += 1;
+        if (deleteAttempts === 1) throw Object.assign(new Error("仍被引用"), { status: 409 });
+        return {};
+      }
+      return {};
+    });
+    const wrapper = await mountEditor();
+    await wrapper.get('[data-action="detach-cover-media"]').trigger("click");
+    await wrapper.get('[data-attachment="M1"] [data-action="detach-attachment-media"]').trigger("click");
+    expect(wrapper.findAll('[data-pending-media]')).toHaveLength(2);
+    await wrapper.get('[data-action="save-content"]').trigger("click");
+    await flushPromises();
+    expect(wrapper.findAll('[data-pending-media]')).toHaveLength(2);
+    await wrapper.get('[data-pending-media="M1"] [data-action="delete-pending-media"]').trigger("click");
+    await flushPromises();
+    expect(wrapper.find('[data-pending-media="M1"]').exists()).toBe(true);
+    expect(wrapper.text()).toContain("媒体仍被内容引用");
+    await wrapper.get('[data-pending-media="M1"] [data-action="delete-pending-media"]').trigger("click");
+    await flushPromises();
+    expect(wrapper.find('[data-pending-media="M1"]').exists()).toBe(false);
+  });
+
+  it("locks physical deletion by media id while the request is pending", async () => {
+    const deletion = deferred();
+    apiMock.mockImplementation(async (path, options = {}) => {
+      if (path === "/api/admin/content/POST-1") return { row: { ...row, attachments: [{ mediaId: "M1", label: "规程", displayOrder: 0, media: { id: "M1", originalName: "rules.pdf" } }] } };
+      if (path === "/api/admin/site-media/M1" && options.method === "DELETE") return deletion.promise;
+      return {};
+    });
+    const wrapper = await mountEditor();
+    await wrapper.get('[data-attachment="M1"] [data-action="detach-attachment-media"]').trigger("click");
+    const button = wrapper.get('[data-pending-media="M1"] [data-action="delete-pending-media"]');
+    await button.trigger("click");
+    await button.trigger("click");
+    expect(apiMock.mock.calls.filter(([path, options]) => path === "/api/admin/site-media/M1" && options?.method === "DELETE")).toHaveLength(1);
+    expect(button.attributes("disabled")).toBeDefined();
+    deletion.resolve({}); await flushPromises();
+    expect(wrapper.find('[data-pending-media="M1"]').exists()).toBe(false);
+  });
+
+  it("traps focus and restores stable focus after publish, offline, and delete", async () => {
+    const wrapper = await mount(ContentEditorPanel, { props: { contentId: "POST-1", events }, attachTo: document.body });
+    await flushPromises();
+    await wrapper.get('[data-action="publish-content"]').trigger("click");
+    const buttons = wrapper.get('[role="dialog"]').findAll("button");
+    buttons.at(-1).element.focus();
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true }));
+    expect(document.activeElement).toBe(buttons[0].element);
+    buttons[0].element.focus();
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", shiftKey: true, bubbles: true }));
+    expect(document.activeElement).toBe(buttons.at(-1).element);
+    await wrapper.get('[data-action="confirm-content-action"]').trigger("click");
+    await flushPromises();
+    expect(document.activeElement).toBe(wrapper.get('[data-content-editor-heading]').element);
+
+    await wrapper.get('[data-action="offline-content"]').trigger("click");
+    await wrapper.get('[data-action="confirm-content-action"]').trigger("click");
+    await flushPromises();
+    expect(document.activeElement).toBe(wrapper.get('[data-content-editor-heading]').element);
+
+    await wrapper.get('[data-action="delete-content"]').trigger("click");
+    await wrapper.get('[data-action="confirm-content-action"]').trigger("click");
+    await flushPromises();
+    expect(document.activeElement).toBe(wrapper.get('[data-content-editor-heading]').element);
+    wrapper.unmount();
+  });
+
+  it("traps preview focus and restores it to the preview button", async () => {
+    const wrapper = await mount(ContentEditorPanel, { props: { contentId: "POST-1", events }, attachTo: document.body });
+    await flushPromises();
+    const opener = wrapper.get('[data-action="preview-content"]');
+    opener.element.focus();
+    await opener.trigger("click"); await flushPromises();
+    const close = wrapper.get('[aria-label="关闭预览"]');
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true }));
+    expect(document.activeElement).toBe(close.element);
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", shiftKey: true, bubbles: true }));
+    expect(document.activeElement).toBe(close.element);
+    await close.trigger("click"); await wrapper.vm.$nextTick();
     expect(document.activeElement).toBe(opener.element);
     wrapper.unmount();
   });

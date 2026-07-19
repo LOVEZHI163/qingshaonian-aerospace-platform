@@ -40,4 +40,31 @@ describe("RichTextEditor", () => {
     await wrapper.get('[data-editor-mode="text"]').trigger("click");
     expect(wrapper.get('[data-rich-editor="text"]').element.value).toContain("第一行");
   });
+
+  it("never inserts unsafe saved draft HTML into the visual DOM", async () => {
+    const wrapper = mount(RichTextEditor, { props: { modelValue: '<div><p style="color:red" onclick="bad()">正文<a href="javascript:bad()">链接</a><img src="/api/public/media/M1" onerror="bad()"></p><script>bad()</script><style>body{display:none}</style></div>' } });
+    await wrapper.vm.$nextTick();
+    const html = wrapper.get('[data-rich-editor="visual"]').element.innerHTML;
+    expect(html).toContain("正文");
+    expect(html).toContain("/api/public/media/M1");
+    expect(html).not.toMatch(/script|style=|onclick|onerror|javascript:|<div/i);
+  });
+
+  it("sanitizes HTML repair input before switching back to visual mode", async () => {
+    const wrapper = mount(RichTextEditor, { props: { modelValue: "<p>原文</p>" } });
+    await wrapper.get('[data-editor-mode="html"]').trigger("click");
+    await wrapper.get('[data-rich-editor="html"]').setValue('<h2 style="color:red">标题</h2><img src="javascript:bad" onerror="bad()"><script>bad()</script><a href="javascript:bad()">坏链接</a>');
+    await wrapper.get('[data-editor-mode="visual"]').trigger("click");
+    const html = wrapper.get('[data-rich-editor="visual"]').element.innerHTML;
+    expect(html).toContain("<h2>标题</h2>");
+    expect(html).toContain("坏链接");
+    expect(html).not.toMatch(/script|style=|onerror|javascript:/i);
+    expect(wrapper.emitted("update:modelValue").at(-1)[0]).toBe(wrapper.get('[data-rich-editor="visual"]').element.innerHTML);
+  });
+
+  it("does not trust internal sanitizer marker attributes supplied by content", async () => {
+    const wrapper = mount(RichTextEditor, { props: { modelValue: '<a href="javascript:bad()" data-editor-href="javascript:bad()">伪造链接</a>' } });
+    await wrapper.vm.$nextTick();
+    expect(wrapper.get('[data-rich-editor="visual"]').element.innerHTML).toBe("<a>伪造链接</a>");
+  });
 });

@@ -1,17 +1,66 @@
 <script setup>
-import { computed, nextTick, ref, watch } from "vue";
+import { computed, nextTick, onMounted, ref, watch } from "vue";
 
 const props = defineProps({ modelValue: { type: String, default: "" }, disabled: { type: Boolean, default: false } });
-const emit = defineEmits(["update:modelValue"]);
+const emit = defineEmits(["update:modelValue", "normalized"]);
+const ALLOWED_TAGS = new Set(["P", "H2", "H3", "H4", "UL", "OL", "LI", "STRONG", "EM", "BLOCKQUOTE", "A", "IMG", "FIGURE", "FIGCAPTION", "BR"]);
+const DROP_TAGS = new Set(["SCRIPT", "STYLE", "IFRAME", "OBJECT", "EMBED", "SVG", "MATH", "TEMPLATE"]);
 const mode = ref("visual");
 const visual = ref(null);
-const value = ref(props.modelValue);
+const repairValue = ref("");
+const textRepair = ref("");
+
+function sanitizeEditorHtml(raw) {
+  const parsed = new DOMParser().parseFromString(String(raw || ""), "text/html");
+  function visit(parent) {
+    for (const node of [...parent.childNodes]) {
+      if (node.nodeType !== Node.ELEMENT_NODE) continue;
+      if (DROP_TAGS.has(node.tagName)) { node.remove(); continue; }
+      visit(node);
+      if (!ALLOWED_TAGS.has(node.tagName)) { node.replaceWith(...node.childNodes); continue; }
+      for (const attribute of [...node.attributes]) {
+        if (!attribute.name.startsWith("data-editor-")) node.removeAttribute(attribute.name);
+      }
+    }
+  }
+  // Preserve only approved attributes before the general stripping pass.
+  parsed.body.querySelectorAll("*").forEach((node) => {
+    for (const attribute of [...node.attributes]) {
+      if (attribute.name.startsWith("data-editor-")) node.removeAttribute(attribute.name);
+    }
+  });
+  parsed.body.querySelectorAll("a").forEach((node) => {
+    const href = node.getAttribute("href") || "";
+    if (/^(https?:|mailto:)/i.test(href)) node.setAttribute("data-editor-href", href);
+  });
+  parsed.body.querySelectorAll("img").forEach((node) => {
+    const src = node.getAttribute("src") || "";
+    const alt = node.getAttribute("alt") || "";
+    if (!src.startsWith("/api/public/media/")) { node.remove(); return; }
+    node.setAttribute("data-editor-src", src);
+    if (alt) node.setAttribute("data-editor-alt", alt);
+  });
+  visit(parsed.body);
+  parsed.body.querySelectorAll("a[data-editor-href]").forEach((node) => {
+    node.setAttribute("href", node.getAttribute("data-editor-href")); node.removeAttribute("data-editor-href");
+  });
+  parsed.body.querySelectorAll("img[data-editor-src]").forEach((node) => {
+    node.setAttribute("src", node.getAttribute("data-editor-src")); node.removeAttribute("data-editor-src");
+    if (node.hasAttribute("data-editor-alt")) { node.setAttribute("alt", node.getAttribute("data-editor-alt")); node.removeAttribute("data-editor-alt"); }
+  });
+  return parsed.body.innerHTML;
+}
+
+const value = ref(sanitizeEditorHtml(props.modelValue));
 
 watch(() => props.modelValue, (next) => {
-  if (next === value.value) return;
-  value.value = next || "";
+  const safe = sanitizeEditorHtml(next);
+  if (safe === value.value) return;
+  value.value = safe;
   if (visual.value && mode.value === "visual" && visual.value.innerHTML !== value.value) visual.value.innerHTML = value.value;
+  if (safe !== next) emit("normalized", safe);
 });
+onMounted(() => { if (value.value !== props.modelValue) emit("normalized", value.value); });
 
 const plainText = computed(() => {
   const container = document.createElement("div");
@@ -20,12 +69,18 @@ const plainText = computed(() => {
 });
 
 function update(next) {
-  value.value = next;
-  emit("update:modelValue", next);
+  const safe = sanitizeEditorHtml(next);
+  value.value = safe;
+  if (visual.value && visual.value.innerHTML !== safe) visual.value.innerHTML = safe;
+  emit("update:modelValue", safe);
 }
 
 async function setMode(next) {
+  if (mode.value === "html") update(repairValue.value);
+  else if (mode.value === "text") update(`<p>${textRepair.value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replace(/\r?\n/g, "</p><p>")}</p>`);
   mode.value = next;
+  if (next === "html") repairValue.value = value.value;
+  if (next === "text") textRepair.value = plainText.value;
   await nextTick();
   if (next === "visual" && visual.value) visual.value.innerHTML = value.value;
 }
@@ -48,17 +103,7 @@ function promptImage() {
 }
 
 function cleanPastedHtml(html, text) {
-  const documentFragment = new DOMParser().parseFromString(html || "", "text/html");
-  documentFragment.querySelectorAll("script,style,iframe,object,embed").forEach((node) => node.remove());
-  documentFragment.body.querySelectorAll("*").forEach((node) => {
-    for (const attribute of [...node.attributes]) {
-      const keepHref = node.tagName === "A" && attribute.name === "href" && /^(https?:|mailto:)/i.test(attribute.value);
-      const keepImage = node.tagName === "IMG" && ["src", "alt"].includes(attribute.name)
-        && (attribute.name === "alt" || attribute.value.startsWith("/api/public/media/"));
-      if (!keepHref && !keepImage) node.removeAttribute(attribute.name);
-    }
-  });
-  return documentFragment.body.innerHTML || String(text || "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replace(/\r?\n/g, "<br>");
+  return sanitizeEditorHtml(html) || String(text || "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replace(/\r?\n/g, "<br>");
 }
 
 function paste(event) {
@@ -85,7 +130,7 @@ function paste(event) {
       <button type="button" aria-label="图片" :disabled="disabled" @click="promptImage">图片</button>
     </div>
     <div v-if="mode === 'visual'" ref="visual" class="rich-editor-surface" data-rich-editor="visual" :contenteditable="disabled ? 'false' : 'true'" @input="update($event.currentTarget.innerHTML)" @paste="paste" v-html="value"></div>
-    <textarea v-else-if="mode === 'html'" :value="value" data-rich-editor="html" :disabled="disabled" @input="update($event.target.value)"></textarea>
-    <textarea v-else :value="plainText" data-rich-editor="text" :disabled="disabled" @input="update(`<p>${$event.target.value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replace(/\r?\n/g, '</p><p>')}</p>`)"></textarea>
+    <textarea v-else-if="mode === 'html'" v-model="repairValue" data-rich-editor="html" :disabled="disabled"></textarea>
+    <textarea v-else v-model="textRepair" data-rich-editor="text" :disabled="disabled"></textarea>
   </section>
 </template>
