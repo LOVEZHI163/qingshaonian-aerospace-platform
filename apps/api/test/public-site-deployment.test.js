@@ -77,6 +77,18 @@ test("nginx protects HTML and public media while caching immutable assets", asyn
   assert.match(nginx, /location \/\s*\{[\s\S]*\/index\.html/);
 });
 
+test("nginx never makes unpublished media errors publicly cacheable", async () => {
+  const nginx = await read("deploy/nginx.conf");
+  const mediaLocation = nginx.match(/location \^~ \/api\/public\/media\/\s*\{([\s\S]*?)\n  \}/)?.[1];
+
+  assert.ok(mediaLocation, "public media location must remain more specific than /api/");
+  assert.match(mediaLocation, /add_header X-Content-Type-Options "nosniff" always/);
+  assert.match(mediaLocation, /add_header Content-Security-Policy [^\r\n]+ always/);
+  assert.match(mediaLocation, /add_header Content-Disposition "inline" always/);
+  assert.match(mediaLocation, /add_header Cache-Control "public, max-age=604800, immutable";/);
+  assert.doesNotMatch(mediaLocation, /add_header Cache-Control [^\r\n]+ always/);
+});
+
 test("backup and preflight cover site media, capacity, health, and port boundaries", async () => {
   const [backup, preflight] = await Promise.all([
     read("deploy/backup-uploads.sh"),
