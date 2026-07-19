@@ -30,6 +30,7 @@ const initialParams = new URLSearchParams(window.location.search);
 const initialView = DEEP_LINK_VIEWS.has(initialParams.get("view")) ? initialParams.get("view") : "";
 const initialEventId = initialView && SAFE_EVENT_ID.test(initialParams.get("eventId") || "") ? initialParams.get("eventId") : "";
 const registrationEventId = ref(initialEventId);
+const selectedRegistrationEvent = ref(null);
 const passwordChangeForm = reactive({ currentPassword: "", newPassword: "" });
 const roleText = { ordinary: "普通用户", organization: "组织用户", admin: "超级管理员" };
 
@@ -46,6 +47,18 @@ const userNavigation = computed(() => {
   if (!approvedOrganization.value) return [["organization", "审核进度"]];
   return [["registration", "报名"], ["registrationRecords", "报名记录"], ["certificates", "证书查询"], ["organization", "组织控制台"]];
 });
+const userHeaderEvent = computed(() => {
+  if (currentView.value !== "registration") return eventData.value.event;
+  if (selectedRegistrationEvent.value) {
+    const event = selectedRegistrationEvent.value;
+    return {
+      ...event,
+      date: event.date || event.dateLabel || "",
+      registrationDeadline: event.registrationDeadline || String(event.registrationEndAt || "").slice(0, 10)
+    };
+  }
+  return registrationEventId.value ? { name: "正在加载目标赛事…", date: "", venue: "", registrationDeadline: "" } : eventData.value.event;
+});
 
 function defaultView(user = currentUser.value) {
   if (!user) return "login";
@@ -56,6 +69,7 @@ function defaultView(user = currentUser.value) {
 
 function targetView(user = currentUser.value) {
   if (!user || !initialView) return defaultView(user);
+  if (user.type === "organization" && !approvedOrganization.value) return "organization";
   const allowed = user.type === "admin"
     ? new Set(["overview", "events", "organizations", "registration", "certificates", "users"])
     : user.type === "organization"
@@ -115,6 +129,10 @@ function handleError(error) {
   message.value = String(error || "操作失败，请稍后重试");
 }
 
+function useRegistrationEvent(event) {
+  selectedRegistrationEvent.value = event || null;
+}
+
 watch(() => currentUser.value?.type, () => {
   if (currentUser.value && !currentUser.value.mustChangePassword) currentView.value = targetView();
 });
@@ -122,6 +140,10 @@ watch(() => currentUser.value?.type, () => {
 watch(approvedOrganization, (organization) => {
   if (currentUser.value?.type !== "organization") return;
   if (!organization) currentView.value = "organization";
+});
+
+watch(currentView, (view) => {
+  if (view !== "registration") selectedRegistrationEvent.value = null;
 });
 
 onMounted(async () => {
@@ -170,9 +192,9 @@ onMounted(async () => {
       <button class="ghost" @click="logout">退出登录</button>
     </aside>
     <main>
-      <header class="topbar"><div><h2>{{ eventData.event.name || "赛事报名平台" }}</h2><p>{{ eventData.event.date }} · {{ eventData.event.venue }} · 报名截止 {{ eventData.event.registrationDeadline }}</p></div></header>
+      <header class="topbar"><div><h2>{{ userHeaderEvent.name || "赛事报名平台" }}</h2><p>{{ userHeaderEvent.date }} · {{ userHeaderEvent.venue }} · 报名截止 {{ userHeaderEvent.registrationDeadline }}</p></div></header>
       <p v-if="message" class="message">{{ message }}</p>
-      <RegistrationPage v-if="currentView === 'registration'" :event-id="registrationEventId" :fallback-context="{ projects: eventData.projects }" @registered="message = '报名已提交，等待审核'" @error="handleError" />
+      <RegistrationPage v-if="currentView === 'registration'" :event-id="registrationEventId" :fallback-context="{ projects: eventData.projects }" @context="useRegistrationEvent" @registered="message = '报名已提交，等待审核'" @error="handleError" />
       <RegistrationRecordsPage v-else-if="currentView === 'registrationRecords'" @error="handleError" />
       <MyCertificatesPage v-else-if="currentView === 'certificates'" @error="handleError" />
       <OrganizationConsolePage v-else-if="currentView === 'organization'" @error="handleError" />

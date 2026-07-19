@@ -8,7 +8,7 @@ const props = defineProps({
   eventId: { type: String, default: "" },
   fallbackContext: { type: Object, default: () => ({}) }
 });
-const emit = defineEmits(["registered", "error"]);
+const emit = defineEmits(["context", "registered", "error"]);
 const context = ref({ organizations: [], projects: [], grades: [] });
 const loading = ref(true);
 const form = reactive({ eventId: props.eventId, organizationId: "", athlete: { name: "", school: "", grade: "", phone: "" }, projectId: "", instructor: "" });
@@ -48,6 +48,7 @@ onMounted(async () => {
       organizations: [], defaultOrganizationId: "", projects: props.fallbackContext.projects || [], grades: GRADE_GROUPS
     };
     form.eventId = context.value.event?.id || props.eventId || "";
+    emit("context", context.value.event || null);
     form.organizationId = context.value.defaultOrganizationId || "";
     applyOrganization();
   } catch (error) { emit("error", error.message); } finally { loading.value = false; }

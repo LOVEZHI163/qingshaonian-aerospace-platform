@@ -243,9 +243,10 @@ export function currentPublishedEvent(db) {
 }
 
 function registrationProfileVisible(db, eventId) {
-  const profile = (db.eventPublicProfiles || []).find((row) => row.eventId === eventId);
+  const profiles = db.eventPublicProfiles || [];
+  const profile = profiles.find((row) => row.eventId === eventId);
   if (profile) return profile.isVisible === true;
-  return db.events.find((row) => row.id === eventId)?.isCurrent === true;
+  return profiles.length === 0 && db.events.find((row) => row.id === eventId)?.isCurrent === true;
 }
 
 function assertPublishedRegistrationEvent(db, event, clock) {

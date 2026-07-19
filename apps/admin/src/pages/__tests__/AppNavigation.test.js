@@ -85,11 +85,38 @@ describe("role based application navigation", () => {
 
   it("restores a whitelisted registration deep link with its event id", async () => {
     window.history.replaceState({}, "", "/admin/?view=registration&eventId=E2");
-    const wrapper = await mountFor({ id: "U1", type: "ordinary", name: "普通用户", phone: "13800000001", mustChangePassword: false }); mounted.push(wrapper);
+    session.user.value = { id: "U1", type: "ordinary", name: "普通用户", phone: "13800000001", mustChangePassword: false };
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/public/event") return {
+        event: { id: "E1", name: "当前赛事 E1", date: "2026-01-01", venue: "E1 场地", registrationDeadline: "2025-12-01" },
+        projects: [], grades: []
+      };
+      if (path === "/api/public/features") return { smsPasswordResetEnabled: false };
+      if (path === "/api/me/registration-context?eventId=E2") return {
+        event: { id: "E2", name: "目标赛事 E2", dateLabel: "2027-02-02", venue: "E2 场地", registrationEndAt: "2027-01-20T15:59:59.000Z" },
+        organizations: [], projects: [], grades: []
+      };
+      return { rows: [] };
+    });
+    const wrapper = mount(App); mounted.push(wrapper);
     await flushPromises();
 
     expect(wrapper.find(".registration-page").exists()).toBe(true);
     expect(apiMock.mock.calls.some(([path]) => path === "/api/me/registration-context?eventId=E2")).toBe(true);
+    expect(wrapper.get(".topbar").text()).toContain("目标赛事 E2");
+    expect(wrapper.get(".topbar").text()).toContain("E2 场地");
+    expect(wrapper.get(".topbar").text()).not.toContain("当前赛事 E1");
+  });
+
+  it("keeps a pending organization on review progress even when a registration deep link is requested", async () => {
+    window.history.replaceState({}, "", "/admin/?view=registration&eventId=E2");
+    const organization = { id: "O1", ownerUserId: "O1U", name: "待审核学校", reviewStatus: "pending", status: "active", membershipRole: "owner" };
+    const wrapper = await mountFor({ id: "O1U", type: "organization", name: "负责人", phone: "13800000002", mustChangePassword: false }, organization); mounted.push(wrapper);
+    await flushPromises();
+
+    expect(wrapper.find(".registration-page").exists()).toBe(false);
+    expect(wrapper.text()).toContain("组织资料正在审核");
+    expect(apiMock.mock.calls.some(([path]) => path.includes("registration-context"))).toBe(false);
   });
 
   it("does not pass an invalid view or event query into application components", async () => {

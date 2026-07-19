@@ -47,6 +47,37 @@ test("registration context defaults exactly one active organization and school s
   });
 });
 
+test("legacy current event without a profile is rejected explicitly once public profiles exist", async () => {
+  await withServer(async (baseUrl, dbPath) => {
+    const ordinary = await loginAs(baseUrl, "13800000001", "123456");
+    await mutateDb(dbPath, (db) => {
+      db.events[0].registrationMode = "force_open";
+      db.eventPublicProfiles.push({ eventId: "OTHER", slug: "other", isVisible: false });
+    });
+
+    const response = await fetch(
+      `${baseUrl}/api/me/registration-context?eventId=wz-aerospace-2026`,
+      withSession(ordinary.cookie)
+    );
+    assert.equal(response.status, 409);
+    assert.match((await json(response)).error, /未公开/);
+  });
+});
+
+test("legacy current event without a profile is not an implicit candidate once public profiles exist", async () => {
+  await withServer(async (baseUrl, dbPath) => {
+    const ordinary = await loginAs(baseUrl, "13800000001", "123456");
+    await mutateDb(dbPath, (db) => {
+      db.events[0].registrationMode = "force_open";
+      db.eventPublicProfiles.push({ eventId: "OTHER", slug: "other", isVisible: false });
+    });
+
+    const response = await fetch(`${baseUrl}/api/me/registration-context`, withSession(ordinary.cookie));
+    assert.equal(response.status, 422);
+    assert.match((await json(response)).error, /没有可报名赛事|选择赛事/);
+  });
+});
+
 test("event context requires an explicit selection when multiple published events accept registration", async () => {
   await withServer(async (baseUrl, dbPath) => {
     const ordinary = await loginAs(baseUrl, "13800000001", "123456");
