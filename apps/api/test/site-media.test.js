@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
+import path from "node:path";
 import test from "node:test";
 
 import express from "express";
 import sharp from "sharp";
 
+import { readSiteMedia } from "../src/files/storage.js";
 import { createSiteMediaRouter } from "../src/routes/site-media.js";
 import { withTestServer } from "../test-support/server.js";
 import { loginAs, withSession } from "./helpers/api-client.js";
@@ -14,6 +16,51 @@ const PNG = Buffer.from(
   "base64"
 );
 const PDF = Buffer.from("%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF\n");
+
+function fileError(code, message = code) {
+  return Object.assign(new Error(message), { code });
+}
+
+function controlledFileSystem({ links = [], missing = [], readErrors = new Map(), realpathSequences = new Map() } = {}) {
+  const linked = new Set(links.map((value) => path.resolve(value)));
+  const absent = new Set(missing.map((value) => path.resolve(value)));
+  const calls = new Map();
+  return {
+    async lstat(value) {
+      const resolved = path.resolve(value);
+      if (absent.has(resolved)) throw fileError("ENOENT");
+      return { isSymbolicLink: () => linked.has(resolved) };
+    },
+    async realpath(value) {
+      const resolved = path.resolve(value);
+      if (absent.has(resolved)) throw fileError("ENOENT");
+      const sequence = realpathSequences.get(resolved);
+      if (!sequence) return resolved;
+      const index = calls.get(resolved) || 0;
+      calls.set(resolved, index + 1);
+      return path.resolve(sequence[Math.min(index, sequence.length - 1)]);
+    },
+    async readFile(value) {
+      const resolved = path.resolve(value);
+      if (absent.has(resolved)) throw fileError("ENOENT");
+      if (readErrors.has(resolved)) throw readErrors.get(resolved);
+      return Buffer.from(`contents:${path.basename(resolved)}`);
+    }
+  };
+}
+
+function siteMediaRecord(id = "MEDIA-SECURE") {
+  const root = path.resolve(process.env.UPLOAD_ROOT || "/data/uploads");
+  const directory = path.resolve(root, "site-media", id);
+  return {
+    id,
+    filePath: path.resolve(directory, "original.png"),
+    mimeType: "image/png",
+    variants: {
+      mobile: { filePath: path.resolve(directory, "mobile.webp"), mimeType: "image/webp" }
+    }
+  };
+}
 
 function mediaForm(buffer, { name = "upload.png", type = "image/png", purpose = "cover" } = {}) {
   const form = new FormData();
@@ -364,4 +411,105 @@ test("site media image processing corrects orientation and caps derivative width
     assert.equal(orientedRow.variants.mobile.width, 10);
     assert.equal(orientedRow.variants.desktop.width, 10);
   }, { prefix: "site-media-sizing-" });
+});
+
+test("site media reading rejects a linked file inside its managed directory", async () => {
+  const record = siteMediaRecord("MEDIA-FILE-LINK");
+  await assert.rejects(
+    () => readSiteMedia(record, "original", controlledFileSystem({ links: [record.filePath] })),
+    /symbolic link/i
+  );
+});
+
+test("site media reading rejects a linked or junction media directory", async () => {
+  const record = siteMediaRecord("MEDIA-DIR-LINK");
+  await assert.rejects(
+    () => readSiteMedia(record, "original", controlledFileSystem({ links: [path.dirname(record.filePath)] })),
+    /symbolic link/i
+  );
+});
+
+test("site media reading rejects a path outside the record media directory even within upload root", async () => {
+  const record = siteMediaRecord("MEDIA-SCOPED");
+  const root = path.resolve(process.env.UPLOAD_ROOT || "/data/uploads");
+  record.filePath = path.resolve(root, "certificates", "private.png");
+  await assert.rejects(
+    () => readSiteMedia(record, "original", controlledFileSystem()),
+    /media directory/i
+  );
+});
+
+test("site media public route conceals a cross-directory media path", async () => {
+  const record = { ...siteMediaRecord("MEDIA-ROUTE-SCOPED"), visibility: "public", cleanedAt: null };
+  const root = path.resolve(process.env.UPLOAD_ROOT || "/data/uploads");
+  record.filePath = path.resolve(root, "certificates", "private.png");
+  const pass = (_req, _res, next) => next();
+  const wrap = (handler) => (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
+  const router = createSiteMediaRouter({
+    store: { readDb: async () => ({ mediaAssets: [record] }) },
+    requireAdmin: pass,
+    requirePasswordReady: pass,
+    asyncRoute: wrap,
+    mutationAsyncRoute: wrap,
+    makeId: () => "unused",
+    now: () => "2026-07-19T13:00:00.000Z",
+    storage: {
+      save: async () => { throw new Error("not used"); },
+      delete: async () => { throw new Error("not used"); },
+      read: (media, variant) => readSiteMedia(media, variant, controlledFileSystem())
+    }
+  });
+
+  await withRouter(router, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/public/media/${record.id}`);
+    assert.equal(response.status, 404);
+  });
+});
+
+test("site media reading rejects a path that changes during realpath validation", async () => {
+  const record = siteMediaRecord("MEDIA-RACE");
+  const root = path.resolve(process.env.UPLOAD_ROOT || "/data/uploads");
+  const fileSystem = controlledFileSystem({
+    realpathSequences: new Map([[record.filePath, [record.filePath, path.resolve(root, "certificates", "private.png")]]])
+  });
+  await assert.rejects(() => readSiteMedia(record, "original", fileSystem), /changed during validation/i);
+});
+
+test("site media reading falls back to original only when a registered variant is missing", async () => {
+  const record = siteMediaRecord("MEDIA-FALLBACK");
+  const mobilePath = record.variants.mobile.filePath;
+  const missingVariantFs = controlledFileSystem({ missing: [mobilePath] });
+  await assert.doesNotReject(async () => {
+    const result = await readSiteMedia(record, "mobile", missingVariantFs);
+    assert.equal(result.mimeType, "image/png");
+    assert.equal(result.buffer.toString(), "contents:original.png");
+  });
+
+  const denied = fileError("EACCES", "variant read denied");
+  await assert.rejects(
+    () => readSiteMedia(record, "mobile", controlledFileSystem({ readErrors: new Map([[mobilePath, denied]]) })),
+    (error) => error === denied
+  );
+});
+
+test("site media attachment API accepts exactly 20 MB and rejects a larger multipart file", async () => {
+  const atLimit = Buffer.alloc(20 * 1024 * 1024);
+  PDF.copy(atLimit);
+  const overLimit = Buffer.alloc(atLimit.length + 1);
+  PDF.copy(overLimit);
+
+  await withTestServer(async ({ baseUrl }) => {
+    const admin = await loginAs(baseUrl, "13900000000", "admin123");
+    const accepted = await fetch(`${baseUrl}/api/admin/site-media`, withSession(admin.cookie, {
+      method: "POST",
+      body: mediaForm(atLimit, { name: "limit.pdf", type: "application/pdf", purpose: "attachment" })
+    }));
+    assert.equal(accepted.status, 201, await accepted.text());
+
+    const rejected = await fetch(`${baseUrl}/api/admin/site-media`, withSession(admin.cookie, {
+      method: "POST",
+      body: mediaForm(overLimit, { name: "too-large.pdf", type: "application/pdf", purpose: "attachment" })
+    }));
+    assert.equal(rejected.status, 413);
+  }, { prefix: "site-media-attachment-limit-" });
 });

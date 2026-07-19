@@ -184,11 +184,50 @@ export async function saveSiteMedia({ mediaId, file, purpose, fileSystem = fs, i
   };
 }
 
+async function readSiteMediaFile(record, selected, fileSystem) {
+  if (!record?.id || !selected?.filePath) throw new Error("Site media record is required");
+  const root = uploadRoot();
+  const directory = siteMediaDirectory(record.id);
+  const filePath = path.resolve(selected.filePath);
+  assertInside(directory, filePath, "Site media file path escapes its media directory");
+
+  const rootStats = await fileSystem.lstat(root);
+  if (rootStats.isSymbolicLink()) throw new Error("Site media path contains a symbolic link");
+  await assertNoLinkedComponents(root, filePath, fileSystem);
+  const [realRoot, realDirectory, realFilePath] = await Promise.all([
+    fileSystem.realpath(root),
+    fileSystem.realpath(directory),
+    fileSystem.realpath(filePath)
+  ]);
+  assertInside(realRoot, realDirectory, "Site media directory escapes upload root");
+  assertInside(realDirectory, realFilePath, "Site media file path escapes its media directory");
+
+  const [confirmedRoot, confirmedDirectory, confirmedFilePath] = await Promise.all([
+    fileSystem.realpath(root),
+    fileSystem.realpath(directory),
+    fileSystem.realpath(filePath)
+  ]);
+  if (confirmedRoot !== realRoot || confirmedDirectory !== realDirectory || confirmedFilePath !== realFilePath) {
+    throw new Error("Site media path changed during validation");
+  }
+  return fileSystem.readFile(realFilePath);
+}
+
 export async function readSiteMedia(record, variant = "original", fileSystem = fs) {
-  const selected = variant === "original" ? record : record?.variants?.[variant] || record;
+  const registeredVariant = variant !== "original" ? record?.variants?.[variant] : null;
+  const selected = registeredVariant || record;
+  let served = selected;
+  let buffer;
+  try {
+    buffer = await readSiteMediaFile(record, selected, fileSystem);
+  } catch (error) {
+    if (!registeredVariant || error?.code !== "ENOENT") throw error;
+    served = record;
+    buffer = await readSiteMediaFile(record, record, fileSystem);
+  }
   return {
-    buffer: await readPrivateFile(selected, fileSystem),
-    mimeType: selected.mimeType || record.mimeType
+    buffer,
+    mimeType: served.mimeType || record.mimeType
   };
 }
 

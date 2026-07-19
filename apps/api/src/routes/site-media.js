@@ -2,6 +2,7 @@ import express from "express";
 import multer from "multer";
 import path from "node:path";
 
+import { SITE_ATTACHMENT_POLICY } from "../files/policy.js";
 import { deleteSiteMedia, readSiteMedia, saveSiteMedia } from "../files/storage.js";
 import { assertMediaUnreferenced } from "../services/site-media.js";
 
@@ -29,7 +30,7 @@ export function createSiteMediaRouter({
 }) {
   const router = express.Router();
   const admin = [requireAdmin, requirePasswordReady];
-  const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
+  const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: SITE_ATTACHMENT_POLICY.maxBytes + 1 } });
   const uploadOne = (req, res, next) => upload.single("file")(req, res, (error) => {
     if (!error) return next();
     return res.status(error.code === "LIMIT_FILE_SIZE" ? 413 : 422).json({ error: "媒体文件上传无效" });
@@ -102,7 +103,7 @@ export function createSiteMediaRouter({
     try {
       file = await storage.read(media, variant);
     } catch (error) {
-      if (error?.code === "ENOENT" || /escapes upload root|symbolic link/i.test(String(error?.message || ""))) {
+      if (error?.code === "ENOENT" || /escapes upload root|escapes its media directory|symbolic link|changed during validation/i.test(String(error?.message || ""))) {
         throw routeError(404, "媒体文件不存在");
       }
       throw error;
