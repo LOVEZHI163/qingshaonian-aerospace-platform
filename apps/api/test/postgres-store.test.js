@@ -235,6 +235,86 @@ test("PostgreSQL content posts reject stale versioned snapshots", async () => {
   });
 });
 
+test("PostgreSQL site settings reject an interleaved same-version write after its stale read", async () => {
+  await withStore(async (store, pool) => {
+    const peer = createPostgresStore(pool);
+    const stale = await store.readDb();
+    const first = structuredClone(stale);
+    const second = structuredClone(stale);
+    first.siteSettings.platformIntro = "第一个写入";
+    second.siteSettings.platformIntro = "第二个写入";
+    const staleSettingsRow = (await pool.query("SELECT * FROM site_settings WHERE id = $1", ["default"])).rows[0];
+    await store.writeDb(first);
+
+    const connect = pool.connect.bind(pool);
+    pool.connect = async () => {
+      const client = await connect();
+      const query = client.query.bind(client);
+      client.query = async (...args) => {
+        if (args[0] === "SELECT * FROM site_settings WHERE id = $1") {
+          return { rowCount: 1, rows: [staleSettingsRow] };
+        }
+        return query(...args);
+      };
+      return client;
+    };
+
+    await assert.rejects(peer.writeDb(second), /site_settings version conflict/i);
+    const persisted = await store.readDb();
+    assert.equal(persisted.siteSettings.platformIntro, "第一个写入");
+    assert.equal(persisted.siteSettings.version, stale.siteSettings.version + 1);
+  });
+});
+
+test("PostgreSQL unchanged public-site snapshots keep editable versions", async () => {
+  await withStore(async (store) => {
+    const initial = await store.readDb();
+    initial.eventPublicProfiles.push({
+      eventId: "wz-aerospace-2026",
+      slug: "unchanged-profile",
+      slogan: "",
+      summary: "",
+      isVisible: false,
+      displayOrder: 0,
+      heroMediaId: null,
+      version: 1,
+      updatedAt: "2026-07-19T00:00:00.000Z"
+    });
+    initial.contentPosts.push({
+      id: "POST-UNCHANGED",
+      slug: "unchanged-post",
+      eventId: "wz-aerospace-2026",
+      type: "news",
+      title: "未修改",
+      summary: "",
+      bodyHtml: "",
+      status: "draft",
+      publishAt: null,
+      pinned: false,
+      sortOrder: 0,
+      coverMediaId: null,
+      version: 1,
+      createdBy: "U9001",
+      createdAt: "2026-07-19T00:00:00.000Z",
+      updatedAt: "2026-07-19T00:00:00.000Z"
+    });
+    await store.writeDb(initial);
+
+    const unchanged = await store.readDb();
+    const versions = {
+      siteSettings: unchanged.siteSettings.version,
+      profile: unchanged.eventPublicProfiles[0].version,
+      post: unchanged.contentPosts[0].version
+    };
+    await store.writeDb(unchanged);
+    const persisted = await store.readDb();
+
+    assert.equal(persisted.siteSettings.version, versions.siteSettings);
+    assert.equal(persisted.eventPublicProfiles[0].version, versions.profile);
+    assert.equal(persisted.contentPosts[0].version, versions.post);
+  });
+});
+
 test("PostgreSQL store persists mutations, results, and deletions", async () => {
   await withStore(async (store) => {
     const data = await store.readDb();

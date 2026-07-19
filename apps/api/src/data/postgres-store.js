@@ -901,75 +901,107 @@ export function createPostgresStore(pool) {
 
         for (const row of db.eventPublicProfiles) {
           const currentProfile = await client.query(
-            "SELECT version FROM event_public_profiles WHERE event_id = $1",
+            "SELECT * FROM event_public_profiles WHERE event_id = $1",
             [row.eventId]
           );
-          if (currentProfile.rowCount > 0 && currentProfile.rows[0].version !== row.version) {
+          const existingProfile = currentProfile.rows[0];
+          if (existingProfile && existingProfile.version !== row.version) {
             throw new Error("event_public_profiles version conflict");
           }
-          const profileResult = await client.query(
-            `INSERT INTO event_public_profiles
-              (event_id, slug, slogan, summary, is_visible, display_order, hero_media_id, version, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-             ON CONFLICT (event_id) DO UPDATE SET
-               slug = EXCLUDED.slug,
-               slogan = EXCLUDED.slogan,
-               summary = EXCLUDED.summary,
-               is_visible = EXCLUDED.is_visible,
-               display_order = EXCLUDED.display_order,
-               hero_media_id = EXCLUDED.hero_media_id,
-               version = EXCLUDED.version,
-               updated_at = EXCLUDED.updated_at
-             WHERE event_public_profiles.version = EXCLUDED.version - 1
-             RETURNING event_id`,
-            [
-              row.eventId, row.slug, row.slogan || "", row.summary || "", row.isVisible,
-              row.displayOrder, row.heroMediaId || null,
-              currentProfile.rowCount > 0 ? row.version + 1 : row.version, row.updatedAt
-            ]
-          );
-          if (profileResult.rowCount === 0) throw new Error("event_public_profiles version conflict");
+          const profileChanged = !existingProfile
+            || existingProfile.slug !== row.slug
+            || existingProfile.slogan !== (row.slogan || "")
+            || existingProfile.summary !== (row.summary || "")
+            || existingProfile.is_visible !== row.isVisible
+            || existingProfile.display_order !== row.displayOrder
+            || existingProfile.hero_media_id !== (row.heroMediaId || null);
+          if (!existingProfile) {
+            const inserted = await client.query(
+              `INSERT INTO event_public_profiles
+                (event_id, slug, slogan, summary, is_visible, display_order, hero_media_id, version, updated_at)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+               ON CONFLICT (event_id) DO NOTHING
+               RETURNING event_id`,
+              [row.eventId, row.slug, row.slogan || "", row.summary || "", row.isVisible, row.displayOrder, row.heroMediaId || null, row.version, row.updatedAt]
+            );
+            if (inserted.rowCount === 0) throw new Error("event_public_profiles version conflict");
+          } else if (profileChanged) {
+            const updated = await client.query(
+              `UPDATE event_public_profiles SET
+                 slug = $2,
+                 slogan = $3,
+                 summary = $4,
+                 is_visible = $5,
+                 display_order = $6,
+                 hero_media_id = $7,
+                 version = version + 1,
+                 updated_at = $8
+               WHERE event_id = $1 AND version = $9
+               RETURNING event_id`,
+              [row.eventId, row.slug, row.slogan || "", row.summary || "", row.isVisible, row.displayOrder, row.heroMediaId || null, row.updatedAt, row.version]
+            );
+            if (updated.rowCount === 0) throw new Error("event_public_profiles version conflict");
+          }
         }
 
         for (const row of db.contentPosts) {
           const currentPost = await client.query(
-            "SELECT version FROM content_posts WHERE id = $1",
+            "SELECT * FROM content_posts WHERE id = $1",
             [row.id]
           );
-          if (currentPost.rowCount > 0 && currentPost.rows[0].version !== row.version) {
+          const existingPost = currentPost.rows[0];
+          if (existingPost && existingPost.version !== row.version) {
             throw new Error("content_posts version conflict");
           }
-          const postResult = await client.query(
-            `INSERT INTO content_posts
-              (id, slug, event_id, type, title, summary, body_html, status, publish_at, pinned, sort_order,
-               cover_media_id, version, created_by, created_at, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
-             ON CONFLICT (id) DO UPDATE SET
-               slug = EXCLUDED.slug,
-               event_id = EXCLUDED.event_id,
-               type = EXCLUDED.type,
-               title = EXCLUDED.title,
-               summary = EXCLUDED.summary,
-               body_html = EXCLUDED.body_html,
-               status = EXCLUDED.status,
-               publish_at = EXCLUDED.publish_at,
-               pinned = EXCLUDED.pinned,
-               sort_order = EXCLUDED.sort_order,
-               cover_media_id = EXCLUDED.cover_media_id,
-               version = EXCLUDED.version,
-               created_by = EXCLUDED.created_by,
-               created_at = EXCLUDED.created_at,
-               updated_at = EXCLUDED.updated_at
-             WHERE content_posts.version = EXCLUDED.version - 1
-             RETURNING id`,
-            [
-              row.id, row.slug, row.eventId || null, row.type, row.title, row.summary || "", row.bodyHtml || "",
-              row.status, row.publishAt || null, row.pinned, row.sortOrder, row.coverMediaId || null,
-              currentPost.rowCount > 0 ? row.version + 1 : row.version,
-              row.createdBy || null, row.createdAt, row.updatedAt
-            ]
-          );
-          if (postResult.rowCount === 0) throw new Error("content_posts version conflict");
+          const postChanged = !existingPost
+            || existingPost.slug !== row.slug
+            || existingPost.event_id !== (row.eventId || null)
+            || existingPost.type !== row.type
+            || existingPost.title !== row.title
+            || existingPost.summary !== (row.summary || "")
+            || existingPost.body_html !== (row.bodyHtml || "")
+            || existingPost.status !== row.status
+            || (existingPost.publish_at ? iso(existingPost.publish_at) : null) !== (row.publishAt || null)
+            || existingPost.pinned !== row.pinned
+            || existingPost.sort_order !== row.sortOrder
+            || existingPost.cover_media_id !== (row.coverMediaId || null)
+            || existingPost.created_by !== (row.createdBy || null)
+            || iso(existingPost.created_at) !== iso(row.createdAt);
+          if (!existingPost) {
+            const inserted = await client.query(
+              `INSERT INTO content_posts
+                (id, slug, event_id, type, title, summary, body_html, status, publish_at, pinned, sort_order,
+                 cover_media_id, version, created_by, created_at, updated_at)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+               ON CONFLICT (id) DO NOTHING
+               RETURNING id`,
+              [row.id, row.slug, row.eventId || null, row.type, row.title, row.summary || "", row.bodyHtml || "", row.status, row.publishAt || null, row.pinned, row.sortOrder, row.coverMediaId || null, row.version, row.createdBy || null, row.createdAt, row.updatedAt]
+            );
+            if (inserted.rowCount === 0) throw new Error("content_posts version conflict");
+          } else if (postChanged) {
+            const updated = await client.query(
+              `UPDATE content_posts SET
+                 slug = $2,
+                 event_id = $3,
+                 type = $4,
+                 title = $5,
+                 summary = $6,
+                 body_html = $7,
+                 status = $8,
+                 publish_at = $9,
+                 pinned = $10,
+                 sort_order = $11,
+                 cover_media_id = $12,
+                 created_by = $13,
+                 created_at = $14,
+                 updated_at = $15,
+                 version = version + 1
+               WHERE id = $1 AND version = $16
+               RETURNING id`,
+              [row.id, row.slug, row.eventId || null, row.type, row.title, row.summary || "", row.bodyHtml || "", row.status, row.publishAt || null, row.pinned, row.sortOrder, row.coverMediaId || null, row.createdBy || null, row.createdAt, row.updatedAt, row.version]
+            );
+            if (updated.rowCount === 0) throw new Error("content_posts version conflict");
+          }
         }
 
         const currentSiteSettings = await client.query(
@@ -992,39 +1024,50 @@ export function createPostgresStore(pool) {
           || currentSettings.default_hero_media_id !== (db.siteSettings.defaultHeroMediaId || null)
           || currentSettings.share_media_id !== (db.siteSettings.shareMediaId || null)
         );
-        const siteSettingsResult = await client.query(
-          `INSERT INTO site_settings
-            (id, platform_name, featured_event_id, platform_intro, organizers, contact, icp, seo_title,
-             seo_description, default_hero_media_id, share_media_id, version)
-           VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9, $10, $11, $12)
-           ON CONFLICT (id) DO UPDATE SET
-             platform_name = EXCLUDED.platform_name,
-             featured_event_id = EXCLUDED.featured_event_id,
-             platform_intro = EXCLUDED.platform_intro,
-             organizers = EXCLUDED.organizers,
-             contact = EXCLUDED.contact,
-             icp = EXCLUDED.icp,
-             seo_title = EXCLUDED.seo_title,
-             seo_description = EXCLUDED.seo_description,
-             default_hero_media_id = EXCLUDED.default_hero_media_id,
-             share_media_id = EXCLUDED.share_media_id,
-             version = EXCLUDED.version,
-             updated_at = NOW()
-           WHERE site_settings.version = EXCLUDED.version
-              OR site_settings.version = EXCLUDED.version - 1
-           RETURNING id`,
-          [
-            db.siteSettings.id, db.siteSettings.platformName, db.siteSettings.featuredEventId || null,
-            db.siteSettings.platformIntro || "", JSON.stringify(db.siteSettings.organizers || []),
-            db.siteSettings.contact || "", db.siteSettings.icp || "", db.siteSettings.seoTitle,
-            db.siteSettings.seoDescription || "", db.siteSettings.defaultHeroMediaId || null,
-            db.siteSettings.shareMediaId || null,
-            currentSiteSettings.rowCount > 0 && siteSettingsChanged
-              ? db.siteSettings.version + 1
-              : db.siteSettings.version
-          ]
-        );
-        if (siteSettingsResult.rowCount === 0) throw new Error("site_settings version conflict");
+        if (!currentSettings) {
+          const inserted = await client.query(
+            `INSERT INTO site_settings
+              (id, platform_name, featured_event_id, platform_intro, organizers, contact, icp, seo_title,
+               seo_description, default_hero_media_id, share_media_id, version)
+             VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9, $10, $11, $12)
+             ON CONFLICT (id) DO NOTHING
+             RETURNING id`,
+            [
+              db.siteSettings.id, db.siteSettings.platformName, db.siteSettings.featuredEventId || null,
+              db.siteSettings.platformIntro || "", JSON.stringify(db.siteSettings.organizers || []),
+              db.siteSettings.contact || "", db.siteSettings.icp || "", db.siteSettings.seoTitle,
+              db.siteSettings.seoDescription || "", db.siteSettings.defaultHeroMediaId || null,
+              db.siteSettings.shareMediaId || null, db.siteSettings.version
+            ]
+          );
+          if (inserted.rowCount === 0) throw new Error("site_settings version conflict");
+        } else if (siteSettingsChanged) {
+          const updated = await client.query(
+            `UPDATE site_settings SET
+               platform_name = $2,
+               featured_event_id = $3,
+               platform_intro = $4,
+               organizers = $5::jsonb,
+               contact = $6,
+               icp = $7,
+               seo_title = $8,
+               seo_description = $9,
+               default_hero_media_id = $10,
+               share_media_id = $11,
+               version = version + 1,
+               updated_at = NOW()
+             WHERE id = $1 AND version = $12
+             RETURNING id`,
+            [
+              db.siteSettings.id, db.siteSettings.platformName, db.siteSettings.featuredEventId || null,
+              db.siteSettings.platformIntro || "", JSON.stringify(db.siteSettings.organizers || []),
+              db.siteSettings.contact || "", db.siteSettings.icp || "", db.siteSettings.seoTitle,
+              db.siteSettings.seoDescription || "", db.siteSettings.defaultHeroMediaId || null,
+              db.siteSettings.shareMediaId || null, db.siteSettings.version
+            ]
+          );
+          if (updated.rowCount === 0) throw new Error("site_settings version conflict");
+        }
 
         for (const row of db.contentAttachments) {
           await client.query(
