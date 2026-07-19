@@ -303,6 +303,144 @@ textarea {
   }
 }
 
+.site-content-page {
+  display: grid;
+  gap: 16px;
+}
+
+.site-content-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.site-content-tabs button {
+  padding: 10px 18px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  color: #334155;
+  background: #fff;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.site-content-tabs button.active {
+  border-color: var(--blue);
+  color: #0b63ce;
+  background: #eaf3ff;
+}
+
+.site-content-tabs button:focus-visible,
+.event-profile-list button:focus-visible,
+.file-action:focus-within {
+  outline: 3px solid rgba(23, 104, 201, 0.24);
+  outline-offset: 2px;
+}
+
+.site-loading,
+.site-placeholder,
+.site-load-error {
+  min-height: 150px;
+}
+
+.site-placeholder {
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  color: var(--muted);
+  text-align: center;
+}
+
+.event-profile-layout {
+  display: grid;
+  grid-template-columns: minmax(220px, 300px) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.event-profile-list {
+  display: grid;
+  gap: 8px;
+}
+
+.event-profile-list button {
+  display: grid;
+  gap: 4px;
+  width: 100%;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--navy);
+  text-align: left;
+  background: #fff;
+  cursor: pointer;
+}
+
+.event-profile-list button.selected {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 2px rgba(23, 104, 201, 0.1);
+  background: #f2f8ff;
+}
+
+.event-profile-list button span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.event-facts {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0;
+}
+
+.event-facts div {
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.event-facts dt {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.event-facts dd {
+  margin: 5px 0 0;
+  font-weight: 700;
+}
+
+@media (max-width: 1000px) {
+  .event-profile-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .event-profile-list {
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  }
+
+  .event-profile-list h3,
+  .event-profile-list > p {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 760px) {
+  .site-content-page .page-title-row {
+    align-items: stretch;
+  }
+
+  .site-content-tabs {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .event-facts {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
 .auth-shell {
   min-height: 100vh;
   padding: 48px clamp(20px, 5vw, 72px);

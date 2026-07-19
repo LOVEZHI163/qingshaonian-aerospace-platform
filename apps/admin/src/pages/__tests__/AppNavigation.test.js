@@ -69,10 +69,27 @@ describe("role based application navigation", () => {
     mounted = [];
   });
 
-  it("shows all six administrator modules", async () => {
+  it("shows the website module to administrators and opens it from navigation", async () => {
     const wrapper = await mountFor({ id: "A1", type: "admin", name: "管理员", mustChangePassword: false }); mounted.push(wrapper);
     const labels = wrapper.findAll("[data-nav]").map((item) => item.text());
-    expect(labels).toEqual(["概览", "赛事设置", "组织用户", "报名管理", "证书管理", "普通用户管理"]);
+    expect(labels).toEqual(["概览", "赛事设置", "官网内容", "组织用户", "报名管理", "证书管理", "普通用户管理"]);
+
+    await wrapper.get('[data-nav="siteContent"]').trigger("click");
+    await flushPromises();
+    expect(wrapper.find('[data-testid="site-content-page"]').exists()).toBe(true);
+  });
+
+  it("allows only administrators to restore the website content deep link", async () => {
+    window.history.replaceState({}, "", "/admin/?view=siteContent");
+    const ordinary = await mountFor({ id: "U1", type: "ordinary", name: "普通用户", phone: "13800000001", mustChangePassword: false }); mounted.push(ordinary);
+    expect(ordinary.find('[data-testid="site-content-page"]').exists()).toBe(false);
+    expect(ordinary.find('[data-nav="siteContent"]').exists()).toBe(false);
+    expect(apiMock.mock.calls.some(([path]) => path === "/api/admin/site-settings" || path === "/api/admin/event-public-profiles")).toBe(false);
+    ordinary.unmount();
+    mounted = mounted.filter((item) => item !== ordinary);
+
+    const admin = await mountFor({ id: "A1", type: "admin", name: "管理员", mustChangePassword: false }); mounted.push(admin);
+    expect(admin.find('[data-testid="site-content-page"]').exists()).toBe(true);
   });
 
   it("limits ordinary users to registration, records and certificates", async () => {

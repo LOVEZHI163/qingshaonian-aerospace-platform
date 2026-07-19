@@ -8,6 +8,7 @@ defineEmits(["navigate"]);
 const items = [
   ["overview", "概览"],
   ["events", "赛事设置"],
+  ["siteContent", "官网内容"],
   ["organizations", "组织用户"],
   ["registrations", "报名管理"],
   ["certificates", "证书管理"],

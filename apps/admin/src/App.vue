@@ -13,6 +13,7 @@ import OrganizationManagementPage from "./pages/OrganizationManagementPage.vue";
 import RegistrationManagementPage from "./pages/RegistrationManagementPage.vue";
 import RegistrationPage from "./pages/RegistrationPage.vue";
 import RegistrationRecordsPage from "./pages/RegistrationRecordsPage.vue";
+import SiteContentPage from "./pages/SiteContentPage.vue";
 import UserManagementPage from "./pages/UserManagementPage.vue";
 import { useSession } from "./state/session.js";
 
@@ -24,7 +25,7 @@ const currentView = ref("login");
 const message = ref("");
 const certificateRegistrationId = ref("");
 const certificateEventId = ref("");
-const DEEP_LINK_VIEWS = new Set(["overview", "events", "organizations", "registration", "registrationRecords", "certificates", "users", "organization"]);
+const DEEP_LINK_VIEWS = new Set(["overview", "events", "siteContent", "organizations", "registration", "registrationRecords", "certificates", "users", "organization"]);
 const SAFE_EVENT_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 const initialParams = new URLSearchParams(window.location.search);
 const initialView = DEEP_LINK_VIEWS.has(initialParams.get("view")) ? initialParams.get("view") : "";
@@ -71,7 +72,7 @@ function targetView(user = currentUser.value) {
   if (!user || !initialView) return defaultView(user);
   if (user.type === "organization" && !approvedOrganization.value) return "organization";
   const allowed = user.type === "admin"
-    ? new Set(["overview", "events", "organizations", "registration", "certificates", "users"])
+    ? new Set(["overview", "events", "siteContent", "organizations", "registration", "certificates", "users"])
     : user.type === "organization"
       ? new Set(["registration", "registrationRecords", "certificates", "organization"])
       : new Set(["registration", "registrationRecords", "certificates"]);
@@ -178,6 +179,7 @@ onMounted(async () => {
     <p v-if="message" class="message">{{ message }}</p>
     <DashboardPage v-if="currentView === 'overview'" @navigate="navigateAdmin" />
     <EventManagementPage v-else-if="currentView === 'events'" @event-changed="loadEvent" />
+    <SiteContentPage v-else-if="currentView === 'siteContent'" />
     <OrganizationManagementPage v-else-if="currentView === 'organizations'" />
     <RegistrationManagementPage v-else-if="currentView === 'registration'" @open-certificates="openCertificateManagement" />
     <CertificateManagementPage v-else-if="currentView === 'certificates'" :initial-registration-id="certificateRegistrationId" :initial-event-id="certificateEventId" />
