@@ -234,7 +234,7 @@
 - Modify: `package-lock.json`
 
 **Interfaces:**
-- `SITE_IMAGE_POLICY`: JPEG/PNG/WebP/SVG，10MB；SVG 只允许用户已经批准的品牌文件走构建资产，后台不接受 SVG 上传。
+- `SITE_IMAGE_POLICY`: JPEG/PNG/WebP，10MB；用户批准的品牌 SVG 只作为构建期静态资产，后台不接受 SVG 上传。
 - `SITE_ATTACHMENT_POLICY`: PDF/JPEG/PNG/WebP，20MB。
 - `saveSiteMedia({ mediaId, file, purpose })` 生成原图元数据与 `mobile`、`desktop` WebP 变体。
 - Admin: `POST /api/admin/site-media`、`DELETE /api/admin/site-media/:id`。
