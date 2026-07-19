@@ -1,6 +1,8 @@
 <script setup>
 import { nextTick, onMounted, ref } from "vue";
 
+import ContentEditorPanel from "../components/ContentEditorPanel.vue";
+import ContentListPanel from "../components/ContentListPanel.vue";
 import EventPublicProfilePanel from "../components/EventPublicProfilePanel.vue";
 import SiteSettingsPanel from "../components/SiteSettingsPanel.vue";
 import { api } from "../lib/api.js";
@@ -13,6 +15,9 @@ const error = ref("");
 const settings = ref(null);
 const events = ref([]);
 const profiles = ref([]);
+const selectedContentId = ref(null);
+const contentEditor = ref(null);
+const contentList = ref(null);
 
 async function load() {
   loading.value = true;
@@ -41,6 +46,30 @@ function updateProfile(row) {
   const index = profiles.value.findIndex((profile) => profile.eventId === row.eventId);
   if (index >= 0) profiles.value.splice(index, 1, row);
   else profiles.value.push(row);
+}
+
+function chooseContent(id) {
+  contentEditor.value?.requestLeave(() => {
+    if (selectedContentId.value === id) contentEditor.value?.load();
+    else selectedContentId.value = id;
+  });
+}
+
+function newContent() {
+  contentEditor.value?.requestLeave(() => {
+    if (selectedContentId.value === null) contentEditor.value?.load();
+    else selectedContentId.value = null;
+  });
+}
+
+function contentSaved(row) {
+  selectedContentId.value = row.id;
+  contentList.value?.load();
+}
+
+function contentDeleted() {
+  selectedContentId.value = null;
+  contentList.value?.load();
 }
 
 async function activateTab(index, { focus = false } = {}) {
@@ -82,7 +111,7 @@ onMounted(load);
     <template v-else>
       <section id="site-panel-homepage" v-show="activeTab === 'homepage'" role="tabpanel" aria-labelledby="site-tab-homepage" data-site-panel="homepage"><SiteSettingsPanel v-if="settings" :settings="settings" :events="events" :profiles="profiles" @saved="updateSettings" /></section>
       <section id="site-panel-events" v-show="activeTab === 'events'" role="tabpanel" aria-labelledby="site-tab-events" data-site-panel="events"><EventPublicProfilePanel :events="events" :profiles="profiles" @saved="updateProfile" /></section>
-      <section id="site-panel-content" v-show="activeTab === 'content'" role="tabpanel" aria-labelledby="site-tab-content" data-site-panel="content"><div class="panel site-placeholder"><h3>内容发布</h3><p>内容管理将在下一步接入。</p></div></section>
+      <section id="site-panel-content" v-show="activeTab === 'content'" role="tabpanel" aria-labelledby="site-tab-content" data-site-panel="content"><div class="content-management-layout"><ContentListPanel ref="contentList" :events="events" :selected-id="selectedContentId" @select="chooseContent" @new="newContent" /><ContentEditorPanel ref="contentEditor" :content-id="selectedContentId" :events="events" @saved="contentSaved" @deleted="contentDeleted" /></div></section>
     </template>
   </section>
 </template>

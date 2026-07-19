@@ -1,0 +1,188 @@
+import { flushPromises, mount } from "@vue/test-utils";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const { apiMock } = vi.hoisted(() => ({ apiMock: vi.fn() }));
+vi.mock("../../lib/api.js", () => ({ api: apiMock }));
+
+import ContentEditorPanel from "../ContentEditorPanel.vue";
+
+const events = [{ id: "E1", name: "2026赛事" }];
+const row = {
+  id: "POST-1", slug: "first-news", eventId: "E1", type: "news", title: "第一篇",
+  summary: "摘要", bodyHtml: "<p>正文</p>", status: "draft", publishAt: null,
+  pinned: false, sortOrder: 0, coverMediaId: null, attachments: [], version: 1,
+  previewHtml: "<p>正文</p>"
+};
+
+function installApi(overrides = {}) {
+  apiMock.mockImplementation(async (path, options = {}) => {
+    const key = `${options.method || "GET"} ${path}`;
+    if (overrides[key]) return overrides[key](options);
+    if (path === "/api/admin/content/POST-1") return { row: { ...row } };
+    if (path === "/api/admin/content/POST-1" && options.method === "PATCH") return { row: { ...row, ...JSON.parse(options.body), version: 2 } };
+    if (path.endsWith("/publish")) return { row: { ...row, status: "published", version: 2 } };
+    if (path.endsWith("/offline")) return { row: { ...row, status: "offline", version: 3 } };
+    if (path === "/api/admin/content" && options.method === "POST") return { row: { ...row, ...JSON.parse(options.body) } };
+    return {};
+  });
+}
+
+async function mountEditor(contentId = "POST-1") {
+  const wrapper = mount(ContentEditorPanel, { props: { contentId, events } });
+  await flushPromises();
+  return wrapper;
+}
+
+describe("ContentEditorPanel", () => {
+  beforeEach(() => { apiMock.mockReset(); installApi(); });
+
+  it("saves the complete draft, reloads it, and previews only server-sanitized HTML", async () => {
+    const wrapper = await mountEditor();
+    await wrapper.get('[data-content-field="title"]').setValue("管理员修改");
+    await wrapper.get('[data-action="save-content"]').trigger("click");
+    await flushPromises();
+
+    const save = apiMock.mock.calls.find(([path, options]) => path === "/api/admin/content/POST-1" && options?.method === "PATCH");
+    expect(JSON.parse(save[1].body)).toMatchObject({ title: "管理员修改", version: 1, status: "draft", publishAt: null });
+
+    apiMock.mockImplementation(async (path) => path === "/api/admin/content/POST-1"
+      ? { row: { ...row, bodyHtml: '<img src=x onerror="bad()">', previewHtml: "<p>服务端安全预览</p>" } }
+      : {});
+    await wrapper.get('[data-action="refresh-content"]').trigger("click");
+    await flushPromises();
+    await wrapper.get('[data-action="preview-content"]').trigger("click");
+    await flushPromises();
+    expect(wrapper.get('[data-preview-body]').html()).toContain("服务端安全预览");
+    expect(wrapper.get('[data-preview-body]').html()).not.toContain("onerror");
+  });
+
+  it("requires two explicit confirmations for publishing and offlining", async () => {
+    const wrapper = await mountEditor();
+    await wrapper.get('[data-action="publish-content"]').trigger("click");
+    expect(wrapper.get('[role="dialog"]').text()).toContain("确认发布");
+    expect(apiMock.mock.calls.some(([path]) => path.endsWith("/publish"))).toBe(false);
+    await wrapper.get('[data-action="confirm-content-action"]').trigger("click");
+    await flushPromises();
+    expect(wrapper.text()).toContain("已发布");
+    expect(wrapper.get('[data-action="save-content"]').attributes("disabled")).toBeDefined();
+    expect(wrapper.get('[data-action="delete-content"]').attributes("disabled")).toBeDefined();
+
+    await wrapper.get('[data-action="offline-content"]').trigger("click");
+    expect(wrapper.get('[role="dialog"]').text()).toContain("确认下线");
+    await wrapper.get('[data-action="confirm-content-action"]').trigger("click");
+    await flushPromises();
+    expect(wrapper.text()).toContain("已下线");
+  });
+
+  it("keeps unsaved input and asks for refresh after a 409 conflict", async () => {
+    installApi({
+      "PATCH /api/admin/content/POST-1": async () => { throw Object.assign(new Error("冲突"), { status: 409 }); }
+    });
+    const wrapper = await mountEditor();
+    await wrapper.get('[data-content-field="title"]').setValue("不能丢失的标题");
+    await wrapper.get('[data-action="save-content"]').trigger("click");
+    await flushPromises();
+
+    expect(wrapper.get('[data-content-field="title"]').element.value).toBe("不能丢失的标题");
+    expect(wrapper.text()).toContain("内容已被其他管理员更新，请刷新后重试");
+  });
+
+  it("requires a future time for scheduled content and serializes it as ISO", async () => {
+    const wrapper = await mountEditor();
+    await wrapper.get('[data-content-field="status"]').setValue("scheduled");
+    await wrapper.get('[data-action="save-content"]').trigger("click");
+    expect(wrapper.text()).toContain("请选择未来的发布时间");
+
+    await wrapper.get('[data-content-field="publishAt"]').setValue("2099-01-02T12:30");
+    await wrapper.get('[data-action="save-content"]').trigger("click");
+    await flushPromises();
+    const saves = apiMock.mock.calls.filter(([path, options]) => path === "/api/admin/content/POST-1" && options?.method === "PATCH");
+    expect(JSON.parse(saves.at(-1)[1].body).publishAt).toBe(new Date("2099-01-02T12:30").toISOString());
+  });
+
+  it("preserves attachment media ids, labels and current visual order", async () => {
+    apiMock.mockImplementation(async (path, options = {}) => {
+      if (path === "/api/admin/content/POST-1" && options.method === "PATCH") return { row: { ...row, ...JSON.parse(options.body), version: 2 } };
+      if (path === "/api/admin/content/POST-1") return { row: { ...row, attachments: [
+        { mediaId: "M1", label: "规程", displayOrder: 0, media: { id: "M1", originalName: "a.pdf", mimeType: "application/pdf", sizeBytes: 100 } },
+        { mediaId: "M2", label: "图片", displayOrder: 1, media: { id: "M2", originalName: "b.png", mimeType: "image/png", sizeBytes: 200, width: 100, height: 80 } }
+      ] } };
+      return {};
+    });
+    const wrapper = await mountEditor();
+    await wrapper.get('[data-attachment="M2"] [data-action="move-attachment-up"]').trigger("click");
+    await wrapper.get('[data-attachment="M2"] [data-attachment-label]').setValue("获奖图片");
+    await wrapper.get('[data-action="save-content"]').trigger("click");
+    await flushPromises();
+    const save = apiMock.mock.calls.find(([path, options]) => path === "/api/admin/content/POST-1" && options?.method === "PATCH");
+    expect(JSON.parse(save[1].body).attachments).toEqual([
+      { mediaId: "M2", label: "获奖图片", displayOrder: 0 },
+      { mediaId: "M1", label: "规程", displayOrder: 1 }
+    ]);
+  });
+
+  it("does not manufacture a published state when publish fails", async () => {
+    installApi({ "POST /api/admin/content/POST-1/publish": async () => { throw new Error("发布失败"); } });
+    const wrapper = await mountEditor();
+    await wrapper.get('[data-action="publish-content"]').trigger("click");
+    await wrapper.get('[data-action="confirm-content-action"]').trigger("click");
+    await flushPromises();
+    expect(wrapper.text()).toContain("发布失败");
+    expect(wrapper.text()).toContain("草稿");
+  });
+
+  it("deletes an offline item only after explicit confirmation", async () => {
+    apiMock.mockImplementation(async (path, options = {}) => {
+      if (path === "/api/admin/content/POST-1" && options.method === "DELETE") return {};
+      if (path === "/api/admin/content/POST-1") return { row: { ...row, status: "offline" } };
+      return {};
+    });
+    const wrapper = await mountEditor();
+    await wrapper.get('[data-action="delete-content"]').trigger("click");
+    expect(apiMock.mock.calls.some(([, options]) => options?.method === "DELETE")).toBe(false);
+    await wrapper.get('[data-action="confirm-content-action"]').trigger("click");
+    await flushPromises();
+    expect(apiMock.mock.calls.some(([path, options]) => path === "/api/admin/content/POST-1" && options?.method === "DELETE")).toBe(true);
+    expect(wrapper.emitted("deleted")).toEqual([["POST-1"]]);
+  });
+
+  it("requires offline content to return to draft or scheduled before saving edits", async () => {
+    apiMock.mockImplementation(async (path) => path === "/api/admin/content/POST-1"
+      ? { row: { ...row, status: "offline" } }
+      : {});
+    const wrapper = await mountEditor();
+    expect(wrapper.get('[data-action="save-content"]').attributes("disabled")).toBeDefined();
+    expect(wrapper.text()).toContain("请选择草稿或定时发布后再保存");
+    await wrapper.get('[data-content-field="status"]').setValue("draft");
+    expect(wrapper.get('[data-action="save-content"]').attributes("disabled")).toBeUndefined();
+  });
+
+  it("keeps referenced media selected when physical deletion returns 409", async () => {
+    apiMock.mockImplementation(async (path, options = {}) => {
+      if (path === "/api/admin/content/POST-1") return { row: { ...row, attachments: [
+        { mediaId: "M1", label: "规程", displayOrder: 0, media: { id: "M1", originalName: "rules.pdf", mimeType: "application/pdf", sizeBytes: 100 } }
+      ] } };
+      if (path === "/api/admin/site-media/M1" && options.method === "DELETE") throw Object.assign(new Error("媒体仍在引用"), { status: 409 });
+      return {};
+    });
+    const wrapper = await mountEditor();
+    await wrapper.get('[data-attachment="M1"] [data-action="delete-attachment-media"]').trigger("click");
+    await flushPromises();
+    expect(wrapper.text()).toContain("媒体仍被内容引用，请先解除引用并保存");
+    expect(wrapper.find('[data-attachment="M1"]').exists()).toBe(true);
+  });
+
+  it("closes confirmation with Escape and returns focus to its opener", async () => {
+    const wrapper = await mount(ContentEditorPanel, { props: { contentId: "POST-1", events }, attachTo: document.body });
+    await flushPromises();
+    const opener = wrapper.get('[data-action="publish-content"]');
+    opener.element.focus();
+    await opener.trigger("click");
+    expect(document.activeElement).toBe(wrapper.get('[data-action="confirm-content-action"]').element);
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    await wrapper.vm.$nextTick();
+    expect(wrapper.find('[role="dialog"]').exists()).toBe(false);
+    expect(document.activeElement).toBe(opener.element);
+    wrapper.unmount();
+  });
+});

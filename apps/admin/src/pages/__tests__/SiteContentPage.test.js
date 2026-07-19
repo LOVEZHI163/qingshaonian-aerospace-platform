@@ -32,6 +32,12 @@ const profiles = [
   { eventId: "E2", slug: "event-2027", slogan: "", summary: "", isVisible: false, displayOrder: 2, heroMediaId: null, version: 1, event: events[1] }
 ];
 
+const contentRow = {
+  slug: "content", eventId: "E1", type: "news", title: "内容", summary: "摘要",
+  bodyHtml: "<p>正文</p>", publishAt: null, pinned: false, sortOrder: 0,
+  coverMediaId: null, attachments: [], version: 1, previewHtml: "<p>正文</p>"
+};
+
 function installSuccessfulApi() {
   apiMock.mockImplementation(async (path, options = {}) => {
     if (path === "/api/admin/site-settings" && options.method === "PATCH") {
@@ -147,7 +153,7 @@ describe("SiteContentPage", () => {
     await wrapper.get('[data-field="platformIntro"]').setValue("暂存在本页");
 
     await wrapper.get('[data-site-tab="content"]').trigger("click");
-    expect(wrapper.get('[data-site-panel="content"]').text()).toContain("内容管理将在下一步接入");
+    expect(wrapper.get('[data-site-panel="content"]').text()).toContain("内容列表");
     await wrapper.get('[data-site-tab="homepage"]').trigger("click");
 
     expect(wrapper.get('[data-field="platformIntro"]').element.value).toBe("暂存在本页");
@@ -289,5 +295,54 @@ describe("SiteContentPage", () => {
     const save = apiMock.mock.calls.find(([path, options]) => path === "/api/admin/site-settings" && options?.method === "PATCH");
     expect(JSON.parse(save[1].body).defaultHeroMediaId).toBeNull();
     expect(apiMock.mock.calls.some(([path, options]) => path.includes("MEDIA-OLD") && options?.method === "DELETE")).toBe(false);
+  });
+
+  it("loads content management with type, event, status and keyword filters", async () => {
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/admin/site-settings") return { row: { ...settings } };
+      if (path === "/api/admin/event-public-profiles") return { rows: profiles };
+      if (path === "/api/admin/events") return { rows: events, projects: [] };
+      if (path === "/api/admin/content") return { rows: [
+        { ...contentRow, id: "P1", title: "公开新闻", type: "news", status: "published", eventId: "E1", slug: "news-1" },
+        { ...contentRow, id: "P2", title: "草稿公告", type: "announcement", status: "draft", eventId: null, slug: "notice-1" }
+      ] };
+      return { rows: [] };
+    });
+    const wrapper = await mountLoaded();
+    await wrapper.get('[data-site-tab="content"]').trigger("click");
+    await flushPromises();
+    expect(wrapper.get('[data-content-filter="type"]').exists()).toBe(true);
+    expect(wrapper.get('[data-content-filter="eventId"]').exists()).toBe(true);
+    expect(wrapper.get('[data-content-filter="status"]').exists()).toBe(true);
+    await wrapper.get('[data-content-filter="keyword"]').setValue("新闻");
+    expect(wrapper.findAll('[data-content-row]')).toHaveLength(1);
+    expect(wrapper.text()).toContain("已发布");
+  });
+
+  it("blocks selecting another content item until unsaved edits are explicitly discarded", async () => {
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/admin/site-settings") return { row: { ...settings } };
+      if (path === "/api/admin/event-public-profiles") return { rows: profiles };
+      if (path === "/api/admin/events") return { rows: events, projects: [] };
+      if (path === "/api/admin/content") return { rows: [
+        { ...contentRow, id: "P1", title: "第一篇", type: "news", status: "draft", slug: "first" },
+        { ...contentRow, id: "P2", title: "第二篇", type: "news", status: "draft", slug: "second" }
+      ] };
+      if (path === "/api/admin/content/P1") return { row: { ...contentRow, id: "P1", title: "第一篇", status: "draft", slug: "first" } };
+      if (path === "/api/admin/content/P2") return { row: { ...contentRow, id: "P2", title: "第二篇", status: "draft", slug: "second" } };
+      return { rows: [] };
+    });
+    const wrapper = await mountLoaded();
+    await wrapper.get('[data-site-tab="content"]').trigger("click");
+    await flushPromises();
+    await wrapper.get('[data-content-row="P1"]').trigger("click");
+    await flushPromises();
+    await wrapper.get('[data-content-field="title"]').setValue("尚未保存");
+    await wrapper.get('[data-content-row="P2"]').trigger("click");
+    expect(wrapper.get('[role="dialog"]').text()).toContain("放弃未保存修改");
+    expect(wrapper.get('[data-content-field="title"]').element.value).toBe("尚未保存");
+    await wrapper.get('[data-action="confirm-discard-content"]').trigger("click");
+    await flushPromises();
+    expect(wrapper.get('[data-content-field="title"]').element.value).toBe("第二篇");
   });
 });
