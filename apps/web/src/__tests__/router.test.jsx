@@ -1,5 +1,5 @@
 import React from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import App from "../App.jsx";
 import { fetchJson } from "../api/client.js";
@@ -164,21 +164,116 @@ describe("public site async states", () => {
     expect(capturedSignal.aborted).toBe(true);
   });
 
-  it("does not let an obsolete request overwrite the new route site data", async () => {
-    const home = deferred();
-    const announcements = deferred();
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockImplementationOnce(() => home.promise).mockImplementationOnce(() => announcements.promise)
-    );
+  it("keeps successful business content visible when the site bootstrap fails", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (path) => {
+      if (path === "/api/public/home") throw new Error("bootstrap unavailable");
+      return jsonResponse({ items: [{ id: "notice-1" }] });
+    }));
+    window.history.replaceState({}, "", "/announcements");
 
     render(<App />);
-    fireEvent.click(screen.getByRole("link", { name: "公告" }));
-    announcements.resolve(jsonResponse({ site: { platformName: "当前平台" }, title: "当前公告" }));
-    expect(await screen.findByText("当前平台")).toBeInTheDocument();
+    expect(await screen.findByText("页面基础数据已加载")).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByRole("contentinfo")).toBeInTheDocument();
+  });
+});
 
-    home.resolve(jsonResponse({ site: { platformName: "过期平台" }, title: "过期首页" }));
-    await waitFor(() => expect(screen.queryByText("过期平台")).not.toBeInTheDocument());
+describe("site bootstrap and route data", () => {
+  const site = {
+    platformName: "全站真实平台",
+    platformIntro: "全站公开简介",
+    organizers: ["全站主办方"],
+    contact: "0577-88888888",
+    icp: "浙ICP备全站号"
+  };
+
+  beforeEach(() => window.history.replaceState({}, "", "/"));
+
+  it.each([
+    "/events/summer-cup",
+    "/announcements",
+    "/news",
+    "/history",
+    "/content/opening-notice"
+  ])("bootstraps the real footer on a direct visit to %s", async (path) => {
+    window.history.replaceState({}, "", path);
+    vi.stubGlobal("fetch", vi.fn(async (url) => {
+      if (url === "/api/public/home") return jsonResponse({ site });
+      return jsonResponse({ items: [] });
+    }));
+
+    render(<App />);
+    expect(await screen.findByText("全站真实平台")).toBeInTheDocument();
+    expect(screen.getByText("全站公开简介")).toBeInTheDocument();
+    expect(screen.getByText("全站主办方")).toBeInTheDocument();
+    expect(screen.getByText("浙ICP备全站号")).toBeInTheDocument();
+  });
+
+  it("reuses the bootstrap payload on home without requesting home twice", async () => {
+    const request = vi.fn(async () => jsonResponse({ site }));
+    vi.stubGlobal("fetch", request);
+    render(<App />);
+
+    expect(await screen.findByText("页面基础数据已加载")).toBeInTheDocument();
+    expect(request.mock.calls.filter(([url]) => url === "/api/public/home")).toHaveLength(1);
+  });
+
+  it("keeps footer ownership with bootstrap instead of route payloads", async () => {
+    window.history.replaceState({}, "", "/announcements");
+    vi.stubGlobal("fetch", vi.fn(async (url) => {
+      if (url === "/api/public/home") return jsonResponse({ site });
+      return jsonResponse({ site: { platformName: "错误业务平台" }, items: [] });
+    }));
+
+    render(<App />);
+    expect(await screen.findByText("全站真实平台")).toBeInTheDocument();
+    expect(screen.queryByText("错误业务平台")).not.toBeInTheDocument();
+  });
+
+  it("aborts bootstrap and route requests when a direct route unmounts", () => {
+    window.history.replaceState({}, "", "/events/summer-cup");
+    const signals = [];
+    vi.stubGlobal("fetch", vi.fn((_url, options) => {
+      signals.push(options.signal);
+      return new Promise(() => {});
+    }));
+
+    const { unmount } = render(<App />);
+    expect(signals).toHaveLength(2);
+    expect(signals.every((signal) => signal.aborted === false)).toBe(true);
+    unmount();
+    expect(signals.every((signal) => signal.aborted === true)).toBe(true);
+  });
+
+  it("loads news and work with two legal requests sharing one abort signal", async () => {
+    window.history.replaceState({}, "", "/news");
+    const request = vi.fn(async (url) => {
+      if (url === "/api/public/home") return jsonResponse({ site });
+      return jsonResponse({ items: [{ slug: url.includes("work") ? "work-1" : "news-1" }] });
+    });
+    vi.stubGlobal("fetch", request);
+
+    render(<App />);
+    expect(await screen.findByText("页面基础数据已加载")).toBeInTheDocument();
+    const newsCall = request.mock.calls.find(([url]) => url === "/api/public/content?type=news");
+    const workCall = request.mock.calls.find(([url]) => url === "/api/public/content?type=work");
+    expect(newsCall).toBeDefined();
+    expect(workCall).toBeDefined();
+    expect(newsCall[1].signal).toBe(workCall[1].signal);
+    expect(request.mock.calls.some(([url]) => url.includes("type=news,work"))).toBe(false);
+  });
+
+  it("shows a retryable route error when either news request fails", async () => {
+    window.history.replaceState({}, "", "/news");
+    vi.stubGlobal("fetch", vi.fn(async (url) => {
+      if (url === "/api/public/home") return jsonResponse({ site });
+      if (url === "/api/public/content?type=work") throw new Error("work unavailable");
+      return jsonResponse({ items: [] });
+    }));
+
+    render(<App />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("暂时无法加载页面数据");
+    expect(screen.getByRole("button", { name: "重新加载" })).toBeInTheDocument();
   });
 });
 
