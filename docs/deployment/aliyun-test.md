@@ -381,6 +381,20 @@ docker compose up -d --build
 
 本记录对应测试环境。正式域名上线前仍需完成备案、HTTPS 和测试账号更换。
 
+### 公开官网重设计完整部署（2026-07-19）
+
+- 发布提交：`348052c`（`fix: avoid caching unpublished media errors`），分支 `codex/public-website-redesign`。服务器 `/opt/aerogp` 不是 Git 仓库，因此使用该提交的纯 Git 归档发布；归档 SHA-256 为 `490E0F7C205F245779A11A45D45A9F34C7D06F690DF381B81E0E6C60590C522E`，服务器 `.release` 记录 `348052c`。
+- 部署前数据库备份：`backups/aerogp-20260719T113429Z.dump`，已由备份脚本创建并通过 `pg_restore --list` 预检。
+- 部署前上传备份：`backups/uploads/aerogp-uploads-20260719T113448Z-PeoAnH.tar.gz`，备份脚本输出 `Uploads backup verified`；新预检同时验证存在时必须包含 `site-media`。
+- 旧源码备份：`backups/source-before-public-redesign-20260719T1135Z.tgz`，另保留可直接恢复的 `backups/source-tree-before-public-redesign-20260719T1135Z/`。两次升级预检均输出 `Upgrade preflight passed.`，切换前未删除 `.env`、数据库卷或上传卷。
+- 回滚镜像：从旧源码树无密钥重建 `aerogp-api:rollback-20260719T1135Z` 与 `aerogp-web:rollback-20260719T1135Z`。新镜像为 API `475d68a8ccdc`（124 MB）、Web `0c06c3140dd3`（22.9 MB）。
+- 构建与切换：`docker compose build --pull` 成功；公开 Web 构建产物包含 `https://aerogp.cn` canonical，最大公共 JS chunk 141.63 kB。`docker compose up -d --wait --wait-timeout 240` 成功，PostgreSQL、API、Web、Backup 全部 healthy。
+- 远程 smoke：`healthz`、首页、管理端、`/api/public/home`、内容列表、sitemap、品牌 mark/wordmark、管理员登录、官网设置和官网内容接口均为 200；匿名官网设置接口为 401。线上当时没有公开赛事和公开内容，详情检查按脚本设计安全跳过，未构造或修改业务数据。测试密码仅由标准输入临时注入，没有写入命令参数、日志、文档或 Git。
+- 公网浏览器验收：`http://47.99.181.222/` 首页蓝白 A2 视觉、用户指定 SVG、零赛事安全态、赛事服务、公告/动态/作品/历史区块均正常；公告、动态/作品、历届赛事路由正常。360、768、1440、1920px 均无整页横向溢出，Logo 比例不变，移动菜单焦点进入及 Escape 关闭后焦点归还正常。各页 canonical 正确指向 `https://aerogp.cn`。管理端登录页与普通用户登录目标正常加载。
+- 网络与缓存：宿主机只监听 SSH 22 和 HTTP 80；API 4300 与 PostgreSQL 5432 未发布。HTML 返回 `Cache-Control: no-store`；品牌 SVG 缓存 1 天；未发布媒体 404 保留安全响应头且不含 public immutable 缓存。
+- 日志：Nginx 与 API 正常启动，无应用启动错误。API 有一条既有 `pg` 弃用警告（`client.query()` 并发调用将在 pg 9 移除），不影响本次健康检查与 smoke，列为后续技术债。
+- 非破坏回滚：先保留故障日志；将旧源码树恢复到 `/opt/aerogp`，或把 Compose 的 API/Web 镜像切到上述 rollback 标签后执行 `docker compose up -d --wait`。默认保留现有 PostgreSQL 和上传卷，严禁 `docker compose down -v`；只有确认数据损坏或结构不兼容后才使用本节列出的已验证备份恢复。
+
 ## 域名上线前
 
 正式使用 `aerogp.cn` 前需要：完成 ICP 备案、添加 DNS 解析、配置 HTTPS、更换应用测试账号及明文业务密码，并进行正式安全审查。
