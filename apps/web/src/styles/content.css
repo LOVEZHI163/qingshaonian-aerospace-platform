@@ -3,7 +3,6 @@
   margin: 0 auto;
   padding: clamp(2.5rem, 7vw, 5.5rem) 0 var(--space-8);
 }
-
 .content-page-heading { max-width: 52rem; margin-bottom: var(--space-5); }
 .content-page-heading h1,
 .content-detail-heading h1,
@@ -137,4 +136,3 @@
   .attachment-list li { align-items: flex-start; flex-direction: column; }
   .pagination { flex-wrap: wrap; }
 }
-

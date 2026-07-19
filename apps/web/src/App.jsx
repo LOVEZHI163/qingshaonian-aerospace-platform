@@ -20,12 +20,12 @@ function NotFoundPage() {
   );
 }
 
-function PublicRoute({ route, bootstrap }) {
+function PublicRoute({ route, bootstrap, location }) {
   switch (route.name) {
     case "event": return <EventDetailPage slug={route.params.slug} />;
-    case "announcements": return <ContentListPage mode="announcements" />;
-    case "news": return <ContentListPage mode="news" />;
-    case "history": return <HistoryPage bootstrap={bootstrap} />;
+    case "announcements": return <ContentListPage mode="announcements" location={location} />;
+    case "news": return <ContentListPage mode="news" location={location} />;
+    case "history": return <HistoryPage bootstrap={bootstrap} location={location} />;
     case "content": return <ContentDetailPage slug={route.params.slug} />;
     default: return <NotFoundPage />;
   }
@@ -78,6 +78,7 @@ export default function App() {
             key={`${route.name}:${route.params.slug || ""}`}
             route={route}
             bootstrap={bootstrap.data}
+            location={location}
           />
         )}
       </main>

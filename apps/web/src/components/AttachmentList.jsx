@@ -10,7 +10,6 @@ function publicMediaHref(value) {
     return null;
   }
 }
-
 function formatSize(value) {
   const bytes = Number(value);
   if (!Number.isFinite(bytes) || bytes < 0) return "大小未知";
@@ -56,4 +55,3 @@ export default function AttachmentList({ attachments = [], title = "附件下载
     </section>
   );
 }
-

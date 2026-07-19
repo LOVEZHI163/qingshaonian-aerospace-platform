@@ -174,6 +174,39 @@ describe("public event page", () => {
     expect(screen.queryByRole("link", { name: "立即报名" })).not.toBeInTheDocument();
     expect(document.querySelector('a[href^="/admin/?view=registration"]')).toBeNull();
   });
+
+  it("trusts an open public registration window without re-deriving event status", async () => {
+    installApi({
+      "/api/public/events/wenzhou-2026": {
+        event: event({ status: "offline", registrationWindow: { open: true, reason: "管理员临时开放" } }),
+        projects: [], groups: [], resources: [], content: []
+      }
+    });
+
+    render(<App />);
+    expect(await screen.findByRole("link", { name: "立即报名" })).toHaveAttribute(
+      "href",
+      "/admin/?view=registration&eventId=E-2026"
+    );
+    expect(screen.getByText("管理员临时开放")).toBeInTheDocument();
+  });
+
+  it("never creates registration, result or certificate links without a real event id", async () => {
+    installApi({
+      "/api/public/events/wenzhou-2026": {
+        event: event({ id: null, registrationWindow: { open: true, reason: "报名开放中" } }),
+        projects: [], groups: [], resources: [], content: []
+      }
+    });
+
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "2026温州市青少年航空航天创新比赛" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "立即报名" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "查询成绩" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "查询证书" })).not.toBeInTheDocument();
+    expect(document.body.innerHTML).not.toContain("eventId=undefined");
+    expect(document.body.innerHTML).not.toContain("eventId=null");
+  });
 });
 
 describe("public content lists", () => {
@@ -222,6 +255,89 @@ describe("public content lists", () => {
     expect(within(tabs).getByRole("tab", { name: "优秀作品" })).toHaveAttribute("aria-selected", "true");
   });
 
+  it("implements roving keyboard tabs with cyclic arrows, Home/End and linked tabpanels", async () => {
+    window.history.replaceState({}, "", "/news");
+    installApi({
+      "/api/public/content?type=news&page=1&pageSize=10": page([content("N1", "news")]),
+      "/api/public/content?type=work&page=1&pageSize=10": page([content("W1", "work")])
+    });
+
+    render(<App />);
+    await screen.findByText("news-N1 标题");
+    const newsTab = screen.getByRole("tab", { name: "动态" });
+    const workTab = screen.getByRole("tab", { name: "优秀作品" });
+    expect(newsTab).toHaveAttribute("tabindex", "0");
+    expect(workTab).toHaveAttribute("tabindex", "-1");
+    expect(newsTab).toHaveAttribute("aria-controls", "content-panel-news");
+    expect(screen.getByRole("tabpanel")).toHaveAttribute("aria-labelledby", "content-tab-news");
+
+    newsTab.focus();
+    fireEvent.keyDown(newsTab, { key: "ArrowLeft" });
+    expect(workTab).toHaveFocus();
+    expect(workTab).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tabpanel")).toHaveAttribute("id", "content-panel-work");
+    expect(screen.getByText("work-W1 标题")).toBeInTheDocument();
+
+    fireEvent.keyDown(workTab, { key: "Home" });
+    expect(newsTab).toHaveFocus();
+    fireEvent.keyDown(newsTab, { key: "End" });
+    expect(workTab).toHaveFocus();
+    fireEvent.keyDown(workTab, { key: "ArrowRight" });
+    expect(newsTab).toHaveFocus();
+  });
+
+  it("keeps one legal event filter on announcements and pagination requests", async () => {
+    window.history.replaceState({}, "", "/announcements?event=E1&page=1");
+    const request = installApi({
+      "/api/public/content?type=announcement&page=1&pageSize=10&event=E1": page([content("A1", "announcement")], {
+        pagination: { page: 1, pageSize: 10, total: 11, totalPages: 2 }
+      }),
+      "/api/public/content?type=announcement&page=2&pageSize=10&event=E1": page([content("A2", "announcement")], {
+        pagination: { page: 2, pageSize: 10, total: 11, totalPages: 2 }
+      })
+    });
+
+    render(<App />);
+    expect(await screen.findByText("announcement-A1 标题")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "下一页" }));
+    expect(await screen.findByText("announcement-A2 标题")).toBeInTheDocument();
+    expect(window.location.search).toContain("event=E1");
+    expect(window.location.search).toContain("page=2");
+    expect(request).toHaveBeenCalledWith(
+      "/api/public/content?type=announcement&page=2&pageSize=10&event=E1",
+      expect.objectContaining({ signal: expect.any(AbortSignal) })
+    );
+  });
+
+  it("keeps one legal event filter on parallel news/work requests and tab switches", async () => {
+    window.history.replaceState({}, "", "/news?event=E1");
+    const request = installApi({
+      "/api/public/content?type=news&page=1&pageSize=10&event=E1": page([content("N1", "news")]),
+      "/api/public/content?type=work&page=1&pageSize=10&event=E1": page([content("W1", "work")])
+    });
+
+    render(<App />);
+    expect(await screen.findByText("news-N1 标题")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "优秀作品" }));
+    expect(screen.getByText("work-W1 标题")).toBeInTheDocument();
+    expect(request.mock.calls.filter(([url]) => url.endsWith("&event=E1"))).toHaveLength(2);
+    expect(window.location.search).toBe("?event=E1");
+  });
+
+  it.each(["?event=", "?event=E1&event=E2", "?event=../secret", "?event=%20E1%20"])(
+    "does not send an empty, duplicate or malformed event filter %s",
+    async (query) => {
+      window.history.replaceState({}, "", `/announcements${query}`);
+      const request = installApi({
+        "/api/public/content?type=announcement&page=1&pageSize=10": page([])
+      });
+      const { unmount } = render(<App />);
+      expect(await screen.findByText("暂无公开内容")).toBeInTheDocument();
+      expect(request.mock.calls.some(([url]) => url.includes("&event="))).toBe(false);
+      unmount();
+    }
+  );
+
   it("merges public archived-event summaries with recap rows without linking a hidden relation", async () => {
     window.history.replaceState({}, "", "/history");
     installApi({
@@ -242,12 +358,12 @@ describe("public content lists", () => {
   });
 
   it("paginates recap rows without losing the history route", async () => {
-    window.history.replaceState({}, "", "/history");
+    window.history.replaceState({}, "", "/history?event=E1&page=1");
     const request = installApi({
-      "/api/public/content?type=recap&page=1&pageSize=10": page([content("R1", "recap")], {
+      "/api/public/content?type=recap&page=1&pageSize=10&event=E1": page([content("R1", "recap")], {
         pagination: { page: 1, pageSize: 10, total: 11, totalPages: 2 }
       }),
-      "/api/public/content?type=recap&page=2&pageSize=10": page([content("R2", "recap")], {
+      "/api/public/content?type=recap&page=2&pageSize=10&event=E1": page([content("R2", "recap")], {
         pagination: { page: 2, pageSize: 10, total: 11, totalPages: 2 }
       })
     });
@@ -257,8 +373,10 @@ describe("public content lists", () => {
     fireEvent.click(screen.getByRole("button", { name: "下一页" }));
     expect(await screen.findByText("recap-R2 标题")).toBeInTheDocument();
     expect(window.location.pathname).toBe("/history");
+    expect(window.location.search).toContain("event=E1");
+    expect(window.location.search).toContain("page=2");
     expect(request).toHaveBeenCalledWith(
-      "/api/public/content?type=recap&page=2&pageSize=10",
+      "/api/public/content?type=recap&page=2&pageSize=10&event=E1",
       expect.objectContaining({ signal: expect.any(AbortSignal) })
     );
   });

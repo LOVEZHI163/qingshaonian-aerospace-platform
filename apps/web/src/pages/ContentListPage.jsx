@@ -1,14 +1,10 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 
 import { fetchJson } from "../api/client.js";
 import AsyncState from "../components/AsyncState.jsx";
+import { navigatePublicListPage, parsePublicListLocation, publicContentListPath } from "../router.js";
 
-const PAGE_SIZE = 10;
 const labels = { announcement: "公告", news: "动态", work: "优秀作品", recap: "赛事回顾" };
-
-function listUrl(type, page) {
-  return `/api/public/content?type=${type}&page=${page}&pageSize=${PAGE_SIZE}`;
-}
 
 function dateLabel(value) {
   const date = new Date(value);
@@ -46,22 +42,25 @@ function Pagination({ pagination, onPage }) {
   );
 }
 
-export default function ContentListPage({ mode = "announcements" }) {
+export default function ContentListPage({ mode = "announcements", location = window.location.href }) {
   const newsMode = mode === "news";
   const [selectedType, setSelectedType] = useState(newsMode ? "news" : "announcement");
   const [attempt, setAttempt] = useState(0);
   const [state, setState] = useState({ status: "loading", pages: {} });
-  const controllers = useRef(new Set());
+  const tabRefs = useRef({});
+  const query = useMemo(() => parsePublicListLocation(location), [location]);
+  const types = newsMode ? ["news", "work"] : ["announcement"];
 
   useEffect(() => {
     const controller = new AbortController();
-    controllers.current.add(controller);
     let current = true;
     setSelectedType(newsMode ? "news" : "announcement");
     setState({ status: "loading", pages: {} });
-    const types = newsMode ? ["news", "work"] : ["announcement"];
 
-    Promise.all(types.map(async (type) => [type, await fetchJson(listUrl(type, 1), { signal: controller.signal })]))
+    Promise.all(types.map(async (type) => [
+      type,
+      await fetchJson(publicContentListPath(type, query.page, query.event), { signal: controller.signal })
+    ]))
       .then((entries) => {
         if (!current) return;
         setState({ status: "success", pages: Object.fromEntries(entries) });
@@ -74,37 +73,30 @@ export default function ContentListPage({ mode = "announcements" }) {
     return () => {
       current = false;
       controller.abort();
-      controllers.current.delete(controller);
     };
-  }, [attempt, newsMode]);
+  }, [attempt, newsMode, query.event, query.page]);
 
-  useEffect(() => () => {
-    for (const controller of controllers.current) controller.abort();
-    controllers.current.clear();
-  }, []);
-
-  async function changePage(nextPage) {
-    const controller = new AbortController();
-    controllers.current.add(controller);
-    setState((current) => ({ ...current, status: "loading" }));
-    try {
-      const payload = await fetchJson(listUrl(selectedType, nextPage), { signal: controller.signal });
-      if (!controller.signal.aborted) {
-        setState((current) => ({
-          status: "success",
-          pages: { ...current.pages, [selectedType]: payload }
-        }));
-      }
-    } catch (error) {
-      if (error?.name !== "AbortError" && !controller.signal.aborted) {
-        setState((current) => ({ ...current, status: "error" }));
-      }
-    } finally {
-      controllers.current.delete(controller);
-    }
+  function changePage(nextPage) {
+    navigatePublicListPage(location, nextPage, query.event);
   }
 
-  const payload = state.pages[selectedType];
+  function activateTab(type, focus = false) {
+    setSelectedType(type);
+    if (focus) tabRefs.current[type]?.focus();
+  }
+
+  function handleTabKeyDown(event, type) {
+    const index = types.indexOf(type);
+    let nextIndex = null;
+    if (event.key === "ArrowRight") nextIndex = (index + 1) % types.length;
+    if (event.key === "ArrowLeft") nextIndex = (index - 1 + types.length) % types.length;
+    if (event.key === "Home") nextIndex = 0;
+    if (event.key === "End") nextIndex = types.length - 1;
+    if (nextIndex === null) return;
+    event.preventDefault();
+    activateTab(types[nextIndex], true);
+  }
+
   const heading = newsMode ? "动态与优秀作品" : "公告";
 
   return (
@@ -121,19 +113,37 @@ export default function ContentListPage({ mode = "announcements" }) {
             <button
               type="button"
               role="tab"
+              id={`content-tab-${type}`}
+              aria-controls={`content-panel-${type}`}
               aria-selected={selectedType === type}
               tabIndex={selectedType === type ? 0 : -1}
               key={type}
-              onClick={() => setSelectedType(type)}
+              ref={(node) => { tabRefs.current[type] = node; }}
+              onClick={() => activateTab(type)}
+              onKeyDown={(event) => handleTabKeyDown(event, type)}
             >{label}</button>
           ))}
         </div>
       ) : null}
 
-      <AsyncState status={state.status} onRetry={() => setAttempt((value) => value + 1)}>
-        <ContentRows payload={payload} emptyText={newsMode && selectedType === "work" ? "暂无公开优秀作品" : "暂无公开内容"} />
-        <Pagination pagination={payload?.pagination} onPage={changePage} />
-      </AsyncState>
+      {types.map((type) => {
+        const payload = state.pages[type];
+        return (
+          <div
+            role="tabpanel"
+            id={`content-panel-${type}`}
+            aria-labelledby={`content-tab-${type}`}
+            tabIndex={0}
+            hidden={selectedType !== type}
+            key={type}
+          >
+            <AsyncState status={state.status} onRetry={() => setAttempt((value) => value + 1)}>
+              <ContentRows payload={payload} emptyText={newsMode && type === "work" ? "暂无公开优秀作品" : "暂无公开内容"} />
+              <Pagination pagination={payload?.pagination} onPage={changePage} />
+            </AsyncState>
+          </div>
+        );
+      })}
     </section>
   );
 }

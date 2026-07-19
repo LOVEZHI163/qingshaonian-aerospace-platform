@@ -1,9 +1,8 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 
 import { fetchJson } from "../api/client.js";
 import AsyncState from "../components/AsyncState.jsx";
-
-const PAGE_SIZE = 10;
+import { navigatePublicListPage, parsePublicListLocation, publicContentListPath } from "../router.js";
 
 function uniqueEvents(bootstrap) {
   const candidates = bootstrap?.mode === "history"
@@ -17,23 +16,23 @@ function uniqueEvents(bootstrap) {
   });
 }
 
-export default function HistoryPage({ bootstrap }) {
+export default function HistoryPage({ bootstrap, location = window.location.href }) {
   const [attempt, setAttempt] = useState(0);
-  const [page, setPage] = useState(1);
   const [state, setState] = useState({ status: "loading", data: null });
+  const query = useMemo(() => parsePublicListLocation(location), [location]);
 
   useEffect(() => {
     const controller = new AbortController();
     let current = true;
     setState({ status: "loading", data: null });
-    fetchJson(`/api/public/content?type=recap&page=${page}&pageSize=${PAGE_SIZE}`, { signal: controller.signal })
+    fetchJson(publicContentListPath("recap", query.page, query.event), { signal: controller.signal })
       .then((data) => current && setState({ status: "success", data }))
       .catch((error) => {
         if (!current || error?.name === "AbortError") return;
         setState({ status: "error", data: null });
       });
     return () => { current = false; controller.abort(); };
-  }, [attempt, page]);
+  }, [attempt, query.event, query.page]);
 
   const events = uniqueEvents(bootstrap);
   const recaps = Array.isArray(state.data?.rows) ? state.data.rows : [];
@@ -78,9 +77,9 @@ export default function HistoryPage({ bootstrap }) {
           )}
           {state.data?.pagination?.totalPages > 1 ? (
             <nav className="pagination" aria-label="赛事回顾分页">
-              <button type="button" disabled={state.data.pagination.page <= 1} onClick={() => setPage(state.data.pagination.page - 1)}>上一页</button>
+              <button type="button" disabled={state.data.pagination.page <= 1} onClick={() => navigatePublicListPage(location, state.data.pagination.page - 1, query.event)}>上一页</button>
               <span>第 {state.data.pagination.page} / {state.data.pagination.totalPages} 页</span>
-              <button type="button" disabled={state.data.pagination.page >= state.data.pagination.totalPages} onClick={() => setPage(state.data.pagination.page + 1)}>下一页</button>
+              <button type="button" disabled={state.data.pagination.page >= state.data.pagination.totalPages} onClick={() => navigatePublicListPage(location, state.data.pagination.page + 1, query.event)}>下一页</button>
             </nav>
           ) : null}
         </AsyncState>

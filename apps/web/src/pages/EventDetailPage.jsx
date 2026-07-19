@@ -25,7 +25,6 @@ function ResourceNotFound() {
     </section>
   );
 }
-
 function EventContent({ rows = [] }) {
   if (!rows.length) return null;
   return (
@@ -68,7 +67,8 @@ export default function EventDetailPage({ slug }) {
 
   const payload = state.data || {};
   const event = payload.event;
-  const canRegister = event?.status === "published" && event?.registrationWindow?.open === true && event?.id;
+  const eventId = typeof event?.id === "string" && event.id.trim() ? event.id : null;
+  const canRegister = event?.registrationWindow?.open === true && eventId;
 
   return (
     <div className="content-page event-detail-page">
@@ -95,10 +95,10 @@ export default function EventDetailPage({ slug }) {
               </dl>
               <div className="event-detail-actions">
                 {canRegister ? (
-                  <a className="button button-solid" href={`/admin/?view=registration&eventId=${encodeURIComponent(event.id)}`} data-router-ignore="true">立即报名</a>
+                  <a className="button button-solid" href={`/admin/?view=registration&eventId=${encodeURIComponent(eventId)}`} data-router-ignore="true">立即报名</a>
                 ) : null}
-                <a className="button button-outline" href={`/admin/?view=records&eventId=${encodeURIComponent(event.id)}`} data-router-ignore="true">查询成绩</a>
-                <a className="button button-outline" href={`/admin/?view=certificates&eventId=${encodeURIComponent(event.id)}`} data-router-ignore="true">查询证书</a>
+                {eventId ? <a className="button button-outline" href={`/admin/?view=records&eventId=${encodeURIComponent(eventId)}`} data-router-ignore="true">查询成绩</a> : null}
+                {eventId ? <a className="button button-outline" href={`/admin/?view=certificates&eventId=${encodeURIComponent(eventId)}`} data-router-ignore="true">查询证书</a> : null}
               </div>
             </section>
 
@@ -118,4 +118,3 @@ export default function EventDetailPage({ slug }) {
     </div>
   );
 }
-
