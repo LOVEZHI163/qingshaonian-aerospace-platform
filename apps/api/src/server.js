@@ -15,6 +15,7 @@ import { createCertificatesRouter } from "./routes/certificates.js";
 import { createDashboardRouter } from "./routes/dashboard.js";
 import { createResourcesRouter } from "./routes/resources.js";
 import { createSiteMediaRouter } from "./routes/site-media.js";
+import { createSiteAdminRouter } from "./routes/site-admin.js";
 import { projectForHistoricalRegistration, registrationContext } from "./services/events.js";
 import { replayFileCleanupJournal } from "./services/organizations.js";
 
@@ -266,6 +267,16 @@ app.use("/api", createDashboardRouter({
 }));
 
 app.use("/api", createSiteMediaRouter({
+  store: dataStore,
+  requireAdmin,
+  requirePasswordReady,
+  asyncRoute,
+  mutationAsyncRoute,
+  makeId: id,
+  now
+}));
+
+app.use("/api", createSiteAdminRouter({
   store: dataStore,
   requireAdmin,
   requirePasswordReady,
