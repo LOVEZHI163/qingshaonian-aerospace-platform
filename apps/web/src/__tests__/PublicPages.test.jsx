@@ -235,6 +235,20 @@ describe("public content lists", () => {
     expect(request.mock.calls.some(([url]) => url.includes("type=news"))).toBe(false);
   });
 
+  it("renders announcements as ordinary content without tab-only ARIA relationships", async () => {
+    window.history.replaceState({}, "", "/announcements");
+    installApi({
+      "/api/public/content?type=announcement&page=1&pageSize=10": page([content("A1", "announcement")])
+    });
+
+    render(<App />);
+    expect(await screen.findByText("announcement-A1 标题")).toBeInTheDocument();
+    expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab")).not.toBeInTheDocument();
+    expect(screen.queryByRole("tabpanel")).not.toBeInTheDocument();
+    expect(document.querySelector("[aria-labelledby='content-tab-announcement']")).toBeNull();
+  });
+
   it("loads news and work in parallel and switches accessible tabs without an illegal combined type", async () => {
     window.history.replaceState({}, "", "/news");
     const request = installApi({
@@ -321,8 +335,106 @@ describe("public content lists", () => {
     fireEvent.click(screen.getByRole("tab", { name: "优秀作品" }));
     expect(screen.getByText("work-W1 标题")).toBeInTheDocument();
     expect(request.mock.calls.filter(([url]) => url.endsWith("&event=E1"))).toHaveLength(2);
-    expect(window.location.search).toBe("?event=E1");
+    expect(window.location.search).toContain("event=E1");
+    expect(window.location.search).toContain("type=work");
+    expect(window.location.search).toContain("page=1");
   });
+
+  it("uses the URL work type for pagination and keeps the selected rows and event filter", async () => {
+    window.history.replaceState({}, "", "/news?type=work&page=1&event=E1");
+    const request = installApi({
+      "/api/public/content?type=news&page=1&pageSize=10&event=E1": page([content("N1", "news")], {
+        pagination: { page: 1, pageSize: 10, total: 11, totalPages: 2 }
+      }),
+      "/api/public/content?type=work&page=1&pageSize=10&event=E1": page([content("W1", "work")], {
+        pagination: { page: 1, pageSize: 10, total: 11, totalPages: 2 }
+      }),
+      "/api/public/content?type=news&page=2&pageSize=10&event=E1": page([content("N2", "news")], {
+        pagination: { page: 2, pageSize: 10, total: 11, totalPages: 2 }
+      }),
+      "/api/public/content?type=work&page=2&pageSize=10&event=E1": page([content("W2", "work")], {
+        pagination: { page: 2, pageSize: 10, total: 11, totalPages: 2 }
+      })
+    });
+
+    render(<App />);
+    expect(await screen.findByText("work-W1 标题")).toBeInTheDocument();
+    expect(screen.queryByText("news-N1 标题")).not.toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "优秀作品" })).toHaveAttribute("aria-selected", "true");
+    fireEvent.click(screen.getByRole("button", { name: "下一页" }));
+    expect(await screen.findByText("work-W2 标题")).toBeInTheDocument();
+    expect(screen.queryByText("news-N2 标题")).not.toBeInTheDocument();
+    expect(window.location.search).toContain("type=work");
+    expect(window.location.search).toContain("page=2");
+    expect(window.location.search).toContain("event=E1");
+    expect(request).toHaveBeenCalledWith(
+      "/api/public/content?type=work&page=2&pageSize=10&event=E1",
+      expect.objectContaining({ signal: expect.any(AbortSignal) })
+    );
+  });
+
+  it("writes tab changes to history and restores the selected rows on back and forward", async () => {
+    window.history.replaceState({}, "", "/news?event=E1");
+    installApi({
+      "/api/public/content?type=news&page=1&pageSize=10&event=E1": page([content("N1", "news")]),
+      "/api/public/content?type=work&page=1&pageSize=10&event=E1": page([content("W1", "work")])
+    });
+
+    render(<App />);
+    expect(await screen.findByText("news-N1 标题")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "优秀作品" }));
+    expect(await screen.findByText("work-W1 标题")).toBeInTheDocument();
+    expect(window.location.search).toContain("type=work");
+    fireEvent.click(screen.getByRole("tab", { name: "动态" }));
+    expect(await screen.findByText("news-N1 标题")).toBeInTheDocument();
+    expect(window.location.search).toContain("type=news");
+
+    window.history.back();
+    await waitFor(() => expect(screen.getByRole("tab", { name: "优秀作品" })).toHaveAttribute("aria-selected", "true"));
+    expect(screen.getByText("work-W1 标题")).toBeInTheDocument();
+    window.history.forward();
+    await waitFor(() => expect(screen.getByRole("tab", { name: "动态" })).toHaveAttribute("aria-selected", "true"));
+    expect(screen.getByText("news-N1 标题")).toBeInTheDocument();
+  });
+
+  it("keeps work selected when the event filter changes through navigation", async () => {
+    window.history.replaceState({}, "", "/news?type=work&page=1&event=E1");
+    const request = installApi({
+      "/api/public/content?type=news&page=1&pageSize=10&event=E1": page([content("N1", "news")]),
+      "/api/public/content?type=work&page=1&pageSize=10&event=E1": page([content("W1", "work")]),
+      "/api/public/content?type=news&page=1&pageSize=10&event=E2": page([content("N2", "news")]),
+      "/api/public/content?type=work&page=1&pageSize=10&event=E2": page([content("W2", "work")])
+    });
+
+    render(<App />);
+    expect(await screen.findByText("work-W1 标题")).toBeInTheDocument();
+    window.history.pushState({}, "", "/news?type=work&page=1&event=E2");
+    window.dispatchEvent(new PopStateEvent("popstate"));
+    expect(await screen.findByText("work-W2 标题")).toBeInTheDocument();
+    expect(screen.queryByText("news-N2 标题")).not.toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "优秀作品" })).toHaveAttribute("aria-selected", "true");
+    expect(request).toHaveBeenCalledWith(
+      "/api/public/content?type=work&page=1&pageSize=10&event=E2",
+      expect.objectContaining({ signal: expect.any(AbortSignal) })
+    );
+  });
+
+  it.each(["?type=", "?type=news&type=work", "?type=invalid"])(
+    "defaults an empty, duplicate or invalid news type to news without forwarding it %s",
+    async (query) => {
+      window.history.replaceState({}, "", `/news${query}`);
+      const request = installApi({
+        "/api/public/content?type=news&page=1&pageSize=10": page([content("N1", "news")]),
+        "/api/public/content?type=work&page=1&pageSize=10": page([content("W1", "work")])
+      });
+
+      const { unmount } = render(<App />);
+      expect(await screen.findByText("news-N1 标题")).toBeInTheDocument();
+      expect(screen.getByRole("tab", { name: "动态" })).toHaveAttribute("aria-selected", "true");
+      expect(request.mock.calls.every(([url]) => !url.includes("type=invalid") && !url.includes("type=&"))).toBe(true);
+      unmount();
+    }
+  );
 
   it.each(["?event=", "?event=E1&event=E2", "?event=../secret", "?event=%20E1%20"])(
     "does not send an empty, duplicate or malformed event filter %s",

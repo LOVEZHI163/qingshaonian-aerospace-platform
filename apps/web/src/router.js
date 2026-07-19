@@ -10,6 +10,7 @@ const decodeSlug = (value) => {
 };
 
 const EVENT_FILTER_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9._~-]{0,127})$/;
+const PUBLIC_NEWS_TYPES = new Set(["news", "work"]);
 
 export function parsePublicListLocation(location) {
   const url = new URL(location || "/", window.location.origin);
@@ -20,7 +21,11 @@ export function parsePublicListLocation(location) {
   const pageValues = url.searchParams.getAll("page");
   const pageText = pageValues.length === 1 ? pageValues[0] : "";
   const page = /^[1-9]\d{0,5}$/.test(pageText) ? Number(pageText) : 1;
-  return { event, page };
+  const typeValues = url.pathname === "/news" ? url.searchParams.getAll("type") : [];
+  const type = typeValues.length === 1 && PUBLIC_NEWS_TYPES.has(typeValues[0])
+    ? typeValues[0]
+    : "news";
+  return { event, page, type };
 }
 
 export function publicContentListPath(type, page, event) {
@@ -29,14 +34,24 @@ export function publicContentListPath(type, page, event) {
   return `/api/public/content?${params.toString()}`;
 }
 
-export function navigatePublicListPage(location, page, event) {
+function navigatePublicList(location, { page, event, type }) {
   const url = new URL(location || window.location.href, window.location.origin);
   url.searchParams.set("page", String(page));
   url.searchParams.delete("event");
   if (event) url.searchParams.set("event", event);
+  url.searchParams.delete("type");
+  if (PUBLIC_NEWS_TYPES.has(type)) url.searchParams.set("type", type);
   const next = `${url.pathname}${url.search}${url.hash}`;
   window.history.pushState({}, "", next);
   window.dispatchEvent(new PopStateEvent("popstate"));
+}
+
+export function navigatePublicListPage(location, page, event, type) {
+  navigatePublicList(location, { page, event, type });
+}
+
+export function navigatePublicListType(location, type, event) {
+  navigatePublicList(location, { page: 1, event, type });
 }
 
 export function matchRoute(pathname) {

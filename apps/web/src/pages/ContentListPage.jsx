@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 
 import { fetchJson } from "../api/client.js";
 import AsyncState from "../components/AsyncState.jsx";
-import { navigatePublicListPage, parsePublicListLocation, publicContentListPath } from "../router.js";
+import { navigatePublicListPage, navigatePublicListType, parsePublicListLocation, publicContentListPath } from "../router.js";
 
 const labels = { announcement: "公告", news: "动态", work: "优秀作品", recap: "赛事回顾" };
 
@@ -44,17 +44,16 @@ function Pagination({ pagination, onPage }) {
 
 export default function ContentListPage({ mode = "announcements", location = window.location.href }) {
   const newsMode = mode === "news";
-  const [selectedType, setSelectedType] = useState(newsMode ? "news" : "announcement");
   const [attempt, setAttempt] = useState(0);
   const [state, setState] = useState({ status: "loading", pages: {} });
   const tabRefs = useRef({});
   const query = useMemo(() => parsePublicListLocation(location), [location]);
   const types = newsMode ? ["news", "work"] : ["announcement"];
+  const selectedType = newsMode ? query.type : "announcement";
 
   useEffect(() => {
     const controller = new AbortController();
     let current = true;
-    setSelectedType(newsMode ? "news" : "announcement");
     setState({ status: "loading", pages: {} });
 
     Promise.all(types.map(async (type) => [
@@ -77,11 +76,11 @@ export default function ContentListPage({ mode = "announcements", location = win
   }, [attempt, newsMode, query.event, query.page]);
 
   function changePage(nextPage) {
-    navigatePublicListPage(location, nextPage, query.event);
+    navigatePublicListPage(location, nextPage, query.event, newsMode ? selectedType : null);
   }
 
   function activateTab(type, focus = false) {
-    setSelectedType(type);
+    if (type !== selectedType) navigatePublicListType(location, type, query.event);
     if (focus) tabRefs.current[type]?.focus();
   }
 
@@ -126,24 +125,29 @@ export default function ContentListPage({ mode = "announcements", location = win
         </div>
       ) : null}
 
-      {types.map((type) => {
-        const payload = state.pages[type];
-        return (
-          <div
-            role="tabpanel"
-            id={`content-panel-${type}`}
-            aria-labelledby={`content-tab-${type}`}
-            tabIndex={0}
-            hidden={selectedType !== type}
-            key={type}
-          >
-            <AsyncState status={state.status} onRetry={() => setAttempt((value) => value + 1)}>
-              <ContentRows payload={payload} emptyText={newsMode && type === "work" ? "暂无公开优秀作品" : "暂无公开内容"} />
-              <Pagination pagination={payload?.pagination} onPage={changePage} />
-            </AsyncState>
-          </div>
-        );
-      })}
+      {newsMode ? (
+        <div
+          role="tabpanel"
+          id={`content-panel-${selectedType}`}
+          aria-labelledby={`content-tab-${selectedType}`}
+          tabIndex={0}
+        >
+          <AsyncState status={state.status} onRetry={() => setAttempt((value) => value + 1)}>
+            <ContentRows
+              payload={state.pages[selectedType]}
+              emptyText={selectedType === "work" ? "暂无公开优秀作品" : "暂无公开内容"}
+            />
+            <Pagination pagination={state.pages[selectedType]?.pagination} onPage={changePage} />
+          </AsyncState>
+        </div>
+      ) : (
+        <div className="content-list-body">
+          <AsyncState status={state.status} onRetry={() => setAttempt((value) => value + 1)}>
+            <ContentRows payload={state.pages.announcement} emptyText="暂无公开内容" />
+            <Pagination pagination={state.pages.announcement?.pagination} onPage={changePage} />
+          </AsyncState>
+        </div>
+      )}
     </section>
   );
 }
