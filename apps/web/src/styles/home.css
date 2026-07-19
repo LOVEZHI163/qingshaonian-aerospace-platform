@@ -137,7 +137,7 @@
 .service-card p { margin: 0 0 var(--space-2); color: var(--color-text-muted); }
 .service-card .text-link { margin-top: auto; }
 
-.text-link { color: var(--color-brand); font-weight: 800; text-decoration: none; }
+.text-link { display: inline-flex; align-items: center; color: var(--color-brand); font-weight: 800; text-decoration: none; }
 .text-link:hover { text-decoration: underline; text-underline-offset: 0.25rem; }
 
 .announcement-list,
@@ -200,6 +200,10 @@
   .home-section:nth-of-type(3) { animation-delay: .05s; }
   .home-section:nth-of-type(4) { animation-delay: .1s; }
   .home-section:nth-of-type(5) { animation-delay: .15s; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .button:hover { transform: none !important; }
 }
 
 @keyframes home-reveal {

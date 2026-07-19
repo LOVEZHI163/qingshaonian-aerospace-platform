@@ -103,6 +103,5 @@ a:focus-visible, button:focus-visible { outline: none; box-shadow: var(--focus-r
     scroll-behavior: auto !important;
     animation: none !important;
     transition: none !important;
-    transform: none !important;
   }
 }
