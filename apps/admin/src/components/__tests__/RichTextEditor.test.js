@@ -67,4 +67,21 @@ describe("RichTextEditor", () => {
     await wrapper.vm.$nextTick();
     expect(wrapper.get('[data-rich-editor="visual"]').element.innerHTML).toBe("<a>伪造链接</a>");
   });
+
+  it("synchronizes sanitized HTML repair input immediately without replacing the raw textarea", async () => {
+    const wrapper = mount(RichTextEditor, { props: { modelValue: "<p>原文</p>" } });
+    await wrapper.get('[data-editor-mode="html"]').trigger("click");
+    const raw = '<h2 style="color:red">新标题</h2><script>bad()</script><a href="javascript:bad()">链接</a>';
+    await wrapper.get('[data-rich-editor="html"]').setValue(raw);
+    expect(wrapper.get('[data-rich-editor="html"]').element.value).toBe(raw);
+    expect(wrapper.emitted("update:modelValue").at(-1)[0]).toBe("<h2>新标题</h2><a>链接</a>");
+  });
+
+  it("synchronizes escaped semantic HTML from plain-text repair input immediately", async () => {
+    const wrapper = mount(RichTextEditor, { props: { modelValue: "<p>原文</p>" } });
+    await wrapper.get('[data-editor-mode="text"]').trigger("click");
+    await wrapper.get('[data-rich-editor="text"]').setValue("第一行 <危险>\n第二行");
+    expect(wrapper.get('[data-rich-editor="text"]').element.value).toBe("第一行 <危险>\n第二行");
+    expect(wrapper.emitted("update:modelValue").at(-1)[0]).toBe("<p>第一行 &lt;危险&gt;</p><p>第二行</p>");
+  });
 });

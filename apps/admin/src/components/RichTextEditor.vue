@@ -75,9 +75,27 @@ function update(next) {
   emit("update:modelValue", safe);
 }
 
+function plainTextHtml(text) {
+  return String(text || "").split(/\r?\n/).map((line) => `<p>${line.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")}</p>`).join("");
+}
+
+function updateHtmlRepair(event) {
+  repairValue.value = event.target.value;
+  const safe = sanitizeEditorHtml(repairValue.value);
+  value.value = safe;
+  emit("update:modelValue", safe);
+}
+
+function updateTextRepair(event) {
+  textRepair.value = event.target.value;
+  const safe = plainTextHtml(textRepair.value);
+  value.value = safe;
+  emit("update:modelValue", safe);
+}
+
 async function setMode(next) {
   if (mode.value === "html") update(repairValue.value);
-  else if (mode.value === "text") update(`<p>${textRepair.value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replace(/\r?\n/g, "</p><p>")}</p>`);
+  else if (mode.value === "text") update(plainTextHtml(textRepair.value));
   mode.value = next;
   if (next === "html") repairValue.value = value.value;
   if (next === "text") textRepair.value = plainText.value;
@@ -130,7 +148,7 @@ function paste(event) {
       <button type="button" aria-label="图片" :disabled="disabled" @click="promptImage">图片</button>
     </div>
     <div v-if="mode === 'visual'" ref="visual" class="rich-editor-surface" data-rich-editor="visual" :contenteditable="disabled ? 'false' : 'true'" @input="update($event.currentTarget.innerHTML)" @paste="paste" v-html="value"></div>
-    <textarea v-else-if="mode === 'html'" v-model="repairValue" data-rich-editor="html" :disabled="disabled"></textarea>
-    <textarea v-else v-model="textRepair" data-rich-editor="text" :disabled="disabled"></textarea>
+    <textarea v-else-if="mode === 'html'" :value="repairValue" data-rich-editor="html" :disabled="disabled" @input="updateHtmlRepair"></textarea>
+    <textarea v-else :value="textRepair" data-rich-editor="text" :disabled="disabled" @input="updateTextRepair"></textarea>
   </section>
 </template>

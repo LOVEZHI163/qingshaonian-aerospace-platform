@@ -16,13 +16,15 @@ const row = {
 
 function installApi(overrides = {}) {
   apiMock.mockImplementation(async (path, options = {}) => {
-    const key = `${options.method || "GET"} ${path}`;
+    const method = options.method || "GET";
+    const key = `${method} ${path}`;
     if (overrides[key]) return overrides[key](options);
-    if (path === "/api/admin/content/POST-1") return { row: { ...row } };
-    if (path === "/api/admin/content/POST-1" && options.method === "PATCH") return { row: { ...row, ...JSON.parse(options.body), version: 2 } };
-    if (path.endsWith("/publish")) return { row: { ...row, status: "published", version: 2 } };
-    if (path.endsWith("/offline")) return { row: { ...row, status: "offline", version: 3 } };
-    if (path === "/api/admin/content" && options.method === "POST") return { row: { ...row, ...JSON.parse(options.body) } };
+    if (method === "POST" && path.endsWith("/publish")) return { row: { ...row, status: "published", version: 2 } };
+    if (method === "POST" && path.endsWith("/offline")) return { row: { ...row, status: "offline", version: 3 } };
+    if (method === "PATCH" && path === "/api/admin/content/POST-1") return { row: { ...row, ...JSON.parse(options.body), title: "服务器规范标题", version: 9 } };
+    if (method === "DELETE" && path === "/api/admin/content/POST-1") return {};
+    if (method === "POST" && path === "/api/admin/content") return { row: { ...row, ...JSON.parse(options.body) } };
+    if (method === "GET" && path === "/api/admin/content/POST-1") return { row: { ...row } };
     return {};
   });
 }
@@ -339,5 +341,38 @@ describe("ContentEditorPanel", () => {
     await close.trigger("click"); await wrapper.vm.$nextTick();
     expect(document.activeElement).toBe(opener.element);
     wrapper.unmount();
+  });
+
+  it("saves sanitized HTML repair changes without requiring a mode switch", async () => {
+    const wrapper = await mountEditor();
+    await wrapper.get('[data-editor-mode="html"]').trigger("click");
+    await wrapper.get('[data-rich-editor="html"]').setValue('<h2 onclick="bad()">实时标题</h2><script>bad()</script>');
+    await wrapper.get('[data-action="save-content"]').trigger("click");
+    await flushPromises();
+    const patch = apiMock.mock.calls.find(([path, options]) => path === "/api/admin/content/POST-1" && options?.method === "PATCH");
+    expect(JSON.parse(patch[1].body).bodyHtml).toBe("<h2>实时标题</h2>");
+  });
+
+  it.each([
+    ["html", '[data-rich-editor="html"]', "<h2>未保存 HTML</h2>"],
+    ["text", '[data-rich-editor="text"]', "未保存纯文本"]
+  ])("treats %s repair input as dirty before leaving the mode", async (mode, selector, input) => {
+    const wrapper = await mountEditor();
+    await wrapper.get(`[data-editor-mode="${mode}"]`).trigger("click");
+    await wrapper.get(selector).setValue(input);
+    const leave = vi.fn();
+    wrapper.vm.requestLeave(leave);
+    await wrapper.vm.$nextTick();
+    expect(leave).not.toHaveBeenCalled();
+    expect(wrapper.get('[role="dialog"]').text()).toContain("放弃未保存修改");
+  });
+
+  it("refreshes the form from the reachable PATCH response branch", async () => {
+    const wrapper = await mountEditor();
+    await wrapper.get('[data-content-field="title"]').setValue("客户端标题");
+    await wrapper.get('[data-action="save-content"]').trigger("click");
+    await flushPromises();
+    expect(wrapper.get('[data-content-field="title"]').element.value).toBe("服务器规范标题");
+    expect(wrapper.text()).toContain("版本 9");
   });
 });
