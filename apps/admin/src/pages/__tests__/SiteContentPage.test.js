@@ -50,8 +50,8 @@ function installSuccessfulApi() {
   });
 }
 
-async function mountLoaded() {
-  const wrapper = mount(SiteContentPage);
+async function mountLoaded(options = {}) {
+  const wrapper = mount(SiteContentPage, options);
   await flushPromises();
   return wrapper;
 }
@@ -152,6 +152,54 @@ describe("SiteContentPage", () => {
 
     expect(wrapper.get('[data-field="platformIntro"]').element.value).toBe("暂存在本页");
     expect(apiMock.mock.calls).toHaveLength(initialLoads);
+  });
+
+  it("uses roving tabindex and moves focus with horizontal arrow keys", async () => {
+    const wrapper = await mountLoaded({ attachTo: document.body });
+    const homepage = wrapper.get('[data-site-tab="homepage"]');
+    const eventsTab = wrapper.get('[data-site-tab="events"]');
+    const content = wrapper.get('[data-site-tab="content"]');
+
+    expect(homepage.attributes("tabindex")).toBe("0");
+    expect(eventsTab.attributes("tabindex")).toBe("-1");
+    expect(content.attributes("tabindex")).toBe("-1");
+
+    await homepage.trigger("keydown", { key: "ArrowRight" });
+    expect(eventsTab.attributes("aria-selected")).toBe("true");
+    expect(eventsTab.attributes("tabindex")).toBe("0");
+    expect(document.activeElement).toBe(eventsTab.element);
+    expect(wrapper.get('[data-site-panel="events"]').isVisible()).toBe(true);
+
+    await eventsTab.trigger("keydown", { key: "ArrowLeft" });
+    expect(homepage.attributes("aria-selected")).toBe("true");
+    expect(document.activeElement).toBe(homepage.element);
+
+    await homepage.trigger("keydown", { key: "ArrowLeft" });
+    expect(content.attributes("aria-selected")).toBe("true");
+    expect(document.activeElement).toBe(content.element);
+    wrapper.unmount();
+  });
+
+  it("moves to the first and last tab with Home and End", async () => {
+    const wrapper = await mountLoaded({ attachTo: document.body });
+    const homepage = wrapper.get('[data-site-tab="homepage"]');
+    const eventsTab = wrapper.get('[data-site-tab="events"]');
+    const content = wrapper.get('[data-site-tab="content"]');
+
+    await homepage.trigger("keydown", { key: "End" });
+    expect(content.attributes("aria-selected")).toBe("true");
+    expect(content.attributes("tabindex")).toBe("0");
+    expect(document.activeElement).toBe(content.element);
+    expect(wrapper.get('[data-site-panel="content"]').isVisible()).toBe(true);
+
+    await content.trigger("keydown", { key: "Home" });
+    expect(homepage.attributes("aria-selected")).toBe("true");
+    expect(homepage.attributes("tabindex")).toBe("0");
+    expect(eventsTab.attributes("tabindex")).toBe("-1");
+    expect(content.attributes("tabindex")).toBe("-1");
+    expect(document.activeElement).toBe(homepage.element);
+    expect(wrapper.get('[data-site-panel="homepage"]').isVisible()).toBe(true);
+    wrapper.unmount();
   });
 
   it("edits only public profile fields while showing event facts as read only", async () => {

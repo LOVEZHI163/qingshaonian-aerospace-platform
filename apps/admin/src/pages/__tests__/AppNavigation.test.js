@@ -92,6 +92,21 @@ describe("role based application navigation", () => {
     expect(admin.find('[data-testid="site-content-page"]').exists()).toBe(true);
   });
 
+  it("blocks organization users from the website content deep link and its admin APIs", async () => {
+    window.history.replaceState({}, "", "/admin/?view=siteContent");
+    const organization = { id: "O1", ownerUserId: "O1U", name: "实验学校", reviewStatus: "approved", status: "active", membershipRole: "owner" };
+    const wrapper = await mountFor({ id: "O1U", type: "organization", name: "负责人", phone: "13800000002", mustChangePassword: false }, organization); mounted.push(wrapper);
+
+    expect(wrapper.find('[data-testid="site-content-page"]').exists()).toBe(false);
+    expect(wrapper.find('[data-nav="siteContent"]').exists()).toBe(false);
+    expect(apiMock.mock.calls.some(([path]) => [
+      "/api/admin/site-settings",
+      "/api/admin/event-public-profiles",
+      "/api/admin/site-media",
+      "/api/admin/events"
+    ].includes(path))).toBe(false);
+  });
+
   it("limits ordinary users to registration, records and certificates", async () => {
     const wrapper = await mountFor({ id: "U1", type: "ordinary", name: "普通用户", phone: "13800000001", mustChangePassword: false }); mounted.push(wrapper);
     const labels = wrapper.findAll("[data-user-nav]").map((item) => item.text());
