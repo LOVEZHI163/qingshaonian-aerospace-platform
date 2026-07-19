@@ -19,6 +19,12 @@ test -w "$backups_dir" || fail "backup directory is not writable"
 cd "$deploy_dir"
 
 docker compose config --quiet || fail "Compose configuration is invalid"
+test -s apps/web/public/brand/mark.svg || fail "public brand mark is missing"
+test -s apps/web/public/brand/wordmark.svg || fail "public brand wordmark is missing"
+grep -Eq '^ARG VITE_PUBLIC_SITE_URL$' Dockerfile.web \
+  || fail "web image does not accept the public site origin"
+grep -Eq '^[[:space:]]+VITE_PUBLIC_SITE_URL:[[:space:]]+https://aerogp\.cn$' compose.yaml \
+  || fail "web image canonical origin is not configured"
 
 session_secret="$(awk '
   index($0, "SESSION_SECRET=") == 1 {
@@ -42,6 +48,14 @@ test -s "$latest_uploads" || fail "latest uploads backup is empty"
 docker compose run --rm --no-deps -T backup /bin/sh /scripts/verify-uploads-backup.sh \
   "/backups/uploads/$(basename "$latest_uploads")" >/dev/null \
   || fail "latest uploads backup is unreadable or unsafe"
+site_media_state="$(docker compose run --rm --no-deps -T backup /bin/sh -c \
+  'if test -d /uploads/site-media; then printf present; else printf absent; fi')"
+if test "$site_media_state" = "present"; then
+  docker compose run --rm --no-deps -T backup tar -tzf \
+    "/backups/uploads/$(basename "$latest_uploads")" \
+    | grep -Eq '^\./site-media(/|$)' \
+    || fail "latest uploads backup does not contain site-media"
+fi
 
 uploads_kb="$(docker compose run --rm --no-deps -T backup du -sk /uploads | awk 'NR == 1 { print $1 }')"
 case "$uploads_kb" in

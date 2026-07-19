@@ -6,17 +6,18 @@ import test from "node:test";
 const root = path.resolve(import.meta.dirname, "../../..");
 
 test("deployment paths use same-origin API and the /admin/ base", async () => {
-  const [web, admin, adminApi, adminVite] = await Promise.all([
-    fs.readFile(path.join(root, "apps/web/src/main.jsx"), "utf8"),
+  const [webApi, webFooter, admin, adminApi, adminVite] = await Promise.all([
+    fs.readFile(path.join(root, "apps/web/src/api/client.js"), "utf8"),
+    fs.readFile(path.join(root, "apps/web/src/components/SiteFooter.jsx"), "utf8"),
     fs.readFile(path.join(root, "apps/admin/src/App.vue"), "utf8"),
     fs.readFile(path.join(root, "apps/admin/src/lib/api.js"), "utf8"),
     fs.readFile(path.join(root, "apps/admin/vite.config.js"), "utf8")
   ]);
 
-  assert.equal(web.includes("localhost:4300"), false);
-  assert.equal(web.includes("localhost:5174"), false);
-  assert.match(web, /VITE_API_URL\s*\|\|\s*["']{2}/);
-  assert.match(web, /href=["']\/admin\/["']/);
+  assert.equal(webApi.includes("localhost:4300"), false);
+  assert.equal(webFooter.includes("localhost:5174"), false);
+  assert.match(webApi, /VITE_API_URL\s*\|\|\s*["']{2}/);
+  assert.match(webFooter, /href=["']\/admin\/["']/);
 
   assert.equal(admin.includes("localhost:4300"), false);
   assert.equal(adminApi.includes("localhost:4300"), false);
@@ -59,4 +60,15 @@ test("deployment passes optional Aliyun SMS configuration without generating cre
     assert.equal(bootstrap.includes(name), false);
   }
   assert.match(smsSource, /dysmsapi\.aliyuncs\.com/);
+});
+
+test("deployment publishes the canonical public origin without treating it as a secret", async () => {
+  const [compose, webDockerfile] = await Promise.all([
+    fs.readFile(path.join(root, "compose.yaml"), "utf8"),
+    fs.readFile(path.join(root, "Dockerfile.web"), "utf8")
+  ]);
+
+  assert.match(compose, /VITE_PUBLIC_SITE_URL:\s*https:\/\/aerogp\.cn/);
+  assert.match(webDockerfile, /^ARG VITE_PUBLIC_SITE_URL$/m);
+  assert.match(webDockerfile, /^ENV VITE_PUBLIC_SITE_URL=\$VITE_PUBLIC_SITE_URL$/m);
 });

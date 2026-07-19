@@ -35,6 +35,7 @@ $remoteSmoke = Read-RequiredFile "deploy/remote-smoke-test.sh"
 $envExample = Read-RequiredFile ".env.example"
 
 Require-Match $apiDockerfile '(?m)^USER\s+node\s*$' "API image must run as the node user"
+Require-Match $apiDockerfile 'apk add --no-cache[^\r\n]*libc6-compat' "API runtime must install the sharp Alpine compatibility dependency"
 Require-Match $apiDockerfile 'FROM\s+m\.daocloud\.io/docker\.io/library/node:22-alpine' "API build must use the project-scoped mainland Node mirror"
 Require-Match $webDockerfile 'FROM\s+m\.daocloud\.io/docker\.io/library/node:22-alpine' "Web build must use the project-scoped mainland Node mirror"
 Require-Match $webDockerfile 'FROM\s+m\.daocloud\.io/docker\.io/library/nginx:1\.27-alpine' "Web runtime must use the project-scoped mainland Nginx mirror"
@@ -46,6 +47,8 @@ Require-Match $nginx 'server\s+api:4300\s+resolve\s*;' "Nginx upstream must re-r
 Require-Match $nginx 'proxy_pass\s+http://api_backend\s*;' "Nginx must preserve the /api/ prefix when proxying"
 Require-NoMatch $nginx '(?m)^\s*auth_basic(?:_user_file)?\b' "Nginx must not require Basic Auth"
 Require-NoMatch $webDockerfile 'entrypoint-web\.sh|check-aerogp-auth' "Web image must not require the Basic Auth entrypoint"
+Require-Match $webDockerfile '(?m)^ARG VITE_PUBLIC_SITE_URL\s*$' "Web image must accept the canonical public origin"
+Require-Match $webDockerfile '(?m)^ENV VITE_PUBLIC_SITE_URL=\$VITE_PUBLIC_SITE_URL\s*$' "Vite build must receive the canonical public origin"
 Require-Match $dockerIgnore '(?m)^\.env\*?\s*$' ".dockerignore must exclude environment secrets"
 Require-Match $dockerIgnore '(?m)^\*\*/uploads\s*$' ".dockerignore must exclude uploads"
 
@@ -63,6 +66,8 @@ Require-Match $compose '\$\{POSTGRES_PASSWORD:\?[^}]+\}' "Database password must
 Require-Match $compose 'SESSION_SECRET:\s*\$\{SESSION_SECRET:\?[^}]+\}' "API session secret must be required from the environment"
 Require-Match $compose 'uploads_data:/uploads:ro' "Backup service must mount uploads read-only"
 Require-Match $compose '\./backups:/backups(?::rw)?(?:\s|$)' "Backup service must mount the host backup directory writable"
+Require-Match $compose 'VITE_PUBLIC_SITE_URL:\s*https://aerogp\.cn' "Compose must build the public site for aerogp.cn"
+Require-Match $compose 'PUBLIC_SITE_URL:\s*https://aerogp\.cn' "API sitemap must use the public origin"
 
 if ([regex]::Matches($compose, 'restart:\s+unless-stopped').Count -lt 4) { $failures.Add("All four services need restart protection") }
 if ([regex]::Matches($compose, 'healthcheck:').Count -lt 4) { $failures.Add("All four services need health checks") }
@@ -76,6 +81,7 @@ Require-Match $backup 'pg_restore\s+--list' "Backup script must verify each comp
 Require-Match $backupUploads 'tar\s+-C\s+"\$uploads_dir"\s+-czf' "Uploads backup script must archive the uploads directory"
 Require-Match $backupUploads 'mktemp' "Uploads backup script must use invocation-unique temporary files"
 Require-Match $backupUploads 'ln\s+"\$temp"\s+"\$output"' "Uploads backup script must publish completed archives without overwriting"
+Require-Match $backupUploads 'site-media' "Uploads backup must verify that website media is included"
 Require-Match $verifyUploadsBackup 'tar\s+-tzf' "Uploads backup verifier must list the archive"
 Require-Match $verifyUploadsBackup 'parts\[part_index\]\s*==\s*"\.\."' "Uploads backup verifier must reject parent traversal paths"
 Require-Match $verifyUploadsBackup 'symbolic or hard link' "Uploads backup verifier must reject links"
@@ -83,6 +89,7 @@ Require-Match $preflightUpgrade 'pg_restore\s+--list' "Upgrade preflight must ve
 Require-Match $preflightUpgrade 'verify-uploads-backup\.sh' "Upgrade preflight must verify the latest uploads archive"
 Require-Match $preflightUpgrade 'docker compose run --rm --no-deps -T backup' "Upgrade preflight must inspect backups with the pending Compose mounts"
 Require-NoMatch $preflightUpgrade 'docker compose exec -T backup' "Upgrade preflight must not depend on the old running backup container mounts"
+Require-Match $preflightUpgrade 'site-media' "Upgrade preflight must verify website media backup coverage"
 Require-Match $preflightUpgrade 'SESSION_SECRET' "Upgrade preflight must validate SESSION_SECRET"
 Require-Match $preflightUpgrade 'docker compose ps' "Upgrade preflight must validate container health"
 Require-NoMatch $preflightUpgrade 'docker compose up' "Upgrade preflight must not start or replace containers"
@@ -94,6 +101,15 @@ Require-Match $remoteSmoke 'ADMIN_TEST_PASSWORD' "Remote smoke tests must receiv
 Require-Match $remoteSmoke 'cookie' "Remote smoke tests must preserve the authenticated session with a cookie jar"
 Require-Match $remoteSmoke '--data-binary\s+@-' "Remote smoke tests must send login credentials through curl stdin"
 Require-NoMatch $remoteSmoke '(?m)^\s*-d\s+"\$login_payload"' "Remote smoke tests must not put login credentials in curl argv"
+foreach ($path in @('/healthz', '/api/public/home', '/api/public/content', '/api/public/sitemap.xml', '/brand/mark.svg', '/brand/wordmark.svg', '/api/admin/site-settings')) {
+  if (-not $remoteSmoke.Contains($path)) { $failures.Add("Remote smoke tests must check $path") }
+}
+Require-Match $remoteSmoke 'encodeURIComponent' "Remote smoke tests must safely discover public detail URLs"
+Require-Match $nginx 'location\s+\^~\s+/api/public/media/' "Nginx must give public media an explicit proxy policy"
+Require-Match $nginx 'Content-Security-Policy' "Public media responses must receive a restrictive CSP"
+Require-Match $nginx 'X-Content-Type-Options\s+"nosniff"' "Public media responses must disable MIME sniffing"
+Require-Match $nginx 'max-age=31536000, immutable' "Hashed assets must be cached immutably"
+Require-Match $nginx 'Cache-Control\s+"no-store"' "HTML must not be cached"
 Require-Match $envExample '(?m)^POSTGRES_PASSWORD=' ".env.example must document POSTGRES_PASSWORD"
 Require-NoMatch $envExample '(?m)^BASIC_AUTH_' ".env.example must not document removed Basic Auth variables"
 if ([regex]::Matches($compose, 'image:\s+m\.daocloud\.io/docker\.io/library/postgres:16-alpine').Count -lt 2) {

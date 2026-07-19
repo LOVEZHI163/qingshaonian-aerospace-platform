@@ -153,6 +153,43 @@ unset ADMIN_TEST_PASSWORD
 
 脚本会检查首页、管理端和公开接口，随后使用 cookie 登录并验证管理接口，同时确认无 cookie 的请求返回 401。正式部署后必须更换默认管理员密码。
 
+### 官网改版发布门禁
+
+本次官网构建固定使用公开 canonical 地址 `https://aerogp.cn`，即使域名尚未备案解析，服务器内冒烟仍使用 `BASE_URL=http://127.0.0.1`。发布前在本地执行：
+
+```bash
+npm test -w apps/api -- --run
+npm test -w apps/admin -- --run
+npm test -w apps/web -- --run
+npm run build
+docker compose config --quiet
+```
+
+`VITE_PUBLIC_SITE_URL` 只包含公开域名，不得借此向 Web 镜像注入密码、AccessKey 或会话密钥。品牌 SVG 位于 `apps/web/public/brand/`，管理端上传的官网媒体仍通过 `/api/public/media/:id` 由 API 检查发布状态，Nginx 不直接映射 `/data/uploads`。
+
+升级前上传归档必须覆盖整个 `uploads_data` 命名卷。若卷内存在 `site-media`，备份脚本和预检都会确认归档中存在该目录；不要只备份旧证书目录。预检还会验证数据库 dump、归档安全、磁盘余量、四个服务健康状态以及只有 Web 80 端口对宿主机发布。
+
+远程冒烟按顺序检查健康端点、公共首页、管理端、首页 JSON、动态发现的赛事详情、内容列表与动态详情、sitemap、两份品牌 SVG；若当前没有公开赛事或内容，会输出明确的安全跳过记录。随后验证已认证的官网设置/内容接口为 200、匿名官网设置接口为 401。脚本不会输出密码、cookie 或完整响应。
+
+发布记录至少保存以下信息：
+
+- 发布 commit SHA 与执行时间；
+- 最新数据库 `.dump` 和上传 `.tar.gz` 的完整文件名及校验结果；
+- `docker compose ps` 的四服务健康摘要与端口边界；
+- `remote-smoke-test.sh` 的状态码/跳过摘要；
+- 360、768、1440、1920px 页面验收截图及发现的问题。
+
+推荐发布命令（在 `/opt/aerogp`，确认预检通过之后）：
+
+```bash
+docker compose build --pull
+docker compose up -d
+docker compose ps
+BASE_URL=http://127.0.0.1 /bin/sh deploy/remote-smoke-test.sh
+```
+
+其中 `ADMIN_TEST_PASSWORD` 必须按前文通过静默输入导出，不得写入命令历史、文档或 Git。
+
 ## 恢复与回滚
 
 恢复会覆盖当前数据库，必须先额外备份，并明确确认：
@@ -171,6 +208,8 @@ docker compose up -d --build
 ```
 
 不要删除 `aerogp_postgres_data` 或 `aerogp_uploads_data` volume。若数据库结构已经变化，必须先验证旧版应用是否兼容当前数据库。
+
+官网改版回滚时，先记录失败版本的容器日志和 smoke 摘要，再切回发布记录中的上一 commit 并重建 API/Web。默认保留当前 PostgreSQL 与上传卷；只有确认数据库迁移不兼容或上传内容损坏时，才按已校验的具体备份文件执行恢复。禁止使用 `docker compose down -v`、删除命名卷或对运行中的上传卷直接覆盖解压。
 
 恢复上传文件前，先停止 API、额外备份当前上传卷，并再次运行 `verify-uploads-backup.sh`。验证通过后只能把归档解压到空的临时目录，人工核对文件清单后再复制到上传卷；不要直接对正在使用的卷执行覆盖解压。归档校验会拒绝绝对路径和包含 `..` 路径段的文件。
 

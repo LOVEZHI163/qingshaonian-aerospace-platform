@@ -23,6 +23,9 @@ temp="$(mktemp "${output_dir}/.aerogp-upload-archive-XXXXXX")"
 
 tar -C "$uploads_dir" -czf "$temp" .
 /bin/sh "${scripts_dir}/verify-uploads-backup.sh" "$temp"
+if test -d "$uploads_dir/site-media"; then
+  tar -tzf "$temp" | grep -Eq '^\./site-media(/|$)'
+fi
 
 while :; do
   reservation="$(mktemp "${output_dir}/.aerogp-upload-name-${timestamp}-XXXXXX")"

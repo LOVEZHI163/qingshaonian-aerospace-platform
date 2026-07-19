@@ -21,9 +21,34 @@ assert_status() {
   echo "$label=$actual"
 }
 
+json_path() {
+  script="$1"
+  docker compose exec -T api node -e "$script" < "$response_file"
+}
+
+assert_status "healthz" 200 "$base_url/healthz"
 assert_status "home" 200 "$base_url/"
 assert_status "admin" 200 "$base_url/admin/"
-assert_status "event-api" 200 "$base_url/api/public/event"
+assert_status "public-home" 200 "$base_url/api/public/home"
+
+event_path="$(json_path 'let input="";process.stdin.on("data",chunk=>input+=chunk).on("end",()=>{const data=JSON.parse(input);const event=data.featuredEvent||(data.concurrentEvents||[])[0];if(event&&event.slug)process.stdout.write("/api/public/events/"+encodeURIComponent(event.slug));});')"
+if test -n "$event_path"; then
+  assert_status "public-event" 200 "$base_url$event_path"
+else
+  echo "public-event-skipped=no-public-event"
+fi
+
+assert_status "public-content" 200 "$base_url/api/public/content?pageSize=1"
+content_path="$(json_path 'let input="";process.stdin.on("data",chunk=>input+=chunk).on("end",()=>{const data=JSON.parse(input);const row=(data.rows||[])[0];if(row&&row.slug)process.stdout.write("/api/public/content/"+encodeURIComponent(row.slug));});')"
+if test -n "$content_path"; then
+  assert_status "public-content-detail" 200 "$base_url$content_path"
+else
+  echo "public-content-detail-skipped=no-public-content"
+fi
+
+assert_status "sitemap" 200 "$base_url/api/public/sitemap.xml"
+assert_status "brand-mark" 200 "$base_url/brand/mark.svg"
+assert_status "brand-wordmark" 200 "$base_url/brand/wordmark.svg"
 
 if printf '%s' "$admin_phone$admin_password" | LC_ALL=C grep -q '[[:cntrl:]]'; then
   echo "Administrator smoke-test credentials must be single-line values" >&2
@@ -42,8 +67,11 @@ printf '%s' "$login_payload" | \
 
 unset admin_password escaped_password login_payload
 
-assert_status "authenticated-admin-events" 200 \
+assert_status "authenticated-site-settings" 200 \
   -b "$cookie_jar" \
-  "$base_url/api/admin/events"
-assert_status "unauthenticated-admin-events" 401 \
-  "$base_url/api/admin/events"
+  "$base_url/api/admin/site-settings"
+assert_status "authenticated-site-content" 200 \
+  -b "$cookie_jar" \
+  "$base_url/api/admin/content"
+assert_status "unauthenticated-site-settings" 401 \
+  "$base_url/api/admin/site-settings"
