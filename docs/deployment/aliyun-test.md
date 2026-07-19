@@ -395,6 +395,19 @@ docker compose up -d --build
 - 日志：Nginx 与 API 正常启动，无应用启动错误。API 有一条既有 `pg` 弃用警告（`client.query()` 并发调用将在 pg 9 移除），不影响本次健康检查与 smoke，列为后续技术债。
 - 非破坏回滚：先保留故障日志；将旧源码树恢复到 `/opt/aerogp`，或把 Compose 的 API/Web 镜像切到上述 rollback 标签后执行 `docker compose up -d --wait`。默认保留现有 PostgreSQL 和上传卷，严禁 `docker compose down -v`；只有确认数据损坏或结构不兼容后才使用本节列出的已验证备份恢复。
 
+### 公开官网最终审查修订与重新发布（2026-07-19）
+
+- 实际部署源码：`88a2f8f`（`fix: reset admin certificate deep links`），服务器 `/opt/aerogp/.release` 已更新为 `88a2f8f`。本次源码归档 SHA-256 为 `D95E3AC8C202BD324D1BEA6822BC1C81D1790F498AFD9B585E6385F634DB0B08`，服务器接收后复核一致。
+- 本次发布包含最终审查修订：零公开赛事时 `/api/public/home` 健康返回、定时内容自动发布、公开后内容与赛事 slug 永久锁定、历届赛事分页与当前赛事排除、报名/证书深链赛事上下文、站内锚点滚动与移动导航焦点、管理员重复点击导航时重置深链筛选。
+- 部署前数据库备份：`backups/aerogp-20260719T125708Z.dump`；上传卷备份：`backups/uploads/aerogp-uploads-20260719T125722Z-FpEcdo.tar.gz`，上传备份脚本完成自校验。旧源码归档：`backups/source-before-final-review-fixes-20260719T1300Z.tgz`；可直接恢复源码树：`backups/source-tree-before-final-review-fixes-20260719T1300Z/`。
+- 回滚镜像：`aerogp-api:rollback-20260719T1300Z` 与 `aerogp-web:rollback-20260719T1300Z`。新 API 镜像为 `sha256:1366d64df16ecb8b27997d1f4401492b96bfc4e0105cbd97e01556320584afab`，新 Web 镜像为 `sha256:c50a8a7c6943ace161eb59ce95157bab98ee214075e8a1417244d34433c5febb`。
+- 旧源码和新源码的升级预检均输出 `Upgrade preflight passed.`。`docker compose build --pull` 成功；`docker compose up -d --wait --wait-timeout 240` 成功，PostgreSQL、API、Web、Backup 四服务全部 healthy。宿主机仅对外监听 22 和 80，API 4300 与 PostgreSQL 5432 未发布。
+- 无凭据远程 smoke 通过：`healthz`、首页、管理端、`/api/public/home`、分页历届赛事、公开内容列表、sitemap、品牌 SVG、报名与证书深链 HTML 均可访问；匿名管理员 API 返回预期 401。最终重新发布未读取或探测服务器凭据，因此没有再次执行认证 smoke；认证逻辑由本地全量/聚焦测试及上一轮线上认证 smoke 覆盖，这一限制不影响本次公开站点验收结论。
+- 本地发布门禁：Admin 23 个文件、185/185 通过；Web 5 个文件、103/103 通过；根生产构建通过。API 最终独立审查运行 259/260，唯一失败是 Windows 删除临时认证文件时的 `EBUSY`，相关业务聚焦重跑全部通过；`site-media` 16/16 通过。三组独立审查均为 Approved，无 Critical、Important 或 Minor 问题。
+- 公网浏览器只读验收：360、768、1440、1920px 首页均无整页横向溢出；Logo SVG 比例保持正确；移动导航打开后焦点进入首个导航项，按 Esc 关闭后焦点回到菜单按钮；历届赛事在无公开数据时正确显示空状态；管理端应用可加载，移动端无横向溢出；浏览器控制台 error 为 0。验收结束后已恢复默认浏览器视口，并保留 `http://47.99.181.222/` 首页供查看。
+- HTTP 与日志：HTML 使用 `no-store`；品牌 SVG 使用一天公共缓存；未发布媒体 404 保留 CSP 与 `nosniff` 且不进入 immutable 公共缓存。Nginx/API 正常启动，无应用启动错误；仅保留既有 `pg` 弃用警告作为后续技术债。
+- 非破坏回滚：优先恢复本节列出的旧源码树或切换本节 rollback 镜像，然后运行 `docker compose up -d --wait`；默认保留 PostgreSQL 与上传命名卷，禁止执行 `docker compose down -v`。只有确认数据损坏或结构不兼容时，才使用本节已验证的数据库/上传备份恢复。
+
 ## 域名上线前
 
 正式使用 `aerogp.cn` 前需要：完成 ICP 备案、添加 DNS 解析、配置 HTTPS、更换应用测试账号及明文业务密码，并进行正式安全审查。
