@@ -102,9 +102,9 @@ describe("RichTextEditor", () => {
     await wrapper.get('[data-editor-mode="text"]').trigger("click");
     await wrapper.get('[data-rich-editor="text"]').setValue("P1 未保存");
     await wrapper.setProps({ modelValue: "<p>P2 第一行</p><p>P2 第二行</p>" });
-    expect(wrapper.get('[data-rich-editor="text"]').element.value).toBe("P2 第一行P2 第二行");
+    expect(wrapper.get('[data-rich-editor="text"]').element.value).toBe("P2 第一行\nP2 第二行");
     await wrapper.get('[data-editor-mode="visual"]').trigger("click");
-    expect(wrapper.get('[data-rich-editor="visual"]').element.innerHTML).toBe("<p>P2 第一行P2 第二行</p>");
+    expect(wrapper.get('[data-rich-editor="visual"]').element.innerHTML).toBe("<p>P2 第一行</p><p>P2 第二行</p>");
   });
 
   it("preserves raw repair text during self-emitted parent writeback", async () => {
@@ -129,5 +129,42 @@ describe("RichTextEditor", () => {
     await wrapper.get('[data-rich-editor="html"]').setValue("<h2>客户端</h2>");
     await wrapper.setProps({ modelValue: "<p>服务器规范正文</p>" });
     expect(wrapper.get('[data-rich-editor="html"]').element.value).toBe("<p>服务器规范正文</p>");
+  });
+
+  it("preserves block and line-break semantics when entering plain-text mode", async () => {
+    const original = "<h2>标题</h2><p>第一段<br>换行</p><ul><li>项目一</li><li>项目二</li></ul><blockquote>引用</blockquote><figcaption>图注</figcaption>";
+    const wrapper = mount(RichTextEditor, { props: { modelValue: original, revision: "P1:1" } });
+    await wrapper.get('[data-editor-mode="text"]').trigger("click");
+    expect(wrapper.get('[data-rich-editor="text"]').element.value).toBe("标题\n第一段\n换行\n项目一\n项目二\n引用\n图注");
+    expect(wrapper.emitted("update:modelValue")).toBeUndefined();
+  });
+
+  it("does not rewrite canonical HTML when plain-text mode is entered and exited without edits", async () => {
+    const original = "<h2>标题</h2><p>第一段</p><p><strong>第二段</strong></p>";
+    const wrapper = mount(RichTextEditor, { props: { modelValue: original, revision: "P1:1" } });
+    await wrapper.get('[data-editor-mode="text"]').trigger("click");
+    await wrapper.get('[data-editor-mode="visual"]').trigger("click");
+    expect(wrapper.emitted("update:modelValue")).toBeUndefined();
+    expect(wrapper.get('[data-rich-editor="visual"]').element.innerHTML).toBe(original);
+  });
+
+  it("normalizes repeated blank lines while preserving real multiline edits", async () => {
+    const wrapper = mount(RichTextEditor, { props: { modelValue: "<p>原文</p>", revision: "P1:1" } });
+    await wrapper.get('[data-editor-mode="text"]').trigger("click");
+    await wrapper.get('[data-rich-editor="text"]').setValue("第一行\n\n\n\n第二行");
+    expect(wrapper.emitted("update:modelValue").at(-1)[0]).toBe("<p>第一行</p><p></p><p>第二行</p>");
+    expect(wrapper.get('[data-rich-editor="text"]').element.value).toBe("第一行\n\n\n\n第二行");
+  });
+
+  it("refreshes a raw HTML buffer when revision changes even if canonical HTML is equal", async () => {
+    const wrapper = mount(RichTextEditor, { props: { modelValue: "<h2>标题</h2>", revision: "P1:1" } });
+    await wrapper.get('[data-editor-mode="html"]').trigger("click");
+    const raw = '<h2 style="color:red">标题</h2>';
+    await wrapper.get('[data-rich-editor="html"]').setValue(raw);
+    const safe = wrapper.emitted("update:modelValue").at(-1)[0];
+    await wrapper.setProps({ modelValue: safe, revision: "P1:1" });
+    expect(wrapper.get('[data-rich-editor="html"]').element.value).toBe(raw);
+    await wrapper.setProps({ modelValue: safe, revision: "P1:2" });
+    expect(wrapper.get('[data-rich-editor="html"]').element.value).toBe("<h2>标题</h2>");
   });
 });

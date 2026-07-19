@@ -1,7 +1,11 @@
 <script setup>
 import { computed, nextTick, onMounted, ref, watch } from "vue";
 
-const props = defineProps({ modelValue: { type: String, default: "" }, disabled: { type: Boolean, default: false } });
+const props = defineProps({
+  modelValue: { type: String, default: "" },
+  disabled: { type: Boolean, default: false },
+  revision: { type: [String, Number], default: "" }
+});
 const emit = defineEmits(["update:modelValue", "normalized"]);
 const ALLOWED_TAGS = new Set(["P", "H2", "H3", "H4", "UL", "OL", "LI", "STRONG", "EM", "BLOCKQUOTE", "A", "IMG", "FIGURE", "FIGCAPTION", "BR"]);
 const DROP_TAGS = new Set(["SCRIPT", "STYLE", "IFRAME", "OBJECT", "EMBED", "SVG", "MATH", "TEMPLATE"]);
@@ -56,12 +60,24 @@ const value = ref(sanitizeEditorHtml(props.modelValue));
 function htmlPlainText(html) {
   const container = document.createElement("div");
   container.innerHTML = html;
-  return container.textContent || "";
+  const blockTags = new Set(["P", "H2", "H3", "H4", "LI", "BLOCKQUOTE", "FIGCAPTION"]);
+  function textOf(node) {
+    if (node.nodeType === Node.TEXT_NODE) return node.nodeValue || "";
+    if (node.nodeType !== Node.ELEMENT_NODE) return "";
+    if (node.tagName === "BR") return "\n";
+    const text = [...node.childNodes].map(textOf).join("");
+    return blockTags.has(node.tagName) ? `${text}\n` : text;
+  }
+  return [...container.childNodes].map(textOf).join("")
+    .replaceAll("\u00a0", " ")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/^\n+|\n+$/g, "");
 }
 
-watch(() => props.modelValue, (next) => {
+watch([() => props.modelValue, () => props.revision], ([next, revision], [, previousRevision]) => {
   const safe = sanitizeEditorHtml(next);
-  if (safe === value.value) return;
+  if (safe === value.value && revision === previousRevision) return;
   value.value = safe;
   if (mode.value === "html") repairValue.value = safe;
   else if (mode.value === "text") textRepair.value = htmlPlainText(safe);
@@ -82,7 +98,12 @@ function update(next) {
 }
 
 function plainTextHtml(text) {
-  return String(text || "").split(/\r?\n/).map((line) => `<p>${line.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")}</p>`).join("");
+  return String(text || "")
+    .replace(/\r\n?/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .split("\n")
+    .map((line) => `<p>${line.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")}</p>`)
+    .join("");
 }
 
 function updateHtmlRepair(event) {
@@ -100,8 +121,6 @@ function updateTextRepair(event) {
 }
 
 async function setMode(next) {
-  if (mode.value === "html") update(repairValue.value);
-  else if (mode.value === "text") update(plainTextHtml(textRepair.value));
   mode.value = next;
   if (next === "html") repairValue.value = value.value;
   if (next === "text") textRepair.value = plainText.value;

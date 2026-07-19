@@ -375,4 +375,31 @@ describe("ContentEditorPanel", () => {
     expect(wrapper.get('[data-content-field="title"]').element.value).toBe("服务器规范标题");
     expect(wrapper.text()).toContain("版本 9");
   });
+
+  it("refreshes an active HTML repair buffer from the server-normalized saved body", async () => {
+    installApi({
+      "PATCH /api/admin/content/POST-1": async (options) => ({ row: { ...row, ...JSON.parse(options.body), bodyHtml: "<p>服务器规范正文</p>", version: 5 } })
+    });
+    const wrapper = await mountEditor();
+    await wrapper.get('[data-editor-mode="html"]').trigger("click");
+    await wrapper.get('[data-rich-editor="html"]').setValue("<h2>客户端正文</h2>");
+    await wrapper.get('[data-action="save-content"]').trigger("click");
+    await flushPromises();
+    expect(wrapper.get('[data-rich-editor="html"]').element.value).toBe("<p>服务器规范正文</p>");
+    expect(wrapper.text()).toContain("版本 5");
+  });
+
+  it("uses the server revision to refresh an equal canonical body after save", async () => {
+    installApi({
+      "PATCH /api/admin/content/POST-1": async (options) => ({ row: { ...row, ...JSON.parse(options.body), version: 6 } })
+    });
+    const wrapper = await mountEditor();
+    await wrapper.get('[data-editor-mode="html"]').trigger("click");
+    await wrapper.get('[data-rich-editor="html"]').setValue('<p style="color:red">正文</p>');
+    expect(wrapper.get('[data-rich-editor="html"]').element.value).toContain("style=");
+    await wrapper.get('[data-action="save-content"]').trigger("click");
+    await flushPromises();
+    expect(wrapper.get('[data-rich-editor="html"]').element.value).toBe("<p>正文</p>");
+    expect(wrapper.text()).toContain("版本 6");
+  });
 });
