@@ -131,3 +131,18 @@ test("home event selection uses the most recently ended public or archived event
   assert.equal(selection.featuredEvent, null);
   assert.deepEqual(selection.concurrentEvents, []);
 });
+
+test("home event selection excludes visible draft events from history fallback", () => {
+  const noActiveDb = db(
+    [
+      event("PUBLISHED", { registrationEndAt: "2026-07-17T00:00:00.000Z" }),
+      event("DRAFT", { status: "draft", registrationEndAt: "2026-07-18T00:00:00.000Z" })
+    ],
+    [profile("PUBLISHED"), profile("DRAFT")]
+  );
+
+  const selection = selectHomeEvents(noActiveDb, now);
+
+  assert.equal(selection.mode, "history");
+  assert.equal(selection.fallbackEvent.id, "PUBLISHED");
+});
