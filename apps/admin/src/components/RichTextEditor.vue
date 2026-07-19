@@ -53,19 +53,25 @@ function sanitizeEditorHtml(raw) {
 
 const value = ref(sanitizeEditorHtml(props.modelValue));
 
+function htmlPlainText(html) {
+  const container = document.createElement("div");
+  container.innerHTML = html;
+  return container.textContent || "";
+}
+
 watch(() => props.modelValue, (next) => {
   const safe = sanitizeEditorHtml(next);
   if (safe === value.value) return;
   value.value = safe;
+  if (mode.value === "html") repairValue.value = safe;
+  else if (mode.value === "text") textRepair.value = htmlPlainText(safe);
   if (visual.value && mode.value === "visual" && visual.value.innerHTML !== value.value) visual.value.innerHTML = value.value;
   if (safe !== next) emit("normalized", safe);
 });
 onMounted(() => { if (value.value !== props.modelValue) emit("normalized", value.value); });
 
 const plainText = computed(() => {
-  const container = document.createElement("div");
-  container.innerHTML = value.value;
-  return container.textContent || "";
+  return htmlPlainText(value.value);
 });
 
 function update(next) {

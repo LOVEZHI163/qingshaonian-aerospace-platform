@@ -84,4 +84,50 @@ describe("RichTextEditor", () => {
     expect(wrapper.get('[data-rich-editor="text"]').element.value).toBe("第一行 <危险>\n第二行");
     expect(wrapper.emitted("update:modelValue").at(-1)[0]).toBe("<p>第一行 &lt;危险&gt;</p><p>第二行</p>");
   });
+
+  it("replaces the HTML repair buffer when an external record arrives", async () => {
+    const wrapper = mount(RichTextEditor, { props: { modelValue: "<p>P1 正文</p>" } });
+    await wrapper.get('[data-editor-mode="html"]').trigger("click");
+    await wrapper.get('[data-rich-editor="html"]').setValue("<h2>P1 未保存</h2>");
+    const emissionCount = wrapper.emitted("update:modelValue").length;
+    await wrapper.setProps({ modelValue: "<p>P2 正文</p>" });
+    expect(wrapper.get('[data-rich-editor="html"]').element.value).toBe("<p>P2 正文</p>");
+    await wrapper.get('[data-editor-mode="visual"]').trigger("click");
+    expect(wrapper.get('[data-rich-editor="visual"]').element.innerHTML).toBe("<p>P2 正文</p>");
+    expect(wrapper.emitted("update:modelValue").slice(emissionCount).some(([html]) => html.includes("P1 未保存"))).toBe(false);
+  });
+
+  it("replaces the plain-text repair buffer when an external record arrives", async () => {
+    const wrapper = mount(RichTextEditor, { props: { modelValue: "<p>P1 正文</p>" } });
+    await wrapper.get('[data-editor-mode="text"]').trigger("click");
+    await wrapper.get('[data-rich-editor="text"]').setValue("P1 未保存");
+    await wrapper.setProps({ modelValue: "<p>P2 第一行</p><p>P2 第二行</p>" });
+    expect(wrapper.get('[data-rich-editor="text"]').element.value).toBe("P2 第一行P2 第二行");
+    await wrapper.get('[data-editor-mode="visual"]').trigger("click");
+    expect(wrapper.get('[data-rich-editor="visual"]').element.innerHTML).toBe("<p>P2 第一行P2 第二行</p>");
+  });
+
+  it("preserves raw repair text during self-emitted parent writeback", async () => {
+    const wrapper = mount(RichTextEditor, { props: { modelValue: "<p>原文</p>" } });
+    await wrapper.get('[data-editor-mode="html"]').trigger("click");
+    const textarea = wrapper.get('[data-rich-editor="html"]');
+    const raw = '<h2 style="color:red">连续输入</h2>';
+    await textarea.setValue(raw);
+    const safe = wrapper.emitted("update:modelValue").at(-1)[0];
+    await wrapper.setProps({ modelValue: safe });
+    expect(textarea.element.value).toBe(raw);
+
+    const continued = `${raw}<p onclick="bad()">第二段</p>`;
+    await textarea.setValue(continued);
+    await wrapper.setProps({ modelValue: wrapper.emitted("update:modelValue").at(-1)[0] });
+    expect(textarea.element.value).toBe(continued);
+  });
+
+  it("refreshes the active repair buffer from a server-normalized value", async () => {
+    const wrapper = mount(RichTextEditor, { props: { modelValue: "<p>原文</p>" } });
+    await wrapper.get('[data-editor-mode="html"]').trigger("click");
+    await wrapper.get('[data-rich-editor="html"]').setValue("<h2>客户端</h2>");
+    await wrapper.setProps({ modelValue: "<p>服务器规范正文</p>" });
+    expect(wrapper.get('[data-rich-editor="html"]').element.value).toBe("<p>服务器规范正文</p>");
+  });
 });
