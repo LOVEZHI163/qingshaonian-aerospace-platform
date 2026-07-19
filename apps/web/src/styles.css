@@ -1,5 +1,6 @@
 @import "./styles/tokens.css";
 @import "./styles/home.css";
+@import "./styles/content.css";
 
 :root {
   color: var(--color-text);

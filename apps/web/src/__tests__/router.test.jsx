@@ -22,30 +22,56 @@ const deferred = () => {
   return { promise, resolve, reject };
 };
 
+const emptyPage = { rows: [], pagination: { page: 1, pageSize: 10, total: 0, totalPages: 0 } };
+
+function routePayload(url) {
+  if (url === "/api/public/home") return {
+    site: { platformName: "测试赛事平台" },
+    mode: "active",
+    featuredEvent: null,
+    concurrentEvents: [],
+    services: [],
+    announcements: [],
+    news: [],
+    works: [],
+    history: []
+  };
+  if (url.startsWith("/api/public/events/")) return {
+    event: {
+      id: "E1", slug: "summer-cup", name: "测试赛事详情", status: "published",
+      registrationWindow: { open: false, reason: "报名尚未开始" }
+    },
+    projects: [], groups: [], resources: [], content: []
+  };
+  if (url.startsWith("/api/public/content/opening-notice")) return {
+    row: { id: "C1", slug: "opening-notice", type: "announcement", title: "测试内容详情", bodyHtml: "", attachments: [] }
+  };
+  return emptyPage;
+}
+
 describe("public site router", () => {
   beforeEach(() => {
     window.history.replaceState({}, "", "/");
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => jsonResponse({ site: { platformName: "测试赛事平台" }, title: "测试数据" }))
+      vi.fn(async (url) => jsonResponse(routePayload(url)))
     );
   });
 
   it.each([
     ["/", "首页"],
-    ["/events/summer-cup", "赛事详情"],
+    ["/events/summer-cup", "测试赛事详情"],
     ["/announcements", "公告"],
-    ["/news", "动态与作品"],
+    ["/news", "动态与优秀作品"],
     ["/history", "历届赛事"],
-    ["/content/opening-notice", "内容详情"]
+    ["/content/opening-notice", "测试内容详情"]
   ])("renders the %s route inside the persistent site shell", async (path, heading) => {
     window.history.replaceState({}, "", path);
     render(<App />);
 
     expect(screen.getByRole("banner")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: heading })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: heading })).toBeInTheDocument();
     expect(screen.getByRole("contentinfo")).toBeInTheDocument();
-    expect(await screen.findByText("页面基础数据已加载")).toBeInTheDocument();
   });
 
   it("shows a 404 page for unknown and malformed encoded paths", () => {
@@ -82,7 +108,7 @@ describe("public site router", () => {
     window.history.replaceState({}, "", "/history");
     render(<App />);
     expect(fetch).toHaveBeenCalledWith(
-      "/api/public/content?type=recap",
+      "/api/public/content?type=recap&page=1&pageSize=10",
       expect.objectContaining({ signal: expect.any(AbortSignal) })
     );
   });
@@ -167,12 +193,12 @@ describe("public site async states", () => {
   it("keeps successful business content visible when the site bootstrap fails", async () => {
     vi.stubGlobal("fetch", vi.fn(async (path) => {
       if (path === "/api/public/home") throw new Error("bootstrap unavailable");
-      return jsonResponse({ items: [{ id: "notice-1" }] });
+      return jsonResponse({ rows: [{ id: "notice-1", slug: "notice-1", type: "announcement", title: "业务公告" }], pagination: { page: 1, pageSize: 10, total: 1, totalPages: 1 } });
     }));
     window.history.replaceState({}, "", "/announcements");
 
     render(<App />);
-    expect(await screen.findByText("页面基础数据已加载")).toBeInTheDocument();
+    expect(await screen.findByText("业务公告")).toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(screen.getByRole("contentinfo")).toBeInTheDocument();
   });
@@ -199,7 +225,7 @@ describe("site bootstrap and route data", () => {
     window.history.replaceState({}, "", path);
     vi.stubGlobal("fetch", vi.fn(async (url) => {
       if (url === "/api/public/home") return jsonResponse({ site });
-      return jsonResponse({ items: [] });
+      return jsonResponse(url.startsWith("/api/public/events/") ? routePayload(url) : url.startsWith("/api/public/content/opening-notice") ? routePayload(url) : emptyPage);
     }));
 
     render(<App />);
@@ -222,7 +248,7 @@ describe("site bootstrap and route data", () => {
     window.history.replaceState({}, "", "/announcements");
     vi.stubGlobal("fetch", vi.fn(async (url) => {
       if (url === "/api/public/home") return jsonResponse({ site });
-      return jsonResponse({ site: { platformName: "错误业务平台" }, items: [] });
+      return jsonResponse({ ...emptyPage, site: { platformName: "错误业务平台" } });
     }));
 
     render(<App />);
@@ -249,14 +275,14 @@ describe("site bootstrap and route data", () => {
     window.history.replaceState({}, "", "/news");
     const request = vi.fn(async (url) => {
       if (url === "/api/public/home") return jsonResponse({ site });
-      return jsonResponse({ items: [{ slug: url.includes("work") ? "work-1" : "news-1" }] });
+      return jsonResponse({ rows: [{ id: url.includes("work") ? "work-1" : "news-1", slug: url.includes("work") ? "work-1" : "news-1", type: url.includes("work") ? "work" : "news", title: url.includes("work") ? "作品一" : "动态一" }], pagination: { page: 1, pageSize: 10, total: 1, totalPages: 1 } });
     });
     vi.stubGlobal("fetch", request);
 
     render(<App />);
-    expect(await screen.findByText("页面基础数据已加载")).toBeInTheDocument();
-    const newsCall = request.mock.calls.find(([url]) => url === "/api/public/content?type=news");
-    const workCall = request.mock.calls.find(([url]) => url === "/api/public/content?type=work");
+    expect(await screen.findByText("动态一")).toBeInTheDocument();
+    const newsCall = request.mock.calls.find(([url]) => url === "/api/public/content?type=news&page=1&pageSize=10");
+    const workCall = request.mock.calls.find(([url]) => url === "/api/public/content?type=work&page=1&pageSize=10");
     expect(newsCall).toBeDefined();
     expect(workCall).toBeDefined();
     expect(newsCall[1].signal).toBe(workCall[1].signal);
@@ -267,8 +293,8 @@ describe("site bootstrap and route data", () => {
     window.history.replaceState({}, "", "/news");
     vi.stubGlobal("fetch", vi.fn(async (url) => {
       if (url === "/api/public/home") return jsonResponse({ site });
-      if (url === "/api/public/content?type=work") throw new Error("work unavailable");
-      return jsonResponse({ items: [] });
+      if (url === "/api/public/content?type=work&page=1&pageSize=10") throw new Error("work unavailable");
+      return jsonResponse(emptyPage);
     }));
 
     render(<App />);
