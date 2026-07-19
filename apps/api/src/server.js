@@ -16,6 +16,7 @@ import { createDashboardRouter } from "./routes/dashboard.js";
 import { createResourcesRouter } from "./routes/resources.js";
 import { createSiteMediaRouter } from "./routes/site-media.js";
 import { createSiteAdminRouter } from "./routes/site-admin.js";
+import { createPublicSiteRouter } from "./routes/public-site.js";
 import { projectForHistoricalRegistration, registrationContext } from "./services/events.js";
 import { replayFileCleanupJournal } from "./services/organizations.js";
 
@@ -284,6 +285,11 @@ app.use("/api", createSiteAdminRouter({
   mutationAsyncRoute,
   makeId: id,
   now
+}));
+
+app.use("/api", createPublicSiteRouter({
+  store: dataStore,
+  asyncRoute
 }));
 
 app.get("/api/public/features", (_req, res) => {

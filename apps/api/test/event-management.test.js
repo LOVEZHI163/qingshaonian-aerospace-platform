@@ -66,6 +66,19 @@ test("event management routes enforce admin sessions and temporary-password read
   });
 });
 
+test("public event compatibility endpoint keeps the current event payload", async () => {
+  await withServer(async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/public/event`);
+    assert.equal(response.status, 200);
+    const body = await json(response);
+    assert.equal(body.event.isCurrent, true);
+    assert.equal(body.event.status, "published");
+    assert.equal(body.projects.every((row) => row.eventId === body.event.id && row.enabled), true);
+    assert.deepEqual(body.groups, body.grades);
+    assert.equal(typeof body.registrationWindow.open, "boolean");
+  });
+});
+
 test("event management creates, validates, copies, publishes, and archives events transactionally", async () => {
   await withServer(async (baseUrl) => {
     const admin = await loginAs(baseUrl, "13900000000", "admin123");
