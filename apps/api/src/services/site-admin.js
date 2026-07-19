@@ -1,5 +1,5 @@
 import { sanitizeContentHtml } from "../content/sanitize.js";
-import { isPublicPost, normalizeContentInput } from "./content-publishing.js";
+import { normalizeContentInput } from "./content-publishing.js";
 import { promoteContentMedia, promoteMedia } from "./site-media.js";
 
 const SETTINGS_FIELDS = new Set([
@@ -62,6 +62,11 @@ function versionAfterMutation(currentVersion, incrementVersion) {
   return incrementVersion ? currentVersion + 1 : currentVersion;
 }
 
+function eventSlugIsLocked(db, eventId) {
+  return (db.auditLogs || []).some((row) => row.action === "event.content-published" && row.targetId === eventId)
+    || (db.contentPosts || []).some((post) => post.eventId === eventId && post.status === "published");
+}
+
 export function updateSiteSettings(db, input, { incrementVersion = true } = {}) {
   const current = db.siteSettings;
   assertVersion(input, current, "SITE_SETTINGS_VERSION_CONFLICT");
@@ -92,7 +97,7 @@ export function upsertEventPublicProfile(db, eventId, input, { now, incrementVer
   if (current) assertVersion(input, current, "EVENT_PROFILE_VERSION_CONFLICT");
   const slug = normalizeSlug(Object.hasOwn(input, "slug") ? input.slug : current?.slug);
   assertUniqueSlug(profiles, slug, "eventId", eventId);
-  if (current && slug !== current.slug && (db.contentPosts || []).some((post) => post.eventId === eventId && isPublicPost(post, now))) {
+  if (current && slug !== current.slug && eventSlugIsLocked(db, eventId)) {
     fail(409, "已有公开内容的赛事不能更改slug", "EVENT_SLUG_STABLE");
   }
   const next = current ? { ...current } : {
@@ -186,13 +191,25 @@ export function updateContent(db, contentId, input, { now, incrementVersion = tr
   const current = (db.contentPosts || []).find((row) => row.id === contentId);
   if (!current) fail(404, "内容不存在");
   assertVersion(input, current, "CONTENT_VERSION_CONFLICT");
+  if (current.status === "published") {
+    fail(409, "已发布内容请先下线再编辑", "CONTENT_EDIT_REQUIRES_OFFLINE");
+  }
+  if (Object.hasOwn(input, "status") && !["draft", "scheduled"].includes(input.status)) {
+    fail(422, "普通编辑只能设置草稿或定时发布状态");
+  }
   const slug = Object.hasOwn(input, "slug") ? normalizeSlug(input.slug) : current.slug;
   assertUniqueSlug(db.contentPosts, slug, "id", current.id);
+  const status = Object.hasOwn(input, "status") ? input.status : current.status;
+  const publishAt = status === "draft"
+    ? null
+    : status === "scheduled"
+      ? (Object.hasOwn(input, "publishAt") ? input.publishAt : current.publishAt)
+      : current.publishAt;
   const candidate = {
     ...input,
     slug,
-    status: current.status,
-    publishAt: current.publishAt,
+    status,
+    publishAt,
     version: current.version
   };
   const next = normalizeContentInput(candidate, current, now);
@@ -227,6 +244,9 @@ export function deleteContent(db, contentId, input) {
   const current = (db.contentPosts || []).find((row) => row.id === contentId);
   if (!current) fail(404, "内容不存在");
   assertVersion(input, current, "CONTENT_VERSION_CONFLICT");
+  if (!["draft", "offline"].includes(current.status)) {
+    fail(409, "内容必须处于草稿或下线状态才能删除", "CONTENT_DELETE_STATE_CONFLICT");
+  }
   db.contentPosts = db.contentPosts.filter((row) => row.id !== contentId);
   db.contentAttachments = (db.contentAttachments || []).filter((row) => row.contentId !== contentId);
   return current;

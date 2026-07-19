@@ -99,7 +99,17 @@ export function createSiteAdminRouter({
   }));
 
   router.delete("/admin/content/:id", ...admin, mutationAsyncRoute(async (req, res) => {
-    await mutate((db) => deleteContent(db, req.params.id, req.body));
+    await mutate((db) => {
+      const row = deleteContent(db, req.params.id, req.body);
+      recordAudit(db, {
+        actor: req.user,
+        action: "content.delete",
+        targetType: "content",
+        targetId: row.id,
+        summary: `删除内容：${row.title}`,
+        createdAt: now()
+      });
+    });
     res.status(204).end();
   }));
 
@@ -109,6 +119,16 @@ export function createSiteAdminRouter({
         now: now(),
         incrementVersion: incrementsVersionsInSnapshot
       });
+      if (row.eventId && !db.auditLogs.some((audit) => audit.action === "event.content-published" && audit.targetId === row.eventId)) {
+        recordAudit(db, {
+          actor: req.user,
+          action: "event.content-published",
+          targetType: "event",
+          targetId: row.eventId,
+          summary: `赛事已有内容发布：${row.title}`,
+          createdAt: now()
+        });
+      }
       recordAudit(db, {
         actor: req.user,
         action: "content.publish",

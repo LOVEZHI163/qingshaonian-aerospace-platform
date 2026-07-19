@@ -348,3 +348,143 @@ test("content publish is atomic, sanitizes previews, promotes media, records aud
     assert.ok(persisted.auditLogs.some((row) => row.action === "content.offline" && row.targetId === draft.id));
   }, { prefix: "content-publish-atomic-" });
 });
+
+test("site admin content PATCH controls scheduling and blocks editing or deleting protected states", async () => {
+  await withTestServer(async ({ baseUrl, dbPath }) => {
+    const admin = await loginAs(baseUrl, "13900000000", "admin123");
+    const create = async (slug) => {
+      const response = await jsonRequest(`${baseUrl}/api/admin/content`, admin.cookie, "POST", contentInput({ slug }));
+      const payload = await response.json();
+      assert.equal(response.status, 201, payload.error);
+      return payload.row;
+    };
+
+    const scheduledDraft = await create("scheduled-lifecycle");
+    const scheduledResponse = await jsonRequest(`${baseUrl}/api/admin/content/${scheduledDraft.id}`, admin.cookie, "PATCH", {
+      version: scheduledDraft.version,
+      status: "scheduled",
+      publishAt: "2100-01-01T00:00:00.000Z"
+    });
+    const scheduled = (await scheduledResponse.json()).row;
+    assert.equal(scheduledResponse.status, 200);
+    assert.equal(scheduled.status, "scheduled");
+    assert.equal(scheduled.publishAt, "2100-01-01T00:00:00.000Z");
+
+    const scheduledDelete = await jsonRequest(`${baseUrl}/api/admin/content/${scheduled.id}`, admin.cookie, "DELETE", {
+      version: scheduled.version
+    });
+    assert.equal(scheduledDelete.status, 409);
+
+    for (const status of ["published", "offline"]) {
+      const forged = await jsonRequest(`${baseUrl}/api/admin/content/${scheduled.id}`, admin.cookie, "PATCH", {
+        version: scheduled.version,
+        status
+      });
+      assert.equal(forged.status, 422, `PATCH must reject forged ${status}`);
+    }
+
+    for (const publishAt of [null, "2000-01-01T00:00:00.000Z"]) {
+      const invalidSchedule = await jsonRequest(`${baseUrl}/api/admin/content/${scheduled.id}`, admin.cookie, "PATCH", {
+        version: scheduled.version,
+        status: "scheduled",
+        publishAt
+      });
+      assert.equal(invalidSchedule.status, 422, `invalid schedule ${publishAt}`);
+    }
+
+    const draftResponse = await jsonRequest(`${baseUrl}/api/admin/content/${scheduled.id}`, admin.cookie, "PATCH", {
+      version: scheduled.version,
+      status: "draft"
+    });
+    const draft = (await draftResponse.json()).row;
+    assert.equal(draftResponse.status, 200);
+    assert.equal(draft.status, "draft");
+    assert.equal(draft.publishAt, null);
+
+    const deletedDraft = await jsonRequest(`${baseUrl}/api/admin/content/${draft.id}`, admin.cookie, "DELETE", {
+      version: draft.version
+    });
+    assert.equal(deletedDraft.status, 204);
+    let persisted = await readDb(dbPath);
+    assert.ok(persisted.auditLogs.some((row) => row.action === "content.delete" && row.targetId === draft.id));
+
+    const publishable = await create("published-protected");
+    const publishResponse = await jsonRequest(`${baseUrl}/api/admin/content/${publishable.id}/publish`, admin.cookie, "POST", {
+      version: publishable.version
+    });
+    const published = (await publishResponse.json()).row;
+    assert.equal(publishResponse.status, 200);
+
+    const publishedPatch = await jsonRequest(`${baseUrl}/api/admin/content/${published.id}`, admin.cookie, "PATCH", {
+      version: published.version,
+      title: "不允许直接修改"
+    });
+    assert.equal(publishedPatch.status, 409);
+
+    const publishedDelete = await jsonRequest(`${baseUrl}/api/admin/content/${published.id}`, admin.cookie, "DELETE", {
+      version: published.version
+    });
+    assert.equal(publishedDelete.status, 409);
+    persisted = await readDb(dbPath);
+    assert.equal(persisted.contentPosts.find((row) => row.id === published.id).title, published.title);
+  }, { prefix: "site-admin-content-lifecycle-" });
+});
+
+test("content publish permanently locks the event slug after offline and deletion", async () => {
+  await withTestServer(async ({ baseUrl, dbPath }) => {
+    const admin = await loginAs(baseUrl, "13900000000", "admin123");
+    const profileResponse = await jsonRequest(`${baseUrl}/api/admin/event-public-profiles/${EVENT_ID}`, admin.cookie, "PUT", {
+      slug: "durable-event-slug",
+      isVisible: true,
+      displayOrder: 0
+    });
+    const profile = (await profileResponse.json()).row;
+    assert.equal(profileResponse.status, 201);
+
+    const createResponse = await jsonRequest(`${baseUrl}/api/admin/content`, admin.cookie, "POST", contentInput({
+      slug: "durable-event-story"
+    }));
+    const draft = (await createResponse.json()).row;
+    const publishResponse = await jsonRequest(`${baseUrl}/api/admin/content/${draft.id}/publish`, admin.cookie, "POST", {
+      version: draft.version
+    });
+    const published = (await publishResponse.json()).row;
+    assert.equal(publishResponse.status, 200);
+
+    let persisted = await readDb(dbPath);
+    const markers = persisted.auditLogs.filter((row) => row.action === "event.content-published" && row.targetId === EVENT_ID);
+    assert.equal(markers.length, 1);
+
+    const offlineResponse = await jsonRequest(`${baseUrl}/api/admin/content/${draft.id}/offline`, admin.cookie, "POST", {
+      version: published.version
+    });
+    const offline = (await offlineResponse.json()).row;
+    assert.equal(offlineResponse.status, 200);
+
+    const afterOffline = await jsonRequest(`${baseUrl}/api/admin/event-public-profiles/${EVENT_ID}`, admin.cookie, "PUT", {
+      version: profile.version,
+      slug: "changed-after-offline",
+      isVisible: true,
+      displayOrder: 0
+    });
+    assert.equal(afterOffline.status, 409);
+
+    const deleteResponse = await jsonRequest(`${baseUrl}/api/admin/content/${draft.id}`, admin.cookie, "DELETE", {
+      version: offline.version
+    });
+    assert.equal(deleteResponse.status, 204);
+
+    const afterDelete = await jsonRequest(`${baseUrl}/api/admin/event-public-profiles/${EVENT_ID}`, admin.cookie, "PUT", {
+      version: profile.version,
+      slug: "changed-after-delete",
+      isVisible: true,
+      displayOrder: 0
+    });
+    assert.equal(afterDelete.status, 409);
+
+    persisted = await readDb(dbPath);
+    assert.equal(persisted.contentPosts.some((row) => row.id === draft.id), false);
+    assert.equal(persisted.auditLogs.filter((row) => row.action === "event.content-published" && row.targetId === EVENT_ID).length, 1);
+    assert.ok(persisted.auditLogs.some((row) => row.action === "content.delete" && row.targetId === draft.id));
+  }, { prefix: "content-publish-durable-slug-" });
+});
