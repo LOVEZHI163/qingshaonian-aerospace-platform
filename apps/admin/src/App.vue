@@ -194,7 +194,7 @@ onMounted(async () => {
     <SiteContentPage v-else-if="currentView === 'siteContent'" />
     <OrganizationManagementPage v-else-if="currentView === 'organizations'" />
     <RegistrationManagementPage :key="`registration-management:${managementEventId}`" v-else-if="currentView === 'registration'" :initial-event-id="managementEventId" @open-certificates="openCertificateManagement" />
-    <CertificateManagementPage v-else-if="currentView === 'certificates'" :initial-registration-id="certificateRegistrationId" :initial-event-id="certificateEventId" />
+    <CertificateManagementPage :key="`certificate-management:${certificateEventId}:${certificateRegistrationId}`" v-else-if="currentView === 'certificates'" :initial-registration-id="certificateRegistrationId" :initial-event-id="certificateEventId" />
     <UserManagementPage v-else-if="currentView === 'users'" @error="handleError" />
   </AdminShell>
 

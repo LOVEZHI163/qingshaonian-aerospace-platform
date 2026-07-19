@@ -212,6 +212,34 @@ describe("role based application navigation", () => {
     expect(new URLSearchParams(registrationRequests().at(-1).split("?")[1]).get("eventId")).toBe("E1");
   });
 
+  it("reloads administrator certificate management without the event deep-link filter when its current navigation item is clicked", async () => {
+    window.history.replaceState({}, "", "/admin/?view=certificates&eventId=E2");
+    session.user.value = { id: "A1", type: "admin", name: "Admin", phone: "13900000000", mustChangePassword: false };
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/public/event") return { event: { id: "E1", name: "Current event" }, projects: [], grades: [] };
+      if (path === "/api/admin/events") return {
+        rows: [{ id: "E1", name: "Current event", isCurrent: true }, { id: "E2", name: "Target event", isCurrent: false }],
+        projects: []
+      };
+      if (path.startsWith("/api/admin/certificates?")) return { rows: [], total: 0, page: 1, pageSize: 50 };
+      return { rows: [] };
+    });
+
+    const wrapper = mount(App); mounted.push(wrapper);
+    await flushPromises();
+
+    const certificateRequests = () => apiMock.mock.calls
+      .map(([path]) => path)
+      .filter((path) => path.startsWith("/api/admin/certificates?"));
+    expect(new URLSearchParams(certificateRequests().at(-1).split("?")[1]).get("eventId")).toBe("E2");
+
+    await wrapper.get('[data-nav="certificates"]').trigger("click");
+    await flushPromises();
+
+    expect(certificateRequests().length).toBeGreaterThan(1);
+    expect(new URLSearchParams(certificateRequests().at(-1).split("?")[1]).get("eventId")).toBe("E1");
+  });
+
   it.each([
     ["records", "registrationRecords", "/api/me/registrations?eventId=E2", "/api/me/registrations"],
     ["certificates", "certificates", "/api/me/certificates?eventId=E2", "/api/me/certificates"]
