@@ -4,6 +4,7 @@ import { useRouter } from "./router.js";
 import AsyncState from "./components/AsyncState.jsx";
 import SiteFooter from "./components/SiteFooter.jsx";
 import SiteHeader from "./components/SiteHeader.jsx";
+import HomePage from "./pages/HomePage.jsx";
 
 const pageDefinitions = {
   home: { heading: "首页" },
@@ -130,11 +131,15 @@ export default function App() {
         {route.name === "not-found" ? (
           <NotFoundPage />
         ) : route.name === "home" ? (
-          <PageLayout
-            heading={pageDefinitions.home.heading}
-            state={bootstrap}
-            onRetry={() => setBootstrapAttempt((value) => value + 1)}
-          />
+          <div className="home-route">
+            <h1 className="visually-hidden">首页</h1>
+            <AsyncState
+              status={bootstrap.status}
+              onRetry={() => setBootstrapAttempt((value) => value + 1)}
+            >
+              <HomePage data={bootstrap.data || {}} />
+            </AsyncState>
+          </div>
         ) : (
           <RemotePageSkeleton key={routeKey} route={route} />
         )}
