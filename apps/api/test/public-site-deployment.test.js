@@ -3,6 +3,8 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+
+import { withTestServer } from "../test-support/server.js";
 const root = path.resolve(import.meta.dirname, "../../..");
 
 async function read(relativePath) {
@@ -59,6 +61,22 @@ test("container contract keeps private ports private and ships runtime assets", 
   ]);
   assert.doesNotMatch(compose, /["'](?:4300|5432):/);
   assert.match(compose, /ports:\s*\r?\n\s*-\s*["']80:80["']/);
+});
+
+test("API container health check stays healthy when there is no current event", async () => {
+  const compose = await read("compose.yaml");
+  const healthPath = compose.match(/fetch\('http:\/\/127\.0\.0\.1:4300([^']+)'\)/)?.[1];
+
+  assert.ok(healthPath, "API health check URL must be discoverable from compose.yaml");
+  await withTestServer(async ({ baseUrl, dbPath }) => {
+    const db = JSON.parse(await fs.readFile(dbPath, "utf8"));
+    db.events = [];
+    db.eventPublicProfiles = [];
+    await fs.writeFile(dbPath, `${JSON.stringify(db, null, 2)}\n`, "utf8");
+
+    const response = await fetch(`${baseUrl}${healthPath}`);
+    assert.equal(response.status, 200);
+  }, { prefix: "aerogp-health-no-current-event-" });
 });
 
 test("nginx protects HTML and public media while caching immutable assets", async () => {
