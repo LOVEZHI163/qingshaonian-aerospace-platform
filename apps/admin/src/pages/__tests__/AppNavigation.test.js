@@ -140,6 +140,26 @@ describe("role based application navigation", () => {
     expect(wrapper.get(".topbar").text()).not.toContain("当前赛事 E1");
   });
 
+  it.each([
+    ["records", "registration-records-page", "/api/me/registrations?eventId=E2"],
+    ["certificates", "my-certificates-page", "/api/me/certificates?eventId=E2"]
+  ])("restores the public %s deep link and keeps its validated event filter", async (view, testId, expectedPath) => {
+    window.history.replaceState({}, "", `/admin/?view=${view}&eventId=E2`);
+    session.user.value = { id: "U1", type: "ordinary", name: "普通用户", phone: "13800000001", mustChangePassword: false };
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/public/event") return { event: { id: "E1", name: "当前赛事 E1" }, projects: [], grades: [] };
+      if (path === expectedPath) return { rows: [] };
+      return { rows: [] };
+    });
+
+    const wrapper = mount(App); mounted.push(wrapper);
+    await flushPromises();
+
+    expect(wrapper.find(`[data-testid="${testId}"]`).exists()).toBe(true);
+    expect(apiMock).toHaveBeenCalledWith(expectedPath);
+    expect(apiMock.mock.calls.some(([path]) => path.includes("<script>"))).toBe(false);
+  });
+
   it("keeps a pending organization on review progress even when a registration deep link is requested", async () => {
     window.history.replaceState({}, "", "/admin/?view=registration&eventId=E2");
     const organization = { id: "O1", ownerUserId: "O1U", name: "待审核学校", reviewStatus: "pending", status: "active", membershipRole: "owner" };

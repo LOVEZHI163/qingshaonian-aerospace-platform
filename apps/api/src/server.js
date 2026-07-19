@@ -19,6 +19,7 @@ import { createSiteAdminRouter } from "./routes/site-admin.js";
 import { createPublicSiteRouter } from "./routes/public-site.js";
 import { projectForHistoricalRegistration, registrationContext } from "./services/events.js";
 import { replayFileCleanupJournal } from "./services/organizations.js";
+import { publishDueScheduledContent, startScheduledContentPublisher } from "./services/scheduled-content-publisher.js";
 
 const PORT = Number(process.env.PORT || 4300);
 const dataStore = createDataStore();
@@ -49,6 +50,16 @@ function normalizeText(value) {
 
 function normalizePhone(value) {
   return String(value || "").replace(/[^\d]/g, "");
+}
+
+const SAFE_EVENT_FILTER = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+
+function eventFilter(value) {
+  if (value === undefined) return null;
+  if (typeof value !== "string" || !SAFE_EVENT_FILTER.test(value)) {
+    throw Object.assign(new Error("赛事筛选不合法"), { status: 422 });
+  }
+  return value;
 }
 
 function athleteKey(athlete) {
@@ -285,6 +296,19 @@ app.use("/api", createSiteAdminRouter({
   mutationAsyncRoute,
   makeId: id,
   now
+}));
+
+let nextScheduledPublishingCheckAt = 0;
+let scheduledPublishingCheck = null;
+app.use("/api/public", asyncRoute(async (_req, _res, next) => {
+  const timestamp = Date.now();
+  if (timestamp >= nextScheduledPublishingCheckAt) {
+    nextScheduledPublishingCheckAt = timestamp + 1_000;
+    scheduledPublishingCheck = publishDueScheduledContent({ store: dataStore })
+      .finally(() => { scheduledPublishingCheck = null; });
+  }
+  if (scheduledPublishingCheck) await scheduledPublishingCheck;
+  next();
 }));
 
 app.use("/api", createPublicSiteRouter({
@@ -603,7 +627,10 @@ app.patch("/api/memberships/:id", requireUser, requirePasswordReady, mutationAsy
 
 app.get("/api/me/registrations", requireUser, requirePasswordReady, asyncRoute(async (req, res) => {
   const db = await readDb();
-  res.json({ rows: db.registrations.filter((item) => item.userId === req.user.id) });
+  const eventId = eventFilter(req.query.eventId);
+  res.json({
+    rows: db.registrations.filter((item) => item.userId === req.user.id && (!eventId || item.eventId === eventId))
+  });
 }));
 
 app.get("/api/organizations/:id/members", requireUser, requirePasswordReady, asyncRoute(async (req, res) => {
@@ -615,9 +642,12 @@ app.get("/api/organizations/:id/members", requireUser, requirePasswordReady, asy
 app.get("/api/organizations/:id/registrations", requireUser, requirePasswordReady, asyncRoute(async (req, res) => {
   const db = await readDb();
   if (!canManageOrganization(db, req.user.id, req.params.id)) return res.status(403).json({ error: "无权查看该组织记录" });
+  const eventId = eventFilter(req.query.eventId);
   const memberIds = activeMemberIdsForManagedOrganizations(db, req.user.id, req.params.id);
   res.json({
-    rows: db.registrations.filter((row) => row.organizationId === req.params.id && memberIds.includes(row.userId))
+    rows: db.registrations.filter((row) => row.organizationId === req.params.id
+      && memberIds.includes(row.userId)
+      && (!eventId || row.eventId === eventId))
   });
 }));
 
@@ -748,12 +778,14 @@ app.use((error, _req, res, next) => {
 await dataStore.initialize();
 await cleanupExpiredCertificateImportPreviews({ store: dataStore, makeId: id, now });
 await replayFileCleanupJournal({ store: dataStore, now });
+const stopScheduledContentPublisher = startScheduledContentPublisher({ store: dataStore });
 
 const server = app.listen(PORT, () => {
   console.log(`API listening on http://localhost:${server.address().port}`);
 });
 
 async function shutdown() {
+  stopScheduledContentPublisher();
   server.close(async () => {
     await dataStore.close();
   });

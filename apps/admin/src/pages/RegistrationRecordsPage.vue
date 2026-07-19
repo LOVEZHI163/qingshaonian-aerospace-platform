@@ -4,6 +4,7 @@ import { computed, onMounted, ref } from "vue";
 import { api } from "../lib/api.js";
 import { useSession } from "../state/session.js";
 
+const props = defineProps({ eventId: { type: String, default: "" } });
 const emit = defineEmits(["error"]);
 const session = useSession();
 const rows = ref([]);
@@ -13,11 +14,12 @@ const managedOrganizations = computed(() => (session.organizations.value || []).
 
 onMounted(async () => {
   try {
+    const query = props.eventId ? `?eventId=${encodeURIComponent(props.eventId)}` : "";
     if (session.user.value?.type === "organization") {
-      const payloads = await Promise.all(managedOrganizations.value.map((organization) => api(`/api/organizations/${organization.id}/registrations`)));
+      const payloads = await Promise.all(managedOrganizations.value.map((organization) => api(`/api/organizations/${organization.id}/registrations${query}`)));
       rows.value = payloads.flatMap((payload) => payload.rows || []);
     } else {
-      rows.value = (await api("/api/me/registrations")).rows || [];
+      rows.value = (await api(`/api/me/registrations${query}`)).rows || [];
     }
   } catch (error) {
     emit("error", error.message);

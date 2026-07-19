@@ -15,6 +15,7 @@ const contentLabels = {
   guide: "参赛指南",
   recap: "赛事回顾"
 };
+const SAFE_EVENT_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 
 function ResourceNotFound() {
   return (
@@ -71,7 +72,7 @@ export default function EventDetailPage({ slug }) {
 
   const payload = state.data || {};
   const event = payload.event;
-  const eventId = typeof event?.id === "string" && event.id.trim() ? event.id : null;
+  const eventId = typeof event?.id === "string" && SAFE_EVENT_ID.test(event.id) ? event.id : null;
   const canRegister = event?.registrationWindow?.open === true && eventId;
 
   return (

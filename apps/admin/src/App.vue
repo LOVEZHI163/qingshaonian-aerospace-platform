@@ -24,13 +24,15 @@ const eventData = ref({ event: {}, projects: [], grades: [] });
 const currentView = ref("login");
 const message = ref("");
 const certificateRegistrationId = ref("");
-const certificateEventId = ref("");
-const DEEP_LINK_VIEWS = new Set(["overview", "events", "siteContent", "organizations", "registration", "registrationRecords", "certificates", "users", "organization"]);
+const DEEP_LINK_VIEWS = new Set(["overview", "events", "siteContent", "organizations", "registration", "registrationRecords", "records", "certificates", "users", "organization"]);
 const SAFE_EVENT_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 const initialParams = new URLSearchParams(window.location.search);
-const initialView = DEEP_LINK_VIEWS.has(initialParams.get("view")) ? initialParams.get("view") : "";
+const requestedView = DEEP_LINK_VIEWS.has(initialParams.get("view")) ? initialParams.get("view") : "";
+const initialView = requestedView === "records" ? "registrationRecords" : requestedView;
 const initialEventId = initialView && SAFE_EVENT_ID.test(initialParams.get("eventId") || "") ? initialParams.get("eventId") : "";
-const registrationEventId = ref(initialEventId);
+const registrationEventId = ref(initialView === "registration" ? initialEventId : "");
+const recordsEventId = ref(initialView === "registrationRecords" ? initialEventId : "");
+const certificateEventId = ref(initialView === "certificates" ? initialEventId : "");
 const selectedRegistrationEvent = ref(null);
 const passwordChangeForm = reactive({ currentPassword: "", newPassword: "" });
 const roleText = { ordinary: "普通用户", organization: "组织用户", admin: "超级管理员" };
@@ -72,7 +74,7 @@ function targetView(user = currentUser.value) {
   if (!user || !initialView) return defaultView(user);
   if (user.type === "organization" && !approvedOrganization.value) return "organization";
   const allowed = user.type === "admin"
-    ? new Set(["overview", "events", "siteContent", "organizations", "registration", "certificates", "users"])
+    ? new Set(["overview", "events", "siteContent", "organizations", "registration", "registrationRecords", "certificates", "users"])
     : user.type === "organization"
       ? new Set(["registration", "registrationRecords", "certificates", "organization"])
       : new Set(["registration", "registrationRecords", "certificates"]);
@@ -118,6 +120,13 @@ function navigateAdmin(key) {
     certificateEventId.value = "";
   }
   currentView.value = key === "registrations" ? "registration" : key;
+}
+
+function navigateUser(key) {
+  if (key === "registration") registrationEventId.value = "";
+  if (key === "registrationRecords") recordsEventId.value = "";
+  if (key === "certificates") certificateEventId.value = "";
+  currentView.value = key;
 }
 
 function openCertificateManagement(registration) {
@@ -182,6 +191,7 @@ onMounted(async () => {
     <SiteContentPage v-else-if="currentView === 'siteContent'" />
     <OrganizationManagementPage v-else-if="currentView === 'organizations'" />
     <RegistrationManagementPage v-else-if="currentView === 'registration'" @open-certificates="openCertificateManagement" />
+    <RegistrationRecordsPage v-else-if="currentView === 'registrationRecords'" :event-id="recordsEventId" @error="handleError" />
     <CertificateManagementPage v-else-if="currentView === 'certificates'" :initial-registration-id="certificateRegistrationId" :initial-event-id="certificateEventId" />
     <UserManagementPage v-else-if="currentView === 'users'" @error="handleError" />
   </AdminShell>
@@ -190,15 +200,15 @@ onMounted(async () => {
     <aside>
       <div class="logo">航</div><h1>赛事报名系统</h1>
       <div class="user-card"><strong>{{ currentUser.name }}</strong><span>{{ roleText[currentUser.type] }} · {{ currentUser.phone }}</span></div>
-      <button v-for="item in userNavigation" :key="item[0]" type="button" :class="{ active: currentView === item[0] }" :data-user-nav="item[0]" @click="currentView = item[0]">{{ item[1] }}</button>
+      <button v-for="item in userNavigation" :key="item[0]" type="button" :class="{ active: currentView === item[0] }" :data-user-nav="item[0]" @click="navigateUser(item[0])">{{ item[1] }}</button>
       <button class="ghost" @click="logout">退出登录</button>
     </aside>
     <main>
       <header class="topbar"><div><h2>{{ userHeaderEvent.name || "赛事报名平台" }}</h2><p>{{ userHeaderEvent.date }} · {{ userHeaderEvent.venue }} · 报名截止 {{ userHeaderEvent.registrationDeadline }}</p></div></header>
       <p v-if="message" class="message">{{ message }}</p>
       <RegistrationPage v-if="currentView === 'registration'" :event-id="registrationEventId" :fallback-context="{ projects: eventData.projects }" @context="useRegistrationEvent" @registered="message = '报名已提交，等待审核'" @error="handleError" />
-      <RegistrationRecordsPage v-else-if="currentView === 'registrationRecords'" @error="handleError" />
-      <MyCertificatesPage v-else-if="currentView === 'certificates'" @error="handleError" />
+      <RegistrationRecordsPage v-else-if="currentView === 'registrationRecords'" :event-id="recordsEventId" @error="handleError" />
+      <MyCertificatesPage v-else-if="currentView === 'certificates'" :event-id="certificateEventId" @error="handleError" />
       <OrganizationConsolePage v-else-if="currentView === 'organization'" @error="handleError" />
     </main>
   </div>

@@ -11,10 +11,12 @@ export default function HomePage({ data = {} }) {
   return (
     <div className="home-page">
       <span className="visually-hidden">页面基础数据已加载</span>
-      <FeaturedEvent
-        event={featuredEvent}
-        mode={data.mode === "history" ? "history" : "active"}
-      />
+      <div id="registration" tabIndex="-1">
+        <FeaturedEvent
+          event={featuredEvent}
+          mode={data.mode === "history" ? "history" : "active"}
+        />
+      </div>
       <ConcurrentEvents events={rows(data.concurrentEvents)} featuredEventId={featuredEvent?.id} />
       <ServiceGrid services={rows(data.services)} />
       <ContentSection

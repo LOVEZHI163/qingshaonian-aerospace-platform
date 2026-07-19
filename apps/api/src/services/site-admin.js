@@ -67,6 +67,11 @@ function eventSlugIsLocked(db, eventId) {
     || (db.contentPosts || []).some((post) => post.eventId === eventId && post.status === "published");
 }
 
+function contentSlugIsLocked(db, post) {
+  return ["published", "offline"].includes(post.status)
+    || (db.auditLogs || []).some((row) => row.action === "content.publish" && row.targetId === post.id);
+}
+
 export function updateSiteSettings(db, input, { incrementVersion = true } = {}) {
   const current = db.siteSettings;
   assertVersion(input, current, "SITE_SETTINGS_VERSION_CONFLICT");
@@ -198,6 +203,9 @@ export function updateContent(db, contentId, input, { now, incrementVersion = tr
     fail(422, "普通编辑只能设置草稿或定时发布状态");
   }
   const slug = Object.hasOwn(input, "slug") ? normalizeSlug(input.slug) : current.slug;
+  if (slug !== current.slug && contentSlugIsLocked(db, current)) {
+    fail(409, "已发布过的内容不能更改slug", "CONTENT_SLUG_STABLE");
+  }
   assertUniqueSlug(db.contentPosts, slug, "id", current.id);
   const status = Object.hasOwn(input, "status") ? input.status : current.status;
   const publishAt = status === "draft"

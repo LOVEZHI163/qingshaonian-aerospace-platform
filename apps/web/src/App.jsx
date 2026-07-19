@@ -1,6 +1,6 @@
 import React, { lazy, Suspense, useEffect, useState } from "react";
 import { fetchJson } from "./api/client.js";
-import { useRouter } from "./router.js";
+import { focusHashTarget, useRouter } from "./router.js";
 import AsyncState from "./components/AsyncState.jsx";
 import Seo from "./components/Seo.jsx";
 import SiteFooter from "./components/SiteFooter.jsx";
@@ -39,7 +39,7 @@ function PublicRoute({ route, bootstrap, location }) {
     case "event": return <EventDetailPage slug={route.params.slug} />;
     case "announcements": return <ContentListPage mode="announcements" location={location} />;
     case "news": return <ContentListPage mode="news" location={location} />;
-    case "history": return <HistoryPage bootstrap={bootstrap} location={location} />;
+    case "history": return <HistoryPage location={location} />;
     case "content": return <ContentDetailPage slug={route.params.slug} />;
     default: return <NotFoundPage />;
   }
@@ -70,6 +70,20 @@ export default function App() {
       controller.abort();
     };
   }, [bootstrapAttempt]);
+
+  useEffect(() => {
+    const hash = new URL(location || "/", window.location.origin).hash;
+    if (!hash || focusHashTarget(hash)) return undefined;
+    const observer = new MutationObserver(() => {
+      if (focusHashTarget(hash)) observer.disconnect();
+    });
+    observer.observe(document.getElementById("main-content") || document.body, { childList: true, subtree: true });
+    const timeout = window.setTimeout(() => observer.disconnect(), 2_000);
+    return () => {
+      observer.disconnect();
+      window.clearTimeout(timeout);
+    };
+  }, [location]);
 
   return (
     <div className="site-shell">

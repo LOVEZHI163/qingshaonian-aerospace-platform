@@ -21,17 +21,24 @@ export function parsePublicListLocation(location) {
   const pageValues = url.searchParams.getAll("page");
   const pageText = pageValues.length === 1 ? pageValues[0] : "";
   const page = /^[1-9]\d{0,5}$/.test(pageText) ? Number(pageText) : 1;
+  const eventPageValues = url.searchParams.getAll("eventsPage");
+  const eventPageText = eventPageValues.length === 1 ? eventPageValues[0] : "";
+  const eventsPage = /^[1-9]\d{0,5}$/.test(eventPageText) ? Number(eventPageText) : 1;
   const typeValues = url.pathname === "/news" ? url.searchParams.getAll("type") : [];
   const type = typeValues.length === 1 && PUBLIC_NEWS_TYPES.has(typeValues[0])
     ? typeValues[0]
     : "news";
-  return { event, page, type };
+  return { event, page, eventsPage, type };
 }
 
 export function publicContentListPath(type, page, event) {
   const params = new URLSearchParams({ type, page: String(page), pageSize: "10" });
   if (event) params.set("event", event);
   return `/api/public/content?${params.toString()}`;
+}
+
+export function publicHistoryEventsPath(page) {
+  return `/api/public/events?page=${page}&pageSize=6`;
 }
 
 function navigatePublicList(location, { page, event, type }) {
@@ -52,6 +59,14 @@ export function navigatePublicListPage(location, page, event, type) {
 
 export function navigatePublicListType(location, type, event) {
   navigatePublicList(location, { page: 1, event, type });
+}
+
+export function navigateHistoryEventsPage(location, page) {
+  const url = new URL(location || window.location.href, window.location.origin);
+  url.searchParams.set("eventsPage", String(page));
+  const next = `${url.pathname}${url.search}${url.hash}`;
+  window.history.pushState({}, "", next);
+  window.dispatchEvent(new PopStateEvent("popstate"));
 }
 
 export function matchRoute(pathname) {
@@ -92,6 +107,21 @@ export function shouldHandleLinkClick(event) {
   return url.origin === window.location.origin;
 }
 
+export function focusHashTarget(hash = window.location.hash) {
+  if (!hash || hash === "#") return false;
+  let id;
+  try {
+    id = decodeURIComponent(hash.slice(1));
+  } catch {
+    return false;
+  }
+  const target = id ? document.getElementById(id) : null;
+  if (!target) return false;
+  target.focus({ preventScroll: true });
+  target.scrollIntoView?.({ block: "start" });
+  return document.activeElement === target;
+}
+
 const currentLocation = () => `${window.location.pathname}${window.location.search}${window.location.hash}`;
 
 export function useRouter() {
@@ -103,9 +133,12 @@ export function useRouter() {
       if (!shouldHandleLinkClick(event)) return;
       const anchor = getAnchor(event.target);
       const url = new URL(anchor.href, window.location.href);
+      const next = `${url.pathname}${url.search}${url.hash}`;
+      const repeatedLocation = next === currentLocation();
       event.preventDefault();
-      window.history.pushState({}, "", `${url.pathname}${url.search}${url.hash}`);
+      window.history.pushState({}, "", next);
       setLocation(currentLocation());
+      if (repeatedLocation && url.hash) focusHashTarget(url.hash);
     };
 
     window.addEventListener("popstate", handlePopState);

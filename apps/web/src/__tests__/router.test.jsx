@@ -1,5 +1,5 @@
 import React from "react";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import App from "../App.jsx";
 import { fetchJson } from "../api/client.js";
@@ -102,6 +102,24 @@ describe("public site router", () => {
     window.history.pushState({}, "", "/history");
     window.dispatchEvent(new PopStateEvent("popstate"));
     expect(await screen.findByRole("heading", { name: "历届赛事" })).toBeInTheDocument();
+  });
+
+  it("scrolls and moves focus for real same-page skip and registration-link clicks", async () => {
+    const scrollIntoView = vi.fn();
+    Element.prototype.scrollIntoView = scrollIntoView;
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("link", { name: "跳到主要内容" }));
+    await waitFor(() => expect(document.getElementById("main-content")).toHaveFocus());
+    expect(scrollIntoView).toHaveBeenCalled();
+
+    screen.getByRole("link", { name: "网站首页" }).focus();
+    fireEvent.click(screen.getByRole("link", { name: "跳到主要内容" }));
+    expect(document.getElementById("main-content")).toHaveFocus();
+
+    fireEvent.click(screen.getByRole("link", { name: "报名入口" }));
+    await waitFor(() => expect(document.getElementById("registration")).toHaveFocus());
+    expect(window.location.hash).toBe("#registration");
   });
 
   it("loads the history skeleton from the public recap list API", () => {
@@ -327,7 +345,7 @@ describe("site header mobile menu", () => {
     fireEvent.click(trigger);
     fireEvent.click(screen.getByRole("link", { name: "公告" }));
     expect(trigger).toHaveAttribute("aria-expanded", "false");
-    expect(screen.getByRole("link", { name: "报名入口" })).toHaveAttribute("href", "/#events");
+    expect(screen.getByRole("link", { name: "报名入口" })).toHaveAttribute("href", "/#registration");
     expect(screen.getByRole("link", { name: "管理入口" })).toHaveAttribute("data-router-ignore", "true");
   });
 });

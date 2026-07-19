@@ -27,6 +27,16 @@ const MIME_BY_EXTENSION = new Map([
   ["webp", "image/webp"]
 ]);
 
+const SAFE_EVENT_FILTER = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+
+function eventFilter(value) {
+  if (value === undefined) return null;
+  if (typeof value !== "string" || !SAFE_EVENT_FILTER.test(value)) {
+    throw new CertificateError(422, "赛事筛选不合法");
+  }
+  return value;
+}
+
 function cleanupMarker({ makeId, filePath, category, now, attempts = 0, error = "pending cleanup" }) {
   return {
     id: makeId("CLN"),
@@ -386,10 +396,12 @@ export function createCertificatesRouter({
 
   router.get("/me/certificates", ...user, asyncRoute(async (req, res) => {
     const db = await store.readDb();
+    const eventId = eventFilter(req.query.eventId);
     const rows = db.certificates
       .filter((certificate) => {
         if (certificate.status !== "published") return false;
-        return db.registrations.find((row) => row.id === certificate.registrationId)?.userId === req.user.id;
+        const registration = db.registrations.find((row) => row.id === certificate.registrationId);
+        return registration?.userId === req.user.id && (!eventId || registration.eventId === eventId);
       })
       .map((certificate) => certificatePayload(certificate, db.registrations.find((row) => row.id === certificate.registrationId)));
     res.json({ rows });
@@ -398,9 +410,12 @@ export function createCertificatesRouter({
   router.get("/organizations/:id/certificates", ...user, asyncRoute(async (req, res) => {
     const db = await store.readDb();
     if (!canManageOrganization(db, req.user.id, req.params.id)) throw new CertificateError(403, "无权查看该组织证书");
+    const eventId = eventFilter(req.query.eventId);
     const memberIds = activeMemberIds(db, req.params.id);
     const registrationIds = new Set(db.registrations
-      .filter((row) => row.organizationId === req.params.id && memberIds.has(row.userId))
+      .filter((row) => row.organizationId === req.params.id
+        && memberIds.has(row.userId)
+        && (!eventId || row.eventId === eventId))
       .map((row) => row.id));
     const rows = db.certificates
       .filter((certificate) => certificate.status === "published" && registrationIds.has(certificate.registrationId))

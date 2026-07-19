@@ -139,6 +139,23 @@ function eventSummary(db, event, now) {
   };
 }
 
+function historicalEvents(db, now) {
+  return (db.events || [])
+    .filter((event) => {
+      if (!eventIsPublic(db, event)) return false;
+      const endedAt = Date.parse(event.registrationEndAt);
+      return event.status === "archived"
+        || Boolean(event.archivedAt)
+        || (!isRegistrationOpen(event, now).open && Number.isFinite(endedAt) && endedAt < now.getTime());
+    })
+    .sort((left, right) => {
+      const leftEndedAt = Date.parse(left.registrationEndAt);
+      const rightEndedAt = Date.parse(right.registrationEndAt);
+      return (Number.isFinite(rightEndedAt) ? rightEndedAt : 0) - (Number.isFinite(leftEndedAt) ? leftEndedAt : 0)
+        || String(left.id).localeCompare(String(right.id));
+    });
+}
+
 function publicSiteSettings(db) {
   const settings = db.siteSettings || {};
   return {
@@ -283,6 +300,20 @@ export function createPublicSiteRouter({
   router.get("/public/home", asyncRoute(async (_req, res) => {
     const db = await store.readDb();
     res.json(homePayload(db, asDate(clock)));
+  }));
+
+  router.get("/public/events", asyncRoute(async (req, res) => {
+    const db = await store.readDb();
+    const now = asDate(clock);
+    const page = positiveInteger(req.query.page, 1, "页码");
+    const pageSize = positiveInteger(req.query.pageSize, 6, "每页数量", 50);
+    const events = historicalEvents(db, now);
+    const total = events.length;
+    const offset = (page - 1) * pageSize;
+    res.json({
+      rows: events.slice(offset, offset + pageSize).map((event) => eventSummary(db, event, now)),
+      pagination: { page, pageSize, total, totalPages: Math.ceil(total / pageSize) }
+    });
   }));
 
   router.get("/public/events/:slug", asyncRoute(async (req, res) => {

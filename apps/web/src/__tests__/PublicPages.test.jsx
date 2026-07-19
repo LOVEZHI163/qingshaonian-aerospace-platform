@@ -207,6 +207,21 @@ describe("public event page", () => {
     expect(document.body.innerHTML).not.toContain("eventId=undefined");
     expect(document.body.innerHTML).not.toContain("eventId=null");
   });
+
+  it("never creates deep links from an invalid event id", async () => {
+    installApi({
+      "/api/public/events/wenzhou-2026": {
+        event: event({ id: "<script>", registrationWindow: { open: true, reason: "报名开放中" } }),
+        projects: [], groups: [], resources: [], content: []
+      }
+    });
+
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "2026温州市青少年航空航天创新比赛" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "立即报名" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "查询成绩" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "查询证书" })).not.toBeInTheDocument();
+  });
 });
 
 describe("public content lists", () => {
@@ -485,15 +500,14 @@ describe("public content lists", () => {
   it("merges public archived-event summaries with recap rows without linking a hidden relation", async () => {
     window.history.replaceState({}, "", "/history");
     installApi({
+      "/api/public/events?page=1&pageSize=6": page([
+        event({ id: "OLD", slug: "old-event", name: "2025航空航天创新赛", status: "archived", registrationWindow: { open: false, reason: "赛事已归档" } })
+      ]),
       "/api/public/content?type=recap&page=1&pageSize=10": page([
         content("R1", "recap", { eventId: null, eventSlug: null }),
         content("R2", "recap", { eventId: "OLD", eventSlug: "old-event" })
       ])
-    }, home({
-      mode: "history",
-      featuredEvent: event({ id: "OLD", slug: "old-event", name: "2025航空航天创新赛", status: "archived", registrationWindow: { open: false, reason: "赛事已归档" } }),
-      concurrentEvents: []
-    }));
+    }, home());
 
     render(<App />);
     expect(await screen.findByRole("link", { name: "2025航空航天创新赛" })).toHaveAttribute("href", "/events/old-event");
@@ -501,9 +515,54 @@ describe("public content lists", () => {
     expect(document.querySelector('a[href="/events/null"]')).toBeNull();
   });
 
+  it("loads a paginated public history event list even while another event is active", async () => {
+    window.history.replaceState({}, "", "/history");
+    const request = installApi({
+      "/api/public/events?page=1&pageSize=6": page([
+        event({ id: "OLD", slug: "old-event", name: "2025航空航天创新赛", status: "archived", registrationWindow: { open: false, reason: "赛事已归档" } })
+      ]),
+      "/api/public/content?type=recap&page=1&pageSize=10": page([])
+    }, home({
+      mode: "active",
+      featuredEvent: event({ id: "ACTIVE", slug: "active-event", name: "当前赛事" })
+    }));
+
+    render(<App />);
+    expect(await screen.findByRole("link", { name: "2025航空航天创新赛" })).toHaveAttribute("href", "/events/old-event");
+    expect(request).toHaveBeenCalledWith(
+      "/api/public/events?page=1&pageSize=6",
+      expect.objectContaining({ signal: expect.any(AbortSignal) })
+    );
+  });
+
+  it("paginates historical events without changing the recap page", async () => {
+    window.history.replaceState({}, "", "/history?eventsPage=1&page=1");
+    const request = installApi({
+      "/api/public/events?page=1&pageSize=6": page([event({ id: "OLD-1", slug: "old-1", name: "2025赛事" })], {
+        pagination: { page: 1, pageSize: 6, total: 7, totalPages: 2 }
+      }),
+      "/api/public/events?page=2&pageSize=6": page([event({ id: "OLD-2", slug: "old-2", name: "2024赛事" })], {
+        pagination: { page: 2, pageSize: 6, total: 7, totalPages: 2 }
+      }),
+      "/api/public/content?type=recap&page=1&pageSize=10": page([])
+    });
+
+    render(<App />);
+    expect(await screen.findByText("2025赛事")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "下一页历史赛事" }));
+    expect(await screen.findByText("2024赛事")).toBeInTheDocument();
+    expect(window.location.search).toContain("eventsPage=2");
+    expect(window.location.search).toContain("page=1");
+    expect(request).toHaveBeenCalledWith(
+      "/api/public/events?page=2&pageSize=6",
+      expect.objectContaining({ signal: expect.any(AbortSignal) })
+    );
+  });
+
   it("paginates recap rows without losing the history route", async () => {
     window.history.replaceState({}, "", "/history?event=E1&page=1");
     const request = installApi({
+      "/api/public/events?page=1&pageSize=6": page([]),
       "/api/public/content?type=recap&page=1&pageSize=10&event=E1": page([content("R1", "recap")], {
         pagination: { page: 1, pageSize: 10, total: 11, totalPages: 2 }
       }),
