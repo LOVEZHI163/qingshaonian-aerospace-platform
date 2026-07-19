@@ -29,6 +29,21 @@ const REGISTRATION_END_AT = "2026-11-01T15:59:59.000Z";
 export const APPROVED_GROUP_NAMES = ["小学低段", "小学高段", "中学组", "职高/高中组"];
 export const REGISTRATION_MODES = ["automatic", "force_open", "force_closed"];
 
+export const DEFAULT_SITE_SETTINGS = {
+  id: "default",
+  platformName: "温州市青少年航空航天创新比赛",
+  featuredEventId: null,
+  platformIntro: "",
+  organizers: [],
+  contact: "",
+  icp: "",
+  seoTitle: "温州市青少年航空航天创新比赛",
+  seoDescription: "",
+  defaultHeroMediaId: null,
+  shareMediaId: null,
+  version: 1
+};
+
 Object.assign(EVENT, {
   dateLabel: EVENT.date,
   registrationStartAt: REGISTRATION_START_AT,
@@ -129,7 +144,12 @@ Object.assign(seedDb, {
   projects: PROJECTS,
   projectGroups: PROJECT_GROUPS,
   organizationDocuments: [],
-  fileCleanupJournal: []
+  fileCleanupJournal: [],
+  siteSettings: structuredClone(DEFAULT_SITE_SETTINGS),
+  eventPublicProfiles: [],
+  contentPosts: [],
+  mediaAssets: [],
+  contentAttachments: []
 });
 for (const organization of seedDb.organizations) {
   Object.assign(organization, {
@@ -145,6 +165,14 @@ for (const organization of seedDb.organizations) {
 for (const row of seedDb.registrations) row.eventId = EVENT.id;
 
 export function ensureDbShape(db) {
+  db.siteSettings ||= {};
+  for (const [key, value] of Object.entries(DEFAULT_SITE_SETTINGS)) {
+    if (!Object.hasOwn(db.siteSettings, key)) db.siteSettings[key] = structuredClone(value);
+  }
+  db.eventPublicProfiles ||= [];
+  db.contentPosts ||= [];
+  db.mediaAssets ||= [];
+  db.contentAttachments ||= [];
   db.users ||= [];
   for (const user of db.users) {
     user.sessionVersion ??= 0;

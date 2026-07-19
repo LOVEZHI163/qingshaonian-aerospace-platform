@@ -5,7 +5,30 @@ import path from "node:path";
 import test from "node:test";
 
 import { createDataStore } from "../src/data/index.js";
-import { seedDb } from "../src/data/seed.js";
+import { ensureDbShape, seedDb } from "../src/data/seed.js";
+
+test("website data shape fills missing public site collections and default settings", () => {
+  const db = ensureDbShape({});
+
+  assert.deepEqual(db.siteSettings, {
+    id: "default",
+    platformName: "温州市青少年航空航天创新比赛",
+    featuredEventId: null,
+    platformIntro: "",
+    organizers: [],
+    contact: "",
+    icp: "",
+    seoTitle: "温州市青少年航空航天创新比赛",
+    seoDescription: "",
+    defaultHeroMediaId: null,
+    shareMediaId: null,
+    version: 1
+  });
+  assert.deepEqual(db.eventPublicProfiles, []);
+  assert.deepEqual(db.contentPosts, []);
+  assert.deepEqual(db.mediaAssets, []);
+  assert.deepEqual(db.contentAttachments, []);
+});
 
 test("data store selects file persistence and keeps mutations", async () => {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "aerogp-store-"));

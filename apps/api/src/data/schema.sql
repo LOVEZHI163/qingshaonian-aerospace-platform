@@ -209,3 +209,76 @@ CREATE INDEX IF NOT EXISTS registrations_user_id_idx ON registrations(user_id);
 CREATE INDEX IF NOT EXISTS registrations_organization_id_idx ON registrations(organization_id);
 CREATE INDEX IF NOT EXISTS memberships_organization_id_idx ON memberships(organization_id);
 CREATE INDEX IF NOT EXISTS certificates_user_id_idx ON certificates(user_id);
+
+CREATE TABLE IF NOT EXISTS site_settings (
+  id TEXT PRIMARY KEY CHECK (id = 'default'),
+  platform_name TEXT NOT NULL,
+  featured_event_id TEXT REFERENCES events(id) ON DELETE SET NULL,
+  platform_intro TEXT NOT NULL DEFAULT '',
+  organizers JSONB NOT NULL DEFAULT '[]'::jsonb,
+  contact TEXT NOT NULL DEFAULT '',
+  icp TEXT NOT NULL DEFAULT '',
+  seo_title TEXT NOT NULL,
+  seo_description TEXT NOT NULL DEFAULT '',
+  default_hero_media_id TEXT,
+  share_media_id TEXT,
+  version INTEGER NOT NULL DEFAULT 1,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS event_public_profiles (
+  event_id TEXT PRIMARY KEY REFERENCES events(id) ON DELETE CASCADE,
+  slug TEXT NOT NULL UNIQUE,
+  slogan TEXT NOT NULL DEFAULT '',
+  summary TEXT NOT NULL DEFAULT '',
+  is_visible BOOLEAN NOT NULL DEFAULT FALSE,
+  display_order INTEGER NOT NULL DEFAULT 0,
+  hero_media_id TEXT,
+  version INTEGER NOT NULL DEFAULT 1,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS content_posts (
+  id TEXT PRIMARY KEY,
+  slug TEXT NOT NULL UNIQUE,
+  event_id TEXT REFERENCES events(id) ON DELETE SET NULL,
+  type TEXT NOT NULL CHECK (type IN ('announcement','news','work','recap','guide')),
+  title TEXT NOT NULL,
+  summary TEXT NOT NULL DEFAULT '',
+  body_html TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL CHECK (status IN ('draft','scheduled','published','offline')),
+  publish_at TIMESTAMPTZ,
+  pinned BOOLEAN NOT NULL DEFAULT FALSE,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  cover_media_id TEXT,
+  version INTEGER NOT NULL DEFAULT 1,
+  created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS media_assets (
+  id TEXT PRIMARY KEY,
+  event_id TEXT REFERENCES events(id) ON DELETE SET NULL,
+  purpose TEXT NOT NULL,
+  visibility TEXT NOT NULL CHECK (visibility IN ('draft','public')),
+  original_name TEXT NOT NULL,
+  stored_name TEXT NOT NULL,
+  file_path TEXT NOT NULL,
+  mime_type TEXT NOT NULL,
+  size_bytes BIGINT NOT NULL,
+  width INTEGER,
+  height INTEGER,
+  variants JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL,
+  cleaned_at TIMESTAMPTZ
+);
+
+CREATE TABLE IF NOT EXISTS content_attachments (
+  content_id TEXT NOT NULL REFERENCES content_posts(id) ON DELETE CASCADE,
+  media_id TEXT NOT NULL REFERENCES media_assets(id),
+  label TEXT NOT NULL DEFAULT '',
+  display_order INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (content_id, media_id)
+);

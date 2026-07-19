@@ -74,6 +74,15 @@ async function runMigrations(pool) {
       if (applied.rowCount > 0) continue;
 
       let migration = await fs.readFile(new URL(name, migrationsUrl), "utf8");
+      for (const tableName of ["site_settings", "event_public_profiles", "content_posts", "media_assets", "content_attachments"]) {
+        const existing = await client.query(`
+          SELECT 1 FROM information_schema.tables
+          WHERE table_schema = 'public' AND table_name = $1
+        `, [tableName]);
+        if (existing.rowCount > 0) {
+          migration = migration.replace(new RegExp(`CREATE TABLE IF NOT EXISTS ${tableName} \\([\\s\\S]*?\\);\\s*`), "");
+        }
+      }
       const projectGroups = await client.query(`
         SELECT 1 FROM information_schema.tables
         WHERE table_schema = 'public' AND table_name = 'project_groups'
@@ -309,11 +318,15 @@ export function createPostgresStore(pool) {
       }
 
       const count = await pool.query("SELECT COUNT(*)::integer AS count FROM users");
-      if (count.rows[0].count === 0) await store.writeDb(structuredClone(seedDb));
+      if (count.rows[0].count === 0) {
+        const initialDb = structuredClone(seedDb);
+        initialDb.siteSettings = (await store.readDb()).siteSettings;
+        await store.writeDb(initialDb);
+      }
     },
     async readDb() {
       const executor = activeContext()?.client || pool;
-      const [events, projects, projectGroups, users, organizations, memberships, registrations, certificates, certificateImportBatches, certificateImportErrors, organizationDocuments, fileCleanupJournal, auditLogs] = await Promise.all([
+      const [events, projects, projectGroups, users, organizations, memberships, registrations, certificates, certificateImportBatches, certificateImportErrors, organizationDocuments, fileCleanupJournal, auditLogs, siteSettings, eventPublicProfiles, contentPosts, mediaAssets, contentAttachments] = await Promise.all([
         executor.query("SELECT * FROM events ORDER BY created_at, id"),
         executor.query("SELECT * FROM projects ORDER BY display_order, id"),
         executor.query("SELECT * FROM project_groups ORDER BY project_id, group_name"),
@@ -331,7 +344,12 @@ export function createPostgresStore(pool) {
         executor.query("SELECT * FROM certificate_import_errors ORDER BY batch_id, row_number, id"),
         executor.query("SELECT * FROM organization_documents ORDER BY uploaded_at DESC, id"),
         executor.query("SELECT * FROM file_cleanup_journal ORDER BY created_at, id"),
-        executor.query("SELECT * FROM audit_logs ORDER BY created_at DESC, id DESC")
+        executor.query("SELECT * FROM audit_logs ORDER BY created_at DESC, id DESC"),
+        executor.query("SELECT * FROM site_settings WHERE id = 'default'"),
+        executor.query("SELECT * FROM event_public_profiles ORDER BY display_order, event_id"),
+        executor.query("SELECT * FROM content_posts ORDER BY sort_order, created_at, id"),
+        executor.query("SELECT * FROM media_assets ORDER BY created_at, id"),
+        executor.query("SELECT * FROM content_attachments ORDER BY content_id, display_order, media_id")
       ]);
 
       const groupsByProject = projectGroups.rows.reduce((groups, row) => {
@@ -498,6 +516,72 @@ export function createPostgresStore(pool) {
           targetId: row.target_id,
           summary: row.summary,
           createdAt: iso(row.created_at)
+        })),
+        siteSettings: siteSettings.rows[0] && {
+          id: siteSettings.rows[0].id,
+          platformName: siteSettings.rows[0].platform_name,
+          featuredEventId: siteSettings.rows[0].featured_event_id,
+          platformIntro: siteSettings.rows[0].platform_intro,
+          organizers: siteSettings.rows[0].organizers || [],
+          contact: siteSettings.rows[0].contact,
+          icp: siteSettings.rows[0].icp,
+          seoTitle: siteSettings.rows[0].seo_title,
+          seoDescription: siteSettings.rows[0].seo_description,
+          defaultHeroMediaId: siteSettings.rows[0].default_hero_media_id,
+          shareMediaId: siteSettings.rows[0].share_media_id,
+          version: siteSettings.rows[0].version
+        },
+        eventPublicProfiles: eventPublicProfiles.rows.map((row) => ({
+          eventId: row.event_id,
+          slug: row.slug,
+          slogan: row.slogan,
+          summary: row.summary,
+          isVisible: row.is_visible,
+          displayOrder: row.display_order,
+          heroMediaId: row.hero_media_id,
+          version: row.version,
+          updatedAt: iso(row.updated_at)
+        })),
+        contentPosts: contentPosts.rows.map((row) => ({
+          id: row.id,
+          slug: row.slug,
+          eventId: row.event_id,
+          type: row.type,
+          title: row.title,
+          summary: row.summary,
+          bodyHtml: row.body_html,
+          status: row.status,
+          publishAt: row.publish_at ? iso(row.publish_at) : null,
+          pinned: row.pinned,
+          sortOrder: row.sort_order,
+          coverMediaId: row.cover_media_id,
+          version: row.version,
+          createdBy: row.created_by,
+          createdAt: iso(row.created_at),
+          updatedAt: iso(row.updated_at)
+        })),
+        mediaAssets: mediaAssets.rows.map((row) => ({
+          id: row.id,
+          eventId: row.event_id,
+          purpose: row.purpose,
+          visibility: row.visibility,
+          originalName: row.original_name,
+          storedName: row.stored_name,
+          filePath: row.file_path,
+          mimeType: row.mime_type,
+          sizeBytes: Number(row.size_bytes),
+          width: row.width,
+          height: row.height,
+          variants: row.variants || {},
+          createdBy: row.created_by,
+          createdAt: iso(row.created_at),
+          cleanedAt: row.cleaned_at ? iso(row.cleaned_at) : null
+        })),
+        contentAttachments: contentAttachments.rows.map((row) => ({
+          contentId: row.content_id,
+          mediaId: row.media_id,
+          label: row.label,
+          displayOrder: row.display_order
         }))
       });
     },
@@ -786,6 +870,177 @@ export function createPostgresStore(pool) {
           );
         }
 
+        for (const row of db.mediaAssets) {
+          await client.query(
+            `INSERT INTO media_assets
+              (id, event_id, purpose, visibility, original_name, stored_name, file_path, mime_type,
+               size_bytes, width, height, variants, created_by, created_at, cleaned_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13, $14, $15)
+             ON CONFLICT (id) DO UPDATE SET
+               event_id = EXCLUDED.event_id,
+               purpose = EXCLUDED.purpose,
+               visibility = EXCLUDED.visibility,
+               original_name = EXCLUDED.original_name,
+               stored_name = EXCLUDED.stored_name,
+               file_path = EXCLUDED.file_path,
+               mime_type = EXCLUDED.mime_type,
+               size_bytes = EXCLUDED.size_bytes,
+               width = EXCLUDED.width,
+               height = EXCLUDED.height,
+               variants = EXCLUDED.variants,
+               created_by = EXCLUDED.created_by,
+               created_at = EXCLUDED.created_at,
+               cleaned_at = EXCLUDED.cleaned_at`,
+            [
+              row.id, row.eventId || null, row.purpose, row.visibility, row.originalName, row.storedName,
+              row.filePath, row.mimeType, row.sizeBytes, row.width ?? null, row.height ?? null,
+              JSON.stringify(row.variants || {}), row.createdBy || null, row.createdAt, row.cleanedAt || null
+            ]
+          );
+        }
+
+        for (const row of db.eventPublicProfiles) {
+          const currentProfile = await client.query(
+            "SELECT version FROM event_public_profiles WHERE event_id = $1",
+            [row.eventId]
+          );
+          if (currentProfile.rowCount > 0 && currentProfile.rows[0].version !== row.version) {
+            throw new Error("event_public_profiles version conflict");
+          }
+          const profileResult = await client.query(
+            `INSERT INTO event_public_profiles
+              (event_id, slug, slogan, summary, is_visible, display_order, hero_media_id, version, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+             ON CONFLICT (event_id) DO UPDATE SET
+               slug = EXCLUDED.slug,
+               slogan = EXCLUDED.slogan,
+               summary = EXCLUDED.summary,
+               is_visible = EXCLUDED.is_visible,
+               display_order = EXCLUDED.display_order,
+               hero_media_id = EXCLUDED.hero_media_id,
+               version = EXCLUDED.version,
+               updated_at = EXCLUDED.updated_at
+             WHERE event_public_profiles.version = EXCLUDED.version - 1
+             RETURNING event_id`,
+            [
+              row.eventId, row.slug, row.slogan || "", row.summary || "", row.isVisible,
+              row.displayOrder, row.heroMediaId || null,
+              currentProfile.rowCount > 0 ? row.version + 1 : row.version, row.updatedAt
+            ]
+          );
+          if (profileResult.rowCount === 0) throw new Error("event_public_profiles version conflict");
+        }
+
+        for (const row of db.contentPosts) {
+          const currentPost = await client.query(
+            "SELECT version FROM content_posts WHERE id = $1",
+            [row.id]
+          );
+          if (currentPost.rowCount > 0 && currentPost.rows[0].version !== row.version) {
+            throw new Error("content_posts version conflict");
+          }
+          const postResult = await client.query(
+            `INSERT INTO content_posts
+              (id, slug, event_id, type, title, summary, body_html, status, publish_at, pinned, sort_order,
+               cover_media_id, version, created_by, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+             ON CONFLICT (id) DO UPDATE SET
+               slug = EXCLUDED.slug,
+               event_id = EXCLUDED.event_id,
+               type = EXCLUDED.type,
+               title = EXCLUDED.title,
+               summary = EXCLUDED.summary,
+               body_html = EXCLUDED.body_html,
+               status = EXCLUDED.status,
+               publish_at = EXCLUDED.publish_at,
+               pinned = EXCLUDED.pinned,
+               sort_order = EXCLUDED.sort_order,
+               cover_media_id = EXCLUDED.cover_media_id,
+               version = EXCLUDED.version,
+               created_by = EXCLUDED.created_by,
+               created_at = EXCLUDED.created_at,
+               updated_at = EXCLUDED.updated_at
+             WHERE content_posts.version = EXCLUDED.version - 1
+             RETURNING id`,
+            [
+              row.id, row.slug, row.eventId || null, row.type, row.title, row.summary || "", row.bodyHtml || "",
+              row.status, row.publishAt || null, row.pinned, row.sortOrder, row.coverMediaId || null,
+              currentPost.rowCount > 0 ? row.version + 1 : row.version,
+              row.createdBy || null, row.createdAt, row.updatedAt
+            ]
+          );
+          if (postResult.rowCount === 0) throw new Error("content_posts version conflict");
+        }
+
+        const currentSiteSettings = await client.query(
+          "SELECT * FROM site_settings WHERE id = $1",
+          [db.siteSettings.id]
+        );
+        if (currentSiteSettings.rowCount > 0 && currentSiteSettings.rows[0].version !== db.siteSettings.version) {
+          throw new Error("site_settings version conflict");
+        }
+        const currentSettings = currentSiteSettings.rows[0];
+        const siteSettingsChanged = Boolean(currentSettings) && (
+          currentSettings.platform_name !== db.siteSettings.platformName
+          || currentSettings.featured_event_id !== (db.siteSettings.featuredEventId || null)
+          || currentSettings.platform_intro !== (db.siteSettings.platformIntro || "")
+          || JSON.stringify(currentSettings.organizers || []) !== JSON.stringify(db.siteSettings.organizers || [])
+          || currentSettings.contact !== (db.siteSettings.contact || "")
+          || currentSettings.icp !== (db.siteSettings.icp || "")
+          || currentSettings.seo_title !== db.siteSettings.seoTitle
+          || currentSettings.seo_description !== (db.siteSettings.seoDescription || "")
+          || currentSettings.default_hero_media_id !== (db.siteSettings.defaultHeroMediaId || null)
+          || currentSettings.share_media_id !== (db.siteSettings.shareMediaId || null)
+        );
+        const siteSettingsResult = await client.query(
+          `INSERT INTO site_settings
+            (id, platform_name, featured_event_id, platform_intro, organizers, contact, icp, seo_title,
+             seo_description, default_hero_media_id, share_media_id, version)
+           VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9, $10, $11, $12)
+           ON CONFLICT (id) DO UPDATE SET
+             platform_name = EXCLUDED.platform_name,
+             featured_event_id = EXCLUDED.featured_event_id,
+             platform_intro = EXCLUDED.platform_intro,
+             organizers = EXCLUDED.organizers,
+             contact = EXCLUDED.contact,
+             icp = EXCLUDED.icp,
+             seo_title = EXCLUDED.seo_title,
+             seo_description = EXCLUDED.seo_description,
+             default_hero_media_id = EXCLUDED.default_hero_media_id,
+             share_media_id = EXCLUDED.share_media_id,
+             version = EXCLUDED.version,
+             updated_at = NOW()
+           WHERE site_settings.version = EXCLUDED.version
+              OR site_settings.version = EXCLUDED.version - 1
+           RETURNING id`,
+          [
+            db.siteSettings.id, db.siteSettings.platformName, db.siteSettings.featuredEventId || null,
+            db.siteSettings.platformIntro || "", JSON.stringify(db.siteSettings.organizers || []),
+            db.siteSettings.contact || "", db.siteSettings.icp || "", db.siteSettings.seoTitle,
+            db.siteSettings.seoDescription || "", db.siteSettings.defaultHeroMediaId || null,
+            db.siteSettings.shareMediaId || null,
+            currentSiteSettings.rowCount > 0 && siteSettingsChanged
+              ? db.siteSettings.version + 1
+              : db.siteSettings.version
+          ]
+        );
+        if (siteSettingsResult.rowCount === 0) throw new Error("site_settings version conflict");
+
+        for (const row of db.contentAttachments) {
+          await client.query(
+            `INSERT INTO content_attachments (content_id, media_id, label, display_order)
+             VALUES ($1, $2, $3, $4)
+             ON CONFLICT (content_id, media_id) DO UPDATE SET
+               label = EXCLUDED.label,
+               display_order = EXCLUDED.display_order`,
+            [row.contentId, row.mediaId, row.label || "", row.displayOrder]
+          );
+        }
+
+        await deleteMissing(client, "content_attachments", "content_id || ':' || media_id", db.contentAttachments.map((row) => `${row.contentId}:${row.mediaId}`));
+        await deleteMissing(client, "content_posts", "id", db.contentPosts.map((row) => row.id));
+        await deleteMissing(client, "media_assets", "id", db.mediaAssets.map((row) => row.id));
+        await deleteMissing(client, "event_public_profiles", "event_id", db.eventPublicProfiles.map((row) => row.eventId));
         await deleteMissing(client, "organization_documents", "id", db.organizationDocuments.map((row) => row.id));
         await deleteMissing(client, "file_cleanup_journal", "id", (db.fileCleanupJournal || []).map((row) => row.id));
         await deleteMissing(client, "certificate_import_errors", "id", db.certificateImportErrors.map((row) => row.id));

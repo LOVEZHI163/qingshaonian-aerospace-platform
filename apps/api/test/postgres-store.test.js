@@ -49,6 +49,192 @@ test("PostgreSQL store creates normalized tables and seeds an empty database", a
   });
 });
 
+test("public site schema creates constrained tables, indexes, and one default settings row", async () => {
+  await withStore(async (store, pool) => {
+    const tableRows = await pool.query(`
+      SELECT table_name
+      FROM information_schema.tables
+      WHERE table_schema = 'public'
+    `);
+    const tables = new Set(tableRows.rows.map((row) => row.table_name));
+    for (const name of ["site_settings", "event_public_profiles", "content_posts", "media_assets", "content_attachments"]) {
+      assert.equal(tables.has(name), true, `missing table ${name}`);
+    }
+
+    for (const statement of [
+      "CREATE INDEX content_posts_status_publish_at_idx ON content_posts(status, publish_at)",
+      "CREATE INDEX content_posts_event_id_type_idx ON content_posts(event_id, type)",
+      "CREATE INDEX event_public_profiles_is_visible_display_order_idx ON event_public_profiles(is_visible, display_order)"
+    ]) {
+      await assert.rejects(pool.query(statement), /already exists/i);
+    }
+
+    const data = await store.readDb();
+    assert.equal(data.siteSettings.id, "default");
+    assert.equal(data.siteSettings.version, 1);
+    assert.equal(data.eventPublicProfiles.length, 0);
+    assert.equal(data.contentPosts.length, 0);
+    assert.equal(data.mediaAssets.length, 0);
+    assert.equal(data.contentAttachments.length, 0);
+
+    await store.initialize();
+    assert.equal((await store.readDb()).siteSettings.version, 1);
+
+    await assert.rejects(pool.query(`
+      INSERT INTO site_settings (id, platform_name, seo_title)
+      VALUES ('not-default', 'test', 'test')
+    `));
+    await pool.query(`
+      INSERT INTO event_public_profiles (event_id, slug)
+      VALUES ('wz-aerospace-2026', 'public-event')
+    `);
+    await pool.query(`
+      INSERT INTO events
+        (id, name, theme, date_label, venue, registration_deadline, contact,
+         registration_start_at, registration_end_at, registration_mode, status, is_current)
+      VALUES
+        ('event-public-unique', '测试赛事', '测试', '2027', '测试场馆', '2027-01-01', '测试',
+         '2026-12-01T00:00:00.000Z', '2027-01-01T00:00:00.000Z', 'automatic', 'published', FALSE)
+    `);
+    await assert.rejects(pool.query(`
+      INSERT INTO event_public_profiles (event_id, slug)
+      VALUES ('event-public-unique', 'public-event')
+    `));
+  });
+});
+
+test("PostgreSQL public site data maps snapshots with versioned content and media attachments", async () => {
+  await withStore(async (store) => {
+    const data = await store.readDb();
+    data.siteSettings = { ...data.siteSettings, platformIntro: "公开赛事平台" };
+    data.mediaAssets.push({
+      id: "MEDIA-1",
+      eventId: "wz-aerospace-2026",
+      purpose: "cover",
+      visibility: "public",
+      originalName: "cover.png",
+      storedName: "cover-1.png",
+      filePath: "/uploads/cover-1.png",
+      mimeType: "image/png",
+      sizeBytes: 128,
+      width: 640,
+      height: 480,
+      variants: { thumbnail: "/uploads/cover-thumb.png" },
+      createdBy: "U9001",
+      createdAt: "2026-07-19T00:00:00.000Z",
+      cleanedAt: null
+    });
+    data.eventPublicProfiles.push({
+      eventId: "wz-aerospace-2026",
+      slug: "wz-2026",
+      slogan: "飞向未来",
+      summary: "赛事公开资料",
+      isVisible: true,
+      displayOrder: 1,
+      heroMediaId: "MEDIA-1",
+      version: 3,
+      updatedAt: "2026-07-19T00:00:00.000Z"
+    });
+    data.contentPosts.push({
+      id: "POST-1",
+      slug: "welcome",
+      eventId: "wz-aerospace-2026",
+      type: "announcement",
+      title: "欢迎",
+      summary: "赛事公告",
+      bodyHtml: "<p>欢迎</p>",
+      status: "published",
+      publishAt: "2026-07-19T01:00:00.000Z",
+      pinned: true,
+      sortOrder: 1,
+      coverMediaId: "MEDIA-1",
+      version: 4,
+      createdBy: "U9001",
+      createdAt: "2026-07-19T00:00:00.000Z",
+      updatedAt: "2026-07-19T00:00:00.000Z"
+    });
+    data.contentAttachments.push({ contentId: "POST-1", mediaId: "MEDIA-1", label: "封面", displayOrder: 0 });
+
+    await store.writeDb(data);
+    const persisted = await store.readDb();
+
+    assert.equal(persisted.siteSettings.platformIntro, "公开赛事平台");
+    assert.equal(persisted.siteSettings.version, data.siteSettings.version + 1);
+    assert.deepEqual(persisted.eventPublicProfiles, [data.eventPublicProfiles[0]]);
+    assert.deepEqual(persisted.contentPosts, [data.contentPosts[0]]);
+    assert.deepEqual(persisted.mediaAssets, [data.mediaAssets[0]]);
+    assert.deepEqual(persisted.contentAttachments, [data.contentAttachments[0]]);
+  });
+});
+
+test("PostgreSQL public site settings reject stale versioned snapshots", async () => {
+  await withStore(async (store) => {
+    const stale = await store.readDb();
+    const next = structuredClone(stale);
+    next.siteSettings.platformIntro = "最新设置";
+
+    await store.writeDb(next);
+    await assert.rejects(store.writeDb(stale), /site_settings version conflict/i);
+  });
+});
+
+test("PostgreSQL public event profiles reject stale versioned snapshots", async () => {
+  await withStore(async (store) => {
+    const initial = await store.readDb();
+    initial.eventPublicProfiles.push({
+      eventId: "wz-aerospace-2026",
+      slug: "profile-versioning",
+      slogan: "初始标语",
+      summary: "",
+      isVisible: false,
+      displayOrder: 0,
+      heroMediaId: null,
+      version: 1,
+      updatedAt: "2026-07-19T00:00:00.000Z"
+    });
+    await store.writeDb(initial);
+
+    const stale = await store.readDb();
+    const next = structuredClone(stale);
+    next.eventPublicProfiles[0].slogan = "最新标语";
+    await store.writeDb(next);
+
+    await assert.rejects(store.writeDb(stale), /event_public_profiles version conflict/i);
+  });
+});
+
+test("PostgreSQL content posts reject stale versioned snapshots", async () => {
+  await withStore(async (store) => {
+    const initial = await store.readDb();
+    initial.contentPosts.push({
+      id: "POST-VERSIONING",
+      slug: "post-versioning",
+      eventId: "wz-aerospace-2026",
+      type: "news",
+      title: "初始标题",
+      summary: "",
+      bodyHtml: "",
+      status: "draft",
+      publishAt: null,
+      pinned: false,
+      sortOrder: 0,
+      coverMediaId: null,
+      version: 1,
+      createdBy: "U9001",
+      createdAt: "2026-07-19T00:00:00.000Z",
+      updatedAt: "2026-07-19T00:00:00.000Z"
+    });
+    await store.writeDb(initial);
+
+    const stale = await store.readDb();
+    const next = structuredClone(stale);
+    next.contentPosts[0].title = "最新标题";
+    await store.writeDb(next);
+
+    await assert.rejects(store.writeDb(stale), /content_posts version conflict/i);
+  });
+});
+
 test("PostgreSQL store persists mutations, results, and deletions", async () => {
   await withStore(async (store) => {
     const data = await store.readDb();
