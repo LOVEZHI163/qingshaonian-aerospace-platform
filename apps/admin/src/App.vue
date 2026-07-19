@@ -24,6 +24,12 @@ const currentView = ref("login");
 const message = ref("");
 const certificateRegistrationId = ref("");
 const certificateEventId = ref("");
+const DEEP_LINK_VIEWS = new Set(["overview", "events", "organizations", "registration", "registrationRecords", "certificates", "users", "organization"]);
+const SAFE_EVENT_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+const initialParams = new URLSearchParams(window.location.search);
+const initialView = DEEP_LINK_VIEWS.has(initialParams.get("view")) ? initialParams.get("view") : "";
+const initialEventId = initialView && SAFE_EVENT_ID.test(initialParams.get("eventId") || "") ? initialParams.get("eventId") : "";
+const registrationEventId = ref(initialEventId);
 const passwordChangeForm = reactive({ currentPassword: "", newPassword: "" });
 const roleText = { ordinary: "普通用户", organization: "组织用户", admin: "超级管理员" };
 
@@ -48,6 +54,16 @@ function defaultView(user = currentUser.value) {
   return "registration";
 }
 
+function targetView(user = currentUser.value) {
+  if (!user || !initialView) return defaultView(user);
+  const allowed = user.type === "admin"
+    ? new Set(["overview", "events", "organizations", "registration", "certificates", "users"])
+    : user.type === "organization"
+      ? new Set(["registration", "registrationRecords", "certificates", "organization"])
+      : new Set(["registration", "registrationRecords", "certificates"]);
+  return allowed.has(initialView) ? initialView : defaultView(user);
+}
+
 async function loadEvent() {
   eventData.value = await api("/api/public/event");
 }
@@ -56,7 +72,7 @@ async function login(credentials) {
   message.value = "";
   try {
     const user = await session.login(credentials);
-    currentView.value = user.mustChangePassword ? "password" : defaultView(user);
+    currentView.value = user.mustChangePassword ? "password" : targetView(user);
   } catch (error) {
     message.value = error.message;
   }
@@ -68,7 +84,7 @@ async function changePassword() {
     const payload = await api("/api/auth/change-password", { method: "POST", body: JSON.stringify(passwordChangeForm) });
     session.setUser(payload.user, session.organizations.value);
     Object.assign(passwordChangeForm, { currentPassword: "", newPassword: "" });
-    currentView.value = defaultView(payload.user);
+    currentView.value = targetView(payload.user);
     message.value = "密码修改成功";
   } catch (error) {
     message.value = error.message;
@@ -100,7 +116,7 @@ function handleError(error) {
 }
 
 watch(() => currentUser.value?.type, () => {
-  if (currentUser.value && !currentUser.value.mustChangePassword) currentView.value = defaultView();
+  if (currentUser.value && !currentUser.value.mustChangePassword) currentView.value = targetView();
 });
 
 watch(approvedOrganization, (organization) => {
@@ -115,7 +131,7 @@ onMounted(async () => {
     message.value = error.message;
   }
   await session.restore();
-  if (currentUser.value && !currentUser.value.mustChangePassword) currentView.value = defaultView();
+  if (currentUser.value && !currentUser.value.mustChangePassword) currentView.value = targetView();
 });
 </script>
 
@@ -156,7 +172,7 @@ onMounted(async () => {
     <main>
       <header class="topbar"><div><h2>{{ eventData.event.name || "赛事报名平台" }}</h2><p>{{ eventData.event.date }} · {{ eventData.event.venue }} · 报名截止 {{ eventData.event.registrationDeadline }}</p></div></header>
       <p v-if="message" class="message">{{ message }}</p>
-      <RegistrationPage v-if="currentView === 'registration'" :fallback-context="{ projects: eventData.projects }" @registered="message = '报名已提交，等待审核'" @error="handleError" />
+      <RegistrationPage v-if="currentView === 'registration'" :event-id="registrationEventId" :fallback-context="{ projects: eventData.projects }" @registered="message = '报名已提交，等待审核'" @error="handleError" />
       <RegistrationRecordsPage v-else-if="currentView === 'registrationRecords'" @error="handleError" />
       <MyCertificatesPage v-else-if="currentView === 'certificates'" @error="handleError" />
       <OrganizationConsolePage v-else-if="currentView === 'organization'" @error="handleError" />

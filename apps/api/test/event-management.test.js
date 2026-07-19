@@ -329,8 +329,18 @@ test("public event and registration APIs use the current database event in real 
     }, ordinary.cookie))).status, 422);
     await fetch(`${baseUrl}/api/admin/projects/rocket-duration`, jsonOptions("PATCH", { enabled: true }, admin.cookie));
 
-    const valid = await fetch(`${baseUrl}/api/registrations`, jsonOptions("POST", {
+    const mismatchedEvent = await fetch(`${baseUrl}/api/registrations`, jsonOptions("POST", {
       eventId: draftEvent.id,
+      projectName: "伪造项目名",
+      projectType: "team",
+      athlete: { name: "合法学生", school: "测试学校", grade: "二年级", phone: "13600003005" },
+      group: "小学低段",
+      projectId: "rocket-duration"
+    }, ordinary.cookie));
+    assert.equal(mismatchedEvent.status, 409);
+
+    const valid = await fetch(`${baseUrl}/api/registrations`, jsonOptions("POST", {
+      eventId: current.id,
       projectName: "伪造项目名",
       projectType: "team",
       athlete: { name: "合法学生", school: "测试学校", grade: "二年级", phone: "13600003005" },

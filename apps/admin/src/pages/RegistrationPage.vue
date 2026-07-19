@@ -4,11 +4,14 @@ import { computed, onMounted, reactive, ref, watch } from "vue";
 import SchoolCombobox from "../components/SchoolCombobox.vue";
 import { api } from "../lib/api.js";
 
-const props = defineProps({ fallbackContext: { type: Object, default: () => ({}) } });
+const props = defineProps({
+  eventId: { type: String, default: "" },
+  fallbackContext: { type: Object, default: () => ({}) }
+});
 const emit = defineEmits(["registered", "error"]);
 const context = ref({ organizations: [], projects: [], grades: [] });
 const loading = ref(true);
-const form = reactive({ organizationId: "", athlete: { name: "", school: "", grade: "", phone: "" }, projectId: "", instructor: "" });
+const form = reactive({ eventId: props.eventId, organizationId: "", athlete: { name: "", school: "", grade: "", phone: "" }, projectId: "", instructor: "" });
 const GRADE_GROUPS = [
   { id: "primary_lower", name: "小学低段", grades: ["一年级", "二年级", "三年级"] },
   { id: "primary_upper", name: "小学高段", grades: ["四年级", "五年级", "六年级"] },
@@ -24,7 +27,7 @@ watch(() => form.organizationId, applyOrganization);
 watch(eligibleProjects, (projects) => { if (!projects.some((project) => project.id === form.projectId)) form.projectId = projects[0]?.id || ""; });
 watch(() => [form.athlete.name, form.athlete.school, form.athlete.grade, form.athlete.phone, form.projectId], async () => {
   if (!form.athlete.name || !form.athlete.school || !form.athlete.grade || !form.athlete.phone || !form.projectId) return;
-  try { await api("/api/registrations/check", { method: "POST", body: JSON.stringify({ athlete: form.athlete, projectId: form.projectId, group: selectedGroup.value }) }); } catch { /* Submission remains the authoritative validation. */ }
+  try { await api("/api/registrations/check", { method: "POST", body: JSON.stringify({ eventId: form.eventId, athlete: form.athlete, projectId: form.projectId, group: selectedGroup.value }) }); } catch { /* Submission remains the authoritative validation. */ }
 });
 
 async function submit() {
@@ -38,11 +41,13 @@ async function submit() {
 
 onMounted(async () => {
   try {
-    const payload = await api("/api/me/registration-context");
+    const query = props.eventId ? `?eventId=${encodeURIComponent(props.eventId)}` : "";
+    const payload = await api(`/api/me/registration-context${query}`);
     const hasContext = Array.isArray(payload?.projects) && Array.isArray(payload?.grades);
     context.value = hasContext ? payload : {
       organizations: [], defaultOrganizationId: "", projects: props.fallbackContext.projects || [], grades: GRADE_GROUPS
     };
+    form.eventId = context.value.event?.id || props.eventId || "";
     form.organizationId = context.value.defaultOrganizationId || "";
     applyOrganization();
   } catch (error) { emit("error", error.message); } finally { loading.value = false; }
@@ -51,7 +56,7 @@ onMounted(async () => {
 
 <template>
   <section class="content-grid registration-page"><form class="panel form-panel" @submit.prevent="submit">
-    <div class="panel-title"><h3>报名端</h3><span v-if="selectedGroup">{{ selectedGroup }}</span></div>
+    <div class="panel-title"><h3>报名端<span v-if="context.event?.name"> · {{ context.event.name }}</span></h3><span v-if="selectedGroup">{{ selectedGroup }}</span></div>
     <p v-if="loading" class="hint">正在加载报名资料…</p>
     <template v-else>
       <label v-if="context.organizations.length > 1">关联组织<select v-model="form.organizationId"><option value="">不关联组织</option><option v-for="org in context.organizations" :key="org.id" :value="org.id">{{ org.name }}</option></select></label>

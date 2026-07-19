@@ -1,6 +1,6 @@
 import { GRADE_GROUPS, groupForGrade } from "../domain/grades.js";
 import { isRegistrationOpen } from "../domain/registration-window.js";
-import { businessError, currentPublishedEvent, projectForHistoricalRegistration } from "./events.js";
+import { businessError, projectForHistoricalRegistration, publishedRegistrationEvent, registrationContext } from "./events.js";
 
 function normalizeText(value) {
   return String(value || "").trim().replace(/\s+/g, "").toLowerCase();
@@ -36,9 +36,9 @@ export function activeMembershipOrganizations(db, userId) {
     .filter(Boolean);
 }
 
-export function registrationContextPayload(db, userId) {
+export function registrationContextPayload(db, userId, input = {}, clock = () => new Date()) {
   const organizations = activeMembershipOrganizations(db, userId);
-  const event = currentPublishedEvent(db);
+  const event = publishedRegistrationEvent(db, input.eventId, clock);
   const projects = db.projects
     .filter((project) => project.eventId === event.id && project.enabled)
     .sort((left, right) => left.displayOrder - right.displayOrder || left.id.localeCompare(right.id));
@@ -81,14 +81,6 @@ function validateOrganizationForUser(db, userId, organizationId) {
   return organization;
 }
 
-function validateProjectForCurrentEvent(db, event, projectId, group) {
-  const project = db.projects.find((row) => row.id === projectId);
-  if (!project || project.eventId !== event.id) throw businessError(422, "赛项不属于当前赛事");
-  if (!project.enabled) throw businessError(422, "赛项已停用");
-  if (!project.allowedGroups.includes(group)) throw businessError(422, "所选组别不能报名该赛项");
-  return project;
-}
-
 function validateProjectForRegistration(db, eventId, projectId, group) {
   const project = db.projects.find((row) => row.id === projectId);
   if (!project || project.eventId !== eventId) throw businessError(422, "赛项不属于报名赛事");
@@ -121,10 +113,7 @@ export function validateRegistration(input, existingRows, project, eventId, igno
   return { ok: errors.length === 0, errors, athleteKey: key, projectType, duplicateCount: sameAthleteRows.length };
 }
 
-export function prepareRegistrationCreate(db, input, userId) {
-  const event = currentPublishedEvent(db);
-  const window = isRegistrationOpen(event);
-  if (!window.open) throw businessError(409, window.reason, "REGISTRATION_CLOSED");
+export function prepareRegistrationCreate(db, input, userId, clock = () => new Date()) {
   const athlete = input?.athlete || {};
   requireText(athlete.name, "姓名");
   requireText(athlete.school, "学校");
@@ -133,21 +122,19 @@ export function prepareRegistrationCreate(db, input, userId) {
   const group = groupForGrade(athlete.grade);
   if (!group) throw businessError(422, "实际年级不合法");
   const projectId = requireText(input?.projectId, "赛项");
-  const project = validateProjectForCurrentEvent(db, event, projectId, group);
+  const { event, project } = registrationContext(db, { ...input, projectId, group }, clock);
   const organization = validateOrganizationForUser(db, userId, input?.organizationId);
   const validation = validateRegistration({ ...input, athlete, projectId }, db.registrations, project, event.id);
   if (!validation.ok) throw Object.assign(businessError(422, validation.errors[0]), { validation });
   return { event, project, athlete, group, organization, validation };
 }
 
-export function registrationDuplicateCheck(db, input) {
-  const event = currentPublishedEvent(db);
-  const window = isRegistrationOpen(event);
-  if (!window.open) throw businessError(409, window.reason, "REGISTRATION_CLOSED");
+export function registrationDuplicateCheck(db, input, clock = () => new Date()) {
   const athlete = input?.athlete || input || {};
   const group = groupForGrade(athlete.grade);
   if (!group) throw businessError(422, "实际年级不合法");
-  validateProjectForCurrentEvent(db, event, requireText(input?.projectId, "赛项"), group);
+  const projectId = requireText(input?.projectId, "赛项");
+  const { event } = registrationContext(db, { ...input, projectId, group }, clock);
   const key = athleteKey(athlete);
   const matches = db.registrations.filter((row) => row.eventId === event.id && row.athleteKey === key && row.status !== "cancelled");
   return {

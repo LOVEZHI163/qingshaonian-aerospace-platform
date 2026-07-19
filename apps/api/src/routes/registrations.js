@@ -29,7 +29,7 @@ export function createRegistrationsRouter({ store, requireUser, requireAdmin, re
 
   router.get("/me/registration-context", ...user, asyncRoute(async (req, res) => {
     const db = await store.readDb();
-    res.json(registrationContextPayload(db, req.user.id));
+    res.json(registrationContextPayload(db, req.user.id, req.query, clock));
   }));
 
   router.get("/admin/registrations", ...admin, asyncRoute(async (req, res) => {
@@ -78,12 +78,12 @@ export function createRegistrationsRouter({ store, requireUser, requireAdmin, re
 
   router.post("/registrations/check", ...user, asyncRoute(async (req, res) => {
     const db = await store.readDb();
-    res.json(registrationDuplicateCheck(db, req.body));
+    res.json(registrationDuplicateCheck(db, req.body, clock));
   }));
 
   router.post("/registrations", ...user, asyncRoute(async (req, res) => {
     const db = await store.readDb();
-    const prepared = prepareRegistrationCreate(db, req.body, req.user.id);
+    const prepared = prepareRegistrationCreate(db, req.body, req.user.id, clock);
     const row = {
       id: makeId("R"), eventId: prepared.event.id, source: "普通用户", userId: req.user.id,
       organizationId: prepared.organization?.id || null, organization: prepared.organization?.name || "",

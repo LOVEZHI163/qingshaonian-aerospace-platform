@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import fs from "node:fs/promises";
 import test from "node:test";
 
 import { withTestServer } from "../test-support/server.js";
@@ -9,7 +10,13 @@ async function json(response) {
 }
 
 async function withServer(fn) {
-  await withTestServer(({ baseUrl }) => fn(baseUrl), { prefix: "wz-registration-api-" });
+  await withTestServer(({ baseUrl, dbPath }) => fn(baseUrl, dbPath), { prefix: "wz-registration-api-" });
+}
+
+async function mutateDb(dbPath, mutate) {
+  const db = JSON.parse(await fs.readFile(dbPath, "utf8"));
+  mutate(db);
+  await fs.writeFile(dbPath, JSON.stringify(db, null, 2), "utf8");
 }
 
 async function openRegistration(baseUrl, cookie) {
@@ -24,6 +31,8 @@ async function openRegistration(baseUrl, cookie) {
 test("registration context defaults exactly one active organization and school search deduplicates approved sources", async () => {
   await withServer(async (baseUrl) => {
     const ordinary = await loginAs(baseUrl, "13800000001", "123456");
+    const admin = await loginAs(baseUrl, "13900000000", "admin123");
+    await openRegistration(baseUrl, admin.cookie);
     const contextResponse = await fetch(`${baseUrl}/api/me/registration-context`, withSession(ordinary.cookie));
     assert.equal(contextResponse.status, 200);
     const context = await json(contextResponse);
@@ -35,6 +44,110 @@ test("registration context defaults exactly one active organization and school s
     assert.equal(schoolsResponse.status, 200);
     const schools = await json(schoolsResponse);
     assert.deepEqual(schools.rows, ["温州市实验小学", "温州市第二实验中学"]);
+  });
+});
+
+test("event context requires an explicit selection when multiple published events accept registration", async () => {
+  await withServer(async (baseUrl, dbPath) => {
+    const ordinary = await loginAs(baseUrl, "13800000001", "123456");
+    await mutateDb(dbPath, (db) => {
+      db.events[0].registrationMode = "force_open";
+      db.eventPublicProfiles.push({ eventId: db.events[0].id, slug: "event-one", isVisible: true });
+      db.events.push({
+        ...structuredClone(db.events[0]),
+        id: "E2",
+        name: "第二场公开赛事",
+        isCurrent: false
+      });
+      db.projects.push({
+        ...structuredClone(db.projects[0]),
+        id: "P-E2",
+        eventId: "E2",
+        name: "第二场纸飞机"
+      });
+      db.eventPublicProfiles.push({ eventId: "E2", slug: "event-two", isVisible: true });
+    });
+
+    const ambiguous = await fetch(`${baseUrl}/api/me/registration-context`, withSession(ordinary.cookie));
+    assert.equal(ambiguous.status, 422);
+    assert.match((await json(ambiguous)).error, /选择赛事/);
+
+    const selected = await fetch(`${baseUrl}/api/me/registration-context?eventId=E2`, withSession(ordinary.cookie));
+    assert.equal(selected.status, 200);
+    const selectedContext = await json(selected);
+    assert.equal(selectedContext.event.id, "E2");
+    assert.deepEqual(selectedContext.projects.map((project) => project.id), ["P-E2"]);
+
+    const mismatch = await fetch(`${baseUrl}/api/registrations/check`, withSession(ordinary.cookie, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        eventId: "E2",
+        athlete: { name: "跨赛事学生", school: "测试学校", grade: "二年级", phone: "13600004001" },
+        projectId: "rocket-duration"
+      })
+    }));
+    assert.equal(mismatch.status, 422);
+    assert.match((await json(mismatch)).error, /赛项不属于/);
+
+    const created = await fetch(`${baseUrl}/api/registrations`, withSession(ordinary.cookie, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        eventId: "E2",
+        athlete: { name: "第二场学生", school: "测试学校", grade: "二年级", phone: "13600004002" },
+        projectId: "P-E2"
+      })
+    }));
+    assert.equal(created.status, 201);
+    assert.equal((await json(created)).row.eventId, "E2");
+  });
+});
+
+test("event context rejects unknown, hidden, archived, draft and closed events", async () => {
+  await withServer(async (baseUrl, dbPath) => {
+    const ordinary = await loginAs(baseUrl, "13800000001", "123456");
+    const request = (eventId) => fetch(
+      `${baseUrl}/api/me/registration-context?eventId=${encodeURIComponent(eventId)}`,
+      withSession(ordinary.cookie)
+    );
+
+    assert.equal((await request("missing-event")).status, 422);
+
+    await mutateDb(dbPath, (db) => {
+      db.events.push({ ...structuredClone(db.events[0]), id: "UNPUBLISHED-PROFILE", isCurrent: false, registrationMode: "force_open" });
+    });
+    assert.equal((await request("UNPUBLISHED-PROFILE")).status, 409);
+    await mutateDb(dbPath, (db) => {
+      db.events = db.events.filter((event) => event.id !== "UNPUBLISHED-PROFILE");
+    });
+
+    await mutateDb(dbPath, (db) => {
+      db.events[0].registrationMode = "force_open";
+      db.eventPublicProfiles.push({ eventId: db.events[0].id, slug: "hidden-event", isVisible: false });
+    });
+    assert.equal((await request("wz-aerospace-2026")).status, 409);
+
+    await mutateDb(dbPath, (db) => {
+      db.eventPublicProfiles[0].isVisible = true;
+      db.events[0].status = "draft";
+    });
+    assert.equal((await request("wz-aerospace-2026")).status, 409);
+
+    await mutateDb(dbPath, (db) => {
+      db.events[0].status = "archived";
+      db.events[0].archivedAt = "2026-07-19T00:00:00.000Z";
+    });
+    assert.equal((await request("wz-aerospace-2026")).status, 409);
+
+    await mutateDb(dbPath, (db) => {
+      db.events[0].status = "published";
+      db.events[0].archivedAt = null;
+      db.events[0].registrationMode = "force_closed";
+    });
+    const closed = await request("wz-aerospace-2026");
+    assert.equal(closed.status, 409);
+    assert.match((await json(closed)).error, /关闭/);
   });
 });
 

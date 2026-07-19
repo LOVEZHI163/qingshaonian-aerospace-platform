@@ -242,6 +242,46 @@ export function currentPublishedEvent(db) {
   return current[0];
 }
 
+function registrationProfileVisible(db, eventId) {
+  const profile = (db.eventPublicProfiles || []).find((row) => row.eventId === eventId);
+  if (profile) return profile.isVisible === true;
+  return db.events.find((row) => row.id === eventId)?.isCurrent === true;
+}
+
+function assertPublishedRegistrationEvent(db, event, clock) {
+  if (event.status !== "published" || event.archivedAt) {
+    throw businessError(409, "赛事当前不可报名", "REGISTRATION_EVENT_UNAVAILABLE");
+  }
+  if (!registrationProfileVisible(db, event.id)) {
+    throw businessError(409, "赛事未公开，暂不可报名", "REGISTRATION_EVENT_UNAVAILABLE");
+  }
+  const window = isRegistrationOpen(event, clock());
+  if (!window.open) throw businessError(409, window.reason, "REGISTRATION_CLOSED");
+  return event;
+}
+
+export function publishedRegistrationEvent(db, eventId, clock = () => new Date()) {
+  const requestedId = String(eventId || "").trim();
+  if (requestedId) {
+    const event = db.events.find((row) => row.id === requestedId);
+    if (!event) throw businessError(422, "赛事不存在", "REGISTRATION_EVENT_NOT_FOUND");
+    return assertPublishedRegistrationEvent(db, event, clock);
+  }
+
+  const available = db.events.filter((event) => {
+    if (event.status !== "published" || event.archivedAt || !registrationProfileVisible(db, event.id)) return false;
+    return isRegistrationOpen(event, clock()).open;
+  });
+  if (available.length === 1) return available[0];
+  if (available.length > 1) throw businessError(422, "存在多场可报名赛事，请选择赛事", "REGISTRATION_EVENT_REQUIRED");
+
+  const publicEvents = db.events.filter((event) => (
+    event.status === "published" && !event.archivedAt && registrationProfileVisible(db, event.id)
+  ));
+  if (publicEvents.length === 1) return assertPublishedRegistrationEvent(db, publicEvents[0], clock);
+  throw businessError(422, "当前没有可报名赛事，请选择赛事后重试", "REGISTRATION_EVENT_REQUIRED");
+}
+
 function shanghaiDate(value) {
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone: "Asia/Shanghai",
@@ -274,11 +314,10 @@ export function publicEventPayload(db, clock = () => new Date()) {
 
 export function registrationContext(db, input, clock = () => new Date()) {
   assertObjectInput(input);
-  const event = currentPublishedEvent(db);
+  const event = publishedRegistrationEvent(db, input.eventId, clock);
   const window = isRegistrationOpen(event, clock());
-  if (!window.open) throw businessError(409, window.reason, "REGISTRATION_CLOSED");
   const project = db.projects.find((row) => row.id === input.projectId);
-  if (!project || project.eventId !== event.id) throw businessError(422, "赛项不属于当前赛事");
+  if (!project || project.eventId !== event.id) throw businessError(422, "赛项不属于所选赛事");
   if (!project.enabled) throw businessError(422, "赛项已停用");
   if (!APPROVED_GROUP_NAMES.includes(input.group)) throw businessError(422, "组别不在赛事规程范围内");
   if (!project.allowedGroups.includes(input.group)) throw businessError(422, "所选组别不能报名该赛项");

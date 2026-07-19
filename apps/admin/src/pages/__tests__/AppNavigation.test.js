@@ -56,6 +56,7 @@ let mounted = [];
 
 describe("role based application navigation", () => {
   beforeEach(() => {
+    window.history.replaceState({}, "", "/");
     installApi();
     apiMock.mockReset();
     session.user.value = null;
@@ -80,6 +81,24 @@ describe("role based application navigation", () => {
     expect(labels).toEqual(["报名", "报名记录", "证书查询"]);
     expect(wrapper.text()).not.toContain("普通用户管理");
     expect(apiMock.mock.calls.some(([path]) => path === "/api/users" || path.startsWith("/api/admin/"))).toBe(false);
+  });
+
+  it("restores a whitelisted registration deep link with its event id", async () => {
+    window.history.replaceState({}, "", "/admin/?view=registration&eventId=E2");
+    const wrapper = await mountFor({ id: "U1", type: "ordinary", name: "普通用户", phone: "13800000001", mustChangePassword: false }); mounted.push(wrapper);
+    await flushPromises();
+
+    expect(wrapper.find(".registration-page").exists()).toBe(true);
+    expect(apiMock.mock.calls.some(([path]) => path === "/api/me/registration-context?eventId=E2")).toBe(true);
+  });
+
+  it("does not pass an invalid view or event query into application components", async () => {
+    window.history.replaceState({}, "", "/admin/?view=constructor&eventId=%3Cscript%3E");
+    const wrapper = await mountFor({ id: "U1", type: "ordinary", name: "普通用户", phone: "13800000001", mustChangePassword: false }); mounted.push(wrapper);
+    await flushPromises();
+
+    expect(wrapper.find(".registration-page").exists()).toBe(true);
+    expect(apiMock.mock.calls.some(([path]) => path.includes("%3Cscript%3E") || path.includes("<script>"))).toBe(false);
   });
 
   it("shows only review progress to a pending organization", async () => {
