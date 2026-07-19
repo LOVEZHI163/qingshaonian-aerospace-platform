@@ -34,8 +34,34 @@ test("an event profile slug remains editable until first public visibility, then
       event.isCurrent = false;
       event.archivedAt = null;
       db.eventPublicProfiles = [];
-      db.contentPosts = [];
-      db.auditLogs = [];
+      db.contentPosts = [{
+        id: "HIDDEN-EVENT-ARTICLE",
+        slug: "hidden-event-article",
+        eventId: EVENT_ID,
+        type: "news",
+        title: "Hidden event article",
+        summary: "",
+        bodyHtml: "<p>article</p>",
+        status: "published",
+        publishAt: "2026-07-01T00:00:00.000Z",
+        pinned: false,
+        sortOrder: 0,
+        coverMediaId: null,
+        version: 1,
+        createdBy: admin.user.id,
+        createdAt: "2026-07-01T00:00:00.000Z",
+        updatedAt: "2026-07-01T00:00:00.000Z"
+      }];
+      db.auditLogs = [{
+        id: "LEGACY-CONTENT-PUBLISH-AUDIT",
+        actorUserId: admin.user.id,
+        actorName: admin.user.name,
+        action: "event.content-published",
+        targetType: "event",
+        targetId: EVENT_ID,
+        summary: "Article published while event profile was hidden",
+        createdAt: "2026-07-01T00:00:00.000Z"
+      }];
     });
 
     const createdResponse = await jsonRequest(`${baseUrl}/api/admin/event-public-profiles/${EVENT_ID}`, admin.cookie, "PUT", {

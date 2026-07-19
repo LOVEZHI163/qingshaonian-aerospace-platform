@@ -10,9 +10,7 @@ export function isEventProfilePublic(db, eventId) {
 
 export function eventProfileSlugIsLocked(db, eventId) {
   return isEventProfilePublic(db, eventId)
-    || (db.auditLogs || []).some((row) => row.action === PUBLICATION_ACTION && row.targetId === eventId)
-    || (db.auditLogs || []).some((row) => row.action === "event.content-published" && row.targetId === eventId)
-    || (db.contentPosts || []).some((post) => post.eventId === eventId && post.status === "published");
+    || (db.auditLogs || []).some((row) => row.action === PUBLICATION_ACTION && row.targetId === eventId);
 }
 
 export function recordEventProfilePublication(db, eventId, { actor, createdAt } = {}) {
