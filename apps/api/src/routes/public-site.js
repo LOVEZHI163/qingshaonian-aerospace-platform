@@ -108,11 +108,15 @@ function eventIsPublic(db, event) {
   return Boolean(publicProfile(db, event?.id)) && ["published", "archived"].includes(event?.status);
 }
 
-function eventSummary(db, event, now, { allowHiddenProfile = false } = {}) {
+function publicRegistrationWindow(event, now) {
+  if (event.status === "archived" || event.archivedAt) return { open: false, reason: "赛事已归档" };
+  if (event.status !== "published") return { open: false, reason: "赛事尚未发布" };
+  return isRegistrationOpen(event, now);
+}
+
+function eventSummary(db, event, now) {
   if (!event) return null;
-  const profile = allowHiddenProfile
-    ? (db.eventPublicProfiles || []).find((row) => row.eventId === event.id)
-    : publicProfile(db, event.id);
+  const profile = publicProfile(db, event.id);
   if (!profile) return null;
   return {
     id: event.id,
@@ -129,7 +133,7 @@ function eventSummary(db, event, now, { allowHiddenProfile = false } = {}) {
     registrationMode: event.registrationMode,
     status: event.status,
     archivedAt: event.archivedAt,
-    registrationWindow: isRegistrationOpen(event, now),
+    registrationWindow: publicRegistrationWindow(event, now),
     hero: publicMedia(db, profile.heroMediaId || db.siteSettings?.defaultHeroMediaId)
   };
 }
@@ -188,7 +192,7 @@ function servicesFor(event, mode) {
 function homePayload(db, now) {
   const selection = selectHomeEvents(db, now);
   const selected = selection.featuredEvent || selection.fallbackEvent;
-  const featuredEvent = eventSummary(db, selected, now, { allowHiddenProfile: selected?.status === "archived" });
+  const featuredEvent = eventSummary(db, selected, now);
   const posts = visiblePosts(db, now);
   const section = (type) => posts
     .filter((row) => row.type === type)
@@ -216,8 +220,34 @@ function positiveInteger(value, fallback, label, max = Number.MAX_SAFE_INTEGER) 
 }
 
 function normalizeSiteUrl(value) {
-  const text = String(value || "").trim().replace(/\/+$/, "");
-  return text || "https://aerogp.cn";
+  const text = String(value || "").trim();
+  if (!text) throw new Error("PUBLIC_SITE_URL is required");
+  let url;
+  try {
+    url = new URL(text);
+  } catch {
+    throw new Error("PUBLIC_SITE_URL is invalid");
+  }
+  if (!["http:", "https:"].includes(url.protocol)
+    || url.username || url.password || url.search || url.hash) {
+    throw new Error("PUBLIC_SITE_URL is invalid");
+  }
+  const pathname = url.pathname.replace(/\/+$/, "");
+  return `${url.origin}${pathname}`;
+}
+
+function publicProject(row) {
+  return {
+    id: row.id,
+    eventId: row.eventId,
+    name: row.name,
+    type: row.type,
+    category: row.category,
+    enabled: row.enabled,
+    instructorRequired: row.instructorRequired,
+    displayOrder: row.displayOrder,
+    allowedGroups: Array.isArray(row.allowedGroups) ? row.allowedGroups : []
+  };
 }
 
 function escapeXml(value) {
@@ -273,7 +303,8 @@ export function createPublicSiteRouter({
       event: eventSummary(db, event, now),
       projects: (db.projects || [])
         .filter((row) => row.eventId === event.id && row.enabled)
-        .sort((left, right) => left.displayOrder - right.displayOrder || String(left.id).localeCompare(String(right.id))),
+        .sort((left, right) => left.displayOrder - right.displayOrder || String(left.id).localeCompare(String(right.id)))
+        .map(publicProject),
       groups: [...APPROVED_GROUP_NAMES],
       resources,
       content: posts.map((row) => contentSummary(db, row))

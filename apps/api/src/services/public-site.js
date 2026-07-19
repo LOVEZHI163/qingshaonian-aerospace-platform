@@ -45,7 +45,8 @@ export function selectHomeEvents(db, clock) {
     const endedAt = Date.parse(event.registrationEndAt);
     return Number.isFinite(endedAt)
       && endedAt < now.getTime()
-      && ((profile?.isVisible === true && event.status === "published") || event.status === "archived");
+      && profile?.isVisible === true
+      && ["published", "archived"].includes(event.status);
   }).sort(compareHistory)[0];
 
   return {

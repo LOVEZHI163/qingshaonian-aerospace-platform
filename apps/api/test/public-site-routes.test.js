@@ -121,25 +121,39 @@ test("public home adapts to zero through three visible events and selects a stab
     assert.deepEqual(automatic.concurrentEvents.map((row) => row.id), ["E3", "E1"]);
 
     await mutateDb(dbPath, (db) => {
-      db.events = [event("ARCHIVED", {
+      db.events = [event("HIDDEN-ARCHIVED", {
         status: "archived",
-        registrationMode: "force_closed",
+        registrationMode: "force_open",
         registrationEndAt: "2026-06-01T00:00:00.000Z",
         archivedAt: "2026-06-02T00:00:00.000Z"
       })];
-      db.eventPublicProfiles = [profile("ARCHIVED", { isVisible: false })];
+      db.eventPublicProfiles = [profile("HIDDEN-ARCHIVED", { slug: "hidden-archive", isVisible: false })];
       db.siteSettings.featuredEventId = null;
     });
-    const history = await payload(await fetch(`${baseUrl}/api/public/home`));
-    assert.equal(history.mode, "history");
-    assert.equal(history.featuredEvent.id, "ARCHIVED");
-    assert.equal(history.featuredEvent.registrationWindow.open, false);
+    const emptyHistory = await payload(await fetch(`${baseUrl}/api/public/home`));
+    assert.equal(emptyHistory.mode, "history");
+    assert.equal(emptyHistory.featuredEvent, null);
+    assert.deepEqual(emptyHistory.concurrentEvents, []);
+    assert.equal(emptyHistory.services.every((service) => service.eventId === null), true);
+    assert.equal(JSON.stringify(emptyHistory).includes("hidden-archive"), false);
+    assert.equal(emptyHistory.services.some((service) => service.href.includes("/events/")), false);
+
+    await mutateDb(dbPath, (db) => {
+      db.eventPublicProfiles[0].isVisible = true;
+    });
+    const visibleHistory = await payload(await fetch(`${baseUrl}/api/public/home`));
+    assert.equal(visibleHistory.mode, "history");
+    assert.equal(visibleHistory.featuredEvent.id, "HIDDEN-ARCHIVED");
+    assert.deepEqual(visibleHistory.featuredEvent.registrationWindow, {
+      open: false,
+      reason: "赛事已归档"
+    });
     assert.deepEqual(
-      history.services.find((service) => service.key === "registration"),
+      visibleHistory.services.find((service) => service.key === "registration"),
       {
         key: "registration",
         label: "报名中心",
-        eventId: "ARCHIVED",
+        eventId: "HIDDEN-ARCHIVED",
         available: false,
         href: "/history"
       }
@@ -277,7 +291,7 @@ test("public event detail combines facts, enabled projects, fixed groups, resour
       db.events = [event("E1")];
       db.eventPublicProfiles = [profile("E1")];
       db.projects = [
-        { id: "P1", eventId: "E1", name: "公开赛项", type: "individual", category: "航模", enabled: true, instructorRequired: false, displayOrder: 1, allowedGroups: [...APPROVED_GROUP_NAMES] },
+        { id: "P1", eventId: "E1", name: "公开赛项", type: "individual", category: "航模", enabled: true, instructorRequired: false, displayOrder: 1, allowedGroups: [...APPROVED_GROUP_NAMES], internalCost: 5000, privateNotes: "内部字段" },
         { id: "P2", eventId: "E1", name: "停用赛项", type: "team", category: "无人机", enabled: false, instructorRequired: false, displayOrder: 0, allowedGroups: [...APPROVED_GROUP_NAMES] }
       ];
       db.contentPosts = [
@@ -301,12 +315,25 @@ test("public event detail combines facts, enabled projects, fixed groups, resour
     assert.equal(detail.event.slug, "e1");
     assert.equal(detail.event.registrationWindow.open, true);
     assert.deepEqual(detail.projects.map((row) => row.id), ["P1"]);
+    assert.deepEqual(Object.keys(detail.projects[0]), [
+      "id", "eventId", "name", "type", "category", "enabled",
+      "instructorRequired", "displayOrder", "allowedGroups"
+    ]);
+    assert.equal(JSON.stringify(detail.projects).includes("内部字段"), false);
     assert.deepEqual(detail.groups, APPROVED_GROUP_NAMES);
     assert.deepEqual(detail.resources.map((row) => row.name), ["规程.pdf"]);
     assert.deepEqual(detail.content.map((row) => row.slug).sort(), ["guide", "news"]);
     assert.equal(JSON.stringify(detail).includes("C:/secret"), false);
 
     assert.equal((await fetch(`${baseUrl}/api/public/events/missing`)).status, 404);
+
+    await mutateDb(dbPath, (db) => {
+      db.events[0].status = "archived";
+      db.events[0].archivedAt = "2026-06-02T00:00:00.000Z";
+      db.events[0].registrationMode = "force_open";
+    });
+    const archived = await payload(await fetch(`${baseUrl}/api/public/events/e1`));
+    assert.deepEqual(archived.event.registrationWindow, { open: false, reason: "赛事已归档" });
   }, { prefix: "aerogp-public-event-detail-" });
 });
 
@@ -336,4 +363,17 @@ test("sitemap uses PUBLIC_SITE_URL and contains only public canonical routes", a
     prefix: "aerogp-public-sitemap-",
     env: { PUBLIC_SITE_URL: "https://public.example/base/" }
   });
+});
+
+test("sitemap fails closed when PUBLIC_SITE_URL is missing or invalid", async () => {
+  for (const publicSiteUrl of ["", "not-a-url", "javascript:alert(1)"]) {
+    await withTestServer(async ({ baseUrl }) => {
+      const response = await fetch(`${baseUrl}/api/public/sitemap.xml`);
+      assert.equal(response.status, 500, publicSiteUrl || "missing");
+      assert.deepEqual(await payload(response), { error: "服务器内部错误" });
+    }, {
+      prefix: "aerogp-public-sitemap-config-",
+      env: { PUBLIC_SITE_URL: publicSiteUrl }
+    });
+  }
 });

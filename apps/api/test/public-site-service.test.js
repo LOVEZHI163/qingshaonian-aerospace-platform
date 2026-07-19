@@ -115,7 +115,7 @@ test("home event selection honors forced registration opening and closing", () =
   assert.deepEqual(selection.concurrentEvents, []);
 });
 
-test("home event selection uses the most recently ended public or archived event for history", () => {
+test("home event selection excludes hidden archived events from public history", () => {
   const noActiveDb = db(
     [
       event("PUBLIC-OLD", { registrationEndAt: "2026-07-10T00:00:00.000Z" }),
@@ -127,7 +127,21 @@ test("home event selection uses the most recently ended public or archived event
   const selection = selectHomeEvents(noActiveDb, now);
 
   assert.equal(selection.mode, "history");
-  assert.equal(selection.fallbackEvent.id, "ARCHIVED-NEW");
+  assert.equal(selection.fallbackEvent.id, "PUBLIC-OLD");
+  assert.equal(selection.featuredEvent, null);
+  assert.deepEqual(selection.concurrentEvents, []);
+});
+
+test("home event selection returns a stable empty history when every archived event is hidden", () => {
+  const noActiveDb = db(
+    [event("ARCHIVED", { status: "archived", archivedAt: "2026-07-18T00:00:00.000Z", registrationEndAt: "2026-07-18T00:00:00.000Z" })],
+    [profile("ARCHIVED", { isVisible: false })]
+  );
+
+  const selection = selectHomeEvents(noActiveDb, now);
+
+  assert.equal(selection.mode, "history");
+  assert.equal(selection.fallbackEvent, null);
   assert.equal(selection.featuredEvent, null);
   assert.deepEqual(selection.concurrentEvents, []);
 });
