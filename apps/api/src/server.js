@@ -14,6 +14,7 @@ import { cleanupExpiredCertificateImportPreviews } from "./services/certificate-
 import { createCertificatesRouter } from "./routes/certificates.js";
 import { createDashboardRouter } from "./routes/dashboard.js";
 import { createResourcesRouter } from "./routes/resources.js";
+import { createSiteMediaRouter } from "./routes/site-media.js";
 import { projectForHistoricalRegistration, registrationContext } from "./services/events.js";
 import { replayFileCleanupJournal } from "./services/organizations.js";
 
@@ -262,6 +263,16 @@ app.use("/api", createDashboardRouter({
   requireAdmin,
   requirePasswordReady,
   asyncRoute
+}));
+
+app.use("/api", createSiteMediaRouter({
+  store: dataStore,
+  requireAdmin,
+  requirePasswordReady,
+  asyncRoute,
+  mutationAsyncRoute,
+  makeId: id,
+  now
 }));
 
 app.get("/api/public/features", (_req, res) => {

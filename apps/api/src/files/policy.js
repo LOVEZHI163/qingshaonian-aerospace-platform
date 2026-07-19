@@ -12,6 +12,18 @@ export const CERTIFICATE_POLICY = {
   maxBytes: 10 * 1024 * 1024
 };
 
+export const SITE_IMAGE_POLICY = {
+  extensions: new Set(["png", "jpg", "jpeg", "webp"]),
+  mimeTypes: new Set(["image/png", "image/jpeg", "image/webp"]),
+  maxBytes: 10 * 1024 * 1024
+};
+
+export const SITE_ATTACHMENT_POLICY = {
+  extensions: new Set(["pdf", "png", "jpg", "jpeg", "webp"]),
+  mimeTypes: new Set(["application/pdf", "image/png", "image/jpeg", "image/webp"]),
+  maxBytes: 20 * 1024 * 1024
+};
+
 export async function validateUpload(file, policy = CREDENTIAL_POLICY) {
   if (!file || !Buffer.isBuffer(file.buffer) || file.buffer.length === 0) {
     throw new Error("A non-empty file buffer is required");

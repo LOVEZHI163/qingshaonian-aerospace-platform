@@ -1,8 +1,15 @@
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
+import sharp from "sharp";
 
-import { CERTIFICATE_POLICY, CREDENTIAL_POLICY, validateUpload } from "./policy.js";
+import {
+  CERTIFICATE_POLICY,
+  CREDENTIAL_POLICY,
+  SITE_ATTACHMENT_POLICY,
+  SITE_IMAGE_POLICY,
+  validateUpload
+} from "./policy.js";
 
 const SAFE_PATH_COMPONENT = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 const CERTIFICATE_IMAGE_EXTENSIONS = new Set(["png", "jpg"]);
@@ -82,6 +89,114 @@ function certificateExtension(value) {
 
 function importStagingDirectory(batchId) {
   return path.resolve(uploadRoot(), "import-staging", safePathComponent(batchId, "batch"));
+}
+
+function siteMediaDirectory(mediaId) {
+  return path.resolve(uploadRoot(), "site-media", safePathComponent(mediaId, "media"));
+}
+
+async function removeSiteMediaDirectory(filePath, fileSystem = fs) {
+  const root = uploadRoot();
+  const parent = path.resolve(root, "site-media");
+  const directory = path.resolve(filePath);
+  assertInside(parent, directory, "Site media path escapes its managed directory");
+  safePathComponent(path.basename(directory), "media");
+  await fileSystem.lstat(directory);
+  await assertNoLinkedComponents(root, directory, fileSystem);
+  await assertRealPathInsideRoot(root, directory, fileSystem);
+  await fileSystem.rm(directory, { recursive: true, force: false });
+}
+
+function siteMediaVariant(storedName, filePath, output) {
+  return {
+    storedName,
+    filePath,
+    mimeType: "image/webp",
+    sizeBytes: output.data.length,
+    width: output.info.width,
+    height: output.info.height
+  };
+}
+
+export async function saveSiteMedia({ mediaId, file, purpose, fileSystem = fs, imageProcessor = sharp }) {
+  const directory = siteMediaDirectory(mediaId);
+  const isAttachment = purpose === "attachment";
+  const detected = await validateUpload(file, isAttachment ? SITE_ATTACHMENT_POLICY : SITE_IMAGE_POLICY);
+  const storedName = `original.${detected.ext}`;
+  const filePath = path.resolve(directory, storedName);
+  const originalName = safeOriginalName(file.originalname);
+  let original = file.buffer;
+  let width = null;
+  let height = null;
+  let variants = {};
+  const pending = [];
+
+  if (!isAttachment) {
+    try {
+      const normalized = await imageProcessor(file.buffer).rotate().toBuffer({ resolveWithObject: true });
+      original = normalized.data;
+      width = normalized.info.width;
+      height = normalized.info.height;
+      for (const [name, targetWidth] of [["mobile", 768], ["desktop", 1600]]) {
+        const output = await imageProcessor(original)
+          .resize({ width: targetWidth, withoutEnlargement: true })
+          .webp()
+          .toBuffer({ resolveWithObject: true });
+        const variantStoredName = `${name}.webp`;
+        const variantPath = path.resolve(directory, variantStoredName);
+        variants[name] = siteMediaVariant(variantStoredName, variantPath, output);
+        pending.push({ filePath: variantPath, buffer: output.data });
+      }
+    } catch (error) {
+      error.status = 422;
+      throw error;
+    }
+  }
+
+  const root = uploadRoot();
+  const parent = path.resolve(root, "site-media");
+  await prepareManagedDirectory(root, parent, fileSystem);
+  await fileSystem.mkdir(directory, { recursive: false });
+  await assertNoLinkedComponents(root, directory, fileSystem);
+  await assertRealPathInsideRoot(root, directory, fileSystem);
+  try {
+    await fileSystem.writeFile(filePath, original, { flag: "wx" });
+    for (const entry of pending) await fileSystem.writeFile(entry.filePath, entry.buffer, { flag: "wx" });
+  } catch (error) {
+    try {
+      await fileSystem.rm(directory, { recursive: true, force: true });
+    } catch (cleanupError) {
+      error.cleanupError = cleanupError;
+      error.cleanupTarget = { filePath: directory, category: "site-media-new", cleanupAttempts: 1 };
+    }
+    throw error;
+  }
+
+  return {
+    originalName,
+    storedName,
+    filePath,
+    mimeType: detected.mime,
+    sizeBytes: original.length,
+    width,
+    height,
+    variants
+  };
+}
+
+export async function readSiteMedia(record, variant = "original", fileSystem = fs) {
+  const selected = variant === "original" ? record : record?.variants?.[variant] || record;
+  return {
+    buffer: await readPrivateFile(selected, fileSystem),
+    mimeType: selected.mimeType || record.mimeType
+  };
+}
+
+export async function deleteSiteMedia(record, fileSystem = fs) {
+  if (!record?.id || !record?.filePath) throw new Error("Site media record is required");
+  const directory = siteMediaDirectory(record.id);
+  assertInside(directory, path.resolve(record.filePath), "Site media file path escapes its media directory");
+  await removeSiteMediaDirectory(directory, fileSystem);
 }
 
 export async function createImportStagingBatch(batchId, fileSystem = fs) {
@@ -268,6 +383,10 @@ export async function savePrivateFile({ category, ownerId, file, fileSystem = fs
 
 export async function deletePrivateFile(record) {
   if (!record?.filePath) throw new Error("Private file record is required");
+  if (String(record.category || "").startsWith("site-media")) {
+    await removeSiteMediaDirectory(record.filePath, fs);
+    return;
+  }
   const root = uploadRoot();
   const filePath = path.resolve(record.filePath);
   const relative = path.relative(root, filePath);
