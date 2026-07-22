@@ -15,6 +15,24 @@ export class SitePreviewError extends Error {
   }
 }
 
+const SENSITIVE_PREVIEW_FIELDS = new Set([
+  "contact", "phone", "phonenumber", "mobile", "mobilephone", "email",
+  "password", "credential", "credentials", "session", "sessionid", "sessionversion",
+  "token", "authorization",
+  "user", "userid", "actor", "actorid", "admin", "adminid",
+  "audit", "auditlog", "auditlogs", "review", "reviewstatus", "reviewedby",
+  "reviewedat", "reviewnote", "reviewnotes", "note", "notes", "internalnote",
+  "internalnotes", "remark", "remarks", "rejectreason", "createdby", "updatedby"
+]);
+
+function withoutSensitivePreviewFields(value) {
+  if (Array.isArray(value)) return value.map(withoutSensitivePreviewFields);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(Object.entries(value)
+    .filter(([key]) => !SENSITIVE_PREVIEW_FIELDS.has(key.toLowerCase()))
+    .map(([key, child]) => [key, withoutSensitivePreviewFields(child)]));
+}
+
 function fail(status, message, code) {
   throw new SitePreviewError(status, message, code);
 }
@@ -78,7 +96,9 @@ function buildHomepagePreview(db, input, now) {
 function buildEventPreview(db, input, now) {
   assertObject(input);
   const eventId = String(input.eventId || "").trim();
-  eventFor(db, eventId);
+  const event = eventFor(db, eventId);
+  if (!["published", "archived"].includes(event.status)) event.status = "published";
+  if (event.status === "published") event.archivedAt = null;
   mediaFor(db, input.heroMediaId, "赛事主视觉", eventId);
   const profileInput = { ...input };
   delete profileInput.eventId;
@@ -129,8 +149,10 @@ function buildContentPreview(db, input, now) {
 
 export function buildSitePreview(db, kind, input, { now }) {
   const snapshot = structuredClone(db);
-  if (kind === "homepage") return buildHomepagePreview(snapshot, input, now);
-  if (kind === "event") return buildEventPreview(snapshot, input, now);
-  if (kind === "content") return buildContentPreview(snapshot, input, now);
-  throw new SitePreviewError(404, "预览类型不存在");
+  let preview;
+  if (kind === "homepage") preview = buildHomepagePreview(snapshot, input, now);
+  else if (kind === "event") preview = buildEventPreview(snapshot, input, now);
+  else if (kind === "content") preview = buildContentPreview(snapshot, input, now);
+  else throw new SitePreviewError(404, "预览类型不存在");
+  return withoutSensitivePreviewFields(preview);
 }

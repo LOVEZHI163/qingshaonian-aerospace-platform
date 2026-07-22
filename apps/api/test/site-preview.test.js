@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import test from "node:test";
 
+import { seedDb } from "../src/data/seed.js";
+import { buildSitePreview } from "../src/services/site-preview.js";
 import { withTestServer } from "../test-support/server.js";
 import { loginAs, withSession } from "./helpers/api-client.js";
 
@@ -19,6 +21,90 @@ async function mutateDb(dbPath, mutate) {
   mutate(db);
   await fs.writeFile(dbPath, `${JSON.stringify(db, null, 2)}\n`);
 }
+
+const SENSITIVE_KEYS = new Set([
+  "contact", "phone", "phonenumber", "mobile", "mobilephone", "email",
+  "password", "credential", "credentials", "session", "sessionid", "sessionversion",
+  "token", "authorization",
+  "user", "userid", "actor", "actorid", "admin", "adminid",
+  "audit", "auditlog", "auditlogs", "review", "reviewstatus", "reviewedby",
+  "reviewedat", "reviewnote", "reviewnotes", "note", "notes", "internalnote",
+  "internalnotes", "remark", "remarks", "rejectreason", "createdby", "updatedby"
+]);
+
+function assertPreviewPayloadHasNoSensitiveData(value) {
+  if (Array.isArray(value)) {
+    value.forEach(assertPreviewPayloadHasNoSensitiveData);
+    return;
+  }
+  if (!value || typeof value !== "object") return;
+  for (const [key, child] of Object.entries(value)) {
+    assert.equal(SENSITIVE_KEYS.has(key.toLowerCase()), false, `preview payload leaked ${key}`);
+    assertPreviewPayloadHasNoSensitiveData(child);
+  }
+}
+
+function eventDraft(eventId, overrides = {}) {
+  return {
+    eventId,
+    slug: "draft-event",
+    slogan: "草稿赛事",
+    summary: "赛事摘要",
+    isVisible: true,
+    displayOrder: 0,
+    heroMediaId: null,
+    ...overrides
+  };
+}
+
+test("pure preview payloads omit structural sensitive fields without stripping ordinary content numbers", () => {
+  const now = "2026-07-22T00:00:00.000Z";
+  const homepageDb = structuredClone(seedDb);
+  homepageDb.siteSettings.contact = "SITE-CONTACT-13900000000";
+  homepageDb.siteSettings.featuredEventId = "wz-aerospace-2026";
+  homepageDb.events[0].contact = "EVENT-CONTACT-13900000000";
+  homepageDb.eventPublicProfiles.push({ ...eventDraft("wz-aerospace-2026"), version: 1 });
+  const homepage = buildSitePreview(homepageDb, "homepage", homepageDb.siteSettings, { now });
+
+  const eventDb = structuredClone(seedDb);
+  eventDb.events[0].contact = "EVENT-CONTACT-13900000000";
+  const event = buildSitePreview(eventDb, "event", eventDraft("wz-aerospace-2026"), { now });
+
+  const content = buildSitePreview(structuredClone(seedDb), "content", {
+    slug: "draft-content",
+    eventId: "wz-aerospace-2026",
+    type: "news",
+    title: "2026 草稿新闻",
+    summary: "保留普通数字 100",
+    bodyHtml: "<p>2026 年第 100 条内容</p>",
+    status: "draft",
+    publishAt: null,
+    pinned: false,
+    sortOrder: 0,
+    coverMediaId: null,
+    attachments: []
+  }, { now });
+
+  for (const preview of [homepage, event, content]) {
+    assertPreviewPayloadHasNoSensitiveData(preview.payload);
+    assert.doesNotMatch(JSON.stringify(preview.payload), /13900000000|PASSWORD|SESSION|ADMIN-SENSITIVE/);
+  }
+  assert.match(content.payload.row.bodyHtml, /2026 年第 100 条内容/);
+});
+
+test("event preview renders an unpublished event only in its cloned snapshot", () => {
+  const db = structuredClone(seedDb);
+  db.events[0].status = "draft";
+  const before = structuredClone(db);
+
+  const preview = buildSitePreview(db, "event", eventDraft("wz-aerospace-2026"), {
+    now: "2026-07-22T00:00:00.000Z"
+  });
+
+  assert.equal(preview.payload.event.status, "published");
+  assert.equal(db.events[0].status, "draft");
+  assert.deepEqual(db, before);
+});
 
 test("admin preview normalizes all three kinds without writing the store", async () => {
   await withTestServer(async ({ baseUrl, dbPath }) => {
