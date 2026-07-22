@@ -106,6 +106,19 @@ test("event preview renders an unpublished event only in its cloned snapshot", (
   assert.deepEqual(db, before);
 });
 
+test("pure content preview accepts an existing draft with its current version", () => {
+  const db = structuredClone(seedDb);
+  const current = { id: "POST-1", slug: "existing-news", eventId: null, type: "news", title: "已保存标题", summary: "摘要", bodyHtml: "<p>已保存</p>", status: "draft", publishAt: null, pinned: false, sortOrder: 0, coverMediaId: null, version: 4, createdAt: "2026-07-01T00:00:00.000Z", updatedAt: "2026-07-01T00:00:00.000Z" };
+  db.contentPosts.push(current);
+  const before = structuredClone(db);
+
+  const preview = buildSitePreview(db, "content", { id: current.id, version: current.version, slug: current.slug, eventId: null, type: "news", title: "未保存标题", summary: "新摘要", bodyHtml: "<p>草稿正文</p>", status: "draft", publishAt: null, pinned: false, sortOrder: 0, coverMediaId: null, attachments: [] }, { now: "2026-07-22T00:00:00.000Z" });
+
+  assert.equal(preview.payload.row.title, "未保存标题");
+  assert.equal(preview.payload.row.bodyHtml, "<p>草稿正文</p>");
+
+  assert.deepEqual(db, before);
+});
 test("admin preview normalizes all three kinds without writing the store", async () => {
   await withTestServer(async ({ baseUrl, dbPath }) => {
     await mutateDb(dbPath, (db) => {

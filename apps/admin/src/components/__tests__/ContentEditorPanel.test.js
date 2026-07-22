@@ -447,6 +447,7 @@ describe("ContentEditorPanel", () => {
 
     const preview = apiMock.mock.calls.find(([path, options]) => path === "/api/admin/site-preview/content" && options?.method === "POST");
     expect(JSON.parse(preview[1].body)).toMatchObject({ title: "未保存内容", slug: "unsaved-content" });
+    expect(JSON.parse(preview[1].body)).not.toHaveProperty("id");
     expect(JSON.parse(preview[1].body)).not.toHaveProperty("version");
     expect(apiMock.mock.calls.some(([path, options]) => path === "/api/admin/content" && options?.method === "POST")).toBe(false);
     expect(wrapper.get('[data-preview-body]').html()).toContain("服务端净化的新内容");
@@ -469,8 +470,7 @@ describe("ContentEditorPanel", () => {
     await flushPromises();
 
     const preview = apiMock.mock.calls.find(([path, options]) => path === "/api/admin/site-preview/content" && options?.method === "POST");
-    expect(JSON.parse(preview[1].body)).toMatchObject({ id: "POST-1", title: "尚未保存修改" });
-    expect(JSON.parse(preview[1].body)).not.toHaveProperty("version");
+    expect(JSON.parse(preview[1].body)).toMatchObject({ id: "POST-1", version: 1, title: "尚未保存修改" });
     expect(apiMock.mock.calls.some(([path, options]) => path === "/api/admin/content/POST-1" && options?.method === "PATCH")).toBe(false);
     expect(wrapper.get('[data-preview-body]').html()).toContain("服务端净化的修改");
   });

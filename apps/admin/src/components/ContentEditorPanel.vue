@@ -122,7 +122,7 @@ function contentPayload({ forPreview = false } = {}) {
       const date = new Date(form.publishAt);
       if (!Number.isNaN(date.getTime())) data.publishAt = date.toISOString();
     }
-    if (form.id) data.id = form.id;
+    if (form.id) { data.id = form.id; data.version = form.version; }
     return data;
   }
 
