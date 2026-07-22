@@ -15,6 +15,8 @@ const error = ref("");
 const settings = ref(null);
 const events = ref([]);
 const profiles = ref([]);
+const siteSettingsPanel = ref(null);
+const eventPublicProfilePanel = ref(null);
 const selectedContentId = ref(null);
 const contentEditor = ref(null);
 const contentList = ref(null);
@@ -109,8 +111,8 @@ onMounted(load);
     <p v-if="loading" class="panel site-loading" role="status">正在加载官网配置…</p>
     <section v-else-if="error" class="panel site-load-error"><p class="message" role="alert">{{ error }}</p><button type="button" class="dark" data-action="retry-load" @click="load">重试</button></section>
     <template v-else>
-      <section id="site-panel-homepage" v-show="activeTab === 'homepage'" role="tabpanel" aria-labelledby="site-tab-homepage" data-site-panel="homepage"><SiteSettingsPanel v-if="settings" :settings="settings" :events="events" :profiles="profiles" @saved="updateSettings" /></section>
-      <section id="site-panel-events" v-show="activeTab === 'events'" role="tabpanel" aria-labelledby="site-tab-events" data-site-panel="events"><EventPublicProfilePanel :events="events" :profiles="profiles" @saved="updateProfile" /></section>
+      <section id="site-panel-homepage" v-show="activeTab === 'homepage'" role="tabpanel" aria-labelledby="site-tab-homepage" data-site-panel="homepage"><SiteSettingsPanel v-if="settings" ref="siteSettingsPanel" :settings="settings" :events="events" :profiles="profiles" @saved="updateSettings" /></section>
+      <section id="site-panel-events" v-show="activeTab === 'events'" role="tabpanel" aria-labelledby="site-tab-events" data-site-panel="events"><EventPublicProfilePanel ref="eventPublicProfilePanel" :events="events" :profiles="profiles" @saved="updateProfile" /></section>
       <section id="site-panel-content" v-show="activeTab === 'content'" role="tabpanel" aria-labelledby="site-tab-content" data-site-panel="content"><div class="content-management-layout"><ContentListPanel ref="contentList" :events="events" :selected-id="selectedContentId" @select="chooseContent" @new="newContent" /><ContentEditorPanel ref="contentEditor" :content-id="selectedContentId" :events="events" @saved="contentSaved" @deleted="contentDeleted" /></div></section>
     </template>
   </section>

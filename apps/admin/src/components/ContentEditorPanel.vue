@@ -115,8 +115,16 @@ function requestLeave(callback) {
   confirmAction.value = "discard";
 }
 
-function contentPayload() {
+function contentPayload({ forPreview = false } = {}) {
   const data = snapshot();
+  if (forPreview) {
+    if (data.publishAt) {
+      const date = new Date(form.publishAt);
+      if (!Number.isNaN(date.getTime())) data.publishAt = date.toISOString();
+    }
+    return data;
+  }
+
   if (!form.id) { data.status = "draft"; data.publishAt = null; return data; }
   if (data.status === "draft") data.publishAt = null;
   else if (data.status === "scheduled") {
@@ -200,7 +208,13 @@ async function deletePendingMedia(mediaId) {
   finally { const next = new Set(deletingMedia.value); next.delete(mediaId); deletingMedia.value = next; }
 }
 
-defineExpose({ requestLeave, load, isDirty: () => dirty.value });
+defineExpose({
+  requestLeave,
+  load,
+  isDirty: () => dirty.value,
+  getPreviewDraft: () => ({ kind: "content", body: contentPayload({ forPreview: true }), context: { contentId: form.id } }),
+  getSavedPreviewPath: () => form.id && form.slug ? `/content/${encodeURIComponent(form.slug)}` : null
+});
 </script>
 
 <template>

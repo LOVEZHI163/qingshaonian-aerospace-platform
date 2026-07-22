@@ -94,6 +94,11 @@ async function upload(event, field, purpose) {
     event.target.value = "";
   }
 }
+
+defineExpose({
+  getPreviewDraft: () => ({ kind: "homepage", body: payload(), context: {} }),
+  getSavedPreviewPath: () => "/"
+});
 </script>
 
 <template>

@@ -5,6 +5,8 @@ const { apiMock } = vi.hoisted(() => ({ apiMock: vi.fn() }));
 vi.mock("../../lib/api.js", () => ({ api: apiMock }));
 
 import SiteContentPage from "../SiteContentPage.vue";
+import EventPublicProfilePanel from "../../components/EventPublicProfilePanel.vue";
+import SiteSettingsPanel from "../../components/SiteSettingsPanel.vue";
 
 const settings = {
   id: "default",
@@ -77,6 +79,28 @@ describe("SiteContentPage", () => {
     expect(wrapper.get('[data-field="featuredEventId"]').findAll("option").map((option) => option.text())).toEqual([
       "自动选择", "2026赛事"
     ]);
+  });
+
+  it("exposes the current homepage and event profile drafts without saving", async () => {
+    const wrapper = await mountLoaded();
+    await wrapper.get('[data-field="platformIntro"]').setValue("尚未保存的简介");
+
+    expect(wrapper.getComponent(SiteSettingsPanel).vm.getPreviewDraft()).toEqual({
+      kind: "homepage",
+      body: expect.objectContaining({ platformIntro: "尚未保存的简介" }),
+      context: {}
+    });
+    expect(wrapper.getComponent(SiteSettingsPanel).vm.getSavedPreviewPath()).toBe("/");
+
+    await wrapper.get('[data-site-tab="events"]').trigger("click");
+    await wrapper.get('[data-profile-field="slogan"]').setValue("尚未保存");
+
+    expect(wrapper.getComponent(EventPublicProfilePanel).vm.getPreviewDraft()).toEqual({
+      kind: "event",
+      body: expect.objectContaining({ eventId: "E1", slogan: "尚未保存" }),
+      context: { eventId: "E1" }
+    });
+    expect(wrapper.getComponent(EventPublicProfilePanel).vm.getSavedPreviewPath()).toBe("/events/event-2026");
   });
 
   it("falls back to automatic selection when the stored featured event is no longer configurable", async () => {

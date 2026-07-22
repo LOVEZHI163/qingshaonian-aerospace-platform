@@ -125,6 +125,16 @@ async function uploadCover(event) {
 watch(() => props.events, (rows) => {
   if (!selectedId.value && rows.length) openEvent(rows[0].id);
 }, { immediate: true });
+
+defineExpose({
+  getPreviewDraft: () => selectedId.value ? {
+    kind: "event",
+    body: { eventId: selectedId.value, ...requestBody() },
+    context: { eventId: selectedId.value }
+  } : null,
+  getSavedPreviewPath: () => profileFor(selectedId.value)?.slug
+    ? `/events/${encodeURIComponent(profileFor(selectedId.value).slug)}` : null
+});
 </script>
 
 <template>

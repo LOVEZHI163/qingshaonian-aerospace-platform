@@ -254,6 +254,24 @@ describe("ContentEditorPanel", () => {
     expect(JSON.parse(update[1].body).publishAt).toBe(new Date("2099-01-02T12:30").toISOString());
   });
 
+  it("exposes an unsaved content draft without applying persistence-only validation", async () => {
+    const wrapper = await mountEditor(null);
+    await wrapper.get('[data-content-field="title"]').setValue("尚未保存的内容");
+    await wrapper.get('[data-content-field="slug"]').setValue("unsaved-content");
+
+    expect(wrapper.vm.getPreviewDraft()).toEqual({
+      kind: "content",
+      body: expect.objectContaining({
+        title: "尚未保存的内容",
+        slug: "unsaved-content",
+        status: "draft",
+        publishAt: null
+      }),
+      context: { contentId: null }
+    });
+    expect(wrapper.vm.getSavedPreviewPath()).toBeNull();
+  });
+
   it("keeps detached media reachable through save, 409, and retrying a successful DELETE", async () => {
     let deleteAttempts = 0;
     apiMock.mockImplementation(async (path, options = {}) => {
