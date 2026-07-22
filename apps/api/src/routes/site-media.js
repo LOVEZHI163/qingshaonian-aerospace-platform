@@ -115,6 +115,28 @@ export function createSiteMediaRouter({
       .send(file.buffer);
   }));
 
+  router.get("/admin/site-media/:id/preview", ...admin, asyncRoute(async (req, res) => {
+    const variant = String(req.query.variant || "original");
+    if (!["original", "mobile", "desktop"].includes(variant)) throw routeError(422, "媒体变体无效");
+    const db = await store.readDb();
+    const media = (db.mediaAssets || []).find((row) => row.id === req.params.id);
+    if (!media || media.cleanedAt) throw routeError(404, "媒体不存在");
+    let file;
+    try {
+      file = await storage.read(media, variant);
+    } catch (error) {
+      if (error?.code === "ENOENT" || /escapes upload root|escapes its media directory|symbolic link|changed during validation/i.test(String(error?.message || ""))) {
+        throw routeError(404, "媒体文件不存在");
+      }
+      throw error;
+    }
+    res
+      .type(file.mimeType)
+      .set("X-Content-Type-Options", "nosniff")
+      .set({ "Cache-Control": "private, no-store", "X-Robots-Tag": "noindex, nofollow" })
+      .send(file.buffer);
+  }));
+
   router.delete("/admin/site-media/:id", ...admin, mutationAsyncRoute(async (req, res) => {
     const db = await store.readDb();
     const media = (db.mediaAssets || []).find((row) => row.id === req.params.id);

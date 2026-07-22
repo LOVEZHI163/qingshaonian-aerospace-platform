@@ -149,7 +149,7 @@ export function historicalEvents(db, now) {
     });
 }
 
-function publicSiteSettings(db) {
+function publicSiteSettings(db, mediaOptions) {
   const settings = db.siteSettings || {};
   return {
     platformName: settings.platformName || "",
@@ -159,8 +159,8 @@ function publicSiteSettings(db) {
     icp: settings.icp || "",
     seoTitle: settings.seoTitle || "",
     seoDescription: settings.seoDescription || "",
-    defaultHero: mediaView(db, settings.defaultHeroMediaId),
-    shareImage: mediaView(db, settings.shareMediaId)
+    defaultHero: mediaView(db, settings.defaultHeroMediaId, mediaOptions),
+    shareImage: mediaView(db, settings.shareMediaId, mediaOptions)
   };
 }
 
@@ -200,7 +200,8 @@ function servicesFor(event, mode) {
   ];
 }
 
-export function buildHomeView(db, now) {
+export function buildHomeView(db, now, { mediaUrl } = {}) {
+  const mediaOptions = typeof mediaUrl === "function" ? { allowPrivate: true, urlFor: mediaUrl } : undefined;
   const selection = selectHomeEvents(db, now);
   const selected = selection.featuredEvent || selection.fallbackEvent;
   const featuredEvent = eventSummary(db, selected, now);
@@ -210,7 +211,7 @@ export function buildHomeView(db, now) {
     .slice(0, HOME_LIMITS[type])
     .map((row) => contentSummary(db, row));
   return {
-    site: publicSiteSettings(db),
+    site: publicSiteSettings(db, mediaOptions),
     mode: selection.mode,
     featuredEvent,
     concurrentEvents: selection.concurrentEvents.map((row) => eventSummary(db, row, now)).filter(Boolean),
@@ -236,11 +237,11 @@ function publicProject(row) {
   };
 }
 
-export function buildEventDetailView(db, slug, now, { allowPrivateMedia = false } = {}) {
+export function buildEventDetailView(db, slug, now, { mediaUrl } = {}) {
   const profile = (db.eventPublicProfiles || []).find((row) => row.slug === slug && row.isVisible === true);
   const event = profile && (db.events || []).find((row) => row.id === profile.eventId);
   if (!eventIsPublic(db, event)) return null;
-  const mediaOptions = allowPrivateMedia ? { allowPrivate: true } : undefined;
+  const mediaOptions = typeof mediaUrl === "function" ? { allowPrivate: true, urlFor: mediaUrl } : undefined;
   const posts = visiblePosts(db, now).filter((row) => row.eventId === event.id);
   const guideIds = new Set(posts.filter((row) => row.type === "guide").map((row) => row.id));
   const resources = (db.contentAttachments || [])

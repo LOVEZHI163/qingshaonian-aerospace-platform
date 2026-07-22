@@ -168,6 +168,24 @@ test("site media upload is admin-only, draft-private, and serves public derivati
   }, { prefix: "site-media-api-" });
 });
 
+test("private preview media requires an administrator session", async () => {
+  await withTestServer(async ({ baseUrl }) => {
+    const admin = await loginAs(baseUrl, "13900000000", "admin123");
+    const upload = await fetch(`${baseUrl}/api/admin/site-media`, withSession(admin.cookie, {
+      method: "POST",
+      body: mediaForm(PNG)
+    }));
+    const media = (await upload.json()).row;
+    assert.equal(upload.status, 201);
+    assert.equal((await fetch(`${baseUrl}/api/admin/site-media/${media.id}/preview`)).status, 401);
+    const response = await fetch(`${baseUrl}/api/admin/site-media/${media.id}/preview`, withSession(admin.cookie));
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("cache-control"), "private, no-store");
+    assert.equal(response.headers.get("x-robots-tag"), "noindex, nofollow");
+    assert.ok((await response.arrayBuffer()).byteLength > 0);
+  }, { prefix: "site-media-preview-" });
+});
+
 test("site media attachments keep only the original and dangerous API uploads return 422", async () => {
   await withTestServer(async ({ baseUrl, dbPath }) => {
     const admin = await loginAs(baseUrl, "13900000000", "admin123");

@@ -2,6 +2,7 @@ import express from "express";
 
 import { recordAudit } from "../services/audit.js";
 import { recordEventProfilePublication } from "../services/event-profile-publication.js";
+import { buildSitePreview } from "../services/site-preview.js";
 import {
   contentDetail,
   createContent,
@@ -164,6 +165,12 @@ export function createSiteAdminRouter({
       });
     });
     res.json({ row: contentDetail(persisted, req.params.id) });
+  }));
+
+  router.post("/admin/site-preview/:kind", ...admin, asyncRoute(async (req, res) => {
+    const preview = buildSitePreview(await store.readDb(), req.params.kind, req.body, { now: now() });
+    res.set("Cache-Control", "private, no-store");
+    res.json({ preview });
   }));
 
   return router;
