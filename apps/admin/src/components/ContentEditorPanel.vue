@@ -122,6 +122,7 @@ function contentPayload({ forPreview = false } = {}) {
       const date = new Date(form.publishAt);
       if (!Number.isNaN(date.getTime())) data.publishAt = date.toISOString();
     }
+    if (form.id) data.id = form.id;
     return data;
   }
 
@@ -153,12 +154,20 @@ async function save() {
 }
 
 async function preview() {
-  if (!form.id) { error.value = "请先保存内容再预览"; return; }
+  if (busy.value) return;
+  busy.value = true;
+  error.value = "";
   try {
-    const row = (await api(`/api/admin/content/${form.id}`)).row;
-    previewHtml.value = row.previewHtml || "";
+    const response = await api("/api/admin/site-preview/content", {
+      method: "POST",
+      body: JSON.stringify(contentPayload({ forPreview: true }))
+    });
+    const html = response?.preview?.payload?.row?.bodyHtml;
+    if (typeof html !== "string") throw new Error("预览数据无效");
+    previewHtml.value = html;
     previewOpen.value = true;
   } catch (failure) { error.value = failure?.message || "预览加载失败"; }
+  finally { busy.value = false; }
 }
 
 function ask(action) { if (!busy.value) confirmAction.value = action; }
@@ -234,7 +243,7 @@ defineExpose({
       <section class="content-media-field"><h4>封面图片</h4><p v-if="form.coverMedia"><strong>{{ form.coverMedia.originalName }}</strong> · {{ form.coverMedia.mimeType }} · {{ form.coverMedia.sizeBytes }} 字节<span v-if="form.coverMedia.width"> · {{ form.coverMedia.width }}×{{ form.coverMedia.height }}</span></p><p v-else-if="form.coverMediaId">媒体 ID：{{ form.coverMediaId }}</p><p v-else>未设置</p><div class="form-actions"><MediaPicker purpose="content-cover" accept="image/png,image/jpeg,image/webp" label="上传封面" :disabled="published" @uploaded="uploadedCover" @error="mediaError"/><button v-if="form.coverMediaId" type="button" data-action="detach-cover-media" :disabled="published" @click="detachCover">解除引用</button></div></section>
       <section class="content-media-field"><div class="panel-title"><h4>附件</h4><MediaPicker purpose="content-attachment" accept="application/pdf,image/png,image/jpeg,image/webp" label="上传附件" :disabled="published" @uploaded="uploadedAttachment" @error="mediaError"/></div><p v-if="!form.attachments.length">暂无附件</p><article v-for="(attachment,index) in form.attachments" :key="attachment.mediaId" class="content-attachment" :data-attachment="attachment.mediaId"><div><strong>{{ attachment.media?.originalName || attachment.mediaId }}</strong><span>{{ attachment.media?.mimeType }} · {{ attachment.media?.sizeBytes }} 字节<span v-if="attachment.media?.width"> · {{ attachment.media.width }}×{{ attachment.media.height }}</span></span></div><input v-model="attachment.label" data-attachment-label aria-label="附件标签" :disabled="published"><div class="form-actions"><button type="button" data-action="move-attachment-up" :disabled="published || index === 0" @click="moveAttachment(attachment.mediaId,-1)">上移</button><button type="button" :disabled="published || index === form.attachments.length - 1" @click="moveAttachment(attachment.mediaId,1)">下移</button><button type="button" data-action="detach-attachment-media" :disabled="published" @click="detachAttachment(attachment.mediaId)">解除引用</button></div></article></section>
       <section v-if="pendingMedia.length" class="content-media-field pending-media"><h4>待清理媒体</h4><p>解除引用并保存后，可在这里物理删除文件。</p><article v-for="media in pendingMedia" :key="media.id" :data-pending-media="media.id"><span>{{ media.originalName || media.id }}</span><button type="button" class="reject" data-action="delete-pending-media" :disabled="deletingMedia.has(media.id)" @click="deletePendingMedia(media.id)">{{ deletingMedia.has(media.id) ? '删除中…' : '删除媒体文件' }}</button></article></section>
-      <div class="form-actions content-editor-actions"><button type="button" class="primary" data-action="save-content" :disabled="busy || published || form.status === 'offline'" @click="save">保存</button><button type="button" data-action="preview-content" :disabled="busy || !form.id || dirty" @click="preview">预览</button><button v-if="form.id && !published" type="button" class="dark" data-action="publish-content" :disabled="busy || dirty" @click="ask('publish')">发布</button><button v-if="published" type="button" class="dark" data-action="offline-content" :disabled="busy" @click="ask('offline')">下线</button><button type="button" class="reject" data-action="delete-content" :disabled="busy || !form.id || !['draft','offline'].includes(form.status)" @click="ask('delete')">删除</button></div>
+      <div class="form-actions content-editor-actions"><button type="button" class="primary" data-action="save-content" :disabled="busy || published || form.status === 'offline'" @click="save">保存</button><button type="button" data-action="preview-content" :disabled="busy" @click="preview">预览</button><button v-if="form.id && !published" type="button" class="dark" data-action="publish-content" :disabled="busy || dirty" @click="ask('publish')">发布</button><button v-if="published" type="button" class="dark" data-action="offline-content" :disabled="busy" @click="ask('offline')">下线</button><button type="button" class="reject" data-action="delete-content" :disabled="busy || !form.id || !['draft','offline'].includes(form.status)" @click="ask('delete')">删除</button></div>
     </form>
     <div v-if="confirmAction" class="dialog-backdrop" @click.self="cancelConfirm"><section class="panel content-confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="content-confirm-title"><h3 id="content-confirm-title">{{ confirmAction === 'publish' ? '确认发布' : confirmAction === 'offline' ? '确认下线' : confirmAction === 'delete' ? '确认删除' : '放弃未保存修改' }}</h3><p>{{ confirmAction === 'publish' ? '发布后内容将对公众可见。' : confirmAction === 'offline' ? '下线后公众将无法访问该内容。' : confirmAction === 'delete' ? '删除后不可恢复。' : '当前修改尚未保存，确定放弃吗？' }}</p><div class="form-actions"><button ref="confirmButton" type="button" class="dark" :data-action="confirmAction === 'discard' ? 'confirm-discard-content' : 'confirm-content-action'" :disabled="busy" @click="confirm">确认</button><button type="button" :disabled="busy" @click="cancelConfirm">取消</button></div></section></div>
     <ContentPreviewDialog :open="previewOpen" :title="form.title || '内容预览'" :html="previewHtml" @close="previewOpen = false" />

@@ -53,9 +53,13 @@ describe("ContentEditorPanel", () => {
     const save = apiMock.mock.calls.find(([path, options]) => path === "/api/admin/content/POST-1" && options?.method === "PATCH");
     expect(JSON.parse(save[1].body)).toMatchObject({ title: "管理员修改", version: 1, status: "draft", publishAt: null });
 
-    apiMock.mockImplementation(async (path) => path === "/api/admin/content/POST-1"
-      ? { row: { ...row, bodyHtml: '<img src=x onerror="bad()">', previewHtml: "<p>服务端安全预览</p>" } }
-      : {});
+    apiMock.mockImplementation(async (path, options = {}) => {
+      if (path === "/api/admin/content/POST-1") return { row: { ...row, bodyHtml: '<img src=x onerror="bad()">' } };
+      if (path === "/api/admin/site-preview/content" && options.method === "POST") {
+        return { preview: { payload: { row: { bodyHtml: "<p>服务端安全预览</p>" } } } };
+      }
+      return {};
+    });
     await wrapper.get('[data-action="refresh-content"]').trigger("click");
     await flushPromises();
     await wrapper.get('[data-action="preview-content"]').trigger("click");
@@ -347,6 +351,11 @@ describe("ContentEditorPanel", () => {
 
   it("traps preview focus and restores it to the preview button", async () => {
     const wrapper = await mount(ContentEditorPanel, { props: { contentId: "POST-1", events }, attachTo: document.body });
+    installApi({
+      "POST /api/admin/site-preview/content": async () => ({
+        preview: { payload: { row: { bodyHtml: "<p>预览</p>" } } }
+      })
+    });
     await flushPromises();
     const opener = wrapper.get('[data-action="preview-content"]');
     opener.element.focus();
@@ -419,5 +428,50 @@ describe("ContentEditorPanel", () => {
     await flushPromises();
     expect(wrapper.get('[data-rich-editor="html"]').element.value).toBe("<p>正文</p>");
     expect(wrapper.text()).toContain("版本 6");
+  });
+
+  it("previews a new unsaved item through the sanitized preview API without saving", async () => {
+    installApi({
+      "POST /api/admin/site-preview/content": async () => ({
+        preview: { payload: { row: { bodyHtml: "<p>服务端净化的新内容</p>" } } }
+      })
+    });
+    const wrapper = await mountEditor(null);
+    await wrapper.get('[data-content-field="title"]').setValue("未保存内容");
+    await wrapper.get('[data-content-field="slug"]').setValue("unsaved-content");
+    const previewButton = wrapper.get('[data-action="preview-content"]');
+    expect(previewButton.attributes("disabled")).toBeUndefined();
+
+    await previewButton.trigger("click");
+    await flushPromises();
+
+    const preview = apiMock.mock.calls.find(([path, options]) => path === "/api/admin/site-preview/content" && options?.method === "POST");
+    expect(JSON.parse(preview[1].body)).toMatchObject({ title: "未保存内容", slug: "unsaved-content" });
+    expect(JSON.parse(preview[1].body)).not.toHaveProperty("version");
+    expect(apiMock.mock.calls.some(([path, options]) => path === "/api/admin/content" && options?.method === "POST")).toBe(false);
+    expect(wrapper.get('[data-preview-body]').html()).toContain("服务端净化的新内容");
+    expect(wrapper.get('[data-preview-body]').html()).not.toContain("onerror");
+  });
+
+  it("previews a dirty saved item through the preview API without saving", async () => {
+    installApi({
+      "POST /api/admin/site-preview/content": async () => ({
+        preview: { payload: { row: { bodyHtml: "<p>服务端净化的修改</p>" } } }
+      })
+    });
+    const wrapper = await mountEditor();
+    await wrapper.get('[data-content-field="title"]').setValue("尚未保存修改");
+    const previewButton = wrapper.get('[data-action="preview-content"]');
+    expect(wrapper.vm.isDirty()).toBe(true);
+    expect(previewButton.attributes("disabled")).toBeUndefined();
+
+    await previewButton.trigger("click");
+    await flushPromises();
+
+    const preview = apiMock.mock.calls.find(([path, options]) => path === "/api/admin/site-preview/content" && options?.method === "POST");
+    expect(JSON.parse(preview[1].body)).toMatchObject({ id: "POST-1", title: "尚未保存修改" });
+    expect(JSON.parse(preview[1].body)).not.toHaveProperty("version");
+    expect(apiMock.mock.calls.some(([path, options]) => path === "/api/admin/content/POST-1" && options?.method === "PATCH")).toBe(false);
+    expect(wrapper.get('[data-preview-body]').html()).toContain("服务端净化的修改");
   });
 });
