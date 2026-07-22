@@ -2,6 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { selectHomeEvents } from "../src/services/public-site.js";
+import {
+  buildContentDetailView,
+  buildEventDetailView,
+  buildHomeView,
+  mediaView
+} from "../src/services/public-site-view.js";
 
 const now = new Date("2026-07-19T12:00:00.000Z");
 
@@ -24,6 +30,67 @@ function profile(eventId, overrides = {}) {
 function db(events, profiles, featuredEventId = null) {
   return { siteSettings: { featuredEventId }, events, eventPublicProfiles: profiles };
 }
+
+function seededPublicSiteDb() {
+  return {
+    siteSettings: { platformName: "青少年航空平台", featuredEventId: "CURRENT-EVENT" },
+    events: [event("CURRENT-EVENT", { name: "当前赛事" })],
+    eventPublicProfiles: [profile("CURRENT-EVENT", { slug: "current-event" })],
+    contentPosts: [{
+      id: "NEWS-ONE",
+      slug: "news-one",
+      eventId: "CURRENT-EVENT",
+      type: "news",
+      title: "新闻一",
+      summary: "新闻摘要",
+      bodyHtml: "<p>新闻正文</p>",
+      status: "published",
+      publishAt: "2026-07-01T00:00:00.000Z",
+      pinned: false,
+      sortOrder: 0,
+      coverMediaId: null
+    }],
+    contentAttachments: [],
+    mediaAssets: [],
+    projects: []
+  };
+}
+
+function seededPublicSiteDbWithPrivateMedia() {
+  const source = seededPublicSiteDb();
+  source.mediaAssets = [{
+    id: "MEDIA-PRIVATE",
+    visibility: "draft",
+    originalName: "private.png",
+    mimeType: "image/png",
+    sizeBytes: 128,
+    width: 64,
+    height: 64,
+    variants: {},
+    cleanedAt: null
+  }];
+  return source;
+}
+
+test("public view builders preserve homepage, event and content shapes", () => {
+  const source = seededPublicSiteDb();
+  const current = new Date("2026-07-20T00:00:00.000Z");
+  assert.equal(buildHomeView(source, current).site.platformName, source.siteSettings.platformName);
+  assert.equal(buildEventDetailView(source, "current-event", current).event.slug, "current-event");
+  assert.equal(buildContentDetailView(source, "news-one", current).row.slug, "news-one");
+});
+
+test("mediaView hides private media unless an explicit protected URL builder is supplied", () => {
+  const source = seededPublicSiteDbWithPrivateMedia();
+  assert.equal(mediaView(source, "MEDIA-PRIVATE"), null);
+  assert.equal(
+    mediaView(source, "MEDIA-PRIVATE", {
+      allowPrivate: true,
+      urlFor: (id) => `/api/admin/site-media/${id}/preview`
+    }).url,
+    "/api/admin/site-media/MEDIA-PRIVATE/preview"
+  );
+});
 
 test("home event selection respects a valid manual feature and caps concurrent events", () => {
   const source = db(
