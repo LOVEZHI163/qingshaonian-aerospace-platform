@@ -34,12 +34,15 @@ const activePreviewDraft = computed(() => activePreviewPanel.value?.getPreviewDr
 const savedPreviewPath = computed(() => activePreviewPanel.value?.getSavedPreviewPath?.() || null);
 const activePreviewState = computed(() => activePreviewPanel.value?.getPreviewState?.() || {
   loading: false,
+  failed: false,
   ready: Boolean(activePreviewDraft.value)
 });
 const previewHelp = computed(() => {
   if (activeTab.value === "events" && !activePreviewDraft.value) return "请先选择赛事后再预览。";
   if (activeTab.value === "content" && !selectedContentId.value) return "请先选择或新建内容后再预览。";
-  if (activeTab.value === "content" && !activePreviewState.value.ready) return "内容加载中，请稍候。";
+  if (activeTab.value === "content" && activePreviewState.value.loading) return "内容加载中，请稍候。";
+  if (activeTab.value === "content" && activePreviewState.value.failed) return "内容加载失败，请重试。";
+  if (activeTab.value === "content" && !activePreviewState.value.ready) return "内容暂不可预览，请重试。";
   return "草稿预览不会保存或发布当前修改。";
 });
 const canPreviewDraft = computed(() => Boolean(

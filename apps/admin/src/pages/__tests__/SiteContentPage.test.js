@@ -177,6 +177,26 @@ describe("SiteContentPage", () => {
     expect(wrapper.get('[data-action="preview-site-draft"]').attributes("disabled")).toBeUndefined();
   });
 
+  it("keeps content preview disabled and reports a selected content load failure", async () => {
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/admin/site-settings") return { row: { ...settings } };
+      if (path === "/api/admin/event-public-profiles") return { rows: profiles };
+      if (path === "/api/admin/events") return { rows: events, projects: [] };
+      if (path === "/api/admin/content") return { rows: [{ ...contentRow, id: "P1", title: "加载失败的内容" }] };
+      if (path === "/api/admin/content/P1") throw new Error("内容加载失败");
+      return { rows: [] };
+    });
+    const wrapper = await mountLoaded();
+
+    await activateTab(wrapper, "content");
+    await wrapper.get('[data-content-row="P1"]').trigger("click");
+    await flushPromises();
+
+    expect(wrapper.get('[data-action="preview-site-draft"]').attributes("disabled")).toBeDefined();
+    expect(wrapper.get("[data-preview-help]").text()).toContain("内容加载失败，请重试");
+    expect(wrapper.get("[data-preview-help]").text()).not.toContain("内容加载中");
+  });
+
   it("stacks preview actions into a full-width mobile action row", () => {
     const css = readFileSync("src/styles/admin.css", "utf8");
 
