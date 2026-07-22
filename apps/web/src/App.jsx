@@ -1,11 +1,11 @@
-import React, { lazy, Suspense, useEffect, useState } from "react";
+import React, { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { fetchJson } from "./api/client.js";
 import { focusHashTarget, useRouter } from "./router.js";
 import AsyncState from "./components/AsyncState.jsx";
 import Seo from "./components/Seo.jsx";
 import SiteFooter from "./components/SiteFooter.jsx";
 import SiteHeader from "./components/SiteHeader.jsx";
-import PreviewPage from "./pages/PreviewPage.jsx";
+import PreviewPage, { readPreviewPageSnapshot } from "./pages/PreviewPage.jsx";
 
 const ContentDetailPage = lazy(() => import("./pages/ContentDetailPage.jsx"));
 const ContentListPage = lazy(() => import("./pages/ContentListPage.jsx"));
@@ -50,6 +50,13 @@ export default function App() {
   const { location, route } = useRouter();
   const [bootstrapAttempt, setBootstrapAttempt] = useState(0);
   const [bootstrap, setBootstrap] = useState({ status: "loading", data: null });
+  const previewResult = useMemo(
+    () => route.name === "preview" ? readPreviewPageSnapshot(location) : null,
+    [location, route.name]
+  );
+  const previewSite = previewResult?.ok && previewResult.snapshot.kind === "homepage"
+    ? previewResult.snapshot.payload?.site || null
+    : null;
 
   useEffect(() => {
     if (route.name === "preview") return undefined;
@@ -92,7 +99,7 @@ export default function App() {
       <main id="main-content" tabIndex="-1">
         <Suspense fallback={<RouteLoading />}>
           {route.name === "preview" ? (
-            <PreviewPage location={location} />
+            <PreviewPage location={location} result={previewResult} />
           ) : route.name === "not-found" ? (
             <NotFoundPage />
           ) : route.name === "home" ? (
@@ -121,7 +128,9 @@ export default function App() {
           )}
         </Suspense>
       </main>
-      <SiteFooter site={bootstrap.data?.site || {}} />
+      {route.name === "preview"
+        ? previewSite ? <SiteFooter site={previewSite} /> : null
+        : <SiteFooter site={bootstrap.data?.site || {}} />}
     </div>
   );
 }

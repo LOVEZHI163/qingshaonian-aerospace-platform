@@ -72,8 +72,8 @@ export default function Seo({
       document.head.append(link);
       nodes.push(link);
       nodes.push(appendMeta("property", "og:url", canonical));
-      nodes.push(appendMeta("property", "og:image", absoluteImage(image, origin)));
     }
+    nodes.push(appendMeta("property", "og:image", absoluteImage(image, origin)));
 
     return () => {
       nodes.filter(Boolean).forEach((node) => {

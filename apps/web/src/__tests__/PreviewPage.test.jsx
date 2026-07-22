@@ -1,5 +1,5 @@
 import React from "react";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import App from "../App.jsx";
@@ -31,7 +31,10 @@ function validSnapshot(overrides = {}) {
   };
 }
 
-afterEach(() => window.localStorage.clear());
+afterEach(() => {
+  window.localStorage.clear();
+  vi.unstubAllEnvs();
+});
 
 function storeSnapshot(snapshot) {
   window.localStorage.setItem(`${PREVIEW_STORAGE_PREFIX}${token}`, JSON.stringify(snapshot));
@@ -98,14 +101,14 @@ describe("PreviewPage", () => {
     [
       "homepage",
       {
-        site: { platformName: "草稿航空平台" },
-        featuredEvent: {
-          id: "draft-home-event",
-          slug: "draft-home-event",
-          name: "首页草稿赛事",
-          slogan: "尚未保存的平台简介",
-          registrationWindow: { open: false }
-        }
+        site: { platformName: "草稿航空平台", platformIntro: "尚未保存的平台简介" },
+        featuredEvent: null,
+        concurrentEvents: [],
+        services: [],
+        announcements: [],
+        news: [],
+        works: [],
+        history: []
       },
       "尚未保存的平台简介"
     ],
@@ -121,7 +124,18 @@ describe("PreviewPage", () => {
         },
         projects: [],
         groups: [],
-        resources: [],
+        resources: [{
+          id: "draft-event-rules",
+          label: "尚未保存的赛事规程",
+          url: "/api/admin/site-media/draft-event-rules/preview",
+          name: "赛事规程.pdf",
+          mimeType: "application/pdf",
+          sizeBytes: 2048
+        }, {
+          id: "unsafe-event-rules",
+          label: "不安全赛事资源",
+          url: "https://attacker.example/rules.pdf"
+        }],
         content: []
       },
       "尚未保存的赛事宣传语"
@@ -134,7 +148,18 @@ describe("PreviewPage", () => {
           slug: "draft-content",
           title: "内容草稿",
           bodyHtml: '<p>尚未保存的正文</p><a href="https://example.org/draft">草稿外链</a>',
-          attachments: []
+          attachments: [{
+            id: "draft-content-attachment",
+            label: "尚未保存的内容附件",
+            url: "/api/admin/site-media/draft-content-attachment/preview",
+            name: "内容附件.png",
+            mimeType: "image/png",
+            sizeBytes: 1536
+          }, {
+            id: "unsafe-content-attachment",
+            label: "不安全内容附件",
+            url: "javascript:alert(1)"
+          }]
         }
       },
       "尚未保存的正文"
@@ -152,11 +177,70 @@ describe("PreviewPage", () => {
     expect(document.head.querySelector('meta[name="robots"]')).toHaveAttribute("content", "noindex, nofollow");
     expect(document.head.querySelector('link[rel="canonical"]')).toBeNull();
     expect(request).not.toHaveBeenCalled();
+    if (kind === "homepage") {
+      expect(within(screen.getByRole("contentinfo")).getByText(expectedText)).toBeInTheDocument();
+    } else {
+      expect(screen.queryByRole("contentinfo")).not.toBeInTheDocument();
+    }
 
     if (kind === "content") {
+      expect(screen.getByRole("link", { name: /尚未保存的内容附件/ })).toHaveAttribute(
+        "href",
+        "/api/admin/site-media/draft-content-attachment/preview"
+      );
+      expect(screen.getByText(/草稿附件需保持管理后台登录状态/)).toBeInTheDocument();
+      expect(screen.queryByText("不安全内容附件")).not.toBeInTheDocument();
       expect(screen.getByRole("link", { name: "草稿外链" })).toHaveAttribute("target", "_blank");
       expect(screen.getByRole("link", { name: "草稿外链" })).toHaveAttribute("rel", "noopener noreferrer");
     }
+    if (kind === "event") {
+      expect(screen.getByRole("link", { name: /尚未保存的赛事规程/ })).toHaveAttribute(
+        "href",
+        "/api/admin/site-media/draft-event-rules/preview"
+      );
+      expect(screen.getByText(/草稿附件需保持管理后台登录状态/)).toBeInTheDocument();
+      expect(screen.queryByText("不安全赛事资源")).not.toBeInTheDocument();
+    }
+  });
+
+  it("uses homepage site drafts for the shared footer and preview SEO without a duplicate footer", () => {
+    vi.stubEnv("VITE_PUBLIC_SITE_URL", "https://aerogp.cn");
+    storeSnapshot(validSnapshot({
+      payload: {
+        site: {
+          platformName: "尚未保存的平台名称",
+          platformIntro: "尚未保存的平台简介",
+          organizers: ["尚未保存的主办单位甲", "尚未保存的主办单位乙"],
+          contact: "0577-76543210",
+          icp: "浙ICP备草稿号",
+          seoTitle: "尚未保存的 SEO 标题",
+          seoDescription: "尚未保存的 SEO 摘要",
+          shareImage: { url: "/api/admin/site-media/draft-share/preview" }
+        }
+      }
+    }));
+    window.history.replaceState({}, "", `/preview?token=${token}`);
+    vi.stubGlobal("fetch", vi.fn());
+
+    render(<App />);
+
+    const footers = screen.getAllByRole("contentinfo");
+    expect(footers).toHaveLength(1);
+    const footer = within(footers[0]);
+    expect(footer.getByText("尚未保存的平台名称")).toBeInTheDocument();
+    expect(footer.getByText("尚未保存的平台简介")).toBeInTheDocument();
+    expect(footer.getByText("尚未保存的主办单位甲、尚未保存的主办单位乙")).toBeInTheDocument();
+    expect(footer.getByText("0577-76543210")).toBeInTheDocument();
+    expect(footer.getByText("浙ICP备草稿号")).toBeInTheDocument();
+    expect(document.title).toBe("尚未保存的 SEO 标题");
+    expect(document.head.querySelector('meta[name="description"]')).toHaveAttribute("content", "尚未保存的 SEO 摘要");
+    expect(document.head.querySelector('meta[property="og:image"]')).toHaveAttribute(
+      "content",
+      "https://aerogp.cn/api/admin/site-media/draft-share/preview"
+    );
+    expect(document.head.querySelector('meta[name="robots"]')).toHaveAttribute("content", "noindex, nofollow");
+    expect(document.head.querySelector('link[rel="canonical"]')).toBeNull();
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   it("rejects duplicate token parameters without reading a snapshot", () => {
@@ -177,7 +261,7 @@ describe("PreviewPage", () => {
     window.history.replaceState({}, "", `/preview?token=${token}`);
     vi.stubGlobal("fetch", vi.fn());
     render(<App />);
-    expect(screen.getByText("草稿航空平台")).toBeInTheDocument();
+    expect(within(screen.getByRole("contentinfo")).getByText("草稿航空平台")).toBeInTheDocument();
     expect(fetch).not.toHaveBeenCalled();
   });
 });

@@ -229,6 +229,35 @@ describe("public site SEO", () => {
   });
 
   it.each([
+    [
+      "/events/foo/",
+      "/api/public/events/foo",
+      { event: { id: "E1", slug: "foo", name: "尾斜杠赛事", registrationWindow: { open: false } }, projects: [], groups: [], resources: [], content: [] },
+      "尾斜杠赛事",
+      "https://aerogp.cn/events/foo"
+    ],
+    [
+      "/content/foo/",
+      "/api/public/content/foo",
+      { row: { id: "C1", slug: "foo", title: "尾斜杠内容", bodyHtml: "", attachments: [] } },
+      "尾斜杠内容",
+      "https://aerogp.cn/content/foo"
+    ]
+  ])("normalizes the detail canonical for %s from the stable slug", async (path, apiPath, payload, title, canonical) => {
+    vi.stubEnv("VITE_PUBLIC_SITE_URL", "https://aerogp.cn");
+    window.history.replaceState({}, "", path);
+    vi.stubGlobal("fetch", vi.fn(async (url) => jsonResponse(
+      url === "/api/public/home" ? homePayload : url === apiPath ? payload : emptyPage
+    )));
+
+    render(<App />);
+
+    await waitFor(() => expect(document.title).toBe(title));
+    expect(document.head.querySelector('link[rel="canonical"]')).toHaveAttribute("href", canonical);
+    expect(document.head.querySelector('meta[property="og:url"]')).toHaveAttribute("content", canonical);
+  });
+
+  it.each([
     ["/missing", null, 200, "页面未找到", "您访问的页面不存在。"],
     ["/events/missing", "/api/public/events/missing", 404, "赛事不存在", "该赛事可能尚未公开或已经停止展示。"],
     ["/content/missing", "/api/public/content/missing", 404, "内容不存在", "该内容可能尚未发布或已经停止展示。"],

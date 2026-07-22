@@ -21,6 +21,10 @@ function previewToken(location) {
   }
 }
 
+export function readPreviewPageSnapshot(location) {
+  return readPreviewSnapshot(previewToken(location));
+}
+
 function adminReturnPath(value) {
   try {
     const url = new URL(value || "/admin/", window.location.origin);
@@ -49,16 +53,24 @@ function PreviewStatus({ snapshot }) {
 
 function PreviewBody({ snapshot }) {
   switch (snapshot.kind) {
-    case "homepage":
+    case "homepage": {
+      const site = snapshot.payload?.site || {};
       return (
         <>
-          <Seo title="草稿预览" description="管理员草稿预览" robots="noindex, nofollow" canonical={false} />
+          <Seo
+            title={site.seoTitle || site.platformName || "草稿预览"}
+            description={site.seoDescription || site.platformIntro || "管理员草稿预览"}
+            image={site.shareImage || snapshot.payload?.featuredEvent?.hero}
+            robots="noindex, nofollow"
+            canonical={false}
+          />
           <div className="home-route">
             <h1 className="visually-hidden">{snapshot.payload?.site?.platformName || "首页草稿预览"}</h1>
             <HomePage data={snapshot.payload || {}} />
           </div>
         </>
       );
+    }
     case "event": return <EventDetailView payload={snapshot.payload || {}} preview />;
     case "content": return <ContentDetailView row={snapshot.payload?.row || null} preview />;
     default: return null;
@@ -80,8 +92,7 @@ function PreviewError({ reason }) {
   );
 }
 
-export default function PreviewPage({ location }) {
-  const result = readPreviewSnapshot(previewToken(location));
+export default function PreviewPage({ location, result = readPreviewPageSnapshot(location) }) {
   if (!result.ok) return <PreviewError reason={result.reason} />;
 
   const { snapshot } = result;

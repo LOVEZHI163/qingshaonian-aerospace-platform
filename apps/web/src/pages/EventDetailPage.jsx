@@ -50,7 +50,7 @@ function EventContent({ rows = [] }) {
   );
 }
 
-export function EventDetailView({ payload = {}, preview = false }) {
+export function EventDetailView({ payload = {}, preview = false, canonicalPath = null }) {
   const event = payload.event;
   const eventId = typeof event?.id === "string" && SAFE_EVENT_ID.test(event.id) ? event.id : null;
   const canRegister = event?.registrationWindow?.open === true && eventId;
@@ -60,7 +60,7 @@ export function EventDetailView({ payload = {}, preview = false }) {
       <Seo
         title={event?.name || "赛事详情"}
         description={event?.summary || "查看赛事介绍、时间地点、赛项组别和报名信息。"}
-        {...(!preview ? { pathname: window.location.pathname } : {})}
+        {...(!preview ? { pathname: canonicalPath || `/events/${encodeURIComponent(event?.slug || "")}` } : {})}
         image={event?.hero}
         robots={preview ? "noindex, nofollow" : null}
         canonical={!preview}
@@ -145,7 +145,10 @@ export default function EventDetailPage({ slug }) {
 
   return (
     <AsyncState status={state.status} onRetry={() => setAttempt((value) => value + 1)}>
-      <EventDetailView payload={state.data || {}} />
+      <EventDetailView
+        payload={state.data || {}}
+        canonicalPath={`/events/${encodeURIComponent(slug)}`}
+      />
     </AsyncState>
   );
 }

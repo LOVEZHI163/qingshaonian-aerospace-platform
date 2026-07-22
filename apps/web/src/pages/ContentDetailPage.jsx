@@ -24,7 +24,7 @@ function formatDate(value) {
   return Number.isFinite(date.getTime()) ? date.toLocaleString("zh-CN", { hour12: false }) : "";
 }
 
-export function ContentDetailView({ row, preview = false }) {
+export function ContentDetailView({ row, preview = false, canonicalPath = null }) {
   const bodyRef = useRef(null);
 
   useEffect(() => {
@@ -54,7 +54,7 @@ export function ContentDetailView({ row, preview = false }) {
       <Seo
         title={row?.title || "内容详情"}
         description={row?.summary || "查看赛事公告、动态与优秀作品详情。"}
-        {...(!preview ? { pathname: window.location.pathname } : {})}
+        {...(!preview ? { pathname: canonicalPath || `/content/${encodeURIComponent(row?.slug || "")}` } : {})}
         image={row?.cover}
         type="article"
         robots={preview ? "noindex, nofollow" : null}
@@ -118,7 +118,12 @@ export default function ContentDetailPage({ slug }) {
 
   return (
     <AsyncState status={state.status} onRetry={() => setAttempt((value) => value + 1)}>
-      {state.row ? <ContentDetailView row={state.row} /> : null}
+      {state.row ? (
+        <ContentDetailView
+          row={state.row}
+          canonicalPath={`/content/${encodeURIComponent(slug)}`}
+        />
+      ) : null}
     </AsyncState>
   );
 }

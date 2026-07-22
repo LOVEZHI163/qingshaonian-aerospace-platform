@@ -1,10 +1,14 @@
 import React from "react";
 
-function publicMediaHref(value) {
+const ADMIN_PREVIEW_MEDIA = /^\/api\/admin\/site-media\/[^/]+\/preview$/;
+
+function safeMediaHref(value) {
   if (typeof value !== "string" || !value) return null;
   try {
     const url = new URL(value, window.location.origin);
-    if (url.origin !== window.location.origin || !url.pathname.startsWith("/api/public/media/")) return null;
+    const allowedPath = url.pathname.startsWith("/api/public/media/")
+      || ADMIN_PREVIEW_MEDIA.test(url.pathname);
+    if (url.origin !== window.location.origin || !allowedPath) return null;
     return `${url.pathname}${url.search}`;
   } catch {
     return null;
@@ -28,7 +32,7 @@ function formatType(mimeType) {
 
 export default function AttachmentList({ attachments = [], title = "附件下载" }) {
   const rows = attachments
-    .map((attachment) => ({ attachment, href: publicMediaHref(attachment?.url) }))
+    .map((attachment) => ({ attachment, href: safeMediaHref(attachment?.url) }))
     .filter((row) => row.href);
 
   if (!rows.length) return null;
@@ -43,7 +47,10 @@ export default function AttachmentList({ attachments = [], title = "附件下载
             <li key={`${attachment.id || href}:${attachment.displayOrder || 0}`}>
               <div>
                 <strong>{label}</strong>
-                <span>{formatType(attachment.mimeType)} · {formatSize(attachment.sizeBytes)}</span>
+                <span>
+                  {formatType(attachment.mimeType)} · {formatSize(attachment.sizeBytes)}
+                  {href.startsWith("/api/admin/site-media/") ? " · 草稿附件需保持管理后台登录状态" : null}
+                </span>
               </div>
               <a href={href} download={attachment.name || undefined} data-router-ignore="true">
                 下载<span className="visually-hidden">{label}</span>
