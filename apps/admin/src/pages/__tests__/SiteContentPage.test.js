@@ -64,10 +64,16 @@ async function mountLoaded(options = {}) {
   return wrapper;
 }
 
+async function activateTab(wrapper, name) {
+  await wrapper.get(`[data-site-tab="${name}"]`).trigger("click");
+  await flushPromises();
+}
+
 describe("SiteContentPage", () => {
   beforeEach(() => {
     apiMock.mockReset();
     installSuccessfulApi();
+    localStorage.clear();
   });
 
   it("loads homepage settings and exposes only configurable featured events", async () => {
@@ -101,6 +107,111 @@ describe("SiteContentPage", () => {
       context: { eventId: "E1" }
     });
     expect(wrapper.getComponent(EventPublicProfilePanel).vm.getSavedPreviewPath()).toBe("/events/event-2026");
+  });
+
+  it("opens the active saved page and creates a draft preview without saving", async () => {
+    const open = vi.spyOn(window, "open").mockReturnValue({ location: { href: "" }, close: vi.fn() });
+    apiMock.mockImplementation(async (path, options = {}) => {
+      if (path === "/api/admin/site-settings") return { row: { ...settings } };
+      if (path === "/api/admin/event-public-profiles") return { rows: profiles };
+      if (path === "/api/admin/events") return { rows: events, projects: [] };
+      if (path === "/api/admin/site-preview/homepage" && options.method === "POST") {
+        return { preview: { payload: { platformName: settings.platformName }, context: {} } };
+      }
+      return { rows: [] };
+    });
+    const wrapper = await mountLoaded();
+
+    await wrapper.get('[data-action="preview-saved-site"]').trigger("click");
+    expect(open).toHaveBeenCalledWith("/", "_blank", "noopener");
+
+    await wrapper.get('[data-action="preview-site-draft"]').trigger("click");
+    expect(open).toHaveBeenLastCalledWith("about:blank", "_blank", "noopener");
+    await flushPromises();
+
+    expect(apiMock).toHaveBeenCalledWith("/api/admin/site-preview/homepage", expect.objectContaining({ method: "POST" }));
+    expect(open.mock.results.at(-1).value.location.href).toMatch(/^\/preview\?token=/);
+    expect(apiMock).not.toHaveBeenCalledWith("/api/admin/site-settings", expect.objectContaining({ method: "PATCH" }));
+  });
+
+  it("disables contextual preview until an event or content is selected", async () => {
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/admin/site-settings") return { row: { ...settings } };
+      if (path === "/api/admin/event-public-profiles") return { rows: [] };
+      if (path === "/api/admin/events") return { rows: [] };
+      return { rows: [] };
+    });
+    const wrapper = await mountLoaded();
+
+    await activateTab(wrapper, "events");
+    expect(wrapper.get('[data-action="preview-site-draft"]').attributes("disabled")).toBeDefined();
+    expect(wrapper.get("[data-preview-help]").text()).toContain("请先选择赛事");
+
+    await activateTab(wrapper, "content");
+    expect(wrapper.get('[data-action="preview-site-draft"]').attributes("disabled")).toBeDefined();
+    expect(wrapper.get("[data-preview-help]").text()).toContain("请先选择内容");
+  });
+
+  it("shows API validation errors and closes the pre-opened preview", async () => {
+    const popup = { location: { href: "" }, close: vi.fn() };
+    vi.spyOn(window, "open").mockReturnValue(popup);
+    apiMock.mockImplementation(async (path, options = {}) => {
+      if (path === "/api/admin/site-settings") return { row: { ...settings } };
+      if (path === "/api/admin/event-public-profiles") return { rows: profiles };
+      if (path === "/api/admin/events") return { rows: events, projects: [] };
+      if (path === "/api/admin/site-preview/homepage" && options.method === "POST") throw new Error("平台简介超过长度限制");
+      return { rows: [] };
+    });
+    const wrapper = await mountLoaded();
+
+    await wrapper.get('[data-action="preview-site-draft"]').trigger("click");
+    await flushPromises();
+
+    expect(wrapper.get("[data-preview-error]").text()).toContain("平台简介超过长度限制");
+    expect(popup.close).toHaveBeenCalledOnce();
+  });
+
+  it("reports snapshot storage errors without saving or publishing", async () => {
+    const setItem = vi.spyOn(Storage.prototype, "setItem").mockImplementationOnce(() => {
+      throw new Error("浏览器存储不可用");
+    });
+    const popup = { location: { href: "" }, close: vi.fn() };
+    vi.spyOn(window, "open").mockReturnValue(popup);
+    apiMock.mockImplementation(async (path, options = {}) => {
+      if (path === "/api/admin/site-settings") return { row: { ...settings } };
+      if (path === "/api/admin/event-public-profiles") return { rows: profiles };
+      if (path === "/api/admin/events") return { rows: events, projects: [] };
+      if (path === "/api/admin/site-preview/homepage" && options.method === "POST") return { preview: { payload: {}, context: {} } };
+      return { rows: [] };
+    });
+    const wrapper = await mountLoaded();
+
+    await wrapper.get('[data-action="preview-site-draft"]').trigger("click");
+    await flushPromises();
+
+    expect(setItem).toHaveBeenCalled();
+    expect(wrapper.get("[data-preview-error]").text()).toContain("浏览器存储不可用");
+    expect(popup.close).toHaveBeenCalledOnce();
+    expect(apiMock.mock.calls.some(([path, options]) => options?.method === "PATCH" || path.includes("/publish"))).toBe(false);
+  });
+
+  it("shows a fallback preview link when the browser blocks the popup", async () => {
+    vi.spyOn(window, "open").mockReturnValue(null);
+    apiMock.mockImplementation(async (path, options = {}) => {
+      if (path === "/api/admin/site-settings") return { row: { ...settings } };
+      if (path === "/api/admin/event-public-profiles") return { rows: profiles };
+      if (path === "/api/admin/events") return { rows: events, projects: [] };
+      if (path === "/api/admin/site-preview/homepage" && options.method === "POST") return { preview: { payload: {}, context: {} } };
+      return { rows: [] };
+    });
+    const wrapper = await mountLoaded();
+
+    await wrapper.get('[data-action="preview-site-draft"]').trigger("click");
+    await flushPromises();
+
+    const fallback = wrapper.get("[data-preview-fallback]");
+    expect(fallback.attributes("href")).toMatch(/^\/preview\?token=/);
+    expect(fallback.attributes("target")).toBe("_blank");
   });
 
   it("falls back to automatic selection when the stored featured event is no longer configurable", async () => {

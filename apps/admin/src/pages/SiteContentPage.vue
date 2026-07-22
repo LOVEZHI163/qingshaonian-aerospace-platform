@@ -1,11 +1,12 @@
 <script setup>
-import { nextTick, onMounted, ref } from "vue";
+import { computed, nextTick, onMounted, ref } from "vue";
 
 import ContentEditorPanel from "../components/ContentEditorPanel.vue";
 import ContentListPanel from "../components/ContentListPanel.vue";
 import EventPublicProfilePanel from "../components/EventPublicProfilePanel.vue";
 import SiteSettingsPanel from "../components/SiteSettingsPanel.vue";
 import { api } from "../lib/api.js";
+import { createPreviewSnapshot } from "../lib/site-preview.js";
 
 const tabs = [["homepage", "首页设置"], ["events", "赛事视觉"], ["content", "内容发布"]];
 const activeTab = ref("homepage");
@@ -20,6 +21,26 @@ const eventPublicProfilePanel = ref(null);
 const selectedContentId = ref(null);
 const contentEditor = ref(null);
 const contentList = ref(null);
+const previewError = ref("");
+const blockedPreviewUrl = ref("");
+
+const activePreviewPanel = computed(() => activeTab.value === "homepage"
+  ? siteSettingsPanel.value
+  : activeTab.value === "events"
+    ? eventPublicProfilePanel.value
+    : contentEditor.value);
+
+const activePreviewDraft = computed(() => activePreviewPanel.value?.getPreviewDraft?.() || null);
+const savedPreviewPath = computed(() => activePreviewPanel.value?.getSavedPreviewPath?.() || null);
+const previewHelp = computed(() => {
+  if (activeTab.value === "events" && !activePreviewDraft.value) return "请先选择赛事后再预览。";
+  if (activeTab.value === "content" && !activePreviewDraft.value?.context?.contentId) return "请先选择内容后再预览。";
+  return "草稿预览不会保存或发布当前修改。";
+});
+const canPreviewDraft = computed(() => Boolean(
+  activePreviewDraft.value
+  && (activeTab.value !== "content" || activePreviewDraft.value.context?.contentId)
+));
 
 async function load() {
   loading.value = true;
@@ -77,9 +98,44 @@ function contentDeleted() {
 async function activateTab(index, { focus = false } = {}) {
   const normalized = (index + tabs.length) % tabs.length;
   activeTab.value = tabs[normalized][0];
+  previewError.value = "";
+  blockedPreviewUrl.value = "";
   if (focus) {
     await nextTick();
     tabButtons.value[normalized]?.focus();
+  }
+}
+
+function previewSaved() {
+  previewError.value = "";
+  blockedPreviewUrl.value = "";
+  const path = savedPreviewPath.value;
+  if (!path) return;
+  if (!window.open(path, "_blank", "noopener")) blockedPreviewUrl.value = path;
+}
+
+async function previewDraft() {
+  previewError.value = "";
+  blockedPreviewUrl.value = "";
+  const draft = activePreviewDraft.value;
+  if (!draft || !canPreviewDraft.value) return;
+
+  const popup = window.open("about:blank", "_blank", "noopener");
+  try {
+    const response = await api(`/api/admin/site-preview/${draft.kind}`, {
+      method: "POST",
+      body: JSON.stringify(draft.body)
+    });
+    const snapshot = createPreviewSnapshot({
+      kind: draft.kind,
+      payload: response.preview.payload,
+      context: response.preview.context
+    });
+    if (popup) popup.location.href = snapshot.url;
+    else blockedPreviewUrl.value = snapshot.url;
+  } catch (failure) {
+    popup?.close?.();
+    previewError.value = failure?.message || "草稿预览生成失败";
   }
 }
 
@@ -103,7 +159,19 @@ onMounted(load);
 
 <template>
   <section class="site-content-page" data-testid="site-content-page">
-    <div class="page-title-row"><div><h2>官网内容</h2><p>统一维护首页信息、赛事视觉与公开内容。</p></div><button type="button" class="dark" data-action="refresh-site-content" :disabled="loading" @click="load">刷新</button></div>
+    <div class="page-title-row">
+      <div><h2>官网内容</h2><p>统一维护首页信息、赛事视觉与公开内容。</p></div>
+      <div class="site-preview-actions">
+        <button type="button" class="dark" data-action="refresh-site-content" :disabled="loading" @click="load">刷新</button>
+        <button type="button" data-action="preview-saved-site" :disabled="loading || !savedPreviewPath" @click="previewSaved">预览已保存官网</button>
+        <button type="button" class="primary" data-action="preview-site-draft" :disabled="loading || !canPreviewDraft" @click="previewDraft">预览当前草稿</button>
+      </div>
+    </div>
+    <div class="site-preview-status">
+      <p class="site-preview-help" data-preview-help>{{ previewHelp }}</p>
+      <p v-if="previewError" class="message" role="alert" data-preview-error>{{ previewError }}</p>
+      <a v-if="blockedPreviewUrl" class="site-preview-fallback" :href="blockedPreviewUrl" target="_blank" rel="noopener" data-preview-fallback>预览窗口被拦截，点击在新标签页打开</a>
+    </div>
     <div class="site-content-tabs" role="tablist" aria-label="官网内容分类">
       <button v-for="(tab, index) in tabs" :id="`site-tab-${tab[0]}`" ref="tabButtons" :key="tab[0]" type="button" role="tab" :data-site-tab="tab[0]" :aria-selected="activeTab === tab[0]" :aria-controls="`site-panel-${tab[0]}`" :tabindex="activeTab === tab[0] ? 0 : -1" :class="{ active: activeTab === tab[0] }" @click="activateTab(index)" @keydown="handleTabKey($event, index)">{{ tab[1] }}</button>
     </div>
