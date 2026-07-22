@@ -24,7 +24,8 @@ function adminReturnPath(value) {
     const url = new URL(value || "/admin/", window.location.origin);
     if (url.origin !== window.location.origin || !url.pathname.startsWith("/admin/")) return "/admin/";
     url.searchParams.delete("token");
-    return `${url.pathname}${url.search}${url.hash}`;
+    url.hash = "";
+    return `${url.pathname}${url.search}`;
   } catch {
     return "/admin/";
   }

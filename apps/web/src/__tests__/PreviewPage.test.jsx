@@ -73,6 +73,19 @@ describe("PreviewPage", () => {
   });
 
   it.each([
+    ["a token-bearing fragment", "/admin/?view=site-content&token=leaked#token=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],
+    ["an arbitrary fragment", "/admin/?view=site-content#section-to-not-preserve"]
+  ])("removes %s from the return link", (_label, adminReturnPath) => {
+    storeSnapshot(validSnapshot({ adminReturnPath }));
+    render(<PreviewPage location={`/preview?token=${token}`} />);
+
+    expect(screen.getByRole("link", { name: "返回管理后台" })).toHaveAttribute(
+      "href",
+      "/admin/?view=site-content"
+    );
+  });
+
+  it.each([
     ["event", { event: { name: "草稿赛事" } }, "草稿赛事"],
     ["content", { row: { title: "草稿内容", summary: "内容摘要" } }, "草稿内容"]
   ])("dispatches the %s snapshot", (kind, payload, heading) => {
