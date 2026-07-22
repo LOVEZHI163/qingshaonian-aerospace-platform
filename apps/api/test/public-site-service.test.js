@@ -83,6 +83,7 @@ test("public view builders preserve homepage, event and content shapes", () => {
 test("mediaView hides private media unless an explicit protected URL builder is supplied", () => {
   const source = seededPublicSiteDbWithPrivateMedia();
   assert.equal(mediaView(source, "MEDIA-PRIVATE"), null);
+  assert.equal(mediaView(source, "MEDIA-PRIVATE", { allowPrivate: true }), null);
   assert.equal(
     mediaView(source, "MEDIA-PRIVATE", {
       allowPrivate: true,
@@ -90,6 +91,53 @@ test("mediaView hides private media unless an explicit protected URL builder is 
     }).url,
     "/api/admin/site-media/MEDIA-PRIVATE/preview"
   );
+});
+
+test("unpublished content uses protected URLs for private cover and attachments", () => {
+  const source = seededPublicSiteDbWithPrivateMedia();
+  source.contentPosts[0] = {
+    ...source.contentPosts[0],
+    status: "draft",
+    coverMediaId: "COVER-PRIVATE"
+  };
+  source.mediaAssets.push(
+    {
+      id: "COVER-PRIVATE",
+      visibility: "draft",
+      originalName: "cover-private.png",
+      mimeType: "image/png",
+      sizeBytes: 256,
+      width: 128,
+      height: 128,
+      variants: {},
+      cleanedAt: null
+    },
+    {
+      id: "ATTACHMENT-PRIVATE",
+      visibility: "draft",
+      originalName: "attachment-private.pdf",
+      mimeType: "application/pdf",
+      sizeBytes: 512,
+      width: null,
+      height: null,
+      variants: {},
+      cleanedAt: null
+    }
+  );
+  source.contentAttachments = [{
+    contentId: "NEWS-ONE",
+    mediaId: "ATTACHMENT-PRIVATE",
+    label: "私有附件",
+    displayOrder: 0
+  }];
+
+  const detail = buildContentDetailView(source, "news-one", new Date("2026-07-20T00:00:00.000Z"), {
+    allowUnpublished: true,
+    mediaUrl: (id) => `/api/admin/site-media/${id}/preview`
+  });
+
+  assert.equal(detail.row.cover.url, "/api/admin/site-media/COVER-PRIVATE/preview");
+  assert.equal(detail.row.attachments[0].url, "/api/admin/site-media/ATTACHMENT-PRIVATE/preview");
 });
 
 test("home event selection respects a valid manual feature and caps concurrent events", () => {

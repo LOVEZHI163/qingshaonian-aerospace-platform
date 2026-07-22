@@ -7,21 +7,24 @@ const HOME_LIMITS = { announcement: 5, news: 6, work: 6, recap: 6 };
 
 export function mediaView(db, mediaId, {
   allowPrivate = false,
-  urlFor = (id, variant = "original") => `/api/public/media/${encodeURIComponent(id)}?variant=${variant}`
+  urlFor
 } = {}) {
   if (!mediaId) return null;
   const media = (db.mediaAssets || []).find((row) => row.id === mediaId && !row.cleanedAt);
-  if (!media || (!allowPrivate && media.visibility !== "public")) return null;
+  if (!media || (media.visibility !== "public" && (!allowPrivate || typeof urlFor !== "function"))) return null;
+  const publicUrlFor = (id, variant = "original") =>
+    `/api/public/media/${encodeURIComponent(id)}?variant=${variant}`;
+  const resolvedUrlFor = typeof urlFor === "function" ? urlFor : publicUrlFor;
   return {
     id: media.id,
-    url: urlFor(media.id, "original"),
+    url: resolvedUrlFor(media.id, "original"),
     name: media.originalName,
     mimeType: media.mimeType,
     sizeBytes: media.sizeBytes,
     width: media.width ?? null,
     height: media.height ?? null,
-    ...(media.variants?.mobile ? { mobileUrl: urlFor(media.id, "mobile") } : {}),
-    ...(media.variants?.desktop ? { desktopUrl: urlFor(media.id, "desktop") } : {})
+    ...(media.variants?.mobile ? { mobileUrl: resolvedUrlFor(media.id, "mobile") } : {}),
+    ...(media.variants?.desktop ? { desktopUrl: resolvedUrlFor(media.id, "desktop") } : {})
   };
 }
 
@@ -262,6 +265,6 @@ export function buildContentDetailView(db, slug, now, { allowUnpublished = false
     item.slug === slug && (allowUnpublished || isPublicPost(item, now))
   );
   if (!row) return null;
-  const mediaOptions = mediaUrl ? { urlFor: mediaUrl } : undefined;
+  const mediaOptions = typeof mediaUrl === "function" ? { allowPrivate: true, urlFor: mediaUrl } : undefined;
   return { row: contentDetail(db, row, mediaOptions) };
 }
