@@ -5,6 +5,7 @@ import AsyncState from "./components/AsyncState.jsx";
 import Seo from "./components/Seo.jsx";
 import SiteFooter from "./components/SiteFooter.jsx";
 import SiteHeader from "./components/SiteHeader.jsx";
+import PreviewPage from "./pages/PreviewPage.jsx";
 
 const ContentDetailPage = lazy(() => import("./pages/ContentDetailPage.jsx"));
 const ContentListPage = lazy(() => import("./pages/ContentListPage.jsx"));
@@ -51,6 +52,7 @@ export default function App() {
   const [bootstrap, setBootstrap] = useState({ status: "loading", data: null });
 
   useEffect(() => {
+    if (route.name === "preview") return undefined;
     const controller = new AbortController();
     let current = true;
     setBootstrap({ status: "loading", data: null });
@@ -69,7 +71,7 @@ export default function App() {
       current = false;
       controller.abort();
     };
-  }, [bootstrapAttempt]);
+  }, [bootstrapAttempt, route.name]);
 
   useEffect(() => {
     const hash = new URL(location || "/", window.location.origin).hash;
@@ -89,7 +91,9 @@ export default function App() {
       <SiteHeader routeKey={location} />
       <main id="main-content" tabIndex="-1">
         <Suspense fallback={<RouteLoading />}>
-          {route.name === "not-found" ? (
+          {route.name === "preview" ? (
+            <PreviewPage location={location} />
+          ) : route.name === "not-found" ? (
             <NotFoundPage />
           ) : route.name === "home" ? (
             <div className="home-route">

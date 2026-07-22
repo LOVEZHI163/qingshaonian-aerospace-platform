@@ -74,6 +74,7 @@ export function matchRoute(pathname) {
   if (pathname === "/announcements") return { name: "announcements", params: {} };
   if (pathname === "/news") return { name: "news", params: {} };
   if (pathname === "/history") return { name: "history", params: {} };
+  if (pathname === "/preview") return { name: "preview", params: {} };
 
   const eventMatch = pathname.match(/^\/events\/([^/]+)\/?$/);
   if (eventMatch) {

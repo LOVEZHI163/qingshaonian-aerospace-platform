@@ -31,6 +31,22 @@ a:focus-visible, button:focus-visible { outline: none; box-shadow: var(--focus-r
 }
 .skip-link:focus { transform: translateY(0); }
 
+.preview-status {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  min-height: 48px;
+  padding: 8px 20px;
+  color: var(--color-white);
+  background: #7a3d00;
+}
+.preview-status p { margin: 0; font-weight: 800; }
+.preview-status a { padding: 6px 10px; border: 1px solid currentColor; border-radius: var(--radius-sm); text-decoration: none; }
+
 .site-shell { min-height: 100vh; display: flex; flex-direction: column; }
 .site-shell > main { flex: 1; }
 
@@ -95,6 +111,7 @@ a:focus-visible, button:focus-visible { outline: none; box-shadow: var(--focus-r
   .site-navigation a { min-height: 44px; display: flex; align-items: center; }
   .mobile-brand-name { display: block; margin: 0; color: var(--color-brand); font-weight: 800; }
   .registration-link { width: fit-content; color: var(--color-white); background: var(--color-brand); }
+  .preview-status { align-items: flex-start; flex-direction: column; gap: 4px; }
   .site-footer { grid-template-columns: 1fr; }
 }
 

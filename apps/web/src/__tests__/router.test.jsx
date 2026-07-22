@@ -93,6 +93,11 @@ describe("public site router", () => {
     expect(matchRoute("/content/%E0%A4%A")).toMatchObject({ name: "not-found" });
   });
 
+  it("recognizes only the fixed preview path", () => {
+    expect(matchRoute("/preview")).toEqual({ name: "preview", params: {} });
+    expect(matchRoute("/preview/extra").name).toBe("not-found");
+  });
+
   it("uses History API navigation and responds to popstate", async () => {
     render(<App />);
     fireEvent.click(screen.getByRole("link", { name: "公告" }));

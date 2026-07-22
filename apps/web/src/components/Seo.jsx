@@ -46,7 +46,9 @@ export default function Seo({
   pathname = window.location.pathname,
   image = null,
   siteUrl = import.meta.env.VITE_PUBLIC_SITE_URL || "",
-  type = "website"
+  type = "website",
+  robots = null,
+  canonical = true
 }) {
   useEffect(() => {
     const previousTitle = document.title;
@@ -58,9 +60,10 @@ export default function Seo({
     nodes.push(appendMeta("property", "og:title", title));
     nodes.push(appendMeta("property", "og:description", description));
     nodes.push(appendMeta("property", "og:type", type));
+    nodes.push(appendMeta("name", "robots", robots));
 
     const origin = configuredOrigin(siteUrl);
-    if (origin) {
+    if (origin && canonical) {
       const canonical = new URL(pagePath(pathname), origin).href;
       const link = document.createElement("link");
       link.rel = "canonical";
@@ -78,7 +81,7 @@ export default function Seo({
       });
       document.title = previousTitle;
     };
-  }, [description, image, pathname, siteUrl, title, type]);
+  }, [canonical, description, image, pathname, robots, siteUrl, title, type]);
 
   return null;
 }
