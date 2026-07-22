@@ -24,27 +24,12 @@ function formatDate(value) {
   return Number.isFinite(date.getTime()) ? date.toLocaleString("zh-CN", { hour12: false }) : "";
 }
 
-export default function ContentDetailPage({ slug }) {
-  const [attempt, setAttempt] = useState(0);
-  const [state, setState] = useState({ status: "loading", row: null });
+export function ContentDetailView({ row, preview = false }) {
   const bodyRef = useRef(null);
 
   useEffect(() => {
-    const controller = new AbortController();
-    let current = true;
-    setState({ status: "loading", row: null });
-    fetchJson(`/api/public/content/${encodeURIComponent(slug)}`, { signal: controller.signal })
-      .then((data) => current && setState({ status: "success", row: data?.row || null }))
-      .catch((error) => {
-        if (!current || error?.name === "AbortError") return;
-        setState({ status: error?.status === 404 ? "not-found" : "error", row: null });
-      });
-    return () => { current = false; controller.abort(); };
-  }, [attempt, slug]);
-
-  useEffect(() => {
     const root = bodyRef.current;
-    if (!root || state.status !== "success") return;
+    if (!root) return;
     for (const anchor of root.querySelectorAll("a[href]")) {
       try {
         const url = new URL(anchor.getAttribute("href"), window.location.href);
@@ -62,41 +47,78 @@ export default function ContentDetailPage({ slug }) {
       if (!image.hasAttribute("alt")) image.alt = "正文图片";
       image.loading = "lazy";
     }
-  }, [state.status, state.row?.bodyHtml]);
-
-  if (state.status === "not-found") return <ContentNotFound />;
-  const row = state.row;
+  }, [row?.bodyHtml]);
 
   return (
     <article className="content-page content-detail-page">
       <Seo
         title={row?.title || "内容详情"}
         description={row?.summary || "查看赛事公告、动态与优秀作品详情。"}
-        pathname={`/content/${encodeURIComponent(slug)}`}
+        {...(!preview ? { pathname: window.location.pathname } : {})}
         image={row?.cover}
         type="article"
+        robots={preview ? "noindex, nofollow" : null}
+        canonical={!preview}
       />
-      <AsyncState status={state.status} onRetry={() => setAttempt((value) => value + 1)}>
-        {row ? (
-          <>
-            <header className="content-detail-heading">
-              <p className="section-kicker">官方内容</p>
-              <h1>{row.title}</h1>
-              {row.summary ? <p>{row.summary}</p> : null}
-              <div className="content-detail-meta">
-                {row.publishAt ? <time dateTime={row.publishAt}>发布时间：{formatDate(row.publishAt)}</time> : null}
-                {row.eventSlug ? <a href={`/events/${encodeURIComponent(row.eventSlug)}`}>查看关联赛事</a> : null}
-              </div>
-            </header>
-            <div
-              ref={bodyRef}
-              className="rich-content"
-              dangerouslySetInnerHTML={{ __html: row.bodyHtml || "" }}
-            />
-            <AttachmentList attachments={row.attachments || []} />
-          </>
-        ) : null}
-      </AsyncState>
+      {row ? (
+        <>
+          <header className="content-detail-heading">
+            <p className="section-kicker">官方内容</p>
+            <h1>{row.title}</h1>
+            {row.summary ? <p>{row.summary}</p> : null}
+            <div className="content-detail-meta">
+              {row.publishAt ? <time dateTime={row.publishAt}>发布时间：{formatDate(row.publishAt)}</time> : null}
+              {row.eventSlug ? <a href={`/events/${encodeURIComponent(row.eventSlug)}`}>查看关联赛事</a> : null}
+            </div>
+          </header>
+          <div
+            ref={bodyRef}
+            className="rich-content"
+            dangerouslySetInnerHTML={{ __html: row.bodyHtml || "" }}
+          />
+          <AttachmentList attachments={row.attachments || []} />
+        </>
+      ) : null}
     </article>
+  );
+}
+
+export default function ContentDetailPage({ slug }) {
+  const [attempt, setAttempt] = useState(0);
+  const [state, setState] = useState({ status: "loading", row: null });
+
+  useEffect(() => {
+    const controller = new AbortController();
+    let current = true;
+    setState({ status: "loading", row: null });
+    fetchJson(`/api/public/content/${encodeURIComponent(slug)}`, { signal: controller.signal })
+      .then((data) => current && setState({ status: "success", row: data?.row || null }))
+      .catch((error) => {
+        if (!current || error?.name === "AbortError") return;
+        setState({ status: error?.status === 404 ? "not-found" : "error", row: null });
+      });
+    return () => { current = false; controller.abort(); };
+  }, [attempt, slug]);
+
+  if (state.status === "not-found") return <ContentNotFound />;
+
+  if (state.status !== "success") {
+    return (
+      <article className="content-page content-detail-page">
+        <Seo
+          title="内容详情"
+          description="查看赛事公告、动态与优秀作品详情。"
+          pathname={`/content/${encodeURIComponent(slug)}`}
+          type="article"
+        />
+        <AsyncState status={state.status} onRetry={() => setAttempt((value) => value + 1)} />
+      </article>
+    );
+  }
+
+  return (
+    <AsyncState status={state.status} onRetry={() => setAttempt((value) => value + 1)}>
+      {state.row ? <ContentDetailView row={state.row} /> : null}
+    </AsyncState>
   );
 }

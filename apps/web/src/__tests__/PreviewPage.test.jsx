@@ -94,6 +94,71 @@ describe("PreviewPage", () => {
     expect(screen.getByRole("heading", { name: heading })).toBeInTheDocument();
   });
 
+  it.each([
+    [
+      "homepage",
+      {
+        site: { platformName: "草稿航空平台" },
+        featuredEvent: {
+          id: "draft-home-event",
+          slug: "draft-home-event",
+          name: "首页草稿赛事",
+          slogan: "尚未保存的平台简介",
+          registrationWindow: { open: false }
+        }
+      },
+      "尚未保存的平台简介"
+    ],
+    [
+      "event",
+      {
+        event: {
+          id: "draft-event",
+          slug: "draft-event",
+          name: "赛事草稿",
+          slogan: "尚未保存的赛事宣传语",
+          registrationWindow: { open: false }
+        },
+        projects: [],
+        groups: [],
+        resources: [],
+        content: []
+      },
+      "尚未保存的赛事宣传语"
+    ],
+    [
+      "content",
+      {
+        row: {
+          id: "draft-content",
+          slug: "draft-content",
+          title: "内容草稿",
+          bodyHtml: '<p>尚未保存的正文</p><a href="https://example.org/draft">草稿外链</a>',
+          attachments: []
+        }
+      },
+      "尚未保存的正文"
+    ]
+  ])("renders %s snapshot through the public view", (kind, payload, expectedText) => {
+    storeSnapshot(validSnapshot({ kind, payload }));
+    window.history.replaceState({}, "", `/preview?token=${token}`);
+    const request = vi.fn();
+    vi.stubGlobal("fetch", request);
+
+    render(<App />);
+
+    expect(screen.getByText(expectedText)).toBeInTheDocument();
+    expect(screen.getByText("草稿预览 · 未保存 · 仅当前浏览器可见")).toBeInTheDocument();
+    expect(document.head.querySelector('meta[name="robots"]')).toHaveAttribute("content", "noindex, nofollow");
+    expect(document.head.querySelector('link[rel="canonical"]')).toBeNull();
+    expect(request).not.toHaveBeenCalled();
+
+    if (kind === "content") {
+      expect(screen.getByRole("link", { name: "草稿外链" })).toHaveAttribute("target", "_blank");
+      expect(screen.getByRole("link", { name: "草稿外链" })).toHaveAttribute("rel", "noopener noreferrer");
+    }
+  });
+
   it("rejects duplicate token parameters without reading a snapshot", () => {
     storeSnapshot(validSnapshot());
     render(<PreviewPage location={`/preview?token=${token}&token=${token}`} />);

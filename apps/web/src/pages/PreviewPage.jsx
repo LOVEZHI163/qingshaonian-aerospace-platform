@@ -3,6 +3,8 @@ import React from "react";
 import Seo from "../components/Seo.jsx";
 import HomePage from "./HomePage.jsx";
 import { readPreviewSnapshot } from "../preview/storage.js";
+import { EventDetailView } from "./EventDetailPage.jsx";
+import { ContentDetailView } from "./ContentDetailPage.jsx";
 
 const messages = {
   invalid: ["预览链接无效", "请返回管理后台重新生成预览。"],
@@ -37,7 +39,7 @@ function PreviewStatus({ snapshot }) {
     ? expiresAt.toLocaleString("zh-CN", { hour12: false })
     : "稍后";
   return (
-    <aside className="preview-status" aria-label="草稿预览状态">
+    <aside className="preview-banner" aria-label="草稿预览状态">
       <p>草稿预览 · 未保存 · 仅当前浏览器可见</p>
       <span>有效至：{expiry}</span>
       <a href={adminReturnPath(snapshot.adminReturnPath)} data-router-ignore="true">返回管理后台</a>
@@ -45,39 +47,20 @@ function PreviewStatus({ snapshot }) {
   );
 }
 
-function EventPreview({ payload }) {
-  const event = payload?.event;
-  return (
-    <section className="page-skeleton preview-dispatch" aria-labelledby="preview-event-title">
-      <p>草稿赛事</p>
-      <h1 id="preview-event-title">{event?.name || "赛事草稿预览"}</h1>
-      <p>赛事详情将在此按草稿快照展示。</p>
-    </section>
-  );
-}
-
-function ContentPreview({ payload }) {
-  const row = payload?.row;
-  return (
-    <section className="page-skeleton preview-dispatch" aria-labelledby="preview-content-title">
-      <p>草稿内容</p>
-      <h1 id="preview-content-title">{row?.title || "内容草稿预览"}</h1>
-      <p>{row?.summary || "内容详情将在此按草稿快照展示。"}</p>
-    </section>
-  );
-}
-
 function PreviewBody({ snapshot }) {
   switch (snapshot.kind) {
     case "homepage":
       return (
-        <div className="home-route preview-dispatch">
-          <h1 className="visually-hidden">{snapshot.payload?.site?.platformName || "首页草稿预览"}</h1>
-          <HomePage data={snapshot.payload || {}} />
-        </div>
+        <>
+          <Seo title="草稿预览" description="管理员草稿预览" robots="noindex, nofollow" canonical={false} />
+          <div className="home-route">
+            <h1 className="visually-hidden">{snapshot.payload?.site?.platformName || "首页草稿预览"}</h1>
+            <HomePage data={snapshot.payload || {}} />
+          </div>
+        </>
       );
-    case "event": return <EventPreview payload={snapshot.payload} />;
-    case "content": return <ContentPreview payload={snapshot.payload} />;
+    case "event": return <EventDetailView payload={snapshot.payload || {}} preview />;
+    case "content": return <ContentDetailView row={snapshot.payload?.row || null} preview />;
     default: return null;
   }
 }
@@ -104,9 +87,10 @@ export default function PreviewPage({ location }) {
   const { snapshot } = result;
   return (
     <>
-      <Seo title="草稿预览" description="管理员草稿预览" robots="noindex, nofollow" canonical={false} />
       <PreviewStatus snapshot={snapshot} />
-      <PreviewBody snapshot={snapshot} />
+      <div className="preview-page">
+        <PreviewBody snapshot={snapshot} />
+      </div>
     </>
   );
 }

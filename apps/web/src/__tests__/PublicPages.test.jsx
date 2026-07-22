@@ -100,6 +100,21 @@ function installApi(routes, bootstrap = home()) {
 describe("public event page", () => {
   beforeEach(() => window.history.replaceState({}, "", "/events/wenzhou-2026"));
 
+  it("continues to fetch the public event detail API", async () => {
+    const request = installApi({
+      "/api/public/events/wenzhou-2026": {
+        event: event(), projects: [], groups: [], resources: [], content: []
+      }
+    });
+
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "2026温州市青少年航空航天创新比赛" })).toBeInTheDocument();
+    expect(request).toHaveBeenCalledWith(
+      "/api/public/events/wenzhou-2026",
+      expect.objectContaining({ signal: expect.any(AbortSignal) })
+    );
+  });
+
   it("renders API facts, enabled projects, four groups, resources and event-scoped actions", async () => {
     installApi({
       "/api/public/events/wenzhou-2026": {
@@ -587,6 +602,21 @@ describe("public content lists", () => {
 
 describe("public content detail and failures", () => {
   beforeEach(() => window.history.replaceState({}, "", "/content/safe-story"));
+
+  it("continues to fetch the public content detail API", async () => {
+    const request = installApi({
+      "/api/public/content/safe-story": {
+        row: { ...content("SAFE", "news", { slug: "safe-story", title: "安全公开内容" }), bodyHtml: "", attachments: [] }
+      }
+    });
+
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "安全公开内容" })).toBeInTheDocument();
+    expect(request).toHaveBeenCalledWith(
+      "/api/public/content/safe-story",
+      expect.objectContaining({ signal: expect.any(AbortSignal) })
+    );
+  });
 
   it("renders only public API HTML, hardens external links, fills image alt and lists safe attachments", async () => {
     window.__bodyScriptRan = false;

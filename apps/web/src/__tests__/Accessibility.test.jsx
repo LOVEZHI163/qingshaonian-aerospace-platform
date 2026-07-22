@@ -125,6 +125,20 @@ describe("public site keyboard and semantics", () => {
     expect(mobileRules).toMatch(/\.button,\s*\.text-link\s*\{[^}]*min-height:\s*44px/);
   });
 
+  it("keeps the preview banner visible, wrapping and clear of focused content", () => {
+    const styles = readFileSync(resolve(process.cwd(), "src/styles.css"), "utf8");
+    const bannerRule = styles.match(/\.preview-banner\s*\{([^}]*)\}/)?.[1] || "";
+    const mobileRules = styles.match(/@media\s*\(max-width:\s*640px\)\s*\{([\s\S]*?)\n\}/)?.[1] || "";
+
+    expect(bannerRule).toMatch(/position:\s*sticky/);
+    expect(bannerRule).toMatch(/flex-wrap:\s*wrap/);
+    expect(bannerRule).toMatch(/color:\s*var\(--color-white\)/);
+    expect(bannerRule).not.toMatch(/animation|transition/);
+    expect(styles).toMatch(/\.preview-page\s+:focus-visible\s*\{[^}]*scroll-margin-top:/);
+    expect(mobileRules).toMatch(/\.preview-banner\s*\{[^}]*grid-template-columns:\s*1fr/);
+    expect(mobileRules).toMatch(/\.preview-banner\s+a\s*\{[^}]*min-height:\s*44px/);
+  });
+
   it("cleans stale assets before producing route chunks", () => {
     const config = readFileSync(resolve(process.cwd(), "vite.config.js"), "utf8");
     expect(config).toMatch(/emptyOutDir:\s*true/);
