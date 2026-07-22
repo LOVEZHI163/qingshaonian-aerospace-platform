@@ -32,14 +32,19 @@ const activePreviewPanel = computed(() => activeTab.value === "homepage"
 
 const activePreviewDraft = computed(() => activePreviewPanel.value?.getPreviewDraft?.() || null);
 const savedPreviewPath = computed(() => activePreviewPanel.value?.getSavedPreviewPath?.() || null);
+const activePreviewState = computed(() => activePreviewPanel.value?.getPreviewState?.() || {
+  loading: false,
+  ready: Boolean(activePreviewDraft.value)
+});
 const previewHelp = computed(() => {
   if (activeTab.value === "events" && !activePreviewDraft.value) return "请先选择赛事后再预览。";
-  if (activeTab.value === "content" && !activePreviewDraft.value?.context?.contentId) return "请先选择内容后再预览。";
+  if (activeTab.value === "content" && !selectedContentId.value) return "请先选择或新建内容后再预览。";
+  if (activeTab.value === "content" && !activePreviewState.value.ready) return "内容加载中，请稍候。";
   return "草稿预览不会保存或发布当前修改。";
 });
 const canPreviewDraft = computed(() => Boolean(
   activePreviewDraft.value
-  && (activeTab.value !== "content" || activePreviewDraft.value.context?.contentId)
+  && (activeTab.value !== "content" || (selectedContentId.value && activePreviewState.value.ready))
 ));
 
 async function load() {

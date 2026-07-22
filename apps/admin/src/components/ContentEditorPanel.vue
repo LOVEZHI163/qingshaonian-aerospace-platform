@@ -221,6 +221,7 @@ defineExpose({
   requestLeave,
   load,
   isDirty: () => dirty.value,
+  getPreviewState: () => ({ loading: loading.value, ready: !loading.value && !loadFailed.value && Boolean(form.id) }),
   getPreviewDraft: () => ({ kind: "content", body: contentPayload({ forPreview: true }), context: { contentId: form.id } }),
   getSavedPreviewPath: () => form.id && form.slug ? `/content/${encodeURIComponent(form.slug)}` : null
 });

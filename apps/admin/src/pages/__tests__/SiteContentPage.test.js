@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { flushPromises, mount } from "@vue/test-utils";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -149,7 +150,39 @@ describe("SiteContentPage", () => {
 
     await activateTab(wrapper, "content");
     expect(wrapper.get('[data-action="preview-site-draft"]').attributes("disabled")).toBeDefined();
-    expect(wrapper.get("[data-preview-help]").text()).toContain("请先选择内容");
+    expect(wrapper.get("[data-preview-help]").text()).toContain("请先选择或新建内容");
+  });
+
+  it("keeps content preview disabled and explains that a selected content item is loading", async () => {
+    let resolveContent;
+    const contentLoad = new Promise((resolve) => { resolveContent = resolve; });
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/admin/site-settings") return { row: { ...settings } };
+      if (path === "/api/admin/event-public-profiles") return { rows: profiles };
+      if (path === "/api/admin/events") return { rows: events, projects: [] };
+      if (path === "/api/admin/content") return { rows: [{ ...contentRow, id: "P1", title: "正在加载的内容" }] };
+      if (path === "/api/admin/content/P1") return contentLoad;
+      return { rows: [] };
+    });
+    const wrapper = await mountLoaded();
+
+    await activateTab(wrapper, "content");
+    await wrapper.get('[data-content-row="P1"]').trigger("click");
+
+    expect(wrapper.get('[data-action="preview-site-draft"]').attributes("disabled")).toBeDefined();
+    expect(wrapper.get("[data-preview-help]").text()).toContain("内容加载中，请稍候");
+
+    resolveContent({ row: { ...contentRow, id: "P1", slug: "loaded-content" } });
+    await flushPromises();
+    expect(wrapper.get('[data-action="preview-site-draft"]').attributes("disabled")).toBeUndefined();
+  });
+
+  it("stacks preview actions into a full-width mobile action row", () => {
+    const css = readFileSync("src/styles/admin.css", "utf8");
+
+    expect(css).toMatch(/@media \(max-width: 760px\) \{[\s\S]*?\.site-content-page \.page-title-row \{[\s\S]*?flex-direction:\s*column;/);
+    expect(css).toMatch(/@media \(max-width: 760px\) \{[\s\S]*?\.site-preview-actions \{[\s\S]*?width:\s*100%;[\s\S]*?grid-template-columns:\s*minmax\(0, 1fr\)/);
+    expect(css).toMatch(/@media \(max-width: 760px\) \{[\s\S]*?\.site-preview-actions button \{[\s\S]*?width:\s*100%;/);
   });
 
   it("shows API validation errors and closes the pre-opened preview", async () => {

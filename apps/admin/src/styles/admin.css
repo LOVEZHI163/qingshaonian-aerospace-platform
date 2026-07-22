@@ -548,9 +548,16 @@ textarea {
 @media (max-width: 760px) {
   .site-content-page .page-title-row {
     align-items: stretch;
+    flex-direction: column;
   }
 
   .site-preview-actions {
+    display: grid;
+    width: 100%;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .site-preview-actions button {
     width: 100%;
   }
 
