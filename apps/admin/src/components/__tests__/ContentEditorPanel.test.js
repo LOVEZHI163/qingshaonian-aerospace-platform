@@ -513,4 +513,50 @@ describe("ContentEditorPanel", () => {
     expect(apiMock.mock.calls.some(([path, options]) => path === "/api/admin/content/POST-1" && options?.method === "PATCH")).toBe(false);
     expect(wrapper.get('[data-preview-body]').html()).toContain("服务端净化的修改");
   });
+
+  it.each(["published", "offline"])("previews an existing %s item through the preview API without persistence or lifecycle calls", async (status) => {
+    const persisted = {
+      ...row,
+      title: `${status} 内容`,
+      bodyHtml: `<p>${status} 正文</p>`,
+      status,
+      publishAt: "2026-01-01T00:00:00.000Z",
+      pinned: true,
+      sortOrder: 4,
+      version: 7
+    };
+    installApi({
+      "GET /api/admin/content/POST-1": async () => ({ row: persisted }),
+      "POST /api/admin/site-preview/content": async () => ({
+        preview: { payload: { row: { bodyHtml: `<p>服务端 ${status} 预览</p>` } } }
+      })
+    });
+    const wrapper = await mountEditor();
+
+    await wrapper.get('[data-action="preview-content"]').trigger("click");
+    await flushPromises();
+
+    const preview = apiMock.mock.calls.find(([path, options]) => path === "/api/admin/site-preview/content" && options?.method === "POST");
+    expect(JSON.parse(preview[1].body)).toEqual({
+      slug: "first-news",
+      eventId: "E1",
+      type: "news",
+      title: `${status} 内容`,
+      summary: "摘要",
+      bodyHtml: `<p>${status} 正文</p>`,
+      status,
+      publishAt: "2026-01-01T00:00:00.000Z",
+      pinned: true,
+      sortOrder: 4,
+      coverMediaId: null,
+      attachments: [],
+      id: "POST-1",
+      version: 7
+    });
+    expect(wrapper.get('[data-preview-body]').html()).toContain(`服务端 ${status} 预览`);
+    expect(apiMock.mock.calls
+      .filter(([, options]) => options?.method)
+      .map(([path, options]) => [options.method, path]))
+      .toEqual([["POST", "/api/admin/site-preview/content"]]);
+  });
 });

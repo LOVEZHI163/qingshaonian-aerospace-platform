@@ -285,6 +285,71 @@ describe("SiteContentPage", () => {
     expect(apiMock.mock.calls.some(([path, options]) => path === "/api/admin/content" && options?.method === "POST")).toBe(false);
   });
 
+  it.each(["published", "offline"])("previews an existing %s content draft from the page action without persisting it", async (status) => {
+    const persisted = {
+      ...contentRow,
+      id: "P1",
+      slug: `${status}-content`,
+      title: `${status} 内容`,
+      bodyHtml: `<p>${status} 正文</p>`,
+      status,
+      publishAt: "2026-01-01T00:00:00.000Z",
+      pinned: true,
+      sortOrder: 4,
+      version: 7
+    };
+    const popup = { opener: window, location: { href: "about:blank" }, close: vi.fn() };
+    vi.spyOn(window, "open").mockReturnValue(popup);
+    apiMock.mockImplementation(async (path, options = {}) => {
+      if (path === "/api/admin/site-settings") return { row: { ...settings } };
+      if (path === "/api/admin/event-public-profiles") return { rows: profiles };
+      if (path === "/api/admin/events") return { rows: events, projects: [] };
+      if (path === "/api/admin/content") return { rows: [persisted] };
+      if (path === "/api/admin/content/P1") return { row: persisted };
+      if (path === "/api/admin/site-preview/content" && options.method === "POST") {
+        return {
+          preview: {
+            payload: { row: { ...persisted, bodyHtml: `<p>服务端 ${status} 预览</p>` } },
+            context: { eventId: "E1", contentId: "P1" }
+          }
+        };
+      }
+      return { rows: [] };
+    });
+    const wrapper = await mountLoaded();
+    await activateTab(wrapper, "content");
+    await wrapper.get('[data-content-row="P1"]').trigger("click");
+    await flushPromises();
+
+    await wrapper.get('[data-action="preview-site-draft"]').trigger("click");
+    await flushPromises();
+
+    const preview = apiMock.mock.calls.find(([path, options]) => path === "/api/admin/site-preview/content" && options?.method === "POST");
+    expect(JSON.parse(preview[1].body)).toEqual({
+      slug: `${status}-content`,
+      eventId: "E1",
+      type: "news",
+      title: `${status} 内容`,
+      summary: "摘要",
+      bodyHtml: `<p>${status} 正文</p>`,
+      status,
+      publishAt: "2026-01-01T00:00:00.000Z",
+      pinned: true,
+      sortOrder: 4,
+      coverMediaId: null,
+      attachments: [],
+      id: "P1",
+      version: 7
+    });
+    expect(popup.opener).toBeNull();
+    expect(popup.location.href).toMatch(/^\/preview\?token=/);
+    expect(popup.close).not.toHaveBeenCalled();
+    expect(apiMock.mock.calls
+      .filter(([, options]) => options?.method)
+      .map(([path, options]) => [options.method, path]))
+      .toEqual([["POST", "/api/admin/site-preview/content"]]);
+  });
+
   it.each([
     ["hidden", { ...events[0] }, { ...profiles[0], isVisible: false }, "已保存赛事未在官网公开，官网不可访问。"],
     ["unpublished", { ...events[0], status: "draft" }, { ...profiles[0], isVisible: true }, "赛事尚未发布，官网不可访问。"]

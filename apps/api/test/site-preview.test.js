@@ -144,7 +144,14 @@ test("content preview reuses create and update lifecycle rules on its clone", ()
     createdAt: "2026-07-01T00:00:00.000Z",
     updatedAt: "2026-07-01T00:00:00.000Z"
   };
-  db.contentPosts.push(current);
+  const publishedCurrent = {
+    ...current,
+    id: "POST-PUBLISHED",
+    slug: "published-slug",
+    status: "published",
+    version: 8
+  };
+  db.contentPosts.push(current, publishedCurrent);
   db.auditLogs.push({
     id: "AUDIT-CONTENT-PUBLISH",
     action: "content.publish",
@@ -171,14 +178,26 @@ test("content preview reuses create and update lifecycle rules on its clone", ()
     }, { now }),
     (error) => error?.status === 409 && error?.code === "CONTENT_VERSION_CONFLICT"
   );
-  assert.throws(
-    () => buildSitePreview(db, "content", {
-      ...current,
-      status: "offline",
-      attachments: []
-    }, { now }),
-    (error) => error?.status === 422
-  );
+
+  const offline = buildSitePreview(db, "content", {
+    ...current,
+    title: "下线内容未保存标题",
+    bodyHtml: "<p>下线内容正文</p><script>bad()</script>",
+    status: "offline",
+    attachments: []
+  }, { now });
+  assert.equal(offline.payload.row.title, "下线内容未保存标题");
+  assert.equal(offline.payload.row.bodyHtml, "<p>下线内容正文</p>");
+
+  const published = buildSitePreview(db, "content", {
+    ...publishedCurrent,
+    title: "已发布内容未保存标题",
+    bodyHtml: "<p>已发布内容正文</p><script>bad()</script>",
+    status: "published",
+    attachments: []
+  }, { now });
+  assert.equal(published.payload.row.title, "已发布内容未保存标题");
+  assert.equal(published.payload.row.bodyHtml, "<p>已发布内容正文</p>");
 
   const draft = buildSitePreview(db, "content", {
     ...current,
@@ -224,6 +243,44 @@ test("admin preview normalizes all three kinds without writing the store", async
         variants: {},
         cleanedAt: null
       });
+      db.contentPosts.push(
+        {
+          id: "POST-PUBLISHED-PREVIEW",
+          slug: "published-preview",
+          eventId: null,
+          type: "news",
+          title: "已发布标题",
+          summary: "摘要",
+          bodyHtml: "<p>已发布正文</p>",
+          status: "published",
+          publishAt: "2026-07-01T00:00:00.000Z",
+          pinned: false,
+          sortOrder: 0,
+          coverMediaId: null,
+          version: 3,
+          createdBy: "USER-ADMIN",
+          createdAt: "2026-07-01T00:00:00.000Z",
+          updatedAt: "2026-07-01T00:00:00.000Z"
+        },
+        {
+          id: "POST-OFFLINE-PREVIEW",
+          slug: "offline-preview",
+          eventId: null,
+          type: "news",
+          title: "下线标题",
+          summary: "摘要",
+          bodyHtml: "<p>下线正文</p>",
+          status: "offline",
+          publishAt: "2026-06-01T00:00:00.000Z",
+          pinned: false,
+          sortOrder: 0,
+          coverMediaId: null,
+          version: 5,
+          createdBy: "USER-ADMIN",
+          createdAt: "2026-06-01T00:00:00.000Z",
+          updatedAt: "2026-07-01T00:00:00.000Z"
+        }
+      );
     });
     const admin = await loginAs(baseUrl, "13900000000", "admin123");
     const before = JSON.parse(await fs.readFile(dbPath, "utf8"));
@@ -254,11 +311,31 @@ test("admin preview normalizes all three kinds without writing the store", async
       coverMediaId: "MEDIA-PRIVATE",
       attachments: []
     });
+    const publishedRow = before.contentPosts.find((row) => row.id === "POST-PUBLISHED-PREVIEW");
+    const published = await request(baseUrl, admin.cookie, "content", {
+      ...publishedRow,
+      title: "已发布未保存标题",
+      bodyHtml: "<p>已发布未保存正文</p><script>bad()</script>",
+      attachments: []
+    });
+    const offlineRow = before.contentPosts.find((row) => row.id === "POST-OFFLINE-PREVIEW");
+    const offline = await request(baseUrl, admin.cookie, "content", {
+      ...offlineRow,
+      title: "下线未保存标题",
+      bodyHtml: "<p>下线未保存正文</p><script>bad()</script>",
+      attachments: []
+    });
 
     assert.equal(homepage.status, 200, homepage.body.error);
     assert.equal(event.status, 200, event.body.error);
     assert.equal(content.status, 200, content.body.error);
+    assert.equal(published.status, 200, published.body.error);
+    assert.equal(offline.status, 200, offline.body.error);
     assert.equal(homepage.headers.get("cache-control"), "private, no-store");
+    assert.equal(published.body.preview.payload.row.title, "已发布未保存标题");
+    assert.equal(published.body.preview.payload.row.bodyHtml, "<p>已发布未保存正文</p>");
+    assert.equal(offline.body.preview.payload.row.title, "下线未保存标题");
+    assert.equal(offline.body.preview.payload.row.bodyHtml, "<p>下线未保存正文</p>");
     assert.equal(homepage.body.preview.payload.site.contact, "PUBLIC-SITE-CONTACT");
     assert.equal(event.body.preview.payload.event.contact, "PUBLIC-EVENT-CONTACT");
     assert.doesNotMatch(JSON.stringify(homepage.body.preview), /13900000000/);

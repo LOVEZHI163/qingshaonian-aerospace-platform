@@ -4,7 +4,7 @@ import {
   buildEventDetailView,
   buildHomeView
 } from "./public-site-view.js";
-import { createContent, updateContent, updateSiteSettings, upsertEventPublicProfile } from "./site-admin.js";
+import { createContent, updateContentForPreview, updateSiteSettings, upsertEventPublicProfile } from "./site-admin.js";
 
 export class SitePreviewError extends Error {
   constructor(status, message, code) {
@@ -125,7 +125,7 @@ function buildContentPreview(db, input, now) {
   normalizeAttachments(db, contentId, attachmentInput || [], eventId);
   const mutationInput = { ...sanitizedInput, attachments: attachmentInput || [] };
   const row = current
-    ? updateContent(db, current.id, mutationInput, { now: timestamp, incrementVersion: false })
+    ? updateContentForPreview(db, current.id, mutationInput, { now: timestamp })
     : createContent(db, mutationInput, { id: contentId, actor: { id: null }, now: timestamp });
   const payload = buildContentDetailView(db, row.slug, new Date(now), {
     allowUnpublished: true,

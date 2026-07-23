@@ -188,14 +188,18 @@ export function createContent(db, input, { id, actor, now } = {}) {
   return row;
 }
 
-export function updateContent(db, contentId, input, { now, incrementVersion = true } = {}) {
+function buildContentUpdateCandidate(db, contentId, input, {
+  now,
+  incrementVersion = true,
+  allowVisibilityStatuses = false
+} = {}) {
   const current = (db.contentPosts || []).find((row) => row.id === contentId);
   if (!current) fail(404, "内容不存在");
   assertVersion(input, current, "CONTENT_VERSION_CONFLICT");
-  if (current.status === "published") {
+  if (!allowVisibilityStatuses && current.status === "published") {
     fail(409, "已发布内容请先下线再编辑", "CONTENT_EDIT_REQUIRES_OFFLINE");
   }
-  if (Object.hasOwn(input, "status") && !["draft", "scheduled"].includes(input.status)) {
+  if (!allowVisibilityStatuses && Object.hasOwn(input, "status") && !["draft", "scheduled"].includes(input.status)) {
     fail(422, "普通编辑只能设置草稿或定时发布状态");
   }
   const slug = Object.hasOwn(input, "slug") ? normalizeSlug(input.slug) : current.slug;
@@ -208,7 +212,9 @@ export function updateContent(db, contentId, input, { now, incrementVersion = tr
     ? null
     : status === "scheduled"
       ? (Object.hasOwn(input, "publishAt") ? input.publishAt : current.publishAt)
-      : current.publishAt;
+      : allowVisibilityStatuses && Object.hasOwn(input, "publishAt")
+        ? input.publishAt
+        : current.publishAt;
   const candidate = {
     ...input,
     slug,
@@ -226,9 +232,27 @@ export function updateContent(db, contentId, input, { now, incrementVersion = tr
   const attachments = Object.hasOwn(input, "attachments")
     ? normalizeAttachments(db, current.id, input.attachments)
     : (db.contentAttachments || []).filter((row) => row.contentId === current.id);
+  return { current, next, attachments };
+}
+
+function applyContentUpdateCandidate(db, { current, next, attachments }) {
   db.contentPosts[db.contentPosts.indexOf(current)] = next;
   replaceAttachments(db, current.id, attachments);
   return next;
+}
+
+export function updateContent(db, contentId, input, { now, incrementVersion = true } = {}) {
+  const candidate = buildContentUpdateCandidate(db, contentId, input, { now, incrementVersion });
+  return applyContentUpdateCandidate(db, candidate);
+}
+
+export function updateContentForPreview(db, contentId, input, { now } = {}) {
+  const candidate = buildContentUpdateCandidate(db, contentId, input, {
+    now,
+    incrementVersion: false,
+    allowVisibilityStatuses: true
+  });
+  return applyContentUpdateCandidate(db, candidate);
 }
 
 export function contentDetail(db, contentId) {
