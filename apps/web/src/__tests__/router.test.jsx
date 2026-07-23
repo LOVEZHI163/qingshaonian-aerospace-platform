@@ -375,6 +375,8 @@ describe("site header mobile menu", () => {
     fireEvent.click(screen.getByRole("link", { name: "公告" }));
     expect(trigger).toHaveAttribute("aria-expanded", "false");
     expect(screen.getByRole("link", { name: "报名入口" })).toHaveAttribute("href", "/#registration");
+    expect(screen.getByRole("link", { name: "用户登录" })).toHaveAttribute("href", "/admin/");
+    expect(screen.getByRole("link", { name: "用户登录" })).toHaveAttribute("data-router-ignore", "true");
     expect(screen.getByRole("link", { name: "管理入口" })).toHaveAttribute("data-router-ignore", "true");
   });
 });

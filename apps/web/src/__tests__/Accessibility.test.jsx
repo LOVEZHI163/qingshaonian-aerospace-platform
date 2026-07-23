@@ -52,6 +52,8 @@ describe("public site keyboard and semantics", () => {
 
     expect(screen.getByRole("link", { name: "跳到主要内容" })).toHaveAttribute("href", "#main-content");
     expect(screen.getByRole("link", { name: "动态与作品" })).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("link", { name: "用户登录" })).toHaveAttribute("href", "/admin/");
+    expect(screen.getByRole("link", { name: "用户登录" })).toHaveAttribute("data-router-ignore", "true");
     expect(screen.getByRole("link", { name: "首页" })).not.toHaveAttribute("aria-current");
     expect(await screen.findByRole("heading", { name: "动态与优秀作品" })).toBeInTheDocument();
   });

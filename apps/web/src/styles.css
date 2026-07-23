@@ -93,7 +93,11 @@ a:focus-visible, button:focus-visible { outline: none; box-shadow: var(--focus-r
 .site-navigation nav { display: flex; align-items: center; gap: clamp(16px, 2.2vw, 34px); }
 .site-navigation nav a { padding: 10px 0; font-weight: 700; text-decoration: none; }
 .site-navigation nav a:hover { text-decoration: underline; text-underline-offset: 6px; }
+.header-actions { display: flex; align-items: center; gap: 10px; }
+.login-link,
 .registration-link { padding: 11px 20px; border: 1px solid rgba(255,255,255,.65); border-radius: 7px; font-weight: 800; text-decoration: none; background: rgba(255,255,255,.12); }
+.login-link { color: var(--color-brand); background: var(--color-white); }
+.login-link:hover, .registration-link:hover { transform: translateY(-1px); }
 .mobile-brand-name, .menu-trigger { display: none; }
 
 .page-skeleton { width: min(1100px, calc(100% - 40px)); min-height: 480px; margin: 0 auto; padding: 84px 0; }
@@ -119,7 +123,7 @@ a:focus-visible, button:focus-visible { outline: none; box-shadow: var(--focus-r
 
 @keyframes spin { to { transform: rotate(360deg); } }
 
-@media (max-width: 900px) {
+@media (max-width: 1120px) {
   .site-header { min-height: 72px; padding: 10px 18px; }
   .brand { min-width: 0; margin-right: auto; }
   .brand-mark { width: 46px; height: 46px; }
@@ -130,7 +134,9 @@ a:focus-visible, button:focus-visible { outline: none; box-shadow: var(--focus-r
   .site-navigation[data-open] { display: grid; }
   .site-navigation nav { display: grid; }
   .site-navigation a { min-height: 44px; display: flex; align-items: center; }
+  .header-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
   .mobile-brand-name { display: block; margin: 0; color: var(--color-brand); font-weight: 800; }
+  .login-link,
   .registration-link { width: fit-content; color: var(--color-white); background: var(--color-brand); }
   .site-footer { grid-template-columns: 1fr; }
 }

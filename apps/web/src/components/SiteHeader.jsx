@@ -58,7 +58,10 @@ export default function SiteHeader({ routeKey }) {
             <a href={href} aria-current={currentPath === href ? "page" : undefined} key={href}>{label}</a>
           ))}
         </nav>
-        <a className="registration-link" href="/#registration">报名入口</a>
+        <div className="header-actions">
+          <a className="login-link" href="/admin/" data-router-ignore="true">用户登录</a>
+          <a className="registration-link" href="/#registration">报名入口</a>
+        </div>
       </div>
     </header>
   );
