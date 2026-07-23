@@ -725,4 +725,3 @@ Expected: no whitespace errors; only intentional source/test/docs changes; `pack
 - [ ] **Step 8: Record final verification**
 
 If Steps 1–7 require a correction, amend the matching task commit only after rerunning that task’s exact focused test command. If no correction is required, do not create an empty commit. Record the passing test counts, build result, browser widths and unchanged-database assertion in the task handoff.
-
