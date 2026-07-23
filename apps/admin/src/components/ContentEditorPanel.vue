@@ -24,6 +24,7 @@ const editorHeading = ref(null);
 const pendingMedia = ref([]);
 const deletingMedia = ref(new Set());
 const baseline = ref(JSON.stringify(blank()));
+const persistedPreview = ref(null);
 let leaveCallback = null;
 let confirmReturnFocus = null;
 let preferStableFocus = false;
@@ -58,6 +59,12 @@ function applyRow(row, { keepPending = false } = {}) {
     publishAt: localDateTime(row.publishAt),
     attachments: (row.attachments || []).map((item) => ({ ...item, label: item.label || "" }))
   });
+  persistedPreview.value = row.id ? {
+    id: row.id,
+    slug: typeof row.slug === "string" ? row.slug : "",
+    status: row.status,
+    publishAt: row.publishAt || null
+  } : null;
   if (!keepPending) pendingMedia.value = [];
   baseline.value = JSON.stringify(snapshot());
 }
@@ -217,13 +224,30 @@ async function deletePendingMedia(mediaId) {
   finally { const next = new Set(deletingMedia.value); next.delete(mediaId); deletingMedia.value = next; }
 }
 
+function getSavedPreviewState() {
+  const saved = persistedPreview.value;
+  if (!saved) return { path: null, reason: "新建内容尚未保存，暂无已保存官网页面。" };
+  if (saved.status === "draft") return { path: null, reason: "已保存内容仍是草稿，尚未公开。" };
+  if (saved.status === "scheduled") return { path: null, reason: "已保存内容为定时发布，尚未公开。" };
+  if (saved.status === "offline") return { path: null, reason: "已保存内容已下线，官网不可访问。" };
+  if (saved.status !== "published") return { path: null, reason: "已保存内容当前未公开，官网不可访问。" };
+
+  const publishAt = Date.parse(saved.publishAt);
+  if (!Number.isFinite(publishAt) || publishAt > Date.now()) {
+    return { path: null, reason: "已保存内容尚未到发布时间，官网不可访问。" };
+  }
+  if (!saved.slug) return { path: null, reason: "已保存内容没有公开地址，官网不可访问。" };
+  return { path: `/content/${encodeURIComponent(saved.slug)}`, reason: "" };
+}
+
 defineExpose({
   requestLeave,
   load,
   isDirty: () => dirty.value,
-  getPreviewState: () => ({ loading: loading.value, failed: loadFailed.value, ready: !loading.value && !loadFailed.value && Boolean(form.id) }),
+  getPreviewState: () => ({ loading: loading.value, failed: loadFailed.value, ready: !loading.value && !loadFailed.value }),
   getPreviewDraft: () => ({ kind: "content", body: contentPayload({ forPreview: true }), context: { contentId: form.id } }),
-  getSavedPreviewPath: () => form.id && form.slug ? `/content/${encodeURIComponent(form.slug)}` : null
+  getSavedPreviewState,
+  getSavedPreviewPath: () => getSavedPreviewState().path
 });
 </script>
 

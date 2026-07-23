@@ -267,6 +267,38 @@ describe("adaptive public home", () => {
     expect(screen.getByLabelText("新闻图片 动态内容标题暂无封面")).toBeInTheDocument();
   });
 
+  it("distinguishes expired protected preview media from genuinely missing covers", () => {
+    const protectedHero = event("E1", {
+      hero: {
+        id: "private-hero",
+        url: "/api/admin/site-media/private-hero/preview",
+        name: "私有赛事封面.png",
+        mimeType: "image/png"
+      }
+    });
+    const protectedNews = content("私有新闻图片", "news", {
+      cover: {
+        id: "private-cover",
+        url: "/api/admin/site-media/private-cover/preview?variant=original",
+        name: "私有内容封面.png",
+        mimeType: "image/png"
+      }
+    });
+    render(<HomePage data={home({
+      featuredEvent: protectedHero,
+      news: [protectedNews],
+      works: [content("无封面作品", "work")]
+    })} />);
+
+    fireEvent.error(screen.getByRole("img", { name: "E1 动态赛事名称赛事封面" }));
+    fireEvent.error(screen.getByRole("img", { name: "私有新闻图片 动态内容标题封面" }));
+
+    expect(screen.getAllByText("预览资源需要重新登录")).toHaveLength(2);
+    expect(screen.getByLabelText("E1 动态赛事名称预览资源需要重新登录")).toBeInTheDocument();
+    expect(screen.getByLabelText("私有新闻图片 动态内容标题预览资源需要重新登录")).toBeInTheDocument();
+    expect(screen.getByLabelText("无封面作品 动态内容标题暂无封面")).toBeInTheDocument();
+  });
+
   it("renders all sections and footer from the single home response", async () => {
     const payload = home();
     const request = vi.fn(async () => jsonResponse(payload));

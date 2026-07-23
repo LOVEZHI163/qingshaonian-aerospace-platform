@@ -56,6 +56,18 @@ a:focus-visible, button:focus-visible { outline: none; box-shadow: var(--focus-r
   background: var(--color-white);
 }
 
+.media-placeholder-message {
+  position: relative;
+  z-index: 2;
+  max-width: 18rem;
+  padding: 0.35rem 0.6rem;
+  border-radius: 0.35rem;
+  background: rgba(255, 255, 255, 0.88);
+  color: var(--color-text);
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+
 .site-shell { min-height: 100vh; display: flex; flex-direction: column; }
 .site-shell > main { flex: 1; }
 

@@ -70,6 +70,16 @@ async function activateTab(wrapper, name) {
   await flushPromises();
 }
 
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((yes, no) => {
+    resolve = yes;
+    reject = no;
+  });
+  return { promise, resolve, reject };
+}
+
 describe("SiteContentPage", () => {
   beforeEach(() => {
     apiMock.mockReset();
@@ -101,17 +111,28 @@ describe("SiteContentPage", () => {
 
     await wrapper.get('[data-site-tab="events"]').trigger("click");
     await wrapper.get('[data-profile-field="slogan"]').setValue("尚未保存");
+    await wrapper.get('[data-profile-field="slug"]').setValue("unsaved-event-route");
 
     expect(wrapper.getComponent(EventPublicProfilePanel).vm.getPreviewDraft()).toEqual({
       kind: "event",
-      body: expect.objectContaining({ eventId: "E1", slogan: "尚未保存" }),
+      body: expect.objectContaining({ eventId: "E1", slug: "unsaved-event-route", slogan: "尚未保存" }),
       context: { eventId: "E1" }
     });
     expect(wrapper.getComponent(EventPublicProfilePanel).vm.getSavedPreviewPath()).toBe("/events/event-2026");
+    expect(wrapper.getComponent(EventPublicProfilePanel).vm.getSavedPreviewState()).toEqual({
+      path: "/events/event-2026",
+      reason: ""
+    });
   });
 
   it("opens the active saved page and creates a draft preview without saving", async () => {
-    const open = vi.spyOn(window, "open").mockReturnValue({ location: { href: "" }, close: vi.fn() });
+    const popups = [];
+    const open = vi.spyOn(window, "open").mockImplementation((url, _target, features) => {
+      if (String(features || "").split(",").includes("noopener")) return null;
+      const popup = { opener: window, location: { href: url }, close: vi.fn() };
+      popups.push(popup);
+      return popup;
+    });
     apiMock.mockImplementation(async (path, options = {}) => {
       if (path === "/api/admin/site-settings") return { row: { ...settings } };
       if (path === "/api/admin/event-public-profiles") return { rows: profiles };
@@ -124,15 +145,44 @@ describe("SiteContentPage", () => {
     const wrapper = await mountLoaded();
 
     await wrapper.get('[data-action="preview-saved-site"]').trigger("click");
-    expect(open).toHaveBeenCalledWith("/", "_blank", "noopener");
+    expect(open).toHaveBeenCalledWith("about:blank", "_blank");
+    expect(popups[0].opener).toBeNull();
+    expect(popups[0].location.href).toBe("/");
+    expect(wrapper.find("[data-preview-fallback]").exists()).toBe(false);
 
     await wrapper.get('[data-action="preview-site-draft"]').trigger("click");
-    expect(open).toHaveBeenLastCalledWith("about:blank", "_blank", "noopener");
+    expect(open).toHaveBeenLastCalledWith("about:blank", "_blank");
     await flushPromises();
 
     expect(apiMock).toHaveBeenCalledWith("/api/admin/site-preview/homepage", expect.objectContaining({ method: "POST" }));
-    expect(open.mock.results.at(-1).value.location.href).toMatch(/^\/preview\?token=/);
+    expect(popups[1].opener).toBeNull();
+    expect(popups[1].location.href).toMatch(/^\/preview\?token=/);
     expect(apiMock).not.toHaveBeenCalledWith("/api/admin/site-settings", expect.objectContaining({ method: "PATCH" }));
+  });
+
+  it("severs the draft popup opener before awaiting validation and navigates it only after success", async () => {
+    const validation = deferred();
+    const popup = { opener: window, location: { href: "about:blank" }, close: vi.fn() };
+    const open = vi.spyOn(window, "open").mockReturnValue(popup);
+    apiMock.mockImplementation(async (path, options = {}) => {
+      if (path === "/api/admin/site-settings") return { row: { ...settings } };
+      if (path === "/api/admin/event-public-profiles") return { rows: profiles };
+      if (path === "/api/admin/events") return { rows: events, projects: [] };
+      if (path === "/api/admin/site-preview/homepage" && options.method === "POST") return validation.promise;
+      return { rows: [] };
+    });
+    const wrapper = await mountLoaded();
+
+    await wrapper.get('[data-action="preview-site-draft"]').trigger("click");
+
+    expect(open).toHaveBeenCalledWith("about:blank", "_blank");
+    expect(popup.opener).toBeNull();
+    expect(popup.location.href).toBe("about:blank");
+
+    validation.resolve({ preview: { payload: {}, context: {} } });
+    await flushPromises();
+    expect(popup.location.href).toMatch(/^\/preview\?token=/);
+    expect(popup.close).not.toHaveBeenCalled();
   });
 
   it("disables contextual preview until an event or content is selected", async () => {
@@ -195,6 +245,125 @@ describe("SiteContentPage", () => {
     expect(wrapper.get('[data-action="preview-site-draft"]').attributes("disabled")).toBeDefined();
     expect(wrapper.get("[data-preview-help]").text()).toContain("内容加载失败，请重试");
     expect(wrapper.get("[data-preview-help]").text()).not.toContain("内容加载中");
+  });
+
+  it("distinguishes no content from a new unsaved draft and enables only draft preview", async () => {
+    const popup = { opener: window, location: { href: "about:blank" }, close: vi.fn() };
+    vi.spyOn(window, "open").mockReturnValue(popup);
+    apiMock.mockImplementation(async (path, options = {}) => {
+      if (path === "/api/admin/site-settings") return { row: { ...settings } };
+      if (path === "/api/admin/event-public-profiles") return { rows: profiles };
+      if (path === "/api/admin/events") return { rows: events, projects: [] };
+      if (path === "/api/admin/content") return { rows: [] };
+      if (path === "/api/admin/site-preview/content" && options.method === "POST") {
+        return { preview: { payload: { row: { title: "未保存内容", bodyHtml: "<p>正文</p>" } }, context: { contentId: null } } };
+      }
+      return { rows: [] };
+    });
+    const wrapper = await mountLoaded();
+    await activateTab(wrapper, "content");
+
+    const panel = wrapper.get('[data-site-panel="content"]');
+    expect(panel.attributes("data-content-context")).toBe("none");
+    expect(wrapper.get('[data-action="preview-site-draft"]').attributes("disabled")).toBeDefined();
+
+    await wrapper.get('[data-action="new-content"]').trigger("click");
+    await flushPromises();
+
+    expect(panel.attributes("data-content-context")).toBe("new");
+    expect(wrapper.get('[data-action="preview-site-draft"]').attributes("disabled")).toBeUndefined();
+    expect(wrapper.get('[data-action="preview-saved-site"]').attributes("disabled")).toBeDefined();
+
+    await wrapper.get('[data-content-field="title"]').setValue("未保存内容");
+    await wrapper.get('[data-content-field="slug"]').setValue("unsaved-content");
+    await wrapper.get('[data-action="preview-site-draft"]').trigger("click");
+    await flushPromises();
+
+    const preview = apiMock.mock.calls.find(([path, options]) => path === "/api/admin/site-preview/content" && options?.method === "POST");
+    expect(JSON.parse(preview[1].body)).toMatchObject({ title: "未保存内容", slug: "unsaved-content" });
+    expect(JSON.parse(preview[1].body)).not.toHaveProperty("id");
+    expect(apiMock.mock.calls.some(([path, options]) => path === "/api/admin/content" && options?.method === "POST")).toBe(false);
+  });
+
+  it.each([
+    ["hidden", { ...events[0] }, { ...profiles[0], isVisible: false }, "已保存赛事未在官网公开，官网不可访问。"],
+    ["unpublished", { ...events[0], status: "draft" }, { ...profiles[0], isVisible: true }, "赛事尚未发布，官网不可访问。"]
+  ])("disables a %s event saved preview with an explicit reason", async (_case, event, profile, reason) => {
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/admin/site-settings") return { row: { ...settings } };
+      if (path === "/api/admin/event-public-profiles") return { rows: [profile] };
+      if (path === "/api/admin/events") return { rows: [event], projects: [] };
+      return { rows: [] };
+    });
+    const wrapper = await mountLoaded();
+    await activateTab(wrapper, "events");
+
+    expect(wrapper.get('[data-action="preview-saved-site"]').attributes("disabled")).toBeDefined();
+    expect(wrapper.get("[data-saved-preview-help]").text()).toContain(reason);
+  });
+
+  it.each([
+    ["draft", null, "已保存内容仍是草稿，尚未公开。"],
+    ["scheduled", "2099-01-01T00:00:00.000Z", "已保存内容为定时发布，尚未公开。"],
+    ["offline", "2026-01-01T00:00:00.000Z", "已保存内容已下线，官网不可访问。"]
+  ])("disables a saved %s content preview with an explicit reason", async (status, publishAt, reason) => {
+    const persisted = {
+      ...contentRow,
+      id: "P1",
+      slug: `${status}-content`,
+      status,
+      publishAt
+    };
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/admin/site-settings") return { row: { ...settings } };
+      if (path === "/api/admin/event-public-profiles") return { rows: profiles };
+      if (path === "/api/admin/events") return { rows: events, projects: [] };
+      if (path === "/api/admin/content") return { rows: [persisted] };
+      if (path === "/api/admin/content/P1") return { row: persisted };
+      return { rows: [] };
+    });
+    const wrapper = await mountLoaded();
+    await activateTab(wrapper, "content");
+    await wrapper.get('[data-content-row="P1"]').trigger("click");
+    await flushPromises();
+
+    expect(wrapper.get('[data-site-panel="content"]').attributes("data-content-context")).toBe("existing");
+    expect(wrapper.get('[data-action="preview-saved-site"]').attributes("disabled")).toBeDefined();
+    expect(wrapper.get("[data-saved-preview-help]").text()).toContain(reason);
+  });
+
+  it("opens only a truly public persisted content route and ignores an unsaved slug", async () => {
+    const persisted = {
+      ...contentRow,
+      id: "P1",
+      slug: "persisted-public-content",
+      status: "published",
+      publishAt: "2026-01-01T00:00:00.000Z"
+    };
+    const popup = { opener: window, location: { href: "about:blank" }, close: vi.fn() };
+    vi.spyOn(window, "open").mockReturnValue(popup);
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/admin/site-settings") return { row: { ...settings } };
+      if (path === "/api/admin/event-public-profiles") return { rows: profiles };
+      if (path === "/api/admin/events") return { rows: events, projects: [] };
+      if (path === "/api/admin/content") return { rows: [persisted] };
+      if (path === "/api/admin/content/P1") return { row: persisted };
+      return { rows: [] };
+    });
+    const wrapper = await mountLoaded();
+    await activateTab(wrapper, "content");
+    await wrapper.get('[data-content-row="P1"]').trigger("click");
+    await flushPromises();
+
+    const slug = wrapper.get('[data-content-field="slug"]');
+    slug.element.disabled = false;
+    await slug.setValue("unsaved-route");
+    expect(wrapper.get('[data-action="preview-saved-site"]').attributes("disabled")).toBeUndefined();
+
+    await wrapper.get('[data-action="preview-saved-site"]').trigger("click");
+    expect(popup.opener).toBeNull();
+    expect(popup.location.href).toBe("/content/persisted-public-content");
+    expect(wrapper.find("[data-preview-fallback]").exists()).toBe(false);
   });
 
   it("stacks preview actions into a full-width mobile action row", () => {

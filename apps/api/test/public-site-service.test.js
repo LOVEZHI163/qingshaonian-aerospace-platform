@@ -140,6 +140,59 @@ test("unpublished content uses protected URLs for private cover and attachments"
   assert.equal(detail.row.attachments[0].url, "/api/admin/site-media/ATTACHMENT-PRIVATE/preview");
 });
 
+test("homepage preview uses protected URLs for private event fallbacks and content covers", () => {
+  const source = seededPublicSiteDb();
+  source.siteSettings.defaultHeroMediaId = "DEFAULT-HERO-PRIVATE";
+  source.events.push(event("CONCURRENT-EVENT", { name: "同期赛事" }));
+  source.eventPublicProfiles.push(profile("CONCURRENT-EVENT", { slug: "concurrent-event" }));
+  source.contentPosts[0].coverMediaId = "CONTENT-COVER-PRIVATE";
+  source.mediaAssets.push(
+    {
+      id: "DEFAULT-HERO-PRIVATE",
+      visibility: "draft",
+      originalName: "default-private.png",
+      mimeType: "image/png",
+      sizeBytes: 256,
+      width: 128,
+      height: 72,
+      variants: {},
+      cleanedAt: null
+    },
+    {
+      id: "CONTENT-COVER-PRIVATE",
+      visibility: "draft",
+      originalName: "content-private.png",
+      mimeType: "image/png",
+      sizeBytes: 256,
+      width: 128,
+      height: 72,
+      variants: {},
+      cleanedAt: null
+    }
+  );
+
+  const view = buildHomeView(source, new Date("2026-07-20T00:00:00.000Z"), {
+    mediaUrl: (id) => `/api/admin/site-media/${id}/preview`
+  });
+
+  assert.equal(view.featuredEvent.hero.url, "/api/admin/site-media/DEFAULT-HERO-PRIVATE/preview");
+  assert.equal(view.concurrentEvents[0].hero.url, "/api/admin/site-media/DEFAULT-HERO-PRIVATE/preview");
+  assert.equal(view.news[0].cover.url, "/api/admin/site-media/CONTENT-COVER-PRIVATE/preview");
+  assert.doesNotMatch(JSON.stringify(view), /\/api\/public\/media\/(?:DEFAULT-HERO-PRIVATE|CONTENT-COVER-PRIVATE)/);
+});
+
+test("event preview bypasses public visibility without changing the event status", () => {
+  const source = seededPublicSiteDb();
+  source.events[0].status = "draft";
+  source.eventPublicProfiles[0].isVisible = false;
+
+  assert.equal(buildEventDetailView(source, "current-event", now), null);
+  const view = buildEventDetailView(source, "current-event", now, { allowUnpublished: true });
+
+  assert.equal(view.event.status, "draft");
+  assert.deepEqual(view.event.registrationWindow, { open: false, reason: "赛事尚未发布" });
+});
+
 test("home event selection respects a valid manual feature and caps concurrent events", () => {
   const source = db(
     [event("E1"), event("E2"), event("E3")],

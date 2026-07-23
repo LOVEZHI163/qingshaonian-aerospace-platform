@@ -122,6 +122,21 @@ async function uploadCover(event) {
   }
 }
 
+function getSavedPreviewState() {
+  const event = selectedEvent.value;
+  if (!event) return { path: null, reason: "请先选择赛事后再预览已保存官网。" };
+  const profile = profileFor(event.id);
+  if (!profile) return { path: null, reason: "该赛事尚未保存官网视觉配置，暂无已保存官网页面。" };
+  if (profile.isVisible !== true) {
+    return { path: null, reason: "已保存赛事未在官网公开，官网不可访问。" };
+  }
+  if (!["published", "archived"].includes(event.status)) {
+    return { path: null, reason: "赛事尚未发布，官网不可访问。" };
+  }
+  if (!profile.slug) return { path: null, reason: "已保存赛事没有公开地址，官网不可访问。" };
+  return { path: `/events/${encodeURIComponent(profile.slug)}`, reason: "" };
+}
+
 watch(() => props.events, (rows) => {
   if (!selectedId.value && rows.length) openEvent(rows[0].id);
 }, { immediate: true });
@@ -132,8 +147,8 @@ defineExpose({
     body: { eventId: selectedId.value, ...requestBody() },
     context: { eventId: selectedId.value }
   } : null,
-  getSavedPreviewPath: () => profileFor(selectedId.value)?.slug
-    ? `/events/${encodeURIComponent(profileFor(selectedId.value).slug)}` : null
+  getSavedPreviewState,
+  getSavedPreviewPath: () => getSavedPreviewState().path
 });
 </script>
 

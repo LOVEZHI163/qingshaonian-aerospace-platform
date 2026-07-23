@@ -4,8 +4,7 @@ import {
   buildEventDetailView,
   buildHomeView
 } from "./public-site-view.js";
-import { normalizeContentInput } from "./content-publishing.js";
-import { updateSiteSettings, upsertEventPublicProfile } from "./site-admin.js";
+import { createContent, updateContent, updateSiteSettings, upsertEventPublicProfile } from "./site-admin.js";
 
 export class SitePreviewError extends Error {
   constructor(status, message, code) {
@@ -16,7 +15,7 @@ export class SitePreviewError extends Error {
 }
 
 const SENSITIVE_PREVIEW_FIELDS = new Set([
-  "contact", "phone", "phonenumber", "mobile", "mobilephone", "email",
+  "phone", "phonenumber", "mobile", "mobilephone", "email",
   "password", "credential", "credentials", "session", "sessionid", "sessionversion",
   "token", "authorization",
   "user", "userid", "actor", "actorid", "admin", "adminid",
@@ -76,12 +75,6 @@ function normalizeAttachments(db, contentId, attachments, eventId) {
   });
 }
 
-function assertContentSlugAvailable(db, slug, currentId) {
-  if ((db.contentPosts || []).some((row) => row.id !== currentId && row.slug === slug)) {
-    fail(409, "slug已存在", "SLUG_CONFLICT");
-  }
-}
-
 function buildHomepagePreview(db, input, now) {
   assertObject(input);
   updateSiteSettings(db, input, { incrementVersion: false });
@@ -96,15 +89,15 @@ function buildHomepagePreview(db, input, now) {
 function buildEventPreview(db, input, now) {
   assertObject(input);
   const eventId = String(input.eventId || "").trim();
-  const event = eventFor(db, eventId);
-  if (!["published", "archived"].includes(event.status)) event.status = "published";
-  if (event.status === "published") event.archivedAt = null;
+  eventFor(db, eventId);
   mediaFor(db, input.heroMediaId, "赛事主视觉", eventId);
   const profileInput = { ...input };
   delete profileInput.eventId;
   const { row } = upsertEventPublicProfile(db, eventId, profileInput, { now, incrementVersion: false });
-  row.isVisible = true;
-  const payload = buildEventDetailView(db, row.slug, new Date(now), { mediaUrl: protectedMediaUrl });
+  const payload = buildEventDetailView(db, row.slug, new Date(now), {
+    allowUnpublished: true,
+    mediaUrl: protectedMediaUrl
+  });
   if (!payload) fail(422, "赛事不可预览");
   return { kind: "event", payload, context: { eventId, contentId: null } };
 }
@@ -115,31 +108,25 @@ function buildContentPreview(db, input, now) {
   const current = requestedId ? (db.contentPosts || []).find((row) => row.id === requestedId) : null;
   if (requestedId && !current) fail(404, "内容不存在");
   const timestamp = new Date(now).toISOString();
-  const normalized = normalizeContentInput({
+  const sanitizedInput = {
     ...input,
     bodyHtml: sanitizeContentHtml(input.bodyHtml ?? current?.bodyHtml ?? "")
-  }, current, timestamp);
-  const eventId = normalized.eventId || null;
-  eventFor(db, eventId, { optional: true });
-  mediaFor(db, normalized.coverMediaId, "文章封面", eventId);
-  assertContentSlugAvailable(db, normalized.slug, current?.id);
-  const contentId = current?.id || "preview-content";
-  const row = {
-    ...normalized,
-    id: contentId,
-    createdBy: current?.createdBy || null,
-    createdAt: current?.createdAt || timestamp,
-    updatedAt: timestamp
   };
+  const eventId = (Object.hasOwn(sanitizedInput, "eventId") ? sanitizedInput.eventId : current?.eventId) || null;
+  eventFor(db, eventId, { optional: true });
+  const coverMediaId = Object.hasOwn(sanitizedInput, "coverMediaId")
+    ? sanitizedInput.coverMediaId
+    : current?.coverMediaId;
+  mediaFor(db, coverMediaId, "文章封面", eventId);
+  const contentId = current?.id || "preview-content";
   const attachmentInput = Object.hasOwn(input, "attachments")
     ? input.attachments
     : (db.contentAttachments || []).filter((attachment) => attachment.contentId === contentId);
-  const attachments = normalizeAttachments(db, contentId, attachmentInput || [], eventId);
-  db.contentPosts ||= [];
-  if (current) db.contentPosts[db.contentPosts.indexOf(current)] = row;
-  else db.contentPosts.push(row);
-  db.contentAttachments = (db.contentAttachments || []).filter((attachment) => attachment.contentId !== contentId);
-  db.contentAttachments.push(...attachments);
+  normalizeAttachments(db, contentId, attachmentInput || [], eventId);
+  const mutationInput = { ...sanitizedInput, attachments: attachmentInput || [] };
+  const row = current
+    ? updateContent(db, current.id, mutationInput, { now: timestamp, incrementVersion: false })
+    : createContent(db, mutationInput, { id: contentId, actor: { id: null }, now: timestamp });
   const payload = buildContentDetailView(db, row.slug, new Date(now), {
     allowUnpublished: true,
     mediaUrl: protectedMediaUrl

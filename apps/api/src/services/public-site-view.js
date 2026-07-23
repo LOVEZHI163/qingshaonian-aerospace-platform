@@ -102,9 +102,9 @@ function publicRegistrationWindow(event, now) {
   return isRegistrationOpen(event, now);
 }
 
-export function eventSummary(db, event, now, mediaOptions) {
+export function eventSummary(db, event, now, mediaOptions, profileOverride) {
   if (!event) return null;
-  const profile = publicProfile(db, event.id);
+  const profile = profileOverride === undefined ? publicProfile(db, event.id) : profileOverride;
   if (!profile) return null;
   return {
     id: event.id,
@@ -204,17 +204,17 @@ export function buildHomeView(db, now, { mediaUrl } = {}) {
   const mediaOptions = typeof mediaUrl === "function" ? { allowPrivate: true, urlFor: mediaUrl } : undefined;
   const selection = selectHomeEvents(db, now);
   const selected = selection.featuredEvent || selection.fallbackEvent;
-  const featuredEvent = eventSummary(db, selected, now);
+  const featuredEvent = eventSummary(db, selected, now, mediaOptions);
   const posts = visiblePosts(db, now);
   const section = (type) => posts
     .filter((row) => row.type === type)
     .slice(0, HOME_LIMITS[type])
-    .map((row) => contentSummary(db, row));
+    .map((row) => contentSummary(db, row, mediaOptions));
   return {
     site: publicSiteSettings(db, mediaOptions),
     mode: selection.mode,
     featuredEvent,
-    concurrentEvents: selection.concurrentEvents.map((row) => eventSummary(db, row, now)).filter(Boolean),
+    concurrentEvents: selection.concurrentEvents.map((row) => eventSummary(db, row, now, mediaOptions)).filter(Boolean),
     services: servicesFor(featuredEvent, selection.mode),
     announcements: section("announcement"),
     news: section("news"),
@@ -237,10 +237,11 @@ function publicProject(row) {
   };
 }
 
-export function buildEventDetailView(db, slug, now, { mediaUrl } = {}) {
-  const profile = (db.eventPublicProfiles || []).find((row) => row.slug === slug && row.isVisible === true);
+export function buildEventDetailView(db, slug, now, { allowUnpublished = false, mediaUrl } = {}) {
+  const profile = (db.eventPublicProfiles || []).find((row) =>
+    row.slug === slug && (allowUnpublished || row.isVisible === true));
   const event = profile && (db.events || []).find((row) => row.id === profile.eventId);
-  if (!eventIsPublic(db, event)) return null;
+  if (!event || (!allowUnpublished && !eventIsPublic(db, event))) return null;
   const mediaOptions = typeof mediaUrl === "function" ? { allowPrivate: true, urlFor: mediaUrl } : undefined;
   const posts = visiblePosts(db, now).filter((row) => row.eventId === event.id);
   const guideIds = new Set(posts.filter((row) => row.type === "guide").map((row) => row.id));
@@ -250,7 +251,7 @@ export function buildEventDetailView(db, slug, now, { mediaUrl } = {}) {
     .map((row) => attachmentView(db, row, mediaOptions))
     .filter(Boolean);
   return {
-    event: eventSummary(db, event, now, mediaOptions),
+    event: eventSummary(db, event, now, mediaOptions, profile),
     projects: (db.projects || [])
       .filter((row) => row.eventId === event.id && row.enabled)
       .sort((left, right) => left.displayOrder - right.displayOrder || String(left.id).localeCompare(String(right.id)))

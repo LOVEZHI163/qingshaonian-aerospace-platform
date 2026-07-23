@@ -97,6 +97,7 @@ async function upload(event, field, purpose) {
 
 defineExpose({
   getPreviewDraft: () => ({ kind: "homepage", body: payload(), context: {} }),
+  getSavedPreviewState: () => ({ path: "/", reason: "" }),
   getSavedPreviewPath: () => "/"
 });
 </script>

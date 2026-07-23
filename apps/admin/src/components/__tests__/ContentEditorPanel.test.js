@@ -274,6 +274,45 @@ describe("ContentEditorPanel", () => {
       context: { contentId: null }
     });
     expect(wrapper.vm.getSavedPreviewPath()).toBeNull();
+    expect(wrapper.vm.getSavedPreviewState()).toEqual({
+      path: null,
+      reason: "新建内容尚未保存，暂无已保存官网页面。"
+    });
+  });
+
+  it("uses the persisted public slug for saved preview even when the form slug changes", async () => {
+    installApi({
+      "GET /api/admin/content/POST-1": async () => ({
+        row: { ...row, status: "published", publishAt: "2026-01-01T00:00:00.000Z" }
+      })
+    });
+    const wrapper = await mountEditor();
+    const slug = wrapper.get('[data-content-field="slug"]');
+    slug.element.disabled = false;
+    await slug.setValue("unsaved-route");
+
+    expect(wrapper.vm.getPreviewDraft().body.slug).toBe("unsaved-route");
+    expect(wrapper.vm.getSavedPreviewState()).toEqual({
+      path: "/content/first-news",
+      reason: ""
+    });
+  });
+
+  it.each([
+    ["draft", null, "已保存内容仍是草稿，尚未公开。"],
+    ["scheduled", "2099-01-01T00:00:00.000Z", "已保存内容为定时发布，尚未公开。"],
+    ["offline", "2026-01-01T00:00:00.000Z", "已保存内容已下线，官网不可访问。"],
+    ["published", "2099-01-01T00:00:00.000Z", "已保存内容尚未到发布时间，官网不可访问。"]
+  ])("disables saved preview for a non-public %s baseline", async (status, publishAt, reason) => {
+    installApi({
+      "GET /api/admin/content/POST-1": async () => ({
+        row: { ...row, status, publishAt }
+      })
+    });
+    const wrapper = await mountEditor();
+
+    expect(wrapper.vm.getSavedPreviewState()).toEqual({ path: null, reason });
+    expect(wrapper.vm.getSavedPreviewPath()).toBeNull();
   });
 
   it("keeps detached media reachable through save, 409, and retrying a successful DELETE", async () => {

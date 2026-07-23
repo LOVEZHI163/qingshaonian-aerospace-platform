@@ -23,7 +23,7 @@ async function mutateDb(dbPath, mutate) {
 }
 
 const SENSITIVE_KEYS = new Set([
-  "contact", "phone", "phonenumber", "mobile", "mobilephone", "email",
+  "phone", "phonenumber", "mobile", "mobilephone", "email",
   "password", "credential", "credentials", "session", "sessionid", "sessionversion",
   "token", "authorization",
   "user", "userid", "actor", "actorid", "admin", "adminid",
@@ -87,8 +87,11 @@ test("pure preview payloads omit structural sensitive fields without stripping o
 
   for (const preview of [homepage, event, content]) {
     assertPreviewPayloadHasNoSensitiveData(preview.payload);
-    assert.doesNotMatch(JSON.stringify(preview.payload), /13900000000|PASSWORD|SESSION|ADMIN-SENSITIVE/);
+    assert.doesNotMatch(JSON.stringify(preview.payload), /PASSWORD|SESSION|ADMIN-SENSITIVE/);
   }
+  assert.equal(homepage.payload.site.contact, "SITE-CONTACT-13900000000");
+  assert.equal(homepage.payload.featuredEvent.contact, "EVENT-CONTACT-13900000000");
+  assert.equal(event.payload.event.contact, "EVENT-CONTACT-13900000000");
   assert.match(content.payload.row.bodyHtml, /2026 年第 100 条内容/);
 });
 
@@ -101,7 +104,8 @@ test("event preview renders an unpublished event only in its cloned snapshot", (
     now: "2026-07-22T00:00:00.000Z"
   });
 
-  assert.equal(preview.payload.event.status, "published");
+  assert.equal(preview.payload.event.status, "draft");
+  assert.deepEqual(preview.payload.event.registrationWindow, { open: false, reason: "赛事尚未发布" });
   assert.equal(db.events[0].status, "draft");
   assert.deepEqual(db, before);
 });
@@ -119,9 +123,95 @@ test("pure content preview accepts an existing draft with its current version", 
 
   assert.deepEqual(db, before);
 });
+
+test("content preview reuses create and update lifecycle rules on its clone", () => {
+  const now = "2026-07-22T00:00:00.000Z";
+  const db = structuredClone(seedDb);
+  const current = {
+    id: "POST-LOCKED",
+    slug: "stable-slug",
+    eventId: null,
+    type: "news",
+    title: "已保存标题",
+    summary: "摘要",
+    bodyHtml: "<p>已保存</p>",
+    status: "offline",
+    publishAt: "2026-07-01T00:00:00.000Z",
+    pinned: false,
+    sortOrder: 0,
+    coverMediaId: null,
+    version: 4,
+    createdAt: "2026-07-01T00:00:00.000Z",
+    updatedAt: "2026-07-01T00:00:00.000Z"
+  };
+  db.contentPosts.push(current);
+  db.auditLogs.push({
+    id: "AUDIT-CONTENT-PUBLISH",
+    action: "content.publish",
+    targetId: current.id
+  });
+  const before = structuredClone(db);
+
+  assert.throws(
+    () => buildSitePreview(db, "content", {
+      ...current,
+      slug: "renamed-after-publish",
+      status: "draft",
+      publishAt: "2099-01-01T00:00:00.000Z",
+      attachments: []
+    }, { now }),
+    (error) => error?.status === 409 && error?.code === "CONTENT_SLUG_STABLE"
+  );
+  assert.throws(
+    () => buildSitePreview(db, "content", {
+      ...current,
+      version: current.version - 1,
+      status: "draft",
+      attachments: []
+    }, { now }),
+    (error) => error?.status === 409 && error?.code === "CONTENT_VERSION_CONFLICT"
+  );
+  assert.throws(
+    () => buildSitePreview(db, "content", {
+      ...current,
+      status: "offline",
+      attachments: []
+    }, { now }),
+    (error) => error?.status === 422
+  );
+
+  const draft = buildSitePreview(db, "content", {
+    ...current,
+    status: "draft",
+    publishAt: "2099-01-01T00:00:00.000Z",
+    attachments: []
+  }, { now });
+  assert.equal(draft.payload.row.status, undefined);
+  assert.equal(draft.payload.row.publishAt, null);
+
+  const created = buildSitePreview(db, "content", {
+    slug: "new-preview-content",
+    eventId: null,
+    type: "news",
+    title: "新建草稿",
+    summary: "",
+    bodyHtml: "<p>新建内容</p>",
+    status: "scheduled",
+    publishAt: "2099-01-01T00:00:00.000Z",
+    pinned: false,
+    sortOrder: 0,
+    coverMediaId: null,
+    attachments: []
+  }, { now });
+  assert.equal(created.payload.row.publishAt, null);
+  assert.deepEqual(db, before);
+});
+
 test("admin preview normalizes all three kinds without writing the store", async () => {
   await withTestServer(async ({ baseUrl, dbPath }) => {
     await mutateDb(dbPath, (db) => {
+      db.siteSettings.contact = "PUBLIC-SITE-CONTACT";
+      db.events[0].contact = "PUBLIC-EVENT-CONTACT";
       db.mediaAssets.push({
         id: "MEDIA-PRIVATE",
         eventId: "wz-aerospace-2026",
@@ -169,6 +259,9 @@ test("admin preview normalizes all three kinds without writing the store", async
     assert.equal(event.status, 200, event.body.error);
     assert.equal(content.status, 200, content.body.error);
     assert.equal(homepage.headers.get("cache-control"), "private, no-store");
+    assert.equal(homepage.body.preview.payload.site.contact, "PUBLIC-SITE-CONTACT");
+    assert.equal(event.body.preview.payload.event.contact, "PUBLIC-EVENT-CONTACT");
+    assert.doesNotMatch(JSON.stringify(homepage.body.preview), /13900000000/);
     assert.equal(event.body.preview.payload.event.hero.url, "/api/admin/site-media/MEDIA-PRIVATE/preview");
     assert.equal(content.body.preview.payload.row.bodyHtml, "<p>正文</p>");
     assert.equal(content.body.preview.payload.row.cover.url, "/api/admin/site-media/MEDIA-PRIVATE/preview");

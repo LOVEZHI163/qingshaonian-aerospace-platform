@@ -1,15 +1,26 @@
 import React, { useState } from "react";
 import EventStatus from "./EventStatus.jsx";
 
+function isProtectedPreviewMedia(url) {
+  return /^\/api\/admin\/site-media\/[^/?#]+\/preview(?:[?#]|$)/.test(String(url || ""));
+}
+
 export function EventPicture({ event, className = "" }) {
-  const [failed, setFailed] = useState(false);
+  const [failedUrl, setFailedUrl] = useState("");
   const hero = event?.hero;
   const label = event?.name || "赛事";
+  const failed = Boolean(hero?.url) && failedUrl === hero.url;
+  const needsLogin = failed && isProtectedPreviewMedia(hero.url);
 
   if (!hero?.url || failed) {
     return (
-      <div className={`media-placeholder ${className}`.trim()} role="img" aria-label={`${label}暂无封面`}>
+      <div
+        className={`media-placeholder ${className}`.trim()}
+        role="img"
+        aria-label={`${label}${needsLogin ? "预览资源需要重新登录" : "暂无封面"}`}
+      >
         <span aria-hidden="true">✦</span>
+        {needsLogin ? <span className="media-placeholder-message">预览资源需要重新登录</span> : null}
       </div>
     );
   }
@@ -22,7 +33,7 @@ export function EventPicture({ event, className = "" }) {
         src={hero.url}
         alt={`${label}赛事封面`}
         fetchPriority="high"
-        onError={() => setFailed(true)}
+        onError={() => setFailedUrl(hero.url)}
       />
     </picture>
   );

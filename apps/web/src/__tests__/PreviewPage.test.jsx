@@ -51,6 +51,28 @@ describe("browser-local preview snapshots", () => {
     expect(storage.getItem(`${PREVIEW_STORAGE_PREFIX}${token}`)).toBeNull();
   });
 
+  it("cleans every expired preview record before reading while preserving fresh and unrelated storage", () => {
+    const expiredToken = "b".repeat(48);
+    const freshToken = "c".repeat(48);
+    const storage = memoryStorageWith({
+      [`${PREVIEW_STORAGE_PREFIX}${token}`]: JSON.stringify(validSnapshot({ expiresAt: 901_000 })),
+      [`${PREVIEW_STORAGE_PREFIX}${expiredToken}`]: JSON.stringify(validSnapshot({
+        token: expiredToken,
+        expiresAt: 899_999
+      })),
+      [`${PREVIEW_STORAGE_PREFIX}${freshToken}`]: JSON.stringify(validSnapshot({
+        token: freshToken,
+        expiresAt: 901_000
+      })),
+      "unrelated-key": "keep"
+    });
+
+    expect(readPreviewSnapshot(token, { now: 900_000, storage }).ok).toBe(true);
+    expect(storage.getItem(`${PREVIEW_STORAGE_PREFIX}${expiredToken}`)).toBeNull();
+    expect(storage.getItem(`${PREVIEW_STORAGE_PREFIX}${freshToken}`)).not.toBeNull();
+    expect(storage.getItem("unrelated-key")).toBe("keep");
+  });
+
   it.each([
     ["malformed", token, "{not-json"],
     ["wrong version", token, JSON.stringify(validSnapshot({ version: 2 }))],
@@ -120,7 +142,7 @@ describe("PreviewPage", () => {
           slug: "draft-event",
           name: "赛事草稿",
           slogan: "尚未保存的赛事宣传语",
-          registrationWindow: { open: false }
+          registrationWindow: { open: false, reason: "赛事尚未发布" }
         },
         projects: [],
         groups: [],
@@ -198,6 +220,8 @@ describe("PreviewPage", () => {
         "href",
         "/api/admin/site-media/draft-event-rules/preview"
       );
+      expect(screen.getAllByText("赛事尚未发布")).not.toHaveLength(0);
+      expect(screen.queryByRole("link", { name: "立即报名" })).not.toBeInTheDocument();
       expect(screen.getByText(/草稿附件需保持管理后台登录状态/)).toBeInTheDocument();
       expect(screen.queryByText("不安全赛事资源")).not.toBeInTheDocument();
     }

@@ -19,6 +19,7 @@ const profiles = ref([]);
 const siteSettingsPanel = ref(null);
 const eventPublicProfilePanel = ref(null);
 const selectedContentId = ref(null);
+const contentContext = ref("none");
 const contentEditor = ref(null);
 const contentList = ref(null);
 const previewError = ref("");
@@ -30,8 +31,24 @@ const activePreviewPanel = computed(() => activeTab.value === "homepage"
     ? eventPublicProfilePanel.value
     : contentEditor.value);
 
-const activePreviewDraft = computed(() => activePreviewPanel.value?.getPreviewDraft?.() || null);
-const savedPreviewPath = computed(() => activePreviewPanel.value?.getSavedPreviewPath?.() || null);
+const activePreviewDraft = computed(() => {
+  if (activeTab.value === "content" && contentContext.value === "none") return null;
+  return activePreviewPanel.value?.getPreviewDraft?.() || null;
+});
+const savedPreviewState = computed(() => {
+  if (activeTab.value === "content" && contentContext.value === "none") {
+    return { path: null, reason: "请先选择已保存内容后再预览。" };
+  }
+  if (activeTab.value === "content" && contentContext.value === "new") {
+    return { path: null, reason: "新建内容尚未保存，暂无已保存官网页面。" };
+  }
+  return activePreviewPanel.value?.getSavedPreviewState?.()
+    || { path: null, reason: "已保存官网页面暂不可用。" };
+});
+const savedPreviewPath = computed(() => savedPreviewState.value.path || null);
+const savedPreviewHelp = computed(() => savedPreviewPath.value
+  ? "已保存官网页面当前可公开访问。"
+  : savedPreviewState.value.reason);
 const activePreviewState = computed(() => activePreviewPanel.value?.getPreviewState?.() || {
   loading: false,
   failed: false,
@@ -39,7 +56,7 @@ const activePreviewState = computed(() => activePreviewPanel.value?.getPreviewSt
 });
 const previewHelp = computed(() => {
   if (activeTab.value === "events" && !activePreviewDraft.value) return "请先选择赛事后再预览。";
-  if (activeTab.value === "content" && !selectedContentId.value) return "请先选择或新建内容后再预览。";
+  if (activeTab.value === "content" && contentContext.value === "none") return "请先选择或新建内容后再预览。";
   if (activeTab.value === "content" && activePreviewState.value.loading) return "内容加载中，请稍候。";
   if (activeTab.value === "content" && activePreviewState.value.failed) return "内容加载失败，请重试。";
   if (activeTab.value === "content" && !activePreviewState.value.ready) return "内容暂不可预览，请重试。";
@@ -47,7 +64,7 @@ const previewHelp = computed(() => {
 });
 const canPreviewDraft = computed(() => Boolean(
   activePreviewDraft.value
-  && (activeTab.value !== "content" || (selectedContentId.value && activePreviewState.value.ready))
+  && (activeTab.value !== "content" || (contentContext.value !== "none" && activePreviewState.value.ready))
 ));
 
 async function load() {
@@ -81,6 +98,7 @@ function updateProfile(row) {
 
 function chooseContent(id) {
   contentEditor.value?.requestLeave(() => {
+    contentContext.value = "existing";
     if (selectedContentId.value === id) contentEditor.value?.load();
     else selectedContentId.value = id;
   });
@@ -88,17 +106,20 @@ function chooseContent(id) {
 
 function newContent() {
   contentEditor.value?.requestLeave(() => {
+    contentContext.value = "new";
     if (selectedContentId.value === null) contentEditor.value?.load();
     else selectedContentId.value = null;
   });
 }
 
 function contentSaved(row) {
+  contentContext.value = "existing";
   selectedContentId.value = row.id;
   contentList.value?.load();
 }
 
 function contentDeleted() {
+  contentContext.value = "none";
   selectedContentId.value = null;
   contentList.value?.load();
 }
@@ -114,12 +135,20 @@ async function activateTab(index, { focus = false } = {}) {
   }
 }
 
+function openPreviewWindow() {
+  const popup = window.open("about:blank", "_blank");
+  if (popup) popup.opener = null;
+  return popup;
+}
+
 function previewSaved() {
   previewError.value = "";
   blockedPreviewUrl.value = "";
   const path = savedPreviewPath.value;
   if (!path) return;
-  if (!window.open(path, "_blank", "noopener")) blockedPreviewUrl.value = path;
+  const popup = openPreviewWindow();
+  if (popup) popup.location.href = path;
+  else blockedPreviewUrl.value = path;
 }
 
 async function previewDraft() {
@@ -128,7 +157,7 @@ async function previewDraft() {
   const draft = activePreviewDraft.value;
   if (!draft || !canPreviewDraft.value) return;
 
-  const popup = window.open("about:blank", "_blank", "noopener");
+  const popup = openPreviewWindow();
   try {
     const response = await api(`/api/admin/site-preview/${draft.kind}`, {
       method: "POST",
@@ -171,11 +200,12 @@ onMounted(load);
       <div><h2>官网内容</h2><p>统一维护首页信息、赛事视觉与公开内容。</p></div>
       <div class="site-preview-actions">
         <button type="button" class="dark" data-action="refresh-site-content" :disabled="loading" @click="load">刷新</button>
-        <button type="button" data-action="preview-saved-site" :disabled="loading || !savedPreviewPath" @click="previewSaved">预览已保存官网</button>
+        <button type="button" data-action="preview-saved-site" :disabled="loading || !savedPreviewPath" :aria-describedby="!savedPreviewPath ? 'saved-preview-help' : undefined" @click="previewSaved">预览已保存官网</button>
         <button type="button" class="primary" data-action="preview-site-draft" :disabled="loading || !canPreviewDraft" @click="previewDraft">预览当前草稿</button>
       </div>
     </div>
     <div class="site-preview-status">
+      <p id="saved-preview-help" class="site-preview-help" data-saved-preview-help>{{ savedPreviewHelp }}</p>
       <p class="site-preview-help" data-preview-help>{{ previewHelp }}</p>
       <p v-if="previewError" class="message" role="alert" data-preview-error>{{ previewError }}</p>
       <a v-if="blockedPreviewUrl" class="site-preview-fallback" :href="blockedPreviewUrl" target="_blank" rel="noopener" data-preview-fallback>预览窗口被拦截，点击在新标签页打开</a>
@@ -189,7 +219,7 @@ onMounted(load);
     <template v-else>
       <section id="site-panel-homepage" v-show="activeTab === 'homepage'" role="tabpanel" aria-labelledby="site-tab-homepage" data-site-panel="homepage"><SiteSettingsPanel v-if="settings" ref="siteSettingsPanel" :settings="settings" :events="events" :profiles="profiles" @saved="updateSettings" /></section>
       <section id="site-panel-events" v-show="activeTab === 'events'" role="tabpanel" aria-labelledby="site-tab-events" data-site-panel="events"><EventPublicProfilePanel ref="eventPublicProfilePanel" :events="events" :profiles="profiles" @saved="updateProfile" /></section>
-      <section id="site-panel-content" v-show="activeTab === 'content'" role="tabpanel" aria-labelledby="site-tab-content" data-site-panel="content"><div class="content-management-layout"><ContentListPanel ref="contentList" :events="events" :selected-id="selectedContentId" @select="chooseContent" @new="newContent" /><ContentEditorPanel ref="contentEditor" :content-id="selectedContentId" :events="events" @saved="contentSaved" @deleted="contentDeleted" /></div></section>
+      <section id="site-panel-content" v-show="activeTab === 'content'" role="tabpanel" aria-labelledby="site-tab-content" data-site-panel="content" :data-content-context="contentContext"><div class="content-management-layout"><ContentListPanel ref="contentList" :events="events" :selected-id="selectedContentId" @select="chooseContent" @new="newContent" /><ContentEditorPanel ref="contentEditor" :content-id="selectedContentId" :events="events" @saved="contentSaved" @deleted="contentDeleted" /></div></section>
     </template>
   </section>
 </template>

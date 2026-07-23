@@ -1,18 +1,29 @@
 import React, { useState } from "react";
 
+function isProtectedPreviewMedia(url) {
+  return /^\/api\/admin\/site-media\/[^/?#]+\/preview(?:[?#]|$)/.test(String(url || ""));
+}
+
 function contentHref(item) {
   return item?.slug ? `/content/${encodeURIComponent(item.slug)}` : null;
 }
 
 function ContentCover({ item }) {
-  const [failed, setFailed] = useState(false);
+  const [failedUrl, setFailedUrl] = useState("");
   const cover = item.cover;
   const label = item.title || "内容";
+  const failed = Boolean(cover?.url) && failedUrl === cover.url;
+  const needsLogin = failed && isProtectedPreviewMedia(cover.url);
 
   if (!cover?.url || failed) {
     return (
-      <div className="content-cover media-placeholder" role="img" aria-label={`${label}暂无封面`}>
+      <div
+        className="content-cover media-placeholder"
+        role="img"
+        aria-label={`${label}${needsLogin ? "预览资源需要重新登录" : "暂无封面"}`}
+      >
         <span aria-hidden="true">✦</span>
+        {needsLogin ? <span className="media-placeholder-message">预览资源需要重新登录</span> : null}
       </div>
     );
   }
@@ -21,7 +32,7 @@ function ContentCover({ item }) {
     <picture className="content-cover">
       {cover.mobileUrl ? <source media="(max-width: 767px)" srcSet={cover.mobileUrl} /> : null}
       {cover.desktopUrl ? <source srcSet={cover.desktopUrl} /> : null}
-      <img src={cover.url} alt={`${label}封面`} loading="lazy" onError={() => setFailed(true)} />
+      <img src={cover.url} alt={`${label}封面`} loading="lazy" onError={() => setFailedUrl(cover.url)} />
     </picture>
   );
 }
