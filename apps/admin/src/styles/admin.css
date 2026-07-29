@@ -586,7 +586,7 @@ textarea {
   box-shadow: 0 -8px 24px rgba(17, 43, 75, 0.08);
 }
 .content-editor-sticky-actions button:focus-visible {
-  outline: 3px solid rgba(23, 104, 201, 0.24);
+  outline: 3px solid #0b63ce;
   outline-offset: 2px;
 }
 .content-confirm-dialog { width: min(100%, 480px); }

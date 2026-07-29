@@ -139,6 +139,7 @@ describe("ContentEditorPanel", () => {
       expect(wrapper.get(`[data-content-section="${name}"]`).classes()).toContain("content-editor-section");
     }
     const actions = wrapper.get('[data-content-editor-actions]');
+    expect(actions.attributes("role")).toBe("group");
     expect(actions.attributes("aria-label")).toBe("内容操作");
     expect(actions.classes()).toContain("content-editor-sticky-actions");
   });

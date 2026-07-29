@@ -84,6 +84,7 @@ describe("SiteContentPage", () => {
   it("defines the desktop sticky workflow and 360px single-column CSS contract", () => {
     const css = readFileSync("src/styles/admin.css", "utf8");
     expect(css).toMatch(/\.content-editor-sticky-actions\s*\{[^}]*position:\s*sticky;[^}]*bottom:\s*0;/s);
+    expect(css).toMatch(/\.content-editor-sticky-actions button:focus-visible\s*\{[^}]*outline:\s*3px solid #0b63ce;/s);
     expect(css).toMatch(/@media \(max-width:\s*760px\)[\s\S]*\.content-editor-section \.site-form-grid\s*\{[^}]*grid-template-columns:\s*1fr;/);
     expect(css).toMatch(/@media \(max-width:\s*760px\)[\s\S]*\.content-editor-sticky-actions\s*\{[^}]*flex-direction:\s*column;/);
   });
