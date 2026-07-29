@@ -99,18 +99,20 @@ function updateProfile(row) {
 }
 
 function chooseContent(id) {
-  contentEditor.value?.requestLeave(() => {
-    contentContext.value = "existing";
-    if (selectedContentId.value === id) contentEditor.value?.load();
-    else selectedContentId.value = id;
-  });
+  contentContext.value = "existing";
+  selectedContentId.value = id;
 }
 
 function newContent() {
+  contentContext.value = "new";
+  selectedContentId.value = null;
+}
+
+function backToContentList() {
   contentEditor.value?.requestLeave(() => {
-    contentContext.value = "new";
-    if (selectedContentId.value === null) contentEditor.value?.load();
-    else selectedContentId.value = null;
+    contentContext.value = "none";
+    selectedContentId.value = null;
+    contentList.value?.load();
   });
 }
 
@@ -221,7 +223,7 @@ onMounted(load);
     <template v-else>
       <section id="site-panel-homepage" v-show="activeTab === 'homepage'" role="tabpanel" aria-labelledby="site-tab-homepage" data-site-panel="homepage"><SiteSettingsPanel v-if="settings" ref="siteSettingsPanel" :settings="settings" :events="events" :profiles="profiles" @saved="updateSettings" /></section>
       <section id="site-panel-events" v-show="activeTab === 'events'" role="tabpanel" aria-labelledby="site-tab-events" data-site-panel="events"><EventPublicProfilePanel ref="eventPublicProfilePanel" :events="events" :profiles="profiles" @saved="updateProfile" @navigate="$emit('navigate', $event)" /></section>
-      <section id="site-panel-content" v-show="activeTab === 'content'" role="tabpanel" aria-labelledby="site-tab-content" data-site-panel="content" :data-content-context="contentContext"><div class="content-management-layout"><ContentListPanel ref="contentList" :events="events" :selected-id="selectedContentId" @select="chooseContent" @new="newContent" /><ContentEditorPanel ref="contentEditor" :content-id="selectedContentId" :events="events" @saved="contentSaved" @deleted="contentDeleted" /></div></section>
+      <section id="site-panel-content" v-show="activeTab === 'content'" role="tabpanel" aria-labelledby="site-tab-content" data-site-panel="content" :data-content-context="contentContext"><div class="content-management-layout"><ContentListPanel v-if="contentContext === 'none'" ref="contentList" :events="events" :selected-id="selectedContentId" @select="chooseContent" @new="newContent" /><div v-else class="content-editor-workflow"><button type="button" data-action="back-to-content-list" @click="backToContentList">返回内容列表</button><ContentEditorPanel ref="contentEditor" :content-id="selectedContentId" :events="events" :profiles="profiles" @saved="contentSaved" @deleted="contentDeleted" @navigate="$emit('navigate', $event)" /></div></div></section>
     </template>
   </section>
 </template>

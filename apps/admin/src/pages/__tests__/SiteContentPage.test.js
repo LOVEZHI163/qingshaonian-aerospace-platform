@@ -786,7 +786,22 @@ describe("SiteContentPage", () => {
     expect(wrapper.text()).toContain("已发布");
   });
 
-  it("blocks selecting another content item until unsaved edits are explicitly discarded", async () => {
+  it("shows only the list until the administrator chooses new or edit", async () => {
+    const wrapper = await mountLoaded();
+    await activateTab(wrapper, "content");
+    await flushPromises();
+
+    expect(wrapper.find(".content-list-panel").exists()).toBe(true);
+    expect(wrapper.find(".content-editor-panel").exists()).toBe(false);
+
+    await wrapper.get('[data-action="new-content"]').trigger("click");
+    await flushPromises();
+    expect(wrapper.find(".content-list-panel").exists()).toBe(false);
+    expect(wrapper.find(".content-editor-panel").exists()).toBe(true);
+    expect(wrapper.get('[data-action="back-to-content-list"]').exists()).toBe(true);
+  });
+
+  it("returns to the list only after unsaved edits are explicitly discarded", async () => {
     apiMock.mockImplementation(async (path) => {
       if (path === "/api/admin/site-settings") return { row: { ...settings } };
       if (path === "/api/admin/event-public-profiles") return { rows: profiles };
@@ -805,11 +820,12 @@ describe("SiteContentPage", () => {
     await wrapper.get('[data-content-row="P1"]').trigger("click");
     await flushPromises();
     await wrapper.get('[data-content-field="title"]').setValue("尚未保存");
-    await wrapper.get('[data-content-row="P2"]').trigger("click");
+    await wrapper.get('[data-action="back-to-content-list"]').trigger("click");
     expect(wrapper.get('[role="dialog"]').text()).toContain("放弃未保存修改");
     expect(wrapper.get('[data-content-field="title"]').element.value).toBe("尚未保存");
     await wrapper.get('[data-action="confirm-discard-content"]').trigger("click");
     await flushPromises();
-    expect(wrapper.get('[data-content-field="title"]').element.value).toBe("第二篇");
+    expect(wrapper.find(".content-editor-panel").exists()).toBe(false);
+    expect(wrapper.find(".content-list-panel").exists()).toBe(true);
   });
 });
