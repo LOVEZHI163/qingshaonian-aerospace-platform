@@ -30,11 +30,16 @@ const initialParams = new URLSearchParams(window.location.search);
 const requestedView = DEEP_LINK_VIEWS.has(initialParams.get("view")) ? initialParams.get("view") : "";
 const initialView = requestedView === "records" ? "registrationRecords" : requestedView;
 const initialEventId = initialView && SAFE_EVENT_ID.test(initialParams.get("eventId") || "") ? initialParams.get("eventId") : "";
+const initialContentId = initialView === "siteContent" && SAFE_EVENT_ID.test(initialParams.get("contentId") || "")
+  ? initialParams.get("contentId")
+  : "";
 const registrationEventId = ref(initialView === "registration" ? initialEventId : "");
 const recordsEventId = ref(initialView === "registrationRecords" ? initialEventId : "");
 const certificateEventId = ref(initialView === "certificates" ? initialEventId : "");
 const managementEventId = ref(["registration", "registrationRecords"].includes(initialView) ? initialEventId : "");
 const selectedRegistrationEvent = ref(null);
+const siteContentPage = ref(null);
+const siteContentId = ref(initialContentId);
 const passwordChangeForm = reactive({ currentPassword: "", newPassword: "" });
 const roleText = { ordinary: "普通用户", organization: "组织用户", admin: "超级管理员" };
 
@@ -110,19 +115,40 @@ async function changePassword() {
   }
 }
 
-async function logout() {
+async function performLogout() {
   await session.logout();
   currentView.value = "login";
   message.value = "";
 }
 
-function navigateAdmin(key) {
+function requestSiteContentLeave(callback) {
+  if (currentView.value === "siteContent" && siteContentPage.value) {
+    siteContentPage.value.requestLeave(callback);
+    return;
+  }
+  callback();
+}
+
+function logout() {
+  if (currentUser.value?.type === "admin") {
+    requestSiteContentLeave(() => { void performLogout(); });
+    return;
+  }
+  void performLogout();
+}
+
+function commitAdminNavigation(key) {
   if (key === "registrations") managementEventId.value = "";
   if (key === "certificates") {
     certificateRegistrationId.value = "";
     certificateEventId.value = "";
   }
+  if (key !== "siteContent") siteContentId.value = "";
   currentView.value = key === "registrations" ? "registration" : key;
+}
+
+function navigateAdmin(key) {
+  requestSiteContentLeave(() => commitAdminNavigation(key));
 }
 
 function navigateUser(key) {
@@ -159,6 +185,15 @@ watch(currentView, (view) => {
   if (view !== "registration") selectedRegistrationEvent.value = null;
 });
 
+watch([currentView, siteContentId, () => currentUser.value?.type], ([view, contentId, userType]) => {
+  if (userType !== "admin" || !DEEP_LINK_VIEWS.has(view)) return;
+  const url = new URL(window.location.href);
+  url.searchParams.set("view", view);
+  if (view === "siteContent" && contentId) url.searchParams.set("contentId", contentId);
+  else url.searchParams.delete("contentId");
+  window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
+}, { flush: "post" });
+
 onMounted(async () => {
   try {
     await loadEvent();
@@ -187,11 +222,11 @@ onMounted(async () => {
   </section>
 
   <AdminShell v-else-if="currentUser.type === 'admin'" :active="adminActive" @navigate="navigateAdmin">
-    <template #header><div><strong>{{ currentUser.name }}</strong><span>{{ eventData.event.name || "赛事管理平台" }}</span></div><button type="button" class="ghost" @click="logout">退出登录</button></template>
+    <template #header><div><strong>{{ currentUser.name }}</strong><span>{{ eventData.event.name || "赛事管理平台" }}</span></div><button type="button" class="ghost" data-action="logout" @click="logout">退出登录</button></template>
     <p v-if="message" class="message">{{ message }}</p>
     <DashboardPage v-if="currentView === 'overview'" @navigate="navigateAdmin" />
     <EventManagementPage v-else-if="currentView === 'events'" @event-changed="loadEvent" />
-    <SiteContentPage v-else-if="currentView === 'siteContent'" @navigate="navigateAdmin" />
+    <SiteContentPage v-else-if="currentView === 'siteContent'" ref="siteContentPage" :initial-content-id="siteContentId" @content-id="siteContentId = $event || ''" @navigate="navigateAdmin" />
     <OrganizationManagementPage v-else-if="currentView === 'organizations'" />
     <RegistrationManagementPage :key="`registration-management:${managementEventId}`" v-else-if="currentView === 'registration'" :initial-event-id="managementEventId" @open-certificates="openCertificateManagement" />
     <CertificateManagementPage :key="`certificate-management:${certificateEventId}:${certificateRegistrationId}`" v-else-if="currentView === 'certificates'" :initial-registration-id="certificateRegistrationId" :initial-event-id="certificateEventId" />

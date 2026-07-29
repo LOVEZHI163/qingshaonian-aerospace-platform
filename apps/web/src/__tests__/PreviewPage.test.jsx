@@ -1,5 +1,5 @@
 import React from "react";
-import { render, screen, within } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import App from "../App.jsx";
@@ -33,6 +33,7 @@ function validSnapshot(overrides = {}) {
 
 afterEach(() => {
   window.localStorage.clear();
+  vi.useRealTimers();
   vi.unstubAllEnvs();
 });
 
@@ -235,7 +236,6 @@ describe("PreviewPage", () => {
           platformName: "尚未保存的平台名称",
           platformIntro: "尚未保存的平台简介",
           organizers: ["尚未保存的主办单位甲", "尚未保存的主办单位乙"],
-          contact: "0577-76543210",
           icp: "浙ICP备草稿号",
           seoTitle: "尚未保存的 SEO 标题",
           seoDescription: "尚未保存的 SEO 摘要",
@@ -254,7 +254,7 @@ describe("PreviewPage", () => {
     expect(footer.getByText("尚未保存的平台名称")).toBeInTheDocument();
     expect(footer.getByText("尚未保存的平台简介")).toBeInTheDocument();
     expect(footer.getByText("尚未保存的主办单位甲、尚未保存的主办单位乙")).toBeInTheDocument();
-    expect(footer.getByText("0577-76543210")).toBeInTheDocument();
+    expect(footer.queryByText("0577-76543210")).not.toBeInTheDocument();
     expect(footer.getByText("浙ICP备草稿号")).toBeInTheDocument();
     expect(document.title).toBe("尚未保存的 SEO 标题");
     expect(document.head.querySelector('meta[name="description"]')).toHaveAttribute("content", "尚未保存的 SEO 摘要");
@@ -276,6 +276,33 @@ describe("PreviewPage", () => {
   it("shows the expired guidance after clearing the expired snapshot", () => {
     window.localStorage.setItem(`${PREVIEW_STORAGE_PREFIX}${token}`, JSON.stringify(validSnapshot({ expiresAt: 0 })));
     render(<PreviewPage location={`/preview?token=${token}`} />);
+    expect(screen.getByRole("heading", { name: "预览已过期" })).toBeInTheDocument();
+    expect(window.localStorage.getItem(`${PREVIEW_STORAGE_PREFIX}${token}`)).toBeNull();
+  });
+
+  it("expires an already-open preview at expiresAt and removes its browser snapshot", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(900_000);
+    storeSnapshot(validSnapshot({ expiresAt: 901_000 }));
+    render(<PreviewPage location={`/preview?token=${token}`} />);
+    expect(screen.getByText("草稿航空平台")).toBeInTheDocument();
+
+    act(() => vi.advanceTimersByTime(1_000));
+
+    expect(screen.getByRole("heading", { name: "预览已过期" })).toBeInTheDocument();
+    expect(window.localStorage.getItem(`${PREVIEW_STORAGE_PREFIX}${token}`)).toBeNull();
+  });
+
+  it.each(["focus", "visibilitychange"])("re-checks preview expiry on %s", (eventName) => {
+    vi.useFakeTimers();
+    vi.setSystemTime(900_000);
+    storeSnapshot(validSnapshot({ expiresAt: 901_000 }));
+    render(<PreviewPage location={`/preview?token=${token}`} />);
+    expect(screen.getByText("草稿航空平台")).toBeInTheDocument();
+
+    vi.setSystemTime(901_001);
+    act(() => (eventName === "focus" ? window : document).dispatchEvent(new Event(eventName)));
+
     expect(screen.getByRole("heading", { name: "预览已过期" })).toBeInTheDocument();
     expect(window.localStorage.getItem(`${PREVIEW_STORAGE_PREFIX}${token}`)).toBeNull();
   });

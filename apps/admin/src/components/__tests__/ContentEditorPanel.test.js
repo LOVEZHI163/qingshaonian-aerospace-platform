@@ -144,6 +144,75 @@ describe("ContentEditorPanel", () => {
     expect(actions.classes()).toContain("content-editor-sticky-actions");
   });
 
+  it("auto-generates a valid slug from a new title until the administrator edits it", async () => {
+    const wrapper = await mountEditor(null);
+    const title = wrapper.get('[data-content-field="title"]');
+    const slug = wrapper.get('[data-content-field="slug"]');
+
+    await title.setValue("Flight Day 2026");
+    expect(slug.element.value).toBe("flight-day-2026");
+    await title.setValue("Flight Day Finals");
+    expect(slug.element.value).toBe("flight-day-finals");
+
+    await slug.setValue("custom-flight-day");
+    await title.setValue("Closing Ceremony");
+    expect(slug.element.value).toBe("custom-flight-day");
+    expect(wrapper.get("[data-slug-guidance]").text()).toContain("小写字母、数字和连字符");
+  });
+
+  it("shows inline slug validation and blocks persistence until the format is valid", async () => {
+    const wrapper = await mountEditor(null);
+    await wrapper.get('[data-content-field="title"]').setValue("Flight Day");
+    const slug = wrapper.get('[data-content-field="slug"]');
+    await slug.setValue("Bad slug!");
+
+    expect(slug.attributes("aria-invalid")).toBe("true");
+    expect(wrapper.get("[data-slug-error]").text()).toContain("小写字母");
+    await wrapper.get('[data-action="save-content"]').trigger("click");
+    await flushPromises();
+    expect(apiMock.mock.calls.some(([path, options]) =>
+      path === "/api/admin/content" && options?.method === "POST"
+    )).toBe(false);
+
+    await slug.setValue("valid-flight-day");
+    expect(slug.attributes("aria-invalid")).toBe("false");
+    expect(wrapper.find("[data-slug-error]").exists()).toBe(false);
+  });
+
+  it("focuses the slug field and suggests a useful alternative when it conflicts", async () => {
+    installApi({
+      "POST /api/admin/content": async () => {
+        throw Object.assign(new Error("slug已存在"), { status: 409, code: "SLUG_CONFLICT" });
+      }
+    });
+    const wrapper = mount(ContentEditorPanel, {
+      attachTo: document.body,
+      props: { contentId: null, events, profiles }
+    });
+    await flushPromises();
+    await wrapper.get('[data-content-field="title"]').setValue("Flight Day");
+    await wrapper.get('[data-action="save-content"]').trigger("click");
+    await flushPromises();
+
+    const slug = wrapper.get('[data-content-field="slug"]');
+    expect(document.activeElement).toBe(slug.element);
+    expect(wrapper.get("[data-slug-error]").text()).toContain("已被使用");
+    expect(wrapper.get("[data-slug-error]").text()).toContain("flight-day-2");
+    wrapper.unmount();
+  });
+
+  it.each(["published", "offline"])("keeps an already-public %s slug read-only", async (status) => {
+    installApi({
+      "GET /api/admin/content/POST-1": async () => ({
+        row: { ...row, status, publishAt: "2026-01-01T00:00:00.000Z" }
+      })
+    });
+    const wrapper = await mountEditor();
+
+    expect(wrapper.get('[data-content-field="slug"]').attributes("disabled")).toBeDefined();
+    expect(wrapper.get("[data-slug-guidance]").text()).toContain("已固定");
+  });
+
   it("does not request publish from review when its event is still a draft", async () => {
     const wrapper = mount(ContentEditorPanel, {
       props: { contentId: "POST-1", events: [{ ...events[0], status: "draft" }], profiles }
@@ -192,7 +261,62 @@ describe("ContentEditorPanel", () => {
     expect(wrapper.text()).toContain("内容已被其他管理员更新，请刷新后重试");
   });
 
-  it("requires a future time for scheduled content and serializes it as ISO", async () => {
+  it("guards content refresh and browser unload while edits are dirty", async () => {
+    const wrapper = await mountEditor();
+    const initialLoads = apiMock.mock.calls.filter(([path, options]) =>
+      path === "/api/admin/content/POST-1" && !options?.method
+    ).length;
+    await wrapper.get('[data-content-field="title"]').setValue("不能被刷新覆盖");
+
+    await wrapper.get('[data-action="refresh-content"]').trigger("click");
+    expect(wrapper.get('[role="dialog"]').text()).toContain("放弃未保存修改");
+    expect(apiMock.mock.calls.filter(([path, options]) =>
+      path === "/api/admin/content/POST-1" && !options?.method
+    )).toHaveLength(initialLoads);
+
+    const unload = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(unload);
+    expect(unload.defaultPrevented).toBe(true);
+
+    await wrapper.get('[data-action="confirm-discard-content"]').trigger("click");
+    await flushPromises();
+    expect(apiMock.mock.calls.filter(([path, options]) =>
+      path === "/api/admin/content/POST-1" && !options?.method
+    )).toHaveLength(initialLoads + 1);
+  });
+
+  it("clears stale saved feedback after later edits and reports dirty, busy, and error states", async () => {
+    const pending = deferred();
+    installApi({
+      "PATCH /api/admin/content/POST-1": async () => pending.promise
+    });
+    const wrapper = await mountEditor();
+    expect(wrapper.get("[data-content-save-state]").text()).toContain("已保存");
+
+    await wrapper.get('[data-content-field="title"]').setValue("第一次修改");
+    expect(wrapper.get("[data-content-save-state]").text()).toContain("有未保存修改");
+    await wrapper.get('[data-action="save-content"]').trigger("click");
+    expect(wrapper.get("[data-content-save-state]").text()).toContain("处理中");
+
+    pending.resolve({ row: { ...row, title: "第一次修改", version: 2 } });
+    await flushPromises();
+    expect(wrapper.get("[data-content-save-state]").text()).toContain("已保存");
+    expect(wrapper.text()).toContain("内容已保存");
+
+    await wrapper.get('[data-content-field="title"]').setValue("第二次修改");
+    expect(wrapper.get("[data-content-save-state]").text()).toContain("有未保存修改");
+    expect(wrapper.text()).not.toContain("内容已保存");
+
+    installApi({
+      "PATCH /api/admin/content/POST-1": async () => { throw new Error("保存服务不可用"); }
+    });
+    await wrapper.get('[data-action="save-content"]').trigger("click");
+    await flushPromises();
+    expect(wrapper.get("[data-content-save-state]").text()).toContain("保存失败");
+    expect(wrapper.get('[data-content-field="title"]').element.value).toBe("第二次修改");
+  });
+
+  it("keeps a future schedule as editor intent while saving only a draft", async () => {
     const wrapper = await mountEditor();
     await wrapper.get('[data-content-field="status"]').setValue("scheduled");
     await wrapper.get('[data-action="save-content"]').trigger("click");
@@ -202,7 +326,69 @@ describe("ContentEditorPanel", () => {
     await wrapper.get('[data-action="save-content"]').trigger("click");
     await flushPromises();
     const saves = apiMock.mock.calls.filter(([path, options]) => path === "/api/admin/content/POST-1" && options?.method === "PATCH");
-    expect(JSON.parse(saves.at(-1)[1].body).publishAt).toBe(new Date("2099-01-02T12:30").toISOString());
+    expect(JSON.parse(saves.at(-1)[1].body)).toMatchObject({ status: "draft", publishAt: null });
+    expect(wrapper.get('[data-content-field="status"]').element.value).toBe("scheduled");
+    expect(wrapper.get('[data-content-field="publishAt"]').element.value).toBe("2099-01-02T12:30");
+    expect(wrapper.vm.isDirty()).toBe(false);
+  });
+
+  it.each([
+    ["保存并预览", "save-and-preview-content"],
+    ["进入发布检查", "save-and-review-content"]
+  ])("%s never persists the selected scheduled state before final confirmation", async (_label, action) => {
+    installApi({
+      "PATCH /api/admin/content/POST-1": async (options) => ({
+        row: { ...row, ...JSON.parse(options.body), status: "draft", publishAt: null, version: 2 }
+      }),
+      "POST /api/admin/site-preview/content": async () => ({
+        preview: { payload: { row: { bodyHtml: "<p>安全预览</p>" } } }
+      })
+    });
+    const wrapper = await mountEditor();
+    await wrapper.get('[data-content-field="status"]').setValue("scheduled");
+    await wrapper.get('[data-content-field="publishAt"]').setValue("2099-01-02T12:30");
+
+    await wrapper.get(`[data-action="${action}"]`).trigger("click");
+    await flushPromises();
+
+    const patch = apiMock.mock.calls.find(([path, options]) =>
+      path === "/api/admin/content/POST-1" && options?.method === "PATCH"
+    );
+    expect(JSON.parse(patch[1].body)).toMatchObject({ status: "draft", publishAt: null });
+    if (action === "save-and-review-content") {
+      expect(wrapper.get('[data-content-publication-review]').text()).toContain("定时发布");
+      await wrapper.get('[data-action="back-to-editor"]').trigger("click");
+    }
+    expect(wrapper.get('[data-content-field="status"]').element.value).toBe("scheduled");
+  });
+
+  it("persists a schedule only after the final review confirmation", async () => {
+    installApi({
+      "PATCH /api/admin/content/POST-1": async (options) => ({
+        row: { ...row, ...JSON.parse(options.body), version: 2 }
+      })
+    });
+    const wrapper = await mountEditor();
+    await wrapper.get('[data-content-field="status"]').setValue("scheduled");
+    await wrapper.get('[data-content-field="publishAt"]').setValue("2099-01-02T12:30");
+    await wrapper.get('[data-action="save-and-review-content"]').trigger("click");
+    await flushPromises();
+    await wrapper.get('[data-action="confirm-review-publish"]').trigger("click");
+    expect(wrapper.get('[role="dialog"]').text()).toContain("确认定时发布");
+
+    await wrapper.get('[data-action="confirm-content-action"]').trigger("click");
+    await flushPromises();
+
+    const patches = apiMock.mock.calls.filter(([path, options]) =>
+      path === "/api/admin/content/POST-1" && options?.method === "PATCH"
+    );
+    expect(JSON.parse(patches.at(-1)[1].body)).toMatchObject({
+      version: 2,
+      status: "scheduled",
+      publishAt: new Date("2099-01-02T12:30").toISOString()
+    });
+    expect(apiMock.mock.calls.some(([path]) => path.endsWith("/publish"))).toBe(false);
+    expect(wrapper.text()).toContain("已确认定时发布");
   });
 
   it("preserves attachment media ids, labels and current visual order", async () => {
@@ -329,7 +515,7 @@ describe("ContentEditorPanel", () => {
     expect(wrapper.get('[data-content-field="title"]').element.value).toBe("第二篇");
   });
 
-  it("creates only a draft, then enables scheduled PATCH after receiving an id", async () => {
+  it("creates only a draft, then keeps a schedule as intent until review confirmation", async () => {
     apiMock.mockImplementation(async (path, options = {}) => {
       if (path === "/api/admin/content" && options.method === "POST") return { row: { ...row, ...JSON.parse(options.body), id: "POST-NEW", status: "draft", publishAt: null } };
       if (path === "/api/admin/content/POST-NEW" && options.method === "PATCH") return { row: { ...row, ...JSON.parse(options.body), id: "POST-NEW", version: 2 } };
@@ -350,7 +536,9 @@ describe("ContentEditorPanel", () => {
     await wrapper.get('[data-action="save-content"]').trigger("click");
     await flushPromises();
     const update = apiMock.mock.calls.find(([path, options]) => path === "/api/admin/content/POST-NEW" && options?.method === "PATCH");
-    expect(JSON.parse(update[1].body).publishAt).toBe(new Date("2099-01-02T12:30").toISOString());
+    expect(JSON.parse(update[1].body)).toMatchObject({ status: "draft", publishAt: null });
+    expect(wrapper.get('[data-content-field="status"]').element.value).toBe("scheduled");
+    expect(wrapper.get('[data-content-field="publishAt"]').element.value).toBe("2099-01-02T12:30");
   });
 
   it("exposes an unsaved content draft without applying persistence-only validation", async () => {

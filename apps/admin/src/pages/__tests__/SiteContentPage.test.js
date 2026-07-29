@@ -85,6 +85,7 @@ describe("SiteContentPage", () => {
     const css = readFileSync("src/styles/admin.css", "utf8");
     expect(css).toMatch(/\.content-editor-sticky-actions\s*\{[^}]*position:\s*sticky;[^}]*bottom:\s*0;/s);
     expect(css).toMatch(/\.content-editor-sticky-actions button:focus-visible\s*\{[^}]*outline:\s*3px solid #0b63ce;/s);
+    expect(css).toMatch(/\.content-management-layout\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\);/s);
     expect(css).toMatch(/@media \(max-width:\s*760px\)[\s\S]*\.content-editor-section \.site-form-grid\s*\{[^}]*grid-template-columns:\s*1fr;/);
     expect(css).toMatch(/@media \(max-width:\s*760px\)[\s\S]*\.content-editor-sticky-actions\s*\{[^}]*flex-direction:\s*column;/);
   });
@@ -856,5 +857,35 @@ describe("SiteContentPage", () => {
     await flushPromises();
     expect(wrapper.find(".content-editor-panel").exists()).toBe(false);
     expect(wrapper.find(".content-list-panel").exists()).toBe(true);
+  });
+
+  it("guards site refresh and tab switches while content edits are dirty", async () => {
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/admin/site-settings") return { row: { ...settings } };
+      if (path === "/api/admin/event-public-profiles") return { rows: profiles };
+      if (path === "/api/admin/events") return { rows: events, projects: [] };
+      if (path === "/api/admin/content") return { rows: [{ ...contentRow, id: "P1", status: "draft" }] };
+      if (path === "/api/admin/content/P1") return { row: { ...contentRow, id: "P1", status: "draft" } };
+      return { rows: [] };
+    });
+    const wrapper = await mountLoaded();
+    await activateTab(wrapper, "content");
+    await wrapper.get('[data-content-row="P1"]').trigger("click");
+    await flushPromises();
+    await wrapper.get('[data-content-field="title"]').setValue("未保存内容");
+    const settingsLoads = () => apiMock.mock.calls.filter(([path]) => path === "/api/admin/site-settings").length;
+    const beforeRefresh = settingsLoads();
+
+    await wrapper.get('[data-action="refresh-site-content"]').trigger("click");
+    expect(wrapper.get('[role="dialog"]').text()).toContain("放弃未保存修改");
+    expect(settingsLoads()).toBe(beforeRefresh);
+    await wrapper.findAll('[role="dialog"] button').at(-1).trigger("click");
+
+    await wrapper.get('[data-site-tab="homepage"]').trigger("click");
+    expect(wrapper.get('[data-site-tab="content"]').attributes("aria-selected")).toBe("true");
+    expect(wrapper.get('[role="dialog"]').text()).toContain("放弃未保存修改");
+    await wrapper.get('[data-action="confirm-discard-content"]').trigger("click");
+    await flushPromises();
+    expect(wrapper.get('[data-site-tab="homepage"]').attributes("aria-selected")).toBe("true");
   });
 });

@@ -125,3 +125,22 @@ test("due scheduled content linked to a draft event remains scheduled", async ()
     assert.equal(db.auditLogs.some((row) => row.targetId === "DRAFT-EVENT-DUE"), false);
   }, { prefix: "scheduled-content-draft-event-" });
 });
+
+test("a draft with an intended due time cannot be activated by the scheduler", async () => {
+  await withTestServer(async ({ baseUrl, dbPath }) => {
+    await mutateDb(dbPath, (db) => {
+      db.contentPosts = [scheduledPost("UNCONFIRMED-DRAFT", "2020-01-01T00:00:00.000Z", {
+        status: "draft"
+      })];
+      db.contentAttachments = [];
+      db.auditLogs = [];
+    });
+
+    const response = await fetch(`${baseUrl}/api/public/home`);
+    assert.equal(response.status, 200);
+
+    const db = await readDb(dbPath);
+    assert.equal(db.contentPosts[0].status, "draft");
+    assert.equal(db.auditLogs.some((row) => row.targetId === "UNCONFIRMED-DRAFT"), false);
+  }, { prefix: "scheduled-content-unconfirmed-draft-" });
+});

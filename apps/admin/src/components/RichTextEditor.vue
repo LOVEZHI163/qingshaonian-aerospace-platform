@@ -144,7 +144,7 @@ function paste(event) {
       <button type="button" aria-label="引用" :disabled="disabled" @click="command('formatBlock', 'blockquote')">引用</button>
       <button type="button" aria-label="图片" :disabled="disabled" @click="promptImage">图片</button>
     </div>
-    <div v-if="mode === 'visual'" ref="visual" class="rich-editor-surface" data-rich-editor="visual" :contenteditable="disabled ? 'false' : 'true'" @focus="visualFocused = true" @blur="visualFocused = false; syncVisualDom(value, { force: true })" @compositionstart="composing = true" @compositionend="composing = false; updateFromVisual($event)" @input="updateFromVisual" @paste="paste"></div>
+    <div v-if="mode === 'visual'" ref="visual" class="rich-editor-surface" data-rich-editor="visual" role="textbox" aria-label="正文编辑区" aria-multiline="true" :contenteditable="disabled ? 'false' : 'true'" @focus="visualFocused = true" @blur="visualFocused = false; syncVisualDom(value, { force: true })" @compositionstart="composing = true" @compositionend="composing = false; updateFromVisual($event)" @input="updateFromVisual" @paste="paste"></div>
     <textarea v-else-if="mode === 'html'" :value="repairValue" data-rich-editor="html" :disabled="disabled" @input="updateHtmlRepair"></textarea>
     <textarea v-else :value="textRepair" data-rich-editor="text" :disabled="disabled" @input="updateTextRepair"></textarea>
   </section>

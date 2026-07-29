@@ -11,6 +11,9 @@ describe("RichTextEditor", () => {
       expect(wrapper.get(`[aria-label="${label}"]`).attributes("type")).toBe("button");
     }
     const editor = wrapper.get('[data-rich-editor="visual"]');
+    expect(editor.attributes("role")).toBe("textbox");
+    expect(editor.attributes("aria-label")).toBe("正文编辑区");
+    expect(editor.attributes("aria-multiline")).toBe("true");
     editor.element.innerHTML = "<p>修改后</p>";
     await editor.trigger("input");
     expect(wrapper.emitted("update:modelValue").at(-1)).toEqual(["<p>修改后</p>"]);

@@ -92,10 +92,40 @@ function PreviewError({ reason }) {
   );
 }
 
-export default function PreviewPage({ location, result = readPreviewPageSnapshot(location) }) {
-  if (!result.ok) return <PreviewError reason={result.reason} />;
+export default function PreviewPage({ location, result }) {
+  const initialized = React.useRef(false);
+  const [liveResult, setLiveResult] = React.useState(
+    () => result || readPreviewPageSnapshot(location)
+  );
 
-  const { snapshot } = result;
+  React.useEffect(() => {
+    if (!initialized.current) {
+      initialized.current = true;
+      return;
+    }
+    setLiveResult(result || readPreviewPageSnapshot(location));
+  }, [location, result]);
+
+  React.useEffect(() => {
+    if (!liveResult.ok) return undefined;
+
+    const checkExpiry = () => {
+      setLiveResult(readPreviewPageSnapshot(location));
+    };
+    const delay = Math.max(0, liveResult.snapshot.expiresAt - Date.now());
+    const timer = window.setTimeout(checkExpiry, delay);
+    window.addEventListener("focus", checkExpiry);
+    document.addEventListener("visibilitychange", checkExpiry);
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener("focus", checkExpiry);
+      document.removeEventListener("visibilitychange", checkExpiry);
+    };
+  }, [location, liveResult.ok ? liveResult.snapshot.expiresAt : null]);
+
+  if (!liveResult.ok) return <PreviewError reason={liveResult.reason} />;
+
+  const { snapshot } = liveResult;
   return (
     <>
       <PreviewStatus snapshot={snapshot} />

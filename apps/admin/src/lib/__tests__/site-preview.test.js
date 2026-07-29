@@ -45,6 +45,52 @@ describe("site preview snapshots", () => {
     }));
   });
 
+  it("stores only preview-safe allowlisted fields and never contact phone numbers", () => {
+    vi.spyOn(globalThis.crypto, "getRandomValues").mockImplementation((bytes) => bytes.fill(8));
+    const storage = memoryStorage();
+
+    const result = createPreviewSnapshot({
+      kind: "homepage",
+      payload: {
+        site: {
+          platformName: "测试",
+          contact: "0577-76543210",
+          privateDraftNote: "仅管理员可见"
+        },
+        featuredEvent: {
+          id: "E1",
+          slug: "event-one",
+          name: "赛事一",
+          contact: "13900000000",
+          organizerMobile: "13800000001"
+        },
+        internalEnvelope: {
+          password: "secret",
+          sessionToken: "token-value"
+        }
+      },
+      context: {
+        eventId: "E1",
+        contentId: null,
+        actorPhone: "13700000002"
+      },
+      now: 1_000,
+      storage
+    });
+
+    const serialized = storage.getItem(`${PREVIEW_STORAGE_PREFIX}${result.token}`);
+    expect(serialized).not.toMatch(/0577-76543210|13900000000|13800000001|13700000002/);
+    expect(serialized).not.toContain("privateDraftNote");
+    expect(serialized).not.toContain("internalEnvelope");
+    expect(JSON.parse(serialized)).toMatchObject({
+      payload: {
+        site: { platformName: "测试" },
+        featuredEvent: { id: "E1", slug: "event-one", name: "赛事一" }
+      },
+      context: { eventId: "E1", contentId: null }
+    });
+  });
+
   it("removes only expired preview records", () => {
     const expiredKey = `${PREVIEW_STORAGE_PREFIX}expired`;
     const freshKey = `${PREVIEW_STORAGE_PREFIX}fresh`;

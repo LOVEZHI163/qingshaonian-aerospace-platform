@@ -1212,4 +1212,3 @@
   ```
 
   Never run `docker compose down -v`; it would destroy the database and upload volumes.
-

@@ -1,5 +1,5 @@
 <script setup>
-import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import { api } from "../lib/api.js";
 import ContentPublicationReview from "./ContentPublicationReview.vue";
 import ContentPreviewDialog from "./ContentPreviewDialog.vue";
@@ -7,9 +7,10 @@ import MediaPicker from "./MediaPicker.vue";
 import RichTextEditor from "./RichTextEditor.vue";
 
 const props = defineProps({ contentId: { type: String, default: null }, events: { type: Array, default: () => [] }, profiles: { type: Array, default: () => [] } });
-const emit = defineEmits(["saved", "deleted", "navigate"]);
+const emit = defineEmits(["saved", "deleted", "navigate", "missing"]);
 const types = [["announcement","公告"],["news","新闻"],["work","作品"],["recap","回顾"],["guide","指南"]];
 const states = { draft: "草稿", scheduled: "定时发布", published: "已发布", offline: "已下线" };
+const SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const blank = () => ({ id: null, slug: "", eventId: null, type: "news", title: "", summary: "", bodyHtml: "", status: "draft", publishAt: null, pinned: false, sortOrder: 0, coverMediaId: null, coverMedia: null, attachments: [], version: null });
 const form = reactive(blank());
 const loading = ref(false);
@@ -27,6 +28,11 @@ const pendingMedia = ref([]);
 const deletingMedia = ref(new Set());
 const baseline = ref(JSON.stringify(blank()));
 const persistedPreview = ref(null);
+const slugInput = ref(null);
+const slugManuallyEdited = ref(false);
+const slugTouched = ref(false);
+const slugServerError = ref("");
+const slugLocked = ref(false);
 let leaveCallback = null;
 let confirmReturnFocus = null;
 let preferStableFocus = false;
@@ -38,6 +44,25 @@ const dirty = computed(() => JSON.stringify(snapshot()) !== baseline.value);
 const statusLabel = computed(() => states[form.status] || form.status);
 const selectedEvent = computed(() => props.events.find((event) => event.id === form.eventId) || null);
 const selectedProfile = computed(() => props.profiles.find((profile) => profile.eventId === form.eventId) || null);
+const confirmingSchedule = computed(() => confirmAction.value === "publish" && form.status === "scheduled");
+const slugFormatError = computed(() => {
+  const value = String(form.slug || "").trim();
+  if (!slugTouched.value && !value) return "";
+  if (!value) return "请填写公开地址";
+  if (!SLUG_PATTERN.test(value)) return "仅可使用小写字母、数字和连字符，且不能以连字符开头或结尾";
+  return "";
+});
+const slugFieldError = computed(() => slugServerError.value || slugFormatError.value);
+const slugGuidance = computed(() => slugLocked.value
+  ? "此内容已公开过，公开地址已固定，以免旧链接失效。"
+  : "仅使用小写字母、数字和连字符；新内容会根据标题自动生成。");
+const saveState = computed(() => {
+  if (loading.value) return "正在加载";
+  if (busy.value) return "处理中";
+  if (error.value) return "保存失败，修改仍保留";
+  if (dirty.value) return "有未保存修改";
+  return form.id ? "已保存" : "尚未保存";
+});
 
 function snapshot() {
   return {
@@ -57,7 +82,47 @@ function localDateTime(value) {
   return local.toISOString().slice(0, 16);
 }
 
-function applyRow(row, { keepPending = false } = {}) {
+function slugFromTitle(value) {
+  const tokens = [];
+  let ascii = "";
+  const flushAscii = () => {
+    if (!ascii) return;
+    tokens.push(ascii);
+    ascii = "";
+  };
+  for (const character of String(value || "").normalize("NFKD").toLowerCase()) {
+    if (/[a-z0-9]/.test(character)) {
+      ascii += character;
+      continue;
+    }
+    flushAscii();
+    if (/[\p{Letter}\p{Number}]/u.test(character)) {
+      tokens.push(`u${character.codePointAt(0).toString(16)}`);
+    }
+  }
+  flushAscii();
+  return tokens.join("-").slice(0, 96).replace(/-+$/g, "");
+}
+
+function slugSuggestion(value) {
+  const base = SLUG_PATTERN.test(String(value || "").trim())
+    ? String(value).trim()
+    : (slugFromTitle(form.title) || "content");
+  return `${base}-2`;
+}
+
+function focusSlug() {
+  void nextTick(() => slugInput.value?.focus());
+}
+
+function handleSlugInput() {
+  slugManuallyEdited.value = true;
+  slugTouched.value = true;
+  slugServerError.value = "";
+}
+
+function applyRow(row, { keepPending = false, keepPublicationIntent = null, keepSlugLock = false } = {}) {
+  const wasSlugLocked = slugLocked.value;
   Object.assign(form, blank(), row, {
     eventId: row.eventId || null,
     publishAt: localDateTime(row.publishAt),
@@ -69,6 +134,18 @@ function applyRow(row, { keepPending = false } = {}) {
     status: row.status,
     publishAt: row.publishAt || null
   } : null;
+  slugLocked.value = Boolean(
+    row.slugLocked
+    || ["published", "offline"].includes(row.status)
+    || (keepSlugLock && wasSlugLocked)
+  );
+  slugManuallyEdited.value = Boolean(row.id);
+  slugTouched.value = false;
+  slugServerError.value = "";
+  if (keepPublicationIntent?.status === "scheduled") {
+    form.status = "scheduled";
+    form.publishAt = keepPublicationIntent.publishAt;
+  }
   if (!keepPending) pendingMedia.value = [];
   baseline.value = JSON.stringify(snapshot());
 }
@@ -89,12 +166,25 @@ async function load() {
     applyRow(payload.row);
   } catch (failure) {
     if (sequence !== loadSequence || failure?.name === "AbortError") return;
+    if (failure?.status === 404) {
+      emit("missing", props.contentId);
+      return;
+    }
     loadFailed.value = true;
     error.value = failure?.message || "内容加载失败";
   } finally { if (sequence === loadSequence) loading.value = false; }
 }
 
 watch(() => props.contentId, load, { immediate: true });
+watch(() => form.title, (title) => {
+  if (!form.id && !slugManuallyEdited.value) {
+    form.slug = slugFromTitle(title);
+    slugServerError.value = "";
+  }
+});
+watch(dirty, (isDirty) => {
+  if (isDirty) success.value = "";
+});
 watch(confirmAction, async (action, previous) => {
   if (action && !previous) {
     confirmReturnFocus = document.activeElement;
@@ -119,7 +209,17 @@ function handleConfirmKey(event) {
     event.preventDefault(); (event.shiftKey ? last : first).focus();
   }
 }
-onBeforeUnmount(() => { document.removeEventListener("keydown", handleConfirmKey); loadController?.abort(); });
+function handleBeforeUnload(event) {
+  if (!dirty.value) return;
+  event.preventDefault();
+  event.returnValue = "";
+}
+onMounted(() => window.addEventListener("beforeunload", handleBeforeUnload));
+onBeforeUnmount(() => {
+  document.removeEventListener("keydown", handleConfirmKey);
+  window.removeEventListener("beforeunload", handleBeforeUnload);
+  loadController?.abort();
+});
 
 function requestLeave(callback) {
   if (!dirty.value) { callback(); return; }
@@ -138,13 +238,19 @@ function contentPayload({ forPreview = false } = {}) {
     return data;
   }
 
-  if (!form.id) { data.status = "draft"; data.publishAt = null; return data; }
-  if (data.status === "draft") data.publishAt = null;
-  else if (data.status === "scheduled") {
+  slugTouched.value = true;
+  data.slug = String(data.slug || "").trim();
+  if (!SLUG_PATTERN.test(data.slug)) {
+    focusSlug();
+    throw new Error(data.slug ? "公开地址格式不正确" : "请填写公开地址");
+  }
+  if (data.status === "scheduled") {
     const date = new Date(form.publishAt || "");
     if (Number.isNaN(date.getTime()) || date <= new Date()) throw new Error("请选择未来的发布时间");
-    data.publishAt = date.toISOString();
   }
+  data.status = "draft";
+  data.publishAt = null;
+  if (!form.id) return data;
   if (form.id) data.version = form.version;
   return data;
 }
@@ -152,18 +258,35 @@ function contentPayload({ forPreview = false } = {}) {
 async function save({ openReview = false } = {}) {
   if (busy.value || published.value) return null;
   error.value = ""; success.value = "";
+  slugServerError.value = "";
   let body;
   try { body = contentPayload(); }
   catch (failure) { error.value = failure.message; return null; }
+  const publicationIntent = { status: form.status, publishAt: form.publishAt };
   busy.value = true;
   try {
     const path = form.id ? `/api/admin/content/${form.id}` : "/api/admin/content";
     const payload = await api(path, { method: form.id ? "PATCH" : "POST", body: JSON.stringify(body) });
-    applyRow(payload.row, { keepPending: true }); success.value = "内容已保存"; emit("saved", payload.row);
+    applyRow(payload.row, { keepPending: true, keepPublicationIntent: publicationIntent, keepSlugLock: true });
+    success.value = "内容已保存"; emit("saved", payload.row);
     if (openReview) reviewing.value = true;
     return payload.row;
   } catch (failure) {
-    error.value = failure?.status === 409 ? "内容已被其他管理员更新，请刷新后重试" : (failure?.message || "内容保存失败");
+    if (failure?.code === "SLUG_CONFLICT") {
+      slugServerError.value = `该公开地址已被使用，可尝试 ${slugSuggestion(form.slug)}`;
+      error.value = "公开地址冲突，请修改后重试";
+      await nextTick();
+      slugInput.value?.focus();
+    } else if (failure?.code === "CONTENT_SLUG_STABLE") {
+      if (persistedPreview.value?.slug) form.slug = persistedPreview.value.slug;
+      slugLocked.value = true;
+      slugServerError.value = "此内容已公开过，公开地址已固定，不能更改";
+      error.value = "公开地址不能更改，其他修改仍保留";
+      await nextTick();
+      slugInput.value?.focus();
+    } else {
+      error.value = failure?.status === 409 ? "内容已被其他管理员更新，请刷新后重试" : (failure?.message || "内容保存失败");
+    }
     return null;
   } finally { busy.value = false; }
 }
@@ -218,6 +341,21 @@ async function confirm() {
     if (action === "delete") {
       await api(`/api/admin/content/${form.id}`, { method: "DELETE", body: JSON.stringify({ version: form.version }) });
       const id = form.id; applyRow(blank()); success.value = "内容已删除"; emit("deleted", id);
+    } else if (action === "publish" && form.status === "scheduled") {
+      const date = new Date(form.publishAt || "");
+      if (Number.isNaN(date.getTime()) || date <= new Date()) throw new Error("请选择未来的发布时间");
+      const payload = await api(`/api/admin/content/${form.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          version: form.version,
+          status: "scheduled",
+          publishAt: date.toISOString()
+        })
+      });
+      applyRow(payload.row, { keepPending: true, keepSlugLock: true });
+      success.value = "已确认定时发布";
+      emit("saved", payload.row);
+      reviewing.value = false;
     } else {
       const payload = await api(`/api/admin/content/${form.id}/${action}`, { method: "POST", body: JSON.stringify({ version: form.version }) });
       applyRow(payload.row, { keepPending: true }); success.value = action === "publish" ? "内容已发布" : "内容已下线"; emit("saved", payload.row);
@@ -281,13 +419,13 @@ defineExpose({
 
 <template>
   <section class="panel content-editor-panel" data-content-editor>
-    <div class="panel-title"><div><h3 ref="editorHeading" tabindex="-1" data-content-editor-heading>{{ form.id ? "编辑内容" : "新建内容" }}</h3><p v-if="form.id">状态：<strong>{{ statusLabel }}</strong> · 版本 {{ form.version }}</p><p v-else>新内容默认保存为草稿。</p></div><button v-if="form.id" type="button" data-action="refresh-content" :disabled="busy" @click="load">刷新</button></div>
+    <div class="panel-title"><div><h3 ref="editorHeading" tabindex="-1" data-content-editor-heading>{{ form.id ? "编辑内容" : "新建内容" }}</h3><p v-if="form.id">状态：<strong>{{ statusLabel }}</strong> · 版本 {{ form.version }}</p><p v-else>新内容默认保存为草稿。</p><p data-content-save-state role="status">{{ saveState }}</p></div><button v-if="form.id" type="button" data-action="refresh-content" :disabled="busy" @click="requestLeave(load)">刷新</button></div>
     <p v-if="loading" role="status">正在加载内容…</p>
     <p v-if="error" class="message" role="alert">{{ error }}</p>
     <p v-if="success" class="success-message" role="status">{{ success }}</p>
     <form v-if="!loading && !loadFailed && !reviewing" class="content-editor-form" @submit.prevent="save">
       <section class="content-editor-section" data-content-section="basics"><h4>基本信息</h4>
-      <div class="site-form-grid"><label>标题<input v-model="form.title" data-content-field="title" :disabled="published"></label><label>公开地址 slug<input v-model="form.slug" data-content-field="slug" :disabled="published" autocomplete="off"></label></div>
+      <div class="site-form-grid"><label>标题<input v-model="form.title" data-content-field="title" :disabled="published"></label><label class="content-slug-field">公开地址 slug<input ref="slugInput" v-model="form.slug" data-content-field="slug" :disabled="published || slugLocked" autocomplete="off" :aria-invalid="slugFieldError ? 'true' : 'false'" :aria-describedby="slugFieldError ? 'content-slug-guidance content-slug-error' : 'content-slug-guidance'" @input="handleSlugInput"><small id="content-slug-guidance" class="hint" data-slug-guidance>{{ slugGuidance }}</small><small v-if="slugFieldError" id="content-slug-error" class="content-field-error" data-slug-error>{{ slugFieldError }}</small></label></div>
       <div class="site-form-grid"><label>归属赛事<select v-model="form.eventId" data-content-field="eventId" :disabled="published"><option :value="null">平台通用</option><option v-for="event in events" :key="event.id" :value="event.id">{{ event.name }}</option></select></label><label>内容类型<select v-model="form.type" data-content-field="type" :disabled="published"><option v-for="type in types" :key="type[0]" :value="type[0]">{{ type[1] }}</option></select></label></div>
       <label>摘要<textarea v-model="form.summary" data-content-field="summary" :disabled="published"></textarea></label>
       </section>
@@ -305,7 +443,7 @@ defineExpose({
       <div class="form-actions content-editor-actions content-editor-sticky-actions" data-content-editor-actions role="group" aria-label="内容操作"><button type="button" class="primary" data-action="save-content" :disabled="busy || published || form.status === 'offline'" @click="save">保存草稿</button><button type="button" data-action="save-and-preview-content" :disabled="busy || published || form.status === 'offline'" @click="saveAndPreview">保存并预览</button><button v-if="!published" type="button" class="dark" data-action="save-and-review-content" :disabled="busy || form.status === 'offline'" @click="saveAndReview">进入发布检查</button><button type="button" data-action="preview-content" :disabled="busy" @click="preview">预览</button><button v-if="published" type="button" class="dark" data-action="offline-content" :disabled="busy" @click="ask('offline')">下线</button><button type="button" class="reject" data-action="delete-content" :disabled="busy || !form.id || !['draft','offline'].includes(form.status)" @click="ask('delete')">删除</button></div>
     </form>
     <ContentPublicationReview v-else-if="!loading && !loadFailed" :content="{ ...form }" :event="selectedEvent" :profile="selectedProfile" :busy="busy" @back="leaveReview" @preview="preview" @publish="ask('publish')" @navigate="emit('navigate', $event)" />
-    <div v-if="confirmAction" class="dialog-backdrop" @click.self="cancelConfirm"><section class="panel content-confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="content-confirm-title"><h3 id="content-confirm-title">{{ confirmAction === 'publish' ? '确认发布' : confirmAction === 'offline' ? '确认下线' : confirmAction === 'delete' ? '确认删除' : '放弃未保存修改' }}</h3><p>{{ confirmAction === 'publish' ? '发布后内容将对公众可见。' : confirmAction === 'offline' ? '下线后公众将无法访问该内容。' : confirmAction === 'delete' ? '删除后不可恢复。' : '当前修改尚未保存，确定放弃吗？' }}</p><div class="form-actions"><button ref="confirmButton" type="button" class="dark" :data-action="confirmAction === 'discard' ? 'confirm-discard-content' : 'confirm-content-action'" :disabled="busy" @click="confirm">确认</button><button type="button" :disabled="busy" @click="cancelConfirm">取消</button></div></section></div>
+    <div v-if="confirmAction" class="dialog-backdrop" @click.self="cancelConfirm"><section class="panel content-confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="content-confirm-title"><h3 id="content-confirm-title">{{ confirmingSchedule ? '确认定时发布' : confirmAction === 'publish' ? '确认发布' : confirmAction === 'offline' ? '确认下线' : confirmAction === 'delete' ? '确认删除' : '放弃未保存修改' }}</h3><p>{{ confirmingSchedule ? '确认后内容将在设定时间自动发布。' : confirmAction === 'publish' ? '发布后内容将对公众可见。' : confirmAction === 'offline' ? '下线后公众将无法访问该内容。' : confirmAction === 'delete' ? '删除后不可恢复。' : '当前修改尚未保存，确定放弃吗？' }}</p><div class="form-actions"><button ref="confirmButton" type="button" class="dark" :data-action="confirmAction === 'discard' ? 'confirm-discard-content' : 'confirm-content-action'" :disabled="busy" @click="confirm">确认</button><button type="button" :disabled="busy" @click="cancelConfirm">取消</button></div></section></div>
     <ContentPreviewDialog :open="previewOpen" :title="form.title || '内容预览'" :html="previewHtml" @close="previewOpen = false" />
   </section>
 </template>

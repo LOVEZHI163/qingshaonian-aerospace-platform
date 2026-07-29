@@ -14,22 +14,38 @@ export class SitePreviewError extends Error {
   }
 }
 
-const SENSITIVE_PREVIEW_FIELDS = new Set([
-  "phone", "phonenumber", "mobile", "mobilephone", "email",
-  "password", "credential", "credentials", "session", "sessionid", "sessionversion",
-  "token", "authorization",
-  "user", "userid", "actor", "actorid", "admin", "adminid",
-  "audit", "auditlog", "auditlogs", "review", "reviewstatus", "reviewedby",
-  "reviewedat", "reviewnote", "reviewnotes", "note", "notes", "internalnote",
-  "internalnotes", "remark", "remarks", "rejectreason", "createdby", "updatedby"
+const PREVIEW_SAFE_FIELDS = new Set([
+  "kind", "payload", "context",
+  "site", "mode", "featuredEvent", "concurrentEvents", "services",
+  "announcements", "news", "works", "history",
+  "event", "projects", "groups", "resources", "content", "row",
+  "platformName", "platformIntro", "organizers", "icp", "seoTitle", "seoDescription",
+  "defaultHero", "shareImage", "hero", "cover", "attachments",
+  "id", "slug", "name", "theme", "slogan", "summary", "dateLabel", "venue",
+  "registrationStartAt", "registrationEndAt", "registrationMode", "registrationWindow",
+  "status", "archivedAt", "open", "reason",
+  "key", "label", "eventId", "contentId", "available", "href",
+  "eventSlug", "type", "title", "publishAt", "pinned", "bodyHtml",
+  "url", "mimeType", "sizeBytes", "width", "height", "mobileUrl", "desktopUrl",
+  "displayOrder", "category", "enabled", "instructorRequired", "allowedGroups"
 ]);
 
-function withoutSensitivePreviewFields(value) {
-  if (Array.isArray(value)) return value.map(withoutSensitivePreviewFields);
+function redactPreviewText(value) {
+  return String(value)
+    .replace(
+      /(^|[^\d])((?:\+?86[-\s]?)?1[3-9]\d{9}|0\d{2,3}[-\s]?\d{7,8})(?=$|[^\d])/g,
+      "$1【联系方式已隐藏】"
+    )
+    .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "【邮箱已隐藏】");
+}
+
+function toPreviewSafeDto(value) {
+  if (Array.isArray(value)) return value.map(toPreviewSafeDto);
+  if (typeof value === "string") return redactPreviewText(value);
   if (!value || typeof value !== "object") return value;
   return Object.fromEntries(Object.entries(value)
-    .filter(([key]) => !SENSITIVE_PREVIEW_FIELDS.has(key.toLowerCase()))
-    .map(([key, child]) => [key, withoutSensitivePreviewFields(child)]));
+    .filter(([key]) => PREVIEW_SAFE_FIELDS.has(key))
+    .map(([key, child]) => [key, toPreviewSafeDto(child)]));
 }
 
 function fail(status, message, code) {
@@ -146,5 +162,5 @@ export function buildSitePreview(db, kind, input, { now }) {
   else if (kind === "event") preview = buildEventPreview(snapshot, input, now);
   else if (kind === "content") preview = buildContentPreview(snapshot, input, now);
   else throw new SitePreviewError(404, "预览类型不存在");
-  return withoutSensitivePreviewFields(preview);
+  return toPreviewSafeDto(preview);
 }

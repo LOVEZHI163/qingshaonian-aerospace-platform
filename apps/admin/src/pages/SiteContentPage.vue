@@ -8,10 +8,13 @@ import SiteSettingsPanel from "../components/SiteSettingsPanel.vue";
 import { api } from "../lib/api.js";
 import { createPreviewSnapshot } from "../lib/site-preview.js";
 
-defineEmits(["navigate"]);
+const props = defineProps({
+  initialContentId: { type: String, default: "" }
+});
+const emit = defineEmits(["navigate", "content-id"]);
 
 const tabs = [["homepage", "首页设置"], ["events", "赛事视觉"], ["content", "内容发布"]];
-const activeTab = ref("homepage");
+const activeTab = ref(props.initialContentId ? "content" : "homepage");
 const tabButtons = ref([]);
 const loading = ref(true);
 const error = ref("");
@@ -20,8 +23,8 @@ const events = ref([]);
 const profiles = ref([]);
 const siteSettingsPanel = ref(null);
 const eventPublicProfilePanel = ref(null);
-const selectedContentId = ref(null);
-const contentContext = ref("none");
+const selectedContentId = ref(props.initialContentId || null);
+const contentContext = ref(props.initialContentId ? "existing" : "none");
 const contentEditor = ref(null);
 const contentList = ref(null);
 const previewError = ref("");
@@ -101,17 +104,20 @@ function updateProfile(row) {
 function chooseContent(id) {
   contentContext.value = "existing";
   selectedContentId.value = id;
+  emit("content-id", id);
 }
 
 function newContent() {
   contentContext.value = "new";
   selectedContentId.value = null;
+  emit("content-id", null);
 }
 
 function backToContentList() {
   contentEditor.value?.requestLeave(() => {
     contentContext.value = "none";
     selectedContentId.value = null;
+    emit("content-id", null);
     contentList.value?.load();
   });
 }
@@ -119,17 +125,32 @@ function backToContentList() {
 function contentSaved(row) {
   contentContext.value = "existing";
   selectedContentId.value = row.id;
+  emit("content-id", row.id);
   contentList.value?.load();
 }
 
 function contentDeleted() {
   contentContext.value = "none";
   selectedContentId.value = null;
+  emit("content-id", null);
   contentList.value?.load();
 }
 
-async function activateTab(index, { focus = false } = {}) {
-  const normalized = (index + tabs.length) % tabs.length;
+function contentMissing() {
+  contentContext.value = "none";
+  selectedContentId.value = null;
+  emit("content-id", null);
+}
+
+function requestLeave(callback) {
+  if (activeTab.value === "content" && contentEditor.value) {
+    contentEditor.value.requestLeave(callback);
+    return;
+  }
+  callback();
+}
+
+async function finishTabActivation(normalized, focus) {
   activeTab.value = tabs[normalized][0];
   previewError.value = "";
   blockedPreviewUrl.value = "";
@@ -137,6 +158,29 @@ async function activateTab(index, { focus = false } = {}) {
     await nextTick();
     tabButtons.value[normalized]?.focus();
   }
+}
+
+function activateTab(index, { focus = false } = {}) {
+  const normalized = (index + tabs.length) % tabs.length;
+  if (tabs[normalized][0] === activeTab.value) {
+    if (focus) void finishTabActivation(normalized, true);
+    return;
+  }
+  if (activeTab.value === "content" && contentEditor.value) {
+    contentEditor.value.requestLeave(async () => {
+      await contentEditor.value?.load?.();
+      await finishTabActivation(normalized, focus);
+    });
+    return;
+  }
+  void finishTabActivation(normalized, focus);
+}
+
+function refreshSiteContent() {
+  requestLeave(async () => {
+    await load();
+    if (activeTab.value === "content" && contentEditor.value) await contentEditor.value.load();
+  });
 }
 
 function openPreviewWindow() {
@@ -196,6 +240,7 @@ function handleTabKey(event, index) {
 }
 
 onMounted(load);
+defineExpose({ requestLeave });
 </script>
 
 <template>
@@ -203,7 +248,7 @@ onMounted(load);
     <div class="page-title-row">
       <div><h2>官网内容</h2><p>统一维护首页信息、赛事视觉与公开内容。</p></div>
       <div class="site-preview-actions">
-        <button type="button" class="dark" data-action="refresh-site-content" :disabled="loading" @click="load">刷新</button>
+        <button type="button" class="dark" data-action="refresh-site-content" :disabled="loading" @click="refreshSiteContent">刷新</button>
         <button type="button" data-action="preview-saved-site" :disabled="loading || !savedPreviewPath" :aria-describedby="!savedPreviewPath ? 'saved-preview-help' : undefined" @click="previewSaved">预览已保存官网</button>
         <button type="button" class="primary" data-action="preview-site-draft" :disabled="loading || !canPreviewDraft" @click="previewDraft">预览当前草稿</button>
       </div>
@@ -222,8 +267,8 @@ onMounted(load);
     <section v-else-if="error" class="panel site-load-error"><p class="message" role="alert">{{ error }}</p><button type="button" class="dark" data-action="retry-load" @click="load">重试</button></section>
     <template v-else>
       <section id="site-panel-homepage" v-show="activeTab === 'homepage'" role="tabpanel" aria-labelledby="site-tab-homepage" data-site-panel="homepage"><SiteSettingsPanel v-if="settings" ref="siteSettingsPanel" :settings="settings" :events="events" :profiles="profiles" @saved="updateSettings" /></section>
-      <section id="site-panel-events" v-show="activeTab === 'events'" role="tabpanel" aria-labelledby="site-tab-events" data-site-panel="events"><EventPublicProfilePanel ref="eventPublicProfilePanel" :events="events" :profiles="profiles" @saved="updateProfile" @navigate="$emit('navigate', $event)" /></section>
-      <section id="site-panel-content" v-show="activeTab === 'content'" role="tabpanel" aria-labelledby="site-tab-content" data-site-panel="content" :data-content-context="contentContext"><div class="content-management-layout"><ContentListPanel v-if="contentContext === 'none'" ref="contentList" :events="events" :selected-id="selectedContentId" @select="chooseContent" @new="newContent" /><div v-else class="content-editor-workflow"><button type="button" data-action="back-to-content-list" @click="backToContentList">返回内容列表</button><ContentEditorPanel ref="contentEditor" :content-id="selectedContentId" :events="events" :profiles="profiles" @saved="contentSaved" @deleted="contentDeleted" @navigate="$emit('navigate', $event)" /></div></div></section>
+      <section id="site-panel-events" v-show="activeTab === 'events'" role="tabpanel" aria-labelledby="site-tab-events" data-site-panel="events"><EventPublicProfilePanel ref="eventPublicProfilePanel" :events="events" :profiles="profiles" @saved="updateProfile" @navigate="emit('navigate', $event)" /></section>
+      <section id="site-panel-content" v-show="activeTab === 'content'" role="tabpanel" aria-labelledby="site-tab-content" data-site-panel="content" :data-content-context="contentContext"><div class="content-management-layout"><ContentListPanel v-if="contentContext === 'none'" ref="contentList" :events="events" :selected-id="selectedContentId" @select="chooseContent" @new="newContent" /><div v-else class="content-editor-workflow"><button type="button" data-action="back-to-content-list" @click="backToContentList">返回内容列表</button><ContentEditorPanel ref="contentEditor" :content-id="selectedContentId" :events="events" :profiles="profiles" @saved="contentSaved" @deleted="contentDeleted" @missing="contentMissing" @navigate="emit('navigate', $event)" /></div></div></section>
     </template>
   </section>
 </template>

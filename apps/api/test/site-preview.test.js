@@ -57,7 +57,7 @@ function eventDraft(eventId, overrides = {}) {
   };
 }
 
-test("pure preview payloads omit structural sensitive fields without stripping ordinary content numbers", () => {
+test("pure preview payloads use a safe DTO and omit contact phone numbers", () => {
   const now = "2026-07-22T00:00:00.000Z";
   const homepageDb = structuredClone(seedDb);
   homepageDb.siteSettings.contact = "SITE-CONTACT-13900000000";
@@ -89,9 +89,10 @@ test("pure preview payloads omit structural sensitive fields without stripping o
     assertPreviewPayloadHasNoSensitiveData(preview.payload);
     assert.doesNotMatch(JSON.stringify(preview.payload), /PASSWORD|SESSION|ADMIN-SENSITIVE/);
   }
-  assert.equal(homepage.payload.site.contact, "SITE-CONTACT-13900000000");
-  assert.equal(homepage.payload.featuredEvent.contact, "EVENT-CONTACT-13900000000");
-  assert.equal(event.payload.event.contact, "EVENT-CONTACT-13900000000");
+  assert.equal(homepage.payload.site.contact, undefined);
+  assert.equal(homepage.payload.featuredEvent.contact, undefined);
+  assert.equal(event.payload.event.contact, undefined);
+  assert.doesNotMatch(JSON.stringify([homepage, event, content]), /13900000000/);
   assert.match(content.payload.row.bodyHtml, /2026 年第 100 条内容/);
 });
 
@@ -231,9 +232,9 @@ test("content preview reuses create and update lifecycle rules on its clone", ()
 test("admin preview normalizes all three kinds without writing the store", async () => {
   await withTestServer(async ({ baseUrl, dbPath }) => {
     await mutateDb(dbPath, (db) => {
-      db.siteSettings.contact = "PUBLIC-SITE-CONTACT";
+      db.siteSettings.contact = "PUBLIC-SITE-CONTACT-0577-76543210";
       db.events[0].status = "draft";
-      db.events[0].contact = "PUBLIC-EVENT-CONTACT";
+      db.events[0].contact = "PUBLIC-EVENT-CONTACT-13900000000";
       db.mediaAssets.push({
         id: "MEDIA-PRIVATE",
         eventId: "wz-aerospace-2026",
@@ -339,9 +340,9 @@ test("admin preview normalizes all three kinds without writing the store", async
     assert.equal(published.body.preview.payload.row.bodyHtml, "<p>已发布未保存正文</p>");
     assert.equal(offline.body.preview.payload.row.title, "下线未保存标题");
     assert.equal(offline.body.preview.payload.row.bodyHtml, "<p>下线未保存正文</p>");
-    assert.equal(homepage.body.preview.payload.site.contact, "PUBLIC-SITE-CONTACT");
-    assert.equal(event.body.preview.payload.event.contact, "PUBLIC-EVENT-CONTACT");
-    assert.doesNotMatch(JSON.stringify(homepage.body.preview), /13900000000/);
+    assert.equal(homepage.body.preview.payload.site.contact, undefined);
+    assert.equal(event.body.preview.payload.event.contact, undefined);
+    assert.doesNotMatch(JSON.stringify([homepage.body.preview, event.body.preview]), /0577-76543210|13900000000/);
     assert.equal(event.body.preview.payload.event.hero.url, "/api/admin/site-media/MEDIA-PRIVATE/preview");
     assert.equal(content.body.preview.payload.row.bodyHtml, "<p>正文</p>");
     assert.equal(content.body.preview.payload.row.cover.url, "/api/admin/site-media/MEDIA-PRIVATE/preview");

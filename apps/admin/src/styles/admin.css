@@ -484,7 +484,7 @@ textarea {
 
 .content-management-layout {
   display: grid;
-  grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: 16px;
   align-items: start;
 }
@@ -530,26 +530,53 @@ textarea {
   overflow: auto;
 }
 
-.content-list-rows button {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
+.content-list-rows article {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
   gap: 10px;
   width: 100%;
   padding: 12px;
   border: 1px solid var(--line);
   border-radius: 8px;
   color: var(--navy);
-  text-align: left;
   background: #fff;
 }
 
-.content-list-rows button.selected { border-color: var(--blue); background: #f2f8ff; }
-.content-list-rows button > span { display: grid; gap: 4px; min-width: 0; }
+.content-list-rows article.selected { border-color: var(--blue); background: #f2f8ff; }
+.content-list-row-main,
+.content-list-row-heading,
+.content-list-row-heading > span { min-width: 0; }
+.content-list-row-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.content-list-row-heading > span { display: grid; gap: 4px; }
 .content-list-rows small { color: var(--muted); overflow-wrap: anywhere; }
 .content-list-rows em.scheduled { color: var(--orange); background: #fff6e8; }
 .content-list-rows em.published { color: var(--green); background: #eefbf6; }
 .content-list-rows em.offline { color: var(--muted); background: #f1f3f5; }
+.content-list-row-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px 16px;
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+.content-list-row-facts div { display: flex; gap: 5px; }
+.content-list-row-facts dt { font-weight: 700; }
+.content-list-row-facts dd { margin: 0; }
+.content-list-row-actions { display: flex; align-items: center; gap: 8px; }
+.content-list-row-actions a,
+.content-list-row-actions button { white-space: nowrap; }
+.content-list-empty { display: grid; justify-items: start; gap: 12px; }
+.content-list-empty p { margin: 0; }
+.content-slug-field { display: grid; align-content: start; gap: 6px; }
+.content-slug-field .hint { margin: 0; font-size: 0.8125rem; font-weight: 400; }
+.content-field-error { color: var(--red); font-size: 0.8125rem; font-weight: 700; }
 
 .rich-text-editor { display: grid; gap: 8px; }
 .rich-editor-modes,

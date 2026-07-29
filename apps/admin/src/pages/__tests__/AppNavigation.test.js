@@ -62,6 +62,7 @@ describe("role based application navigation", () => {
     session.user.value = null;
     session.organizations.value = [];
     session.restore.mockClear();
+    session.logout.mockClear();
   });
 
   afterEach(() => {
@@ -112,6 +113,89 @@ describe("role based application navigation", () => {
 
     const admin = await mountFor({ id: "A1", type: "admin", name: "管理员", mustChangePassword: false }); mounted.push(admin);
     expect(admin.find('[data-testid="site-content-page"]').exists()).toBe(true);
+  });
+
+  it("restores a valid contentId deep link and keeps the selected editor synchronized in the URL", async () => {
+    window.history.replaceState({}, "", "/admin/?view=siteContent&contentId=P1");
+    session.user.value = { id: "A1", type: "admin", name: "管理员", mustChangePassword: false };
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/public/event") return { event: { name: "测试赛事" }, projects: [], grades: [] };
+      if (path === "/api/admin/site-settings") return { row: { id: "default", version: 1 } };
+      if (path === "/api/admin/event-public-profiles") return { rows: [] };
+      if (path === "/api/admin/events") return { rows: [], projects: [] };
+      if (path === "/api/admin/content/P1") return { row: {
+        id: "P1", slug: "restored-content", eventId: null, type: "news", title: "恢复编辑目标",
+        summary: "", bodyHtml: "<p>正文</p>", status: "draft", publishAt: null, pinned: false,
+        sortOrder: 0, coverMediaId: null, attachments: [], version: 1
+      } };
+      if (path === "/api/admin/content") return { rows: [] };
+      return { rows: [] };
+    });
+
+    const wrapper = mount(App); mounted.push(wrapper);
+    await flushPromises();
+
+    expect(wrapper.get('[data-site-tab="content"]').attributes("aria-selected")).toBe("true");
+    expect(wrapper.get('[data-content-field="title"]').element.value).toBe("恢复编辑目标");
+    expect(new URLSearchParams(window.location.search).get("contentId")).toBe("P1");
+
+    await wrapper.get('[data-action="back-to-content-list"]').trigger("click");
+    await flushPromises();
+    expect(wrapper.find(".content-list-panel").exists()).toBe(true);
+    expect(new URLSearchParams(window.location.search).get("view")).toBe("siteContent");
+    expect(new URLSearchParams(window.location.search).has("contentId")).toBe(false);
+  });
+
+  it("falls back to the content list for a missing restored contentId and clears it from the URL", async () => {
+    window.history.replaceState({}, "", "/admin/?view=siteContent&contentId=MISSING");
+    session.user.value = { id: "A1", type: "admin", name: "管理员", mustChangePassword: false };
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/public/event") return { event: { name: "测试赛事" }, projects: [], grades: [] };
+      if (path === "/api/admin/site-settings") return { row: { id: "default", version: 1 } };
+      if (path === "/api/admin/event-public-profiles") return { rows: [] };
+      if (path === "/api/admin/events") return { rows: [], projects: [] };
+      if (path === "/api/admin/content/MISSING") throw Object.assign(new Error("内容不存在"), { status: 404 });
+      if (path === "/api/admin/content") return { rows: [] };
+      return { rows: [] };
+    });
+
+    const wrapper = mount(App); mounted.push(wrapper);
+    await flushPromises();
+
+    expect(wrapper.find(".content-list-panel").exists()).toBe(true);
+    expect(new URLSearchParams(window.location.search).has("contentId")).toBe(false);
+  });
+
+  it("guards administrator navigation and logout while website content has unsaved edits", async () => {
+    window.history.replaceState({}, "", "/admin/?view=siteContent&contentId=P1");
+    session.user.value = { id: "A1", type: "admin", name: "管理员", mustChangePassword: false };
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/public/event") return { event: { name: "测试赛事" }, projects: [], grades: [] };
+      if (path === "/api/admin/site-settings") return { row: { id: "default", version: 1 } };
+      if (path === "/api/admin/event-public-profiles") return { rows: [] };
+      if (path === "/api/admin/events") return { rows: [], projects: [] };
+      if (path === "/api/admin/content/P1") return { row: {
+        id: "P1", slug: "guarded-content", eventId: null, type: "news", title: "守护内容",
+        summary: "", bodyHtml: "<p>正文</p>", status: "draft", publishAt: null, pinned: false,
+        sortOrder: 0, coverMediaId: null, attachments: [], version: 1
+      } };
+      return { rows: [] };
+    });
+    const wrapper = mount(App); mounted.push(wrapper);
+    await flushPromises();
+    await wrapper.get('[data-content-field="title"]').setValue("未保存修改");
+
+    await wrapper.get('[data-nav="events"]').trigger("click");
+    expect(wrapper.get('[data-nav="siteContent"]').classes()).toContain("active");
+    expect(wrapper.get('[role="dialog"]').text()).toContain("放弃未保存修改");
+    await wrapper.findAll('[role="dialog"] button').at(-1).trigger("click");
+
+    await wrapper.get('[data-action="logout"]').trigger("click");
+    expect(session.logout).not.toHaveBeenCalled();
+    expect(wrapper.get('[role="dialog"]').text()).toContain("放弃未保存修改");
+    await wrapper.get('[data-action="confirm-discard-content"]').trigger("click");
+    await flushPromises();
+    expect(session.logout).toHaveBeenCalledTimes(1);
   });
 
   it("blocks organization users from the website content deep link and its admin APIs", async () => {
