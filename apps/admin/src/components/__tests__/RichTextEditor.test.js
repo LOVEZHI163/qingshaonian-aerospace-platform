@@ -156,6 +156,47 @@ describe("RichTextEditor", () => {
     expect(wrapper.get('[data-rich-editor="text"]').element.value).toBe("第一行\n\n\n\n第二行");
   });
 
+  it("keeps focus and selection during parent writeback of visual input", async () => {
+    const wrapper = mount(RichTextEditor, {
+      attachTo: document.body,
+      props: { modelValue: "<p>正文</p>", revision: "P1:1" }
+    });
+    const editor = wrapper.get('[data-rich-editor="visual"]');
+    editor.element.focus();
+    const text = editor.element.querySelector("p").firstChild;
+    const range = document.createRange();
+    range.setStart(text, 1);
+    range.collapse(true);
+    window.getSelection().removeAllRanges();
+    window.getSelection().addRange(range);
+    editor.element.querySelector("p").append("续");
+    await editor.trigger("input");
+    const emitted = wrapper.emitted("update:modelValue").at(-1)[0];
+    await wrapper.setProps({ modelValue: emitted, revision: "P1:1" });
+    expect(document.activeElement).toBe(editor.element);
+    expect(window.getSelection().anchorNode).toBe(text);
+    expect(window.getSelection().anchorOffset).toBe(1);
+    wrapper.unmount();
+  });
+
+  it("does not replace visual DOM during composition but resets it for a new revision", async () => {
+    const wrapper = mount(RichTextEditor, {
+      attachTo: document.body,
+      props: { modelValue: "<p>原文</p>", revision: "P1:1" }
+    });
+    const editor = wrapper.get('[data-rich-editor="visual"]');
+    editor.element.focus();
+    await editor.trigger("compositionstart");
+    editor.element.innerHTML = "<p>中文输入</p>";
+    await editor.trigger("input");
+    await wrapper.setProps({ modelValue: "<p>中文输入</p>", revision: "P1:1" });
+    expect(editor.element.innerHTML).toBe("<p>中文输入</p>");
+    await editor.trigger("compositionend");
+    await wrapper.setProps({ modelValue: "<p>第二篇</p>", revision: "P2:1" });
+    expect(editor.element.innerHTML).toBe("<p>第二篇</p>");
+    wrapper.unmount();
+  });
+
   it("refreshes a raw HTML buffer when revision changes even if canonical HTML is equal", async () => {
     const wrapper = mount(RichTextEditor, { props: { modelValue: "<h2>标题</h2>", revision: "P1:1" } });
     await wrapper.get('[data-editor-mode="html"]').trigger("click");

@@ -11,6 +11,9 @@ const ALLOWED_TAGS = new Set(["P", "H2", "H3", "H4", "UL", "OL", "LI", "STRONG",
 const DROP_TAGS = new Set(["SCRIPT", "STYLE", "IFRAME", "OBJECT", "EMBED", "SVG", "MATH", "TEMPLATE"]);
 const mode = ref("visual");
 const visual = ref(null);
+const visualFocused = ref(false);
+const composing = ref(false);
+const lastEmittedVisual = ref(null);
 const repairValue = ref("");
 const textRepair = ref("");
 
@@ -57,6 +60,12 @@ function sanitizeEditorHtml(raw) {
 
 const value = ref(sanitizeEditorHtml(props.modelValue));
 
+function syncVisualDom(html, { force = false } = {}) {
+  if (!visual.value || mode.value !== "visual") return;
+  if (!force && (visualFocused.value || composing.value)) return;
+  if (visual.value.innerHTML !== html) visual.value.innerHTML = html;
+}
+
 function htmlPlainText(html) {
   const container = document.createElement("div");
   container.innerHTML = html;
@@ -77,23 +86,28 @@ function htmlPlainText(html) {
 
 watch([() => props.modelValue, () => props.revision], ([next, revision], [, previousRevision]) => {
   const safe = sanitizeEditorHtml(next);
-  if (safe === value.value && revision === previousRevision) return;
+  const revisionChanged = revision !== previousRevision;
+  if (safe === value.value && !revisionChanged) return;
   value.value = safe;
   if (mode.value === "html") repairValue.value = safe;
   else if (mode.value === "text") textRepair.value = htmlPlainText(safe);
-  if (visual.value && mode.value === "visual" && visual.value.innerHTML !== value.value) visual.value.innerHTML = value.value;
+  if (revisionChanged) syncVisualDom(safe, { force: true });
+  else if (safe !== lastEmittedVisual.value) syncVisualDom(safe);
   if (safe !== next) emit("normalized", safe);
 });
-onMounted(() => { if (value.value !== props.modelValue) emit("normalized", value.value); });
+onMounted(() => {
+  syncVisualDom(value.value, { force: true });
+  if (value.value !== props.modelValue) emit("normalized", value.value);
+});
 
 const plainText = computed(() => {
   return htmlPlainText(value.value);
 });
 
-function update(next) {
-  const safe = sanitizeEditorHtml(next);
+function updateFromVisual(event) {
+  const safe = sanitizeEditorHtml(event.currentTarget.innerHTML);
   value.value = safe;
-  if (visual.value && visual.value.innerHTML !== safe) visual.value.innerHTML = safe;
+  lastEmittedVisual.value = safe;
   emit("update:modelValue", safe);
 }
 
@@ -125,14 +139,14 @@ async function setMode(next) {
   if (next === "html") repairValue.value = value.value;
   if (next === "text") textRepair.value = plainText.value;
   await nextTick();
-  if (next === "visual" && visual.value) visual.value.innerHTML = value.value;
+  if (next === "visual") syncVisualDom(value.value, { force: true });
 }
 
 function command(name, argument = null) {
   if (props.disabled) return;
   visual.value?.focus();
   document.execCommand?.(name, false, argument);
-  update(visual.value?.innerHTML || value.value);
+  updateFromVisual({ currentTarget: visual.value });
 }
 
 function promptLink() {
@@ -154,7 +168,7 @@ function paste(event) {
   const cleaned = cleanPastedHtml(event.clipboardData?.getData("text/html"), event.clipboardData?.getData("text/plain"));
   if (document.execCommand) document.execCommand("insertHTML", false, cleaned);
   else if (visual.value) visual.value.innerHTML += cleaned;
-  update(visual.value?.innerHTML || cleaned);
+  updateFromVisual({ currentTarget: visual.value });
 }
 </script>
 
@@ -172,7 +186,7 @@ function paste(event) {
       <button type="button" aria-label="引用" :disabled="disabled" @click="command('formatBlock', 'blockquote')">引用</button>
       <button type="button" aria-label="图片" :disabled="disabled" @click="promptImage">图片</button>
     </div>
-    <div v-if="mode === 'visual'" ref="visual" class="rich-editor-surface" data-rich-editor="visual" :contenteditable="disabled ? 'false' : 'true'" @input="update($event.currentTarget.innerHTML)" @paste="paste" v-html="value"></div>
+    <div v-if="mode === 'visual'" ref="visual" class="rich-editor-surface" data-rich-editor="visual" :contenteditable="disabled ? 'false' : 'true'" @focus="visualFocused = true" @blur="visualFocused = false; syncVisualDom(value, { force: true })" @compositionstart="composing = true" @compositionend="composing = false; updateFromVisual($event)" @input="updateFromVisual" @paste="paste"></div>
     <textarea v-else-if="mode === 'html'" :value="repairValue" data-rich-editor="html" :disabled="disabled" @input="updateHtmlRepair"></textarea>
     <textarea v-else :value="textRepair" data-rich-editor="text" :disabled="disabled" @input="updateTextRepair"></textarea>
   </section>
