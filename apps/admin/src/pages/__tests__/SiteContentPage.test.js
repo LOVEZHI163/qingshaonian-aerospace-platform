@@ -371,7 +371,8 @@ describe("SiteContentPage", () => {
     ["draft", false, "当前赛事仍是草稿", true],
     ["published", false, "业务赛事已发布，但官网尚未公开", false],
     ["published", true, "官网已公开", false],
-    ["archived", true, "将在历届赛事中展示", false]
+    ["archived", true, "将在历届赛事中展示", false],
+    ["archived", false, "已归档且未在历届赛事展示", false]
   ])("explains %s event website state", async (status, isVisible, message, disabled) => {
     const originalStatus = events[0].status;
     const originalVisibility = profiles[0].isVisible;
@@ -383,6 +384,28 @@ describe("SiteContentPage", () => {
 
       expect(wrapper.get("[data-event-publication-state]").text()).toContain(message);
       expect(wrapper.get('[data-profile-field="isVisible"]').element.disabled).toBe(disabled);
+    } finally {
+      events[0].status = originalStatus;
+      profiles[0].isVisible = originalVisibility;
+    }
+  });
+
+  it("forces a draft event profile save body to remain hidden when visibility is spoofed", async () => {
+    const originalStatus = events[0].status;
+    const originalVisibility = profiles[0].isVisible;
+    try {
+      events[0].status = "draft";
+      profiles[0].isVisible = false;
+      const wrapper = await mountLoaded();
+      await activateTab(wrapper, "events");
+      const visibility = wrapper.get('[data-profile-field="isVisible"]');
+      visibility.element.disabled = false;
+      await visibility.setValue(true);
+
+      await wrapper.get('[data-action="save-profile"]').trigger("click");
+      const request = apiMock.mock.calls.find(([path, options]) => path === "/api/admin/event-public-profiles/E1" && options?.method === "PUT");
+
+      expect(JSON.parse(request[1].body).isVisible).toBe(false);
     } finally {
       events[0].status = originalStatus;
       profiles[0].isVisible = originalVisibility;
