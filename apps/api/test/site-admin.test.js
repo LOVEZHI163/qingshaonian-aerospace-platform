@@ -226,7 +226,12 @@ test("draft events reject website visibility, content scheduling, and content pu
       `${baseUrl}/api/admin/event-public-profiles/${EVENT_ID}`,
       admin.cookie,
       "PUT",
-      { slug: "draft-event", isVisible: true, displayOrder: 0 }
+      {
+        slug: "draft-event",
+        isVisible: true,
+        displayOrder: 0,
+        allowUnpublishedVisibility: true
+      }
     );
     assert.equal(profile.status, 422);
     assert.equal((await profile.json()).code, "EVENT_NOT_PUBLISHED");

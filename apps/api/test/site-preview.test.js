@@ -99,14 +99,16 @@ test("event preview renders an unpublished event only in its cloned snapshot", (
   const db = structuredClone(seedDb);
   db.events[0].status = "draft";
   const before = structuredClone(db);
+  const input = eventDraft("wz-aerospace-2026");
+  const inputBefore = structuredClone(input);
 
-  const preview = buildSitePreview(db, "event", eventDraft("wz-aerospace-2026"), {
+  const preview = buildSitePreview(db, "event", input, {
     now: "2026-07-22T00:00:00.000Z"
   });
 
   assert.equal(preview.payload.event.status, "draft");
   assert.deepEqual(preview.payload.event.registrationWindow, { open: false, reason: "赛事尚未发布" });
-  assert.equal(db.events[0].status, "draft");
+  assert.deepEqual(input, inputBefore);
   assert.deepEqual(db, before);
 });
 
@@ -230,6 +232,7 @@ test("admin preview normalizes all three kinds without writing the store", async
   await withTestServer(async ({ baseUrl, dbPath }) => {
     await mutateDb(dbPath, (db) => {
       db.siteSettings.contact = "PUBLIC-SITE-CONTACT";
+      db.events[0].status = "draft";
       db.events[0].contact = "PUBLIC-EVENT-CONTACT";
       db.mediaAssets.push({
         id: "MEDIA-PRIVATE",

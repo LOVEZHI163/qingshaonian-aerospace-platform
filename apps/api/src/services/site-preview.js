@@ -89,10 +89,15 @@ function buildHomepagePreview(db, input, now) {
 function buildEventPreview(db, input, now) {
   assertObject(input);
   const eventId = String(input.eventId || "").trim();
-  eventFor(db, eventId);
+  const event = eventFor(db, eventId);
   mediaFor(db, input.heroMediaId, "赛事主视觉", eventId);
   const profileInput = { ...input };
   delete profileInput.eventId;
+  const canHideProfileForPreview = !Object.hasOwn(profileInput, "isVisible")
+    || typeof profileInput.isVisible === "boolean";
+  if (!["published", "archived"].includes(event.status) && canHideProfileForPreview) {
+    profileInput.isVisible = false;
+  }
   const { row } = upsertEventPublicProfile(db, eventId, profileInput, { now, incrementVersion: false });
   const payload = buildEventDetailView(db, row.slug, new Date(now), {
     allowUnpublished: true,
