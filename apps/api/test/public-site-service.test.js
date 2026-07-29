@@ -6,7 +6,8 @@ import {
   buildContentDetailView,
   buildEventDetailView,
   buildHomeView,
-  mediaView
+  mediaView,
+  visiblePosts
 } from "../src/services/public-site-view.js";
 
 const now = new Date("2026-07-19T12:00:00.000Z");
@@ -78,6 +79,25 @@ test("public view builders preserve homepage, event and content shapes", () => {
   assert.equal(buildHomeView(source, current).site.platformName, source.siteSettings.platformName);
   assert.equal(buildEventDetailView(source, "current-event", current).event.slug, "current-event");
   assert.equal(buildContentDetailView(source, "news-one", current).row.slug, "news-one");
+});
+
+test("public content hides linked draft events but keeps platform content public", () => {
+  const source = seededPublicSiteDb();
+  const linked = source.contentPosts[0];
+  source.contentPosts.push({ ...linked, id: "PLATFORM", slug: "platform", eventId: null });
+  source.events[0].status = "draft";
+
+  assert.equal(buildContentDetailView(source, "news-one", now), null);
+  assert.equal(buildContentDetailView(source, "platform", now).row.id, "PLATFORM");
+  assert.deepEqual(visiblePosts(source, now).map((row) => row.id), ["PLATFORM"]);
+});
+
+test("public content remains readable for published or archived event status", () => {
+  for (const status of ["published", "archived"]) {
+    const source = seededPublicSiteDb();
+    source.events[0].status = status;
+    assert.equal(buildContentDetailView(source, "news-one", now).row.id, "NEWS-ONE");
+  }
 });
 
 test("mediaView hides private media unless an explicit protected URL builder is supplied", () => {

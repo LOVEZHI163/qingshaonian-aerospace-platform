@@ -59,8 +59,15 @@ function comparePosts(left, right) {
     || String(left.id).localeCompare(String(right.id));
 }
 
+export function isPublicContentPost(db, row, now) {
+  if (!isPublicPost(row, now)) return false;
+  if (!row.eventId) return true;
+  const event = (db.events || []).find((item) => item.id === row.eventId);
+  return ["published", "archived"].includes(event?.status);
+}
+
 export function visiblePosts(db, now) {
-  return (db.contentPosts || []).filter((row) => isPublicPost(row, now)).sort(comparePosts);
+  return (db.contentPosts || []).filter((row) => isPublicContentPost(db, row, now)).sort(comparePosts);
 }
 
 export function publicProfile(db, eventId) {
@@ -264,7 +271,7 @@ export function buildEventDetailView(db, slug, now, { allowUnpublished = false, 
 
 export function buildContentDetailView(db, slug, now, { allowUnpublished = false, mediaUrl } = {}) {
   const row = (db.contentPosts || []).find((item) =>
-    item.slug === slug && (allowUnpublished || isPublicPost(item, now))
+    item.slug === slug && (allowUnpublished || isPublicContentPost(db, item, now))
   );
   if (!row) return null;
   const mediaOptions = typeof mediaUrl === "function" ? { allowPrivate: true, urlFor: mediaUrl } : undefined;

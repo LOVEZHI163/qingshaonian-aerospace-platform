@@ -215,6 +215,82 @@ test("site admin event public profiles validate events, unique and stable slugs,
   }, { prefix: "site-admin-profiles-" });
 });
 
+test("draft events reject website visibility, content scheduling, and content publishing", async () => {
+  await withTestServer(async ({ baseUrl, dbPath }) => {
+    const admin = await loginAs(baseUrl, "13900000000", "admin123");
+    await mutateDb(dbPath, (db) => {
+      db.events.find((event) => event.id === EVENT_ID).status = "draft";
+    });
+
+    const profile = await jsonRequest(
+      `${baseUrl}/api/admin/event-public-profiles/${EVENT_ID}`,
+      admin.cookie,
+      "PUT",
+      { slug: "draft-event", isVisible: true, displayOrder: 0 }
+    );
+    assert.equal(profile.status, 422);
+    assert.equal((await profile.json()).code, "EVENT_NOT_PUBLISHED");
+
+    const created = await jsonRequest(
+      `${baseUrl}/api/admin/content`,
+      admin.cookie,
+      "POST",
+      contentInput({ slug: "draft-event-news" })
+    );
+    const row = (await created.json()).row;
+
+    const scheduled = await jsonRequest(
+      `${baseUrl}/api/admin/content/${row.id}`,
+      admin.cookie,
+      "PATCH",
+      { version: row.version, status: "scheduled", publishAt: "2100-01-01T00:00:00.000Z" }
+    );
+    assert.equal(scheduled.status, 422);
+    assert.equal((await scheduled.json()).code, "CONTENT_EVENT_NOT_PUBLISHED");
+
+    const published = await jsonRequest(
+      `${baseUrl}/api/admin/content/${row.id}/publish`,
+      admin.cookie,
+      "POST",
+      { version: row.version }
+    );
+    assert.equal(published.status, 422);
+    assert.equal((await published.json()).code, "CONTENT_EVENT_NOT_PUBLISHED");
+  }, { prefix: "draft-event-publication-" });
+});
+
+test("empty content body rejects scheduling and publishing", async () => {
+  await withTestServer(async ({ baseUrl }) => {
+    const admin = await loginAs(baseUrl, "13900000000", "admin123");
+
+    const created = await jsonRequest(
+      `${baseUrl}/api/admin/content`,
+      admin.cookie,
+      "POST",
+      contentInput({ slug: "empty-body-news", bodyHtml: "" })
+    );
+    const row = (await created.json()).row;
+
+    const scheduled = await jsonRequest(
+      `${baseUrl}/api/admin/content/${row.id}`,
+      admin.cookie,
+      "PATCH",
+      { version: row.version, status: "scheduled", publishAt: "2100-01-01T00:00:00.000Z" }
+    );
+    assert.equal(scheduled.status, 422);
+    assert.equal((await scheduled.json()).code, "CONTENT_BODY_REQUIRED");
+
+    const published = await jsonRequest(
+      `${baseUrl}/api/admin/content/${row.id}/publish`,
+      admin.cookie,
+      "POST",
+      { version: row.version }
+    );
+    assert.equal(published.status, 422);
+    assert.equal((await published.json()).code, "CONTENT_BODY_REQUIRED");
+  }, { prefix: "empty-content-publication-" });
+});
+
 test("site admin content CRUD defaults to drafts, rejects conflicts, and preserves creator fields", async () => {
   await withTestServer(async ({ baseUrl, dbPath }) => {
     const admin = await loginAs(baseUrl, "13900000000", "admin123");

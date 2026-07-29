@@ -42,6 +42,30 @@ function assertEvent(db, eventId, { optional = false } = {}) {
   return event;
 }
 
+function assertContentEventPublishable(db, eventId) {
+  const event = assertEvent(db, eventId, { optional: true });
+  if (event && !["published", "archived"].includes(event.status)) {
+    fail(422, "关联赛事尚未发布，内容只能保存为草稿", "CONTENT_EVENT_NOT_PUBLISHED");
+  }
+  return event;
+}
+
+function contentPlainText(html) {
+  return sanitizeContentHtml(html)
+    .replace(/<[^>]*>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function assertContentReadyForPublication(db, post) {
+  assertContentEventPublishable(db, post.eventId);
+  if (!contentPlainText(post.bodyHtml)) {
+    fail(422, "正文不能为空", "CONTENT_BODY_REQUIRED");
+  }
+  return sanitizeContentHtml(post.bodyHtml);
+}
+
 function media(db, mediaId, label) {
   if (mediaId === null || mediaId === undefined || mediaId === "") return null;
   const row = (db.mediaAssets || []).find((item) => item.id === mediaId && !item.cleanedAt);
@@ -92,7 +116,7 @@ export function updateSiteSettings(db, input, { incrementVersion = true } = {}) 
 }
 
 export function upsertEventPublicProfile(db, eventId, input, { now, incrementVersion = true } = {}) {
-  assertEvent(db, eventId);
+  const event = assertEvent(db, eventId);
   const profiles = db.eventPublicProfiles || (db.eventPublicProfiles = []);
   const current = profiles.find((row) => row.eventId === eventId);
   if (current) assertVersion(input, current, "EVENT_PROFILE_VERSION_CONFLICT");
@@ -116,6 +140,9 @@ export function upsertEventPublicProfile(db, eventId, input, { now, incrementVer
   next.slug = slug;
   if (typeof next.isVisible !== "boolean") fail(422, "公开状态必须是布尔值");
   if (!Number.isInteger(next.displayOrder)) fail(422, "排序必须是整数");
+  if (next.isVisible && !["published", "archived"].includes(event.status)) {
+    fail(422, "赛事尚未发布，不能在官网公开", "EVENT_NOT_PUBLISHED");
+  }
   media(db, next.heroMediaId, "赛事主视觉");
   next.version = current ? versionAfterMutation(current.version, incrementVersion) : 1;
   next.updatedAt = new Date(now).toISOString();
@@ -223,6 +250,7 @@ function buildContentUpdateCandidate(db, contentId, input, {
     version: current.version
   };
   const next = normalizeContentInput(candidate, current, now);
+  if (next.status === "scheduled") assertContentReadyForPublication(db, next);
   next.version = versionAfterMutation(current.version, incrementVersion);
   next.createdBy = current.createdBy;
   next.createdAt = current.createdAt;
@@ -285,12 +313,13 @@ export function publishContent(db, contentId, input, { now, incrementVersion = t
   if (!current) fail(404, "内容不存在");
   assertVersion(input, current, "CONTENT_VERSION_CONFLICT");
   assertContentReferences(db, current);
+  const bodyHtml = assertContentReadyForPublication(db, current);
   const timestamp = new Date(now).toISOString();
   const next = normalizeContentInput({
     version: current.version,
     status: "published",
     publishAt: timestamp,
-    bodyHtml: sanitizeContentHtml(current.bodyHtml)
+    bodyHtml
   }, current, timestamp);
   next.version = versionAfterMutation(current.version, incrementVersion);
   next.updatedAt = timestamp;

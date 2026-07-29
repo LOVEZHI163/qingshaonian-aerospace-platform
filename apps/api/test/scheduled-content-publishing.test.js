@@ -105,3 +105,23 @@ test("invalid due scheduled content remains hidden and does not partially promot
     assert.equal(db.auditLogs.some((row) => row.action === "content.publish"), false);
   }, { prefix: "scheduled-content-invalid-" });
 });
+
+test("due scheduled content linked to a draft event remains scheduled", async () => {
+  await withTestServer(async ({ baseUrl, dbPath }) => {
+    await mutateDb(dbPath, (db) => {
+      db.events[0].status = "draft";
+      db.contentPosts = [scheduledPost("DRAFT-EVENT-DUE", "2020-01-01T00:00:00.000Z", {
+        eventId: db.events[0].id
+      })];
+      db.contentAttachments = [];
+      db.auditLogs = [];
+    });
+
+    const response = await fetch(`${baseUrl}/api/public/home`);
+    assert.equal(response.status, 200);
+
+    const db = await readDb(dbPath);
+    assert.equal(db.contentPosts.find((row) => row.id === "DRAFT-EVENT-DUE").status, "scheduled");
+    assert.equal(db.auditLogs.some((row) => row.targetId === "DRAFT-EVENT-DUE"), false);
+  }, { prefix: "scheduled-content-draft-event-" });
+});
