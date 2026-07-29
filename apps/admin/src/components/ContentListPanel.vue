@@ -33,7 +33,10 @@ watch(
 
 async function load() {
   loading.value = true; error.value = "";
-  try { rows.value = (await api("/api/admin/content")).rows || []; }
+  try {
+    rows.value = (await api("/api/admin/content")).rows || [];
+    page.value = Math.min(Math.max(page.value, 1), pageCount.value);
+  }
   catch (failure) { error.value = failure?.message || "内容列表加载失败"; }
   finally { loading.value = false; }
 }
@@ -54,7 +57,7 @@ defineExpose({ load, clearFilters });
     <div class="content-list-summary"><span data-content-list-count>共 {{ filtered.length }} 条内容</span><button v-if="hasActiveFilters" type="button" data-action="clear-content-filters" @click="clearFilters">清空筛选</button></div>
     <p v-if="loading" role="status">正在加载内容列表…</p>
     <div v-else-if="error"><p class="message" role="alert">{{ error }}</p><button type="button" @click="load">重试</button></div>
-    <p v-else-if="!rows.length && !hasActiveFilters" class="empty-state">尚未创建官网内容。</p>
+    <p v-else-if="!rows.length" class="empty-state">尚未创建官网内容。</p>
     <p v-else-if="!filtered.length" class="empty-state">没有符合条件的内容。</p>
     <div v-else class="content-list-rows">
       <button v-for="row in paged" :key="row.id" type="button" :class="{ selected: row.id === selectedId }" :data-content-row="row.id" @click="emit('select', row.id)"><span><strong>{{ row.title }}</strong><small>{{ types[row.type] || row.type }} · {{ row.slug }}</small></span><em :class="row.status">{{ states[row.status] || row.status }}</em></button>

@@ -42,11 +42,38 @@ describe("ContentListPanel", () => {
     expect(wrapper.text()).toContain("尚未创建官网内容");
   });
 
+  it("keeps the no-content guidance when an empty list has active filters", async () => {
+    apiMock.mockResolvedValue({ rows: [] });
+    const wrapper = await mountLoaded();
+    await wrapper.get('[data-content-filter="keyword"]').setValue("赛事");
+
+    expect(wrapper.text()).toContain("尚未创建官网内容");
+    expect(wrapper.text()).not.toContain("没有符合条件的内容");
+  });
+
   it("explains when active filters have no matching content", async () => {
     apiMock.mockResolvedValue({ rows });
     const wrapper = await mountLoaded();
     await wrapper.get('[data-content-filter="keyword"]').setValue("不存在的内容");
 
     expect(wrapper.text()).toContain("没有符合条件的内容");
+  });
+
+  it("clamps the current page after refresh reduces the number of pages", async () => {
+    const elevenRows = Array.from({ length: 11 }, (_, index) => ({
+      ...rows[0], id: `P${index + 1}`, title: `内容 ${index + 1}`
+    }));
+    apiMock.mockResolvedValueOnce({ rows: elevenRows }).mockResolvedValueOnce({ rows: elevenRows.slice(0, 10) });
+    const wrapper = await mountLoaded();
+    const nextPage = wrapper.findAll("button").find((button) => button.text() === "下一页");
+    await nextPage.trigger("click");
+    expect(wrapper.findAll("[data-content-row]")).toHaveLength(1);
+
+    const refresh = wrapper.findAll("button").find((button) => button.text() === "刷新");
+    await refresh.trigger("click");
+    await flushPromises();
+
+    expect(wrapper.findAll("[data-content-row]")).toHaveLength(10);
+    expect(wrapper.findAll("button").some((button) => button.text() === "下一页")).toBe(false);
   });
 });
