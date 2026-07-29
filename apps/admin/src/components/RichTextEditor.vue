@@ -63,7 +63,7 @@ const value = ref(sanitizeEditorHtml(props.modelValue));
 function syncVisualDom(html, { force = false } = {}) {
   if (!visual.value || mode.value !== "visual") return;
   if (!force && (visualFocused.value || composing.value)) return;
-  if (visual.value.innerHTML !== html) visual.value.innerHTML = html;
+  if (force || visual.value.innerHTML !== html) visual.value.innerHTML = html;
 }
 
 function htmlPlainText(html) {

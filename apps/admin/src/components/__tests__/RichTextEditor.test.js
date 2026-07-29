@@ -197,6 +197,49 @@ describe("RichTextEditor", () => {
     wrapper.unmount();
   });
 
+  it("defers a focused external same-revision value until blur without losing selection", async () => {
+    const wrapper = mount(RichTextEditor, {
+      attachTo: document.body,
+      props: { modelValue: "<p>本地正文</p>", revision: "P1:1" }
+    });
+    const editor = wrapper.get('[data-rich-editor="visual"]');
+    editor.element.focus();
+    const text = editor.element.querySelector("p").firstChild;
+    const range = document.createRange();
+    range.setStart(text, 1);
+    range.collapse(true);
+    window.getSelection().removeAllRanges();
+    window.getSelection().addRange(range);
+
+    await wrapper.setProps({ modelValue: '<p onclick="bad()">外部值<script>bad()</script></p>', revision: "P1:1" });
+    expect(editor.element.innerHTML).toBe("<p>本地正文</p>");
+    expect(window.getSelection().anchorNode).toBe(text);
+    expect(window.getSelection().anchorOffset).toBe(1);
+
+    await editor.trigger("blur");
+    expect(editor.element.innerHTML).toBe("<p>外部值</p>");
+    wrapper.unmount();
+  });
+
+  it("rebuilds visual DOM when a new revision has identical HTML", async () => {
+    const wrapper = mount(RichTextEditor, {
+      attachTo: document.body,
+      props: { modelValue: "<p>相同正文</p>", revision: "P1:1" }
+    });
+    const editor = wrapper.get('[data-rich-editor="visual"]');
+    const text = editor.element.querySelector("p").firstChild;
+    const range = document.createRange();
+    range.setStart(text, 1);
+    range.collapse(true);
+    window.getSelection().removeAllRanges();
+    window.getSelection().addRange(range);
+
+    await wrapper.setProps({ modelValue: "<p>相同正文</p>", revision: "P2:1" });
+    expect(editor.element.querySelector("p").firstChild).not.toBe(text);
+    expect(window.getSelection().anchorNode).not.toBe(text);
+    wrapper.unmount();
+  });
+
   it("refreshes a raw HTML buffer when revision changes even if canonical HTML is equal", async () => {
     const wrapper = mount(RichTextEditor, { props: { modelValue: "<h2>标题</h2>", revision: "P1:1" } });
     await wrapper.get('[data-editor-mode="html"]').trigger("click");
