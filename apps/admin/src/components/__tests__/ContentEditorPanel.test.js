@@ -132,6 +132,17 @@ describe("ContentEditorPanel", () => {
     expect(sections[1].find(".content-media-field").exists()).toBe(true);
   });
 
+  it("groups the editor into labeled sections with an accessible sticky action bar", async () => {
+    const wrapper = await mountEditor();
+
+    for (const name of ["basics", "body-media", "display"]) {
+      expect(wrapper.get(`[data-content-section="${name}"]`).classes()).toContain("content-editor-section");
+    }
+    const actions = wrapper.get('[data-content-editor-actions]');
+    expect(actions.attributes("aria-label")).toBe("内容操作");
+    expect(actions.classes()).toContain("content-editor-sticky-actions");
+  });
+
   it("does not request publish from review when its event is still a draft", async () => {
     const wrapper = mount(ContentEditorPanel, {
       props: { contentId: "POST-1", events: [{ ...events[0], status: "draft" }], profiles }

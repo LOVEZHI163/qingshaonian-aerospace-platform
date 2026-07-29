@@ -489,11 +489,26 @@ textarea {
   align-items: start;
 }
 
+.content-editor-workflow {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
 .content-list-panel,
 .content-editor-panel,
 .content-editor-form {
   display: grid;
   gap: 16px;
+}
+
+.content-editor-form { padding-bottom: 86px; }
+
+.content-editor-section {
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
 }
 
 .content-list-panel .panel-title p,
@@ -557,6 +572,23 @@ textarea {
 .content-attachment .form-actions { grid-column: 1 / -1; flex-wrap: wrap; }
 .content-editor-actions { flex-wrap: wrap; }
 .content-editor-actions button { min-width: 96px; padding: 10px 14px; }
+.content-editor-sticky-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 -8px 24px rgba(17, 43, 75, 0.08);
+}
+.content-editor-sticky-actions button:focus-visible {
+  outline: 3px solid rgba(23, 104, 201, 0.24);
+  outline-offset: 2px;
+}
 .content-confirm-dialog { width: min(100%, 480px); }
 .content-preview-dialog { width: min(94vw, 900px); max-height: 90vh; overflow: auto; }
 .content-preview-body { line-height: 1.7; }
@@ -569,6 +601,19 @@ textarea {
 @media (max-width: 760px) {
   .content-filter-grid,
   .content-attachment { grid-template-columns: 1fr; }
+
+  .content-editor-section .site-form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .content-editor-sticky-actions {
+    position: static;
+    flex-direction: column;
+  }
+
+  .content-editor-sticky-actions button {
+    width: 100%;
+  }
 }
 
 @media (max-width: 1000px) {

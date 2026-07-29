@@ -81,6 +81,13 @@ function deferred() {
 }
 
 describe("SiteContentPage", () => {
+  it("defines the desktop sticky workflow and 360px single-column CSS contract", () => {
+    const css = readFileSync("src/styles/admin.css", "utf8");
+    expect(css).toMatch(/\.content-editor-sticky-actions\s*\{[^}]*position:\s*sticky;[^}]*bottom:\s*0;/s);
+    expect(css).toMatch(/@media \(max-width:\s*760px\)[\s\S]*\.content-editor-section \.site-form-grid\s*\{[^}]*grid-template-columns:\s*1fr;/);
+    expect(css).toMatch(/@media \(max-width:\s*760px\)[\s\S]*\.content-editor-sticky-actions\s*\{[^}]*flex-direction:\s*column;/);
+  });
+
   beforeEach(() => {
     apiMock.mockReset();
     installSuccessfulApi();
@@ -799,6 +806,27 @@ describe("SiteContentPage", () => {
     expect(wrapper.find(".content-list-panel").exists()).toBe(false);
     expect(wrapper.find(".content-editor-panel").exists()).toBe(true);
     expect(wrapper.get('[data-action="back-to-content-list"]').exists()).toBe(true);
+  });
+
+  it("returns focus to the content-list control after leaving publication review", async () => {
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/admin/site-settings") return { row: { ...settings } };
+      if (path === "/api/admin/event-public-profiles") return { rows: profiles };
+      if (path === "/api/admin/events") return { rows: events, projects: [] };
+      if (path === "/api/admin/content") return { rows: [{ ...contentRow, id: "P1", status: "draft" }] };
+      if (path === "/api/admin/content/P1") return { row: { ...contentRow, id: "P1", status: "draft" } };
+      return { rows: [] };
+    });
+    const wrapper = await mountLoaded({ attachTo: document.body });
+    await activateTab(wrapper, "content");
+    await wrapper.get('[data-content-row="P1"]').trigger("click");
+    await flushPromises();
+    await wrapper.get('[data-action="save-and-review-content"]').trigger("click");
+    await wrapper.get('[data-action="back-to-editor"]').trigger("click");
+    await flushPromises();
+
+    expect(document.activeElement).toBe(wrapper.get('[data-action="back-to-content-list"]').element);
+    wrapper.unmount();
   });
 
   it("returns to the list only after unsaved edits are explicitly discarded", async () => {

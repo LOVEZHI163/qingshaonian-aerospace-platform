@@ -74,6 +74,22 @@ describe("ContentPublicationReview", () => {
     expect(wrapper.emitted("navigate")).toEqual([["events"]]);
   });
 
+  it("announces blocking issues and non-blocking warnings with explicit status semantics", () => {
+    const blocked = mount(ContentPublicationReview, {
+      props: { content, event: { id: "E1", name: "2026赛事", status: "draft" } }
+    });
+    const warned = mount(ContentPublicationReview, {
+      props: {
+        content,
+        event: { id: "E1", name: "2026赛事", status: "published" },
+        profile: { eventId: "E1", isVisible: false }
+      }
+    });
+
+    expect(blocked.get('[data-review-blocking-issues]').attributes("role")).toBe("alert");
+    expect(warned.get('[data-review-warnings]').attributes("role")).toBe("status");
+  });
+
   it("emits the requested review actions for complete publishable content", async () => {
     const wrapper = mount(ContentPublicationReview, {
       props: {
