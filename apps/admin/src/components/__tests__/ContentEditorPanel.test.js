@@ -105,6 +105,33 @@ describe("ContentEditorPanel", () => {
     expect(wrapper.get('[data-preview-body]').html()).toContain("服务端保存后预览");
   });
 
+  it("does not preview or enter review when saving before a transition fails", async () => {
+    installApi({
+      "PATCH /api/admin/content/POST-1": async () => { throw new Error("保存失败"); }
+    });
+    const preview = apiMock.mock.calls.filter(([path]) => path === "/api/admin/site-preview/content");
+    const previewWrapper = await mountEditor();
+    await previewWrapper.get('[data-content-field="title"]').setValue("无法预览");
+    await previewWrapper.get('[data-action="save-and-preview-content"]').trigger("click");
+    await flushPromises();
+    expect(apiMock.mock.calls.filter(([path]) => path === "/api/admin/site-preview/content")).toHaveLength(preview.length);
+
+    const reviewWrapper = await mountEditor();
+    await reviewWrapper.get('[data-content-field="title"]').setValue("无法检查");
+    await reviewWrapper.get('[data-action="save-and-review-content"]').trigger("click");
+    await flushPromises();
+    expect(reviewWrapper.find('[data-content-publication-review]').exists()).toBe(false);
+  });
+
+  it("renders the three editing sections as ordered siblings", async () => {
+    const wrapper = await mountEditor();
+    const form = wrapper.get("form.content-editor-form");
+    const sections = wrapper.findAll('[data-content-section]');
+    expect(sections.map((section) => section.attributes("data-content-section"))).toEqual(["basics", "body-media", "display"]);
+    expect(sections.every((section) => section.element.parentElement === form.element)).toBe(true);
+    expect(sections[1].find(".content-media-field").exists()).toBe(true);
+  });
+
   it("does not request publish from review when its event is still a draft", async () => {
     const wrapper = mount(ContentEditorPanel, {
       props: { contentId: "POST-1", events: [{ ...events[0], status: "draft" }], profiles }
@@ -128,7 +155,8 @@ describe("ContentEditorPanel", () => {
     await wrapper.get('[data-action="confirm-content-action"]').trigger("click");
     await flushPromises();
     expect(wrapper.text()).toContain("已发布");
-    await wrapper.get('[data-action="back-to-editor"]').trigger("click");
+    expect(wrapper.find('[data-content-publication-review]').exists()).toBe(false);
+    expect(apiMock.mock.calls.filter(([path]) => path.endsWith("/publish"))).toHaveLength(1);
     expect(wrapper.get('[data-action="save-content"]').attributes("disabled")).toBeDefined();
     expect(wrapper.get('[data-action="delete-content"]').attributes("disabled")).toBeDefined();
 
@@ -431,7 +459,6 @@ describe("ContentEditorPanel", () => {
     await wrapper.get('[data-action="confirm-content-action"]').trigger("click");
     await flushPromises();
     expect(document.activeElement).toBe(wrapper.get('[data-content-editor-heading]').element);
-    await wrapper.get('[data-action="back-to-editor"]').trigger("click");
 
     await wrapper.get('[data-action="offline-content"]').trigger("click");
     await wrapper.get('[data-action="confirm-content-action"]').trigger("click");

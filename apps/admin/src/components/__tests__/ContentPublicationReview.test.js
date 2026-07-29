@@ -52,6 +52,14 @@ describe("contentPublicationState", () => {
       warnings: [{ code: "cover" }]
     });
   });
+
+  it.each(["<script>文字</script>", "<style>文字</style>", "<p>&nbsp;</p>"])("blocks body that is empty after editor sanitization: %s", (bodyHtml) => {
+    expect(contentPublicationState({
+      content: { ...content, eventId: null, bodyHtml },
+      event: null,
+      profile: null
+    }).blockingIssues).toContainEqual(expect.objectContaining({ code: "body" }));
+  });
 });
 
 describe("ContentPublicationReview", () => {

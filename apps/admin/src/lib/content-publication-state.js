@@ -1,3 +1,5 @@
+import { sanitizedEditorPlainText } from "./rich-text.js";
+
 function issue(code, message) {
   return { code, message };
 }
@@ -7,7 +9,7 @@ export function contentPublicationState({ content, event, profile }) {
   const warnings = [];
   if (!String(content?.title || "").trim()) blockingIssues.push(issue("title", "请填写标题"));
   if (!String(content?.slug || "").trim()) blockingIssues.push(issue("slug", "请填写公开地址"));
-  if (!String(content?.bodyHtml || "").replace(/<[^>]*>/g, "").trim()) {
+  if (!sanitizedEditorPlainText(content?.bodyHtml)) {
     blockingIssues.push(issue("body", "请填写正文"));
   }
   if (content?.eventId && (!event || event.status === "draft")) {
