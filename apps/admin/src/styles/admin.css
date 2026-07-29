@@ -441,6 +441,47 @@ textarea {
   font-weight: 700;
 }
 
+.event-publication-state {
+  display: grid;
+  gap: 5px;
+  padding: 12px;
+  border: 1px solid;
+  border-radius: 8px;
+}
+
+.event-publication-state strong {
+  font-weight: 700;
+}
+
+.event-publication-state span,
+.event-publication-state p {
+  margin: 0;
+}
+
+.event-publication-state.success {
+  color: #17653a;
+  border-color: #83c99f;
+  background: #effaf2;
+}
+
+.event-publication-state.warning {
+  color: #815600;
+  border-color: #e5b64b;
+  background: #fff8df;
+}
+
+.event-publication-state.history {
+  color: #4d3c85;
+  border-color: #ad9bd7;
+  background: #f5f1ff;
+}
+
+.event-publication-state.muted {
+  color: #475569;
+  border-color: #aeb9c5;
+  background: #f1f5f9;
+}
+
 .content-management-layout {
   display: grid;
   grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);

@@ -79,6 +79,28 @@ describe("role based application navigation", () => {
     expect(wrapper.find('[data-testid="site-content-page"]').exists()).toBe(true);
   });
 
+  it("opens event settings from a draft event website state", async () => {
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/public/event") return { event: { name: "测试赛事" }, projects: [], grades: [] };
+      if (path === "/api/public/features") return { smsPasswordResetEnabled: false };
+      if (path === "/api/admin/site-settings") return { row: { id: "default", version: 1 } };
+      if (path === "/api/admin/event-public-profiles") return { rows: [{ eventId: "E1", slug: "draft-event", isVisible: false, displayOrder: 1, version: 1 }] };
+      if (path === "/api/admin/events") return { rows: [{ id: "E1", name: "草稿赛事", status: "draft", archivedAt: null }], projects: [] };
+      return { rows: [] };
+    });
+    session.user.value = { id: "A1", type: "admin", name: "管理员", mustChangePassword: false };
+    const wrapper = mount(App); mounted.push(wrapper);
+    await flushPromises();
+
+    await wrapper.get('[data-nav="siteContent"]').trigger("click");
+    await flushPromises();
+    await wrapper.get('[data-site-tab="events"]').trigger("click");
+    await wrapper.get('[data-action="go-event-settings"]').trigger("click");
+    await flushPromises();
+
+    expect(wrapper.get('[data-nav="events"]').classes()).toContain("active");
+  });
+
   it("allows only administrators to restore the website content deep link", async () => {
     window.history.replaceState({}, "", "/admin/?view=siteContent");
     const ordinary = await mountFor({ id: "U1", type: "ordinary", name: "普通用户", phone: "13800000001", mustChangePassword: false }); mounted.push(ordinary);

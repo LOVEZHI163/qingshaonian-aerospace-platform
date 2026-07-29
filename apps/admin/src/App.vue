@@ -191,7 +191,7 @@ onMounted(async () => {
     <p v-if="message" class="message">{{ message }}</p>
     <DashboardPage v-if="currentView === 'overview'" @navigate="navigateAdmin" />
     <EventManagementPage v-else-if="currentView === 'events'" @event-changed="loadEvent" />
-    <SiteContentPage v-else-if="currentView === 'siteContent'" />
+    <SiteContentPage v-else-if="currentView === 'siteContent'" @navigate="navigateAdmin" />
     <OrganizationManagementPage v-else-if="currentView === 'organizations'" />
     <RegistrationManagementPage :key="`registration-management:${managementEventId}`" v-else-if="currentView === 'registration'" :initial-event-id="managementEventId" @open-certificates="openCertificateManagement" />
     <CertificateManagementPage :key="`certificate-management:${certificateEventId}:${certificateRegistrationId}`" v-else-if="currentView === 'certificates'" :initial-registration-id="certificateRegistrationId" :initial-event-id="certificateEventId" />

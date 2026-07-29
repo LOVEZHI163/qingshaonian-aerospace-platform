@@ -7,7 +7,7 @@ const props = defineProps({
   events: { type: Array, default: () => [] },
   profiles: { type: Array, default: () => [] }
 });
-const emit = defineEmits(["saved"]);
+const emit = defineEmits(["saved", "navigate"]);
 
 const selectedId = ref("");
 const form = reactive({});
@@ -18,6 +18,31 @@ const saving = ref(false);
 const uploading = ref(false);
 
 const selectedEvent = computed(() => props.events.find((event) => event.id === selectedId.value) || null);
+const websiteState = computed(() => {
+  const event = selectedEvent.value;
+  if (!event) return null;
+  if (event.status === "draft") return {
+    tone: "warning",
+    label: "当前赛事仍是草稿",
+    help: "请先到赛事设置发布；官网公开暂不生效。",
+    canToggle: false,
+    publicResult: "不公开"
+  };
+  if (event.status === "archived") return {
+    tone: form.isVisible ? "history" : "muted",
+    label: form.isVisible ? "将在历届赛事中展示" : "已归档且未在历届赛事展示",
+    help: "归档赛事不会出现在当前赛事区域。",
+    canToggle: true,
+    publicResult: form.isVisible ? "历届赛事可见" : "不公开"
+  };
+  return {
+    tone: form.isVisible ? "success" : "muted",
+    label: form.isVisible ? "官网已公开" : "业务赛事已发布，但官网尚未公开",
+    help: form.isVisible ? "公共赛事页和对应入口可访问。" : "保存视觉内容不会自动公开赛事。",
+    canToggle: true,
+    publicResult: form.isVisible ? "当前赛事可见" : "不公开"
+  };
+});
 const dirty = computed(() => Boolean(selectedId.value) && JSON.stringify(form) !== baseline.value);
 
 function fallbackSlug(event) {
@@ -63,7 +88,7 @@ function requestBody() {
     slug: form.slug.trim(),
     slogan: form.slogan,
     summary: form.summary,
-    isVisible: form.isVisible,
+    isVisible: websiteState.value?.canToggle ? form.isVisible : false,
     displayOrder: Number(form.displayOrder),
     heroMediaId: form.heroMediaId || null
   };
@@ -167,11 +192,17 @@ defineExpose({
       <p v-if="error" class="message" role="alert">{{ error }}</p>
       <p v-if="success" class="message success-message" role="status">{{ success }}</p>
       <dl class="event-facts" :data-event-facts="selectedId"><div><dt>赛事名称</dt><dd>{{ selectedEvent.name }}</dd></div><div><dt>比赛日期</dt><dd>{{ selectedEvent.dateLabel || "未填写" }}</dd></div><div><dt>比赛地点</dt><dd>{{ selectedEvent.venue || "未填写" }}</dd></div><div><dt>赛事状态</dt><dd>{{ selectedEvent.status }}</dd></div></dl>
+      <div v-if="websiteState" class="event-publication-state" :class="websiteState.tone" role="status" data-event-publication-state>
+        <strong>{{ websiteState.label }}</strong>
+        <span>官网结果：{{ websiteState.publicResult }}</span>
+        <p>{{ websiteState.help }}</p>
+      </div>
       <div class="site-form-grid">
         <label>公开地址 slug<input v-model="form.slug" data-profile-field="slug" autocomplete="off" /></label>
         <label>显示顺序<input v-model.number="form.displayOrder" data-profile-field="displayOrder" type="number" /></label>
       </div>
-      <label class="site-checkbox"><input v-model="form.isVisible" data-profile-field="isVisible" type="checkbox" />在官网公开此赛事</label>
+      <label class="site-checkbox"><input v-model="form.isVisible" data-profile-field="isVisible" type="checkbox" :disabled="!websiteState?.canToggle" />在官网公开此赛事</label>
+      <button v-if="!websiteState?.canToggle" type="button" data-action="go-event-settings" @click="emit('navigate', 'events')">去赛事设置</button>
       <label>宣传语<input v-model="form.slogan" data-profile-field="slogan" /></label>
       <label>赛事摘要<textarea v-model="form.summary" data-profile-field="summary" /></label>
       <section class="site-media-field">

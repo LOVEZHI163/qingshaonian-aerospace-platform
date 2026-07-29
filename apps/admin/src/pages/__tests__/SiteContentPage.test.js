@@ -368,6 +368,28 @@ describe("SiteContentPage", () => {
   });
 
   it.each([
+    ["draft", false, "当前赛事仍是草稿", true],
+    ["published", false, "业务赛事已发布，但官网尚未公开", false],
+    ["published", true, "官网已公开", false],
+    ["archived", true, "将在历届赛事中展示", false]
+  ])("explains %s event website state", async (status, isVisible, message, disabled) => {
+    const originalStatus = events[0].status;
+    const originalVisibility = profiles[0].isVisible;
+    try {
+      events[0].status = status;
+      profiles[0].isVisible = isVisible;
+      const wrapper = await mountLoaded();
+      await activateTab(wrapper, "events");
+
+      expect(wrapper.get("[data-event-publication-state]").text()).toContain(message);
+      expect(wrapper.get('[data-profile-field="isVisible"]').element.disabled).toBe(disabled);
+    } finally {
+      events[0].status = originalStatus;
+      profiles[0].isVisible = originalVisibility;
+    }
+  });
+
+  it.each([
     ["draft", null, "已保存内容仍是草稿，尚未公开。"],
     ["scheduled", "2099-01-01T00:00:00.000Z", "已保存内容为定时发布，尚未公开。"],
     ["offline", "2026-01-01T00:00:00.000Z", "已保存内容已下线，官网不可访问。"]
