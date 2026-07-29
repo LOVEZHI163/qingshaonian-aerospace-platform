@@ -6,7 +6,8 @@ vi.mock("../../lib/api.js", () => ({ api: apiMock }));
 
 import ContentEditorPanel from "../ContentEditorPanel.vue";
 
-const events = [{ id: "E1", name: "2026赛事" }];
+const events = [{ id: "E1", name: "2026赛事", status: "published" }];
+const profiles = [{ eventId: "E1", isVisible: true }];
 const row = {
   id: "POST-1", slug: "first-news", eventId: "E1", type: "news", title: "第一篇",
   summary: "摘要", bodyHtml: "<p>正文</p>", status: "draft", publishAt: null,
@@ -36,7 +37,7 @@ function deferred() {
 }
 
 async function mountEditor(contentId = "POST-1") {
-  const wrapper = mount(ContentEditorPanel, { props: { contentId, events } });
+  const wrapper = mount(ContentEditorPanel, { props: { contentId, events, profiles } });
   await flushPromises();
   return wrapper;
 }
@@ -68,14 +69,66 @@ describe("ContentEditorPanel", () => {
     expect(wrapper.get('[data-preview-body]').html()).not.toContain("onerror");
   });
 
+  it("saves dirty content before opening publication review", async () => {
+    const wrapper = await mountEditor();
+    await wrapper.get('[data-content-field="title"]').setValue("准备发布");
+    await wrapper.get('[data-action="save-and-review-content"]').trigger("click");
+    await flushPromises();
+
+    const saveIndex = apiMock.mock.calls.findIndex(([path, options]) =>
+      path === "/api/admin/content/POST-1" && options?.method === "PATCH"
+    );
+    expect(saveIndex).toBeGreaterThanOrEqual(0);
+    expect(wrapper.get('[data-content-publication-review]').exists()).toBe(true);
+    expect(wrapper.find("form.content-editor-form").exists()).toBe(false);
+  });
+
+  it("saves before opening a sanitized preview", async () => {
+    installApi({
+      "POST /api/admin/site-preview/content": async () => ({
+        preview: { payload: { row: { bodyHtml: "<p>服务端保存后预览</p>" } } }
+      })
+    });
+    const wrapper = await mountEditor();
+    await wrapper.get('[data-content-field="title"]').setValue("保存后预览");
+    await wrapper.get('[data-action="save-and-preview-content"]').trigger("click");
+    await flushPromises();
+
+    const saveIndex = apiMock.mock.calls.findIndex(([path, options]) =>
+      path === "/api/admin/content/POST-1" && options?.method === "PATCH"
+    );
+    const previewIndex = apiMock.mock.calls.findIndex(([path, options]) =>
+      path === "/api/admin/site-preview/content" && options?.method === "POST"
+    );
+    expect(saveIndex).toBeGreaterThanOrEqual(0);
+    expect(previewIndex).toBeGreaterThan(saveIndex);
+    expect(wrapper.get('[data-preview-body]').html()).toContain("服务端保存后预览");
+  });
+
+  it("does not request publish from review when its event is still a draft", async () => {
+    const wrapper = mount(ContentEditorPanel, {
+      props: { contentId: "POST-1", events: [{ ...events[0], status: "draft" }], profiles }
+    });
+    await flushPromises();
+    await wrapper.get('[data-action="save-and-review-content"]').trigger("click");
+    await flushPromises();
+
+    const publish = wrapper.get('[data-action="confirm-review-publish"]');
+    expect(publish.attributes("disabled")).toBeDefined();
+    await publish.trigger("click");
+    expect(apiMock.mock.calls.some(([path]) => path.endsWith("/publish"))).toBe(false);
+  });
+
   it("requires two explicit confirmations for publishing and offlining", async () => {
     const wrapper = await mountEditor();
-    await wrapper.get('[data-action="publish-content"]').trigger("click");
+    await wrapper.get('[data-action="save-and-review-content"]').trigger("click");
+    await wrapper.get('[data-action="confirm-review-publish"]').trigger("click");
     expect(wrapper.get('[role="dialog"]').text()).toContain("确认发布");
     expect(apiMock.mock.calls.some(([path]) => path.endsWith("/publish"))).toBe(false);
     await wrapper.get('[data-action="confirm-content-action"]').trigger("click");
     await flushPromises();
     expect(wrapper.text()).toContain("已发布");
+    await wrapper.get('[data-action="back-to-editor"]').trigger("click");
     expect(wrapper.get('[data-action="save-content"]').attributes("disabled")).toBeDefined();
     expect(wrapper.get('[data-action="delete-content"]').attributes("disabled")).toBeDefined();
 
@@ -136,7 +189,8 @@ describe("ContentEditorPanel", () => {
   it("does not manufacture a published state when publish fails", async () => {
     installApi({ "POST /api/admin/content/POST-1/publish": async () => { throw new Error("发布失败"); } });
     const wrapper = await mountEditor();
-    await wrapper.get('[data-action="publish-content"]').trigger("click");
+    await wrapper.get('[data-action="save-and-review-content"]').trigger("click");
+    await wrapper.get('[data-action="confirm-review-publish"]').trigger("click");
     await wrapper.get('[data-action="confirm-content-action"]').trigger("click");
     await flushPromises();
     expect(wrapper.text()).toContain("发布失败");
@@ -188,7 +242,8 @@ describe("ContentEditorPanel", () => {
   it("closes confirmation with Escape and returns focus to its opener", async () => {
     const wrapper = await mount(ContentEditorPanel, { props: { contentId: "POST-1", events }, attachTo: document.body });
     await flushPromises();
-    const opener = wrapper.get('[data-action="publish-content"]');
+    await wrapper.get('[data-action="save-and-review-content"]').trigger("click");
+    const opener = wrapper.get('[data-action="confirm-review-publish"]');
     opener.element.focus();
     await opener.trigger("click");
     expect(document.activeElement).toBe(wrapper.get('[data-action="confirm-content-action"]').element);
@@ -364,7 +419,8 @@ describe("ContentEditorPanel", () => {
   it("traps focus and restores stable focus after publish, offline, and delete", async () => {
     const wrapper = await mount(ContentEditorPanel, { props: { contentId: "POST-1", events }, attachTo: document.body });
     await flushPromises();
-    await wrapper.get('[data-action="publish-content"]').trigger("click");
+    await wrapper.get('[data-action="save-and-review-content"]').trigger("click");
+    await wrapper.get('[data-action="confirm-review-publish"]').trigger("click");
     const buttons = wrapper.get('[role="dialog"]').findAll("button");
     buttons.at(-1).element.focus();
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true }));
@@ -375,6 +431,7 @@ describe("ContentEditorPanel", () => {
     await wrapper.get('[data-action="confirm-content-action"]').trigger("click");
     await flushPromises();
     expect(document.activeElement).toBe(wrapper.get('[data-content-editor-heading]').element);
+    await wrapper.get('[data-action="back-to-editor"]').trigger("click");
 
     await wrapper.get('[data-action="offline-content"]').trigger("click");
     await wrapper.get('[data-action="confirm-content-action"]').trigger("click");

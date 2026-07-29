@@ -1,12 +1,13 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from "vue";
 import { api } from "../lib/api.js";
+import ContentPublicationReview from "./ContentPublicationReview.vue";
 import ContentPreviewDialog from "./ContentPreviewDialog.vue";
 import MediaPicker from "./MediaPicker.vue";
 import RichTextEditor from "./RichTextEditor.vue";
 
-const props = defineProps({ contentId: { type: String, default: null }, events: { type: Array, default: () => [] } });
-const emit = defineEmits(["saved", "deleted"]);
+const props = defineProps({ contentId: { type: String, default: null }, events: { type: Array, default: () => [] }, profiles: { type: Array, default: () => [] } });
+const emit = defineEmits(["saved", "deleted", "navigate"]);
 const types = [["announcement","公告"],["news","新闻"],["work","作品"],["recap","回顾"],["guide","指南"]];
 const states = { draft: "草稿", scheduled: "定时发布", published: "已发布", offline: "已下线" };
 const blank = () => ({ id: null, slug: "", eventId: null, type: "news", title: "", summary: "", bodyHtml: "", status: "draft", publishAt: null, pinned: false, sortOrder: 0, coverMediaId: null, coverMedia: null, attachments: [], version: null });
@@ -18,6 +19,7 @@ const error = ref("");
 const success = ref("");
 const previewOpen = ref(false);
 const previewHtml = ref("");
+const reviewing = ref(false);
 const confirmAction = ref(null);
 const confirmButton = ref(null);
 const editorHeading = ref(null);
@@ -34,6 +36,8 @@ let loadController = null;
 const published = computed(() => form.status === "published");
 const dirty = computed(() => JSON.stringify(snapshot()) !== baseline.value);
 const statusLabel = computed(() => states[form.status] || form.status);
+const selectedEvent = computed(() => props.events.find((event) => event.id === form.eventId) || null);
+const selectedProfile = computed(() => props.profiles.find((profile) => profile.eventId === form.eventId) || null);
 
 function snapshot() {
   return {
@@ -74,6 +78,7 @@ async function load() {
   loadController?.abort();
   error.value = ""; success.value = "";
   loadFailed.value = false;
+  reviewing.value = false;
   applyRow(blank());
   if (!props.contentId) { loading.value = false; return; }
   loading.value = true;
@@ -144,20 +149,37 @@ function contentPayload({ forPreview = false } = {}) {
   return data;
 }
 
-async function save() {
-  if (busy.value || published.value) return;
+async function save({ openReview = false } = {}) {
+  if (busy.value || published.value) return null;
   error.value = ""; success.value = "";
   let body;
   try { body = contentPayload(); }
-  catch (failure) { error.value = failure.message; return; }
+  catch (failure) { error.value = failure.message; return null; }
   busy.value = true;
   try {
     const path = form.id ? `/api/admin/content/${form.id}` : "/api/admin/content";
     const payload = await api(path, { method: form.id ? "PATCH" : "POST", body: JSON.stringify(body) });
     applyRow(payload.row, { keepPending: true }); success.value = "内容已保存"; emit("saved", payload.row);
+    if (openReview) reviewing.value = true;
+    return payload.row;
   } catch (failure) {
     error.value = failure?.status === 409 ? "内容已被其他管理员更新，请刷新后重试" : (failure?.message || "内容保存失败");
+    return null;
   } finally { busy.value = false; }
+}
+
+async function saveAndReview() {
+  if (published.value) return;
+  if (dirty.value || !form.id) {
+    await save({ openReview: true });
+    return;
+  }
+  reviewing.value = true;
+}
+
+async function saveAndPreview() {
+  const saved = await save();
+  if (saved) await preview();
 }
 
 async function preview() {
@@ -257,19 +279,26 @@ defineExpose({
     <p v-if="loading" role="status">正在加载内容…</p>
     <p v-if="error" class="message" role="alert">{{ error }}</p>
     <p v-if="success" class="success-message" role="status">{{ success }}</p>
-    <form v-if="!loading && !loadFailed" class="content-editor-form" @submit.prevent="save">
+    <form v-if="!loading && !loadFailed && !reviewing" class="content-editor-form" @submit.prevent="save">
+      <section data-content-section="basics"><h4>基本信息</h4>
       <div class="site-form-grid"><label>标题<input v-model="form.title" data-content-field="title" :disabled="published"></label><label>公开地址 slug<input v-model="form.slug" data-content-field="slug" :disabled="published" autocomplete="off"></label></div>
       <div class="site-form-grid"><label>归属赛事<select v-model="form.eventId" data-content-field="eventId" :disabled="published"><option :value="null">平台通用</option><option v-for="event in events" :key="event.id" :value="event.id">{{ event.name }}</option></select></label><label>内容类型<select v-model="form.type" data-content-field="type" :disabled="published"><option v-for="type in types" :key="type[0]" :value="type[0]">{{ type[1] }}</option></select></label></div>
       <label>摘要<textarea v-model="form.summary" data-content-field="summary" :disabled="published"></textarea></label>
+      </section>
+      <section data-content-section="body-media"><h4>正文与媒体</h4>
       <label>正文<RichTextEditor :model-value="form.bodyHtml" :revision="`${form.id || 'new'}:${form.version ?? 0}`" :disabled="published" @update:model-value="form.bodyHtml = $event" @normalized="normalizeBody" /></label>
+      <section data-content-section="display"><h4>展示设置</h4>
       <div class="site-form-grid"><label>状态<select v-model="form.status" data-content-field="status" :disabled="published"><option value="draft">草稿</option><option v-if="form.id" value="scheduled">定时发布</option><option v-if="form.status === 'offline'" value="offline">已下线</option><option v-if="published" value="published">已发布</option></select></label><label v-if="form.status === 'scheduled'">发布时间<input v-model="form.publishAt" data-content-field="publishAt" type="datetime-local" :disabled="published"></label><label>排序<input v-model.number="form.sortOrder" data-content-field="sortOrder" type="number" :disabled="published"></label><label class="site-checkbox"><input v-model="form.pinned" data-content-field="pinned" type="checkbox" :disabled="published">置顶显示</label></div>
       <p v-if="!form.id" class="hint">新内容先保存草稿后才能设置定时发布。</p>
       <p v-if="form.status === 'offline'" class="hint">下线内容如需编辑，请选择草稿或定时发布后再保存；也可以直接删除。</p>
+      </section>
       <section class="content-media-field"><h4>封面图片</h4><p v-if="form.coverMedia"><strong>{{ form.coverMedia.originalName }}</strong> · {{ form.coverMedia.mimeType }} · {{ form.coverMedia.sizeBytes }} 字节<span v-if="form.coverMedia.width"> · {{ form.coverMedia.width }}×{{ form.coverMedia.height }}</span></p><p v-else-if="form.coverMediaId">媒体 ID：{{ form.coverMediaId }}</p><p v-else>未设置</p><div class="form-actions"><MediaPicker purpose="content-cover" accept="image/png,image/jpeg,image/webp" label="上传封面" :disabled="published" @uploaded="uploadedCover" @error="mediaError"/><button v-if="form.coverMediaId" type="button" data-action="detach-cover-media" :disabled="published" @click="detachCover">解除引用</button></div></section>
       <section class="content-media-field"><div class="panel-title"><h4>附件</h4><MediaPicker purpose="content-attachment" accept="application/pdf,image/png,image/jpeg,image/webp" label="上传附件" :disabled="published" @uploaded="uploadedAttachment" @error="mediaError"/></div><p v-if="!form.attachments.length">暂无附件</p><article v-for="(attachment,index) in form.attachments" :key="attachment.mediaId" class="content-attachment" :data-attachment="attachment.mediaId"><div><strong>{{ attachment.media?.originalName || attachment.mediaId }}</strong><span>{{ attachment.media?.mimeType }} · {{ attachment.media?.sizeBytes }} 字节<span v-if="attachment.media?.width"> · {{ attachment.media.width }}×{{ attachment.media.height }}</span></span></div><input v-model="attachment.label" data-attachment-label aria-label="附件标签" :disabled="published"><div class="form-actions"><button type="button" data-action="move-attachment-up" :disabled="published || index === 0" @click="moveAttachment(attachment.mediaId,-1)">上移</button><button type="button" :disabled="published || index === form.attachments.length - 1" @click="moveAttachment(attachment.mediaId,1)">下移</button><button type="button" data-action="detach-attachment-media" :disabled="published" @click="detachAttachment(attachment.mediaId)">解除引用</button></div></article></section>
       <section v-if="pendingMedia.length" class="content-media-field pending-media"><h4>待清理媒体</h4><p>解除引用并保存后，可在这里物理删除文件。</p><article v-for="media in pendingMedia" :key="media.id" :data-pending-media="media.id"><span>{{ media.originalName || media.id }}</span><button type="button" class="reject" data-action="delete-pending-media" :disabled="deletingMedia.has(media.id)" @click="deletePendingMedia(media.id)">{{ deletingMedia.has(media.id) ? '删除中…' : '删除媒体文件' }}</button></article></section>
-      <div class="form-actions content-editor-actions"><button type="button" class="primary" data-action="save-content" :disabled="busy || published || form.status === 'offline'" @click="save">保存</button><button type="button" data-action="preview-content" :disabled="busy" @click="preview">预览</button><button v-if="form.id && !published" type="button" class="dark" data-action="publish-content" :disabled="busy || dirty" @click="ask('publish')">发布</button><button v-if="published" type="button" class="dark" data-action="offline-content" :disabled="busy" @click="ask('offline')">下线</button><button type="button" class="reject" data-action="delete-content" :disabled="busy || !form.id || !['draft','offline'].includes(form.status)" @click="ask('delete')">删除</button></div>
+      </section>
+      <div class="form-actions content-editor-actions"><button type="button" class="primary" data-action="save-content" :disabled="busy || published || form.status === 'offline'" @click="save">保存草稿</button><button type="button" data-action="save-and-preview-content" :disabled="busy || published || form.status === 'offline'" @click="saveAndPreview">保存并预览</button><button v-if="!published" type="button" class="dark" data-action="save-and-review-content" :disabled="busy || form.status === 'offline'" @click="saveAndReview">进入发布检查</button><button type="button" data-action="preview-content" :disabled="busy" @click="preview">预览</button><button v-if="published" type="button" class="dark" data-action="offline-content" :disabled="busy" @click="ask('offline')">下线</button><button type="button" class="reject" data-action="delete-content" :disabled="busy || !form.id || !['draft','offline'].includes(form.status)" @click="ask('delete')">删除</button></div>
     </form>
+    <ContentPublicationReview v-else-if="!loading && !loadFailed" :content="{ ...form }" :event="selectedEvent" :profile="selectedProfile" :busy="busy" @back="reviewing = false" @preview="preview" @publish="ask('publish')" @navigate="emit('navigate', $event)" />
     <div v-if="confirmAction" class="dialog-backdrop" @click.self="cancelConfirm"><section class="panel content-confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="content-confirm-title"><h3 id="content-confirm-title">{{ confirmAction === 'publish' ? '确认发布' : confirmAction === 'offline' ? '确认下线' : confirmAction === 'delete' ? '确认删除' : '放弃未保存修改' }}</h3><p>{{ confirmAction === 'publish' ? '发布后内容将对公众可见。' : confirmAction === 'offline' ? '下线后公众将无法访问该内容。' : confirmAction === 'delete' ? '删除后不可恢复。' : '当前修改尚未保存，确定放弃吗？' }}</p><div class="form-actions"><button ref="confirmButton" type="button" class="dark" :data-action="confirmAction === 'discard' ? 'confirm-discard-content' : 'confirm-content-action'" :disabled="busy" @click="confirm">确认</button><button type="button" :disabled="busy" @click="cancelConfirm">取消</button></div></section></div>
     <ContentPreviewDialog :open="previewOpen" :title="form.title || '内容预览'" :html="previewHtml" @close="previewOpen = false" />
   </section>
