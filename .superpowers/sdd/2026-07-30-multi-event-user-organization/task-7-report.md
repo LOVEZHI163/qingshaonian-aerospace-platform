@@ -48,3 +48,12 @@ git diff --check
 - Task 8 需要把普通用户报名、当前报名和证书页面切换到显式 `eventId` API，并在无选中赛事时隐藏业务入口。
 - Task 9 需要消费组织赛事中心的 `participationState`，实现加入赛事和 `organizationWorkspace`。
 - Task 10 需要在管理员赛事型页面挂载 `EventContextSwitcher`，并把唯一的管理员 `eventId` 持久化到 URL。
+
+## Review Fix Round 1
+
+- 修复提交：`c3f5563b86322c45e348b91340083f6e47037cc3`（`fix: recover event center context safely`）。
+- `loadAccountEvents()` 现在将赛事列表请求失败转化为安全的赛事中心状态；登录、改密和会话恢复路径都会继续进入赛事中心，而不会因该请求失败停留在 `login` 视图。
+- `EventCenterPage` 在加载失败时显示明确错误和“重新加载”按钮；重试会重新请求 `/api/me/events` 并恢复正常赛事卡片。
+- 无效或无权限的 `eventId/eventSlug` 深链回退前调用 `selectEventContext("")`，URL 规范化为 `view=eventCenter`，清除 `eventId` 与 `eventSlug`；后续点击业务导航不会重新写入旧赛事上下文。
+- 红测先确认缺少重试操作、失败时无错误恢复 UI、无效深链仍保留旧 URL 参数；修复后聚焦测试 22/22 通过。
+- 完整回归：`npm.cmd test -w apps/admin` 为 28 个测试文件、286/286 用例通过；`npm.cmd run build` 通过；`git diff --check` 通过。
