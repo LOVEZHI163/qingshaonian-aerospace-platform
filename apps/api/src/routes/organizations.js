@@ -67,13 +67,20 @@ export function createOrganizationsRouter({ store, requireUser, requireAdmin, re
 
   router.get("/me/organizations", requireUser, requirePasswordReady, asyncRoute(async (req, res) => {
     const db = await deps.readDb();
-    const rows = db.memberships
-      .filter((membership) => membership.userId === req.user.id && membership.status === "active")
-      .map((membership) => {
-        const organization = db.organizations.find((row) => row.id === membership.organizationId);
-        return organization && organizationWithDocuments(db, organization, membership.role);
-      })
-      .filter(Boolean);
+    const owned = req.user.type === "organization"
+      ? db.organizations.filter((organization) => organization.ownerUserId === req.user.id)
+        .map((organization) => organizationWithDocuments(db, organization))
+      : [];
+    const memberships = req.user.type === "ordinary"
+      ? db.memberships
+        .filter((membership) => membership.userId === req.user.id && membership.status === "active")
+        .map((membership) => {
+          const organization = db.organizations.find((row) => row.id === membership.organizationId);
+          return organization && organizationWithDocuments(db, organization, "member");
+        })
+        .filter(Boolean)
+      : [];
+    const rows = [...owned, ...memberships];
     res.json({ rows });
   }));
 
@@ -156,8 +163,8 @@ export function createOrganizationsRouter({ store, requireUser, requireAdmin, re
     const document = db.organizationDocuments.find((row) => row.id === req.params.documentId && row.organizationId === req.params.id && !row.cleanedAt);
     if (!document) return res.status(404).json({ error: "资质文件不存在" });
     const isAdmin = req.user.type === "admin";
-    const isOwner = db.organizations.some((organization) => organization.id === req.params.id && organization.status === "active" && organization.ownerUserId === req.user.id)
-      && db.memberships.some((membership) => membership.organizationId === req.params.id && membership.userId === req.user.id && membership.role === "owner" && membership.status === "active");
+    const isOwner = req.user.type === "organization"
+      && db.organizations.some((organization) => organization.id === req.params.id && organization.status === "active" && organization.ownerUserId === req.user.id);
     if (!isAdmin && !isOwner) return res.status(403).json({ error: "无权下载该组织资质" });
     res.type(document.mimeType).attachment(document.originalName).sendFile(document.filePath);
   }));

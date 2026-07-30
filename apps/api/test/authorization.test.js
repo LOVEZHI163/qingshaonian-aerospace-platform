@@ -50,7 +50,6 @@ test("every business API requires a session and every administrator API rejects 
     }
     for (const [route, body] of [
       ["/api/organizations/request", { organizationId: "O1001" }],
-      ["/api/organizations/invite", { organizationId: "O1001", phone: "13700000001" }],
       ["/api/registrations/check", { athlete: {} }],
       ["/api/registrations", {}]
     ]) {
@@ -164,7 +163,7 @@ test("session identity cannot be replaced through body, query, or path values", 
     assert.equal((await fetch(`${baseUrl}/api/organizations/O1001/certificates`, withSession(ordinary.cookie))).status, 403);
     assert.equal((await fetch(`${baseUrl}/api/organizations/invite`, jsonOptions("POST", {
       organizationId: "O1002", phone: "13700000001", name: "越权邀请"
-    }, ordinary.cookie))).status, 403);
+    }, ordinary.cookie))).status, 404);
     const ownerOrganizationRows = await fetch(`${baseUrl}/api/organizations/O1001/registrations`, withSession(owner.cookie));
     assert.equal(ownerOrganizationRows.status, 200);
     const ownerRows = (await ownerOrganizationRows.json()).rows;
@@ -172,8 +171,7 @@ test("session identity cannot be replaced through body, query, or path values", 
     assert.equal(ownerRows.some((row) => row.id === "R20260627002"), false);
     assert.equal(ownerRows.some((row) => row.id === privateRegistrationId), false);
     const adminOrganizationRows = await fetch(`${baseUrl}/api/organizations/O1001/registrations`, withSession(admin.cookie));
-    assert.equal(adminOrganizationRows.status, 200);
-    assert.equal((await adminOrganizationRows.json()).rows.every((row) => row.organizationId === "O1001"), true);
+    assert.equal(adminOrganizationRows.status, 403);
 
     assert.equal((await fetch(`${baseUrl}/api/registrations/R20260627001/status`, jsonOptions("PATCH", { status: "approved" }, ordinary.cookie))).status, 403);
     assert.equal((await fetch(`${baseUrl}/api/registrations/R20260627002/status`, jsonOptions("PATCH", { status: "cancelled" }, ordinary.cookie))).status, 403);
@@ -182,71 +180,37 @@ test("session identity cannot be replaced through body, query, or path values", 
   });
 });
 
-test("an invited manager can accept their own invitation and manage the organization", async () => {
+test("only the unique organization owner can review ordinary membership requests", async () => {
   await withServer(async (baseUrl) => {
     const owner = await loginAs(baseUrl, "13800000011", "123456");
     const admin = await loginAs(baseUrl, "13900000000", "admin123");
-    assert.equal((await fetch(`${baseUrl}/api/organizations/invite`, jsonOptions("POST", {
-      organizationId: "O-NOT-FOUND", phone: "13700000016", name: "孤儿关系", role: "member"
-    }, admin.cookie))).status, 404);
-    const registration = await fetch(`${baseUrl}/api/auth/register`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: "协管老师", phone: "13700000010", password: "Manager10" })
-    });
-    assert.equal(registration.status, 201);
-    const invitation = await fetch(`${baseUrl}/api/organizations/invite`, jsonOptions("POST", {
-      organizationId: "O1001",
-      phone: "13700000010",
-      name: "协管老师",
-      role: "manager"
-    }, owner.cookie));
-    assert.equal(invitation.status, 201);
-    const membership = (await invitation.json()).row;
+    const ordinaryRegistration = await fetch(`${baseUrl}/api/auth/register/ordinary`, jsonOptions("POST", {
+      name: "申请成员", phone: "13700000010", password: "Member10"
+    }));
+    assert.equal(ordinaryRegistration.status, 201);
+    const ordinary = await loginAs(baseUrl, "13700000010", "Member10");
 
-    const manager = await loginAs(baseUrl, "13700000010", "Manager10");
-    const accepted = await fetch(`${baseUrl}/api/memberships/${membership.id}`, jsonOptions("PATCH", { status: "active" }, manager.cookie));
-    assert.equal(accepted.status, 200);
-    assert.equal((await accepted.json()).row.userId, manager.user.id);
-    assert.equal((await fetch(`${baseUrl}/api/organizations/O1001/registrations`, withSession(manager.cookie))).status, 200);
-    const memberInvitation = await fetch(`${baseUrl}/api/organizations/invite`, jsonOptions("POST", {
-      organizationId: "O1001", phone: "13700000011", name: "受邀成员"
-    }, manager.cookie));
-    assert.equal(memberInvitation.status, 201);
-    const memberMembership = (await memberInvitation.json()).row;
+    const request = await fetch(`${baseUrl}/api/organizations/request`, jsonOptions("POST", {
+      organizationId: "O1001", note: "申请加入", role: "manager"
+    }, ordinary.cookie));
+    assert.equal(request.status, 201);
+    const membership = (await request.json()).row;
+    assert.equal(membership.role, "member");
 
-    assert.equal((await fetch(`${baseUrl}/api/organizations/invite`, jsonOptions("POST", {
-      organizationId: "O1001", phone: "13700000012", name: "非法负责人", role: "owner"
-    }, owner.cookie))).status, 422);
-    assert.equal((await fetch(`${baseUrl}/api/organizations/invite`, jsonOptions("POST", {
-      organizationId: "O1001", phone: "13700000013", name: "非法角色", role: "supervisor"
-    }, owner.cookie))).status, 422);
-    assert.equal((await fetch(`${baseUrl}/api/organizations/invite`, jsonOptions("POST", {
-      organizationId: "O1001", phone: "13700000014", name: "越权协管", role: "manager"
-    }, manager.cookie))).status, 403);
+    assert.equal((await fetch(`${baseUrl}/api/organizations/O1001/members`, withSession(owner.cookie))).status, 200);
+    assert.equal((await fetch(`${baseUrl}/api/organizations/O1001/members`, withSession(ordinary.cookie))).status, 403);
+    assert.equal((await fetch(`${baseUrl}/api/organizations/O1001/members`, withSession(admin.cookie))).status, 403);
 
-    assert.equal((await fetch(`${baseUrl}/api/memberships/M1001`, jsonOptions("PATCH", { status: "removed" }, manager.cookie))).status, 403);
-    assert.equal((await fetch(`${baseUrl}/api/memberships/${membership.id}`, jsonOptions("PATCH", { status: "removed" }, manager.cookie))).status, 403);
-    assert.equal((await fetch(`${baseUrl}/api/memberships/${memberMembership.id}`, jsonOptions("PATCH", {
+    const approved = await fetch(`${baseUrl}/api/memberships/${membership.id}`, jsonOptions("PATCH", {
       status: "active", role: "manager"
-    }, manager.cookie))).status, 403);
-    assert.equal((await fetch(`${baseUrl}/api/memberships/${memberMembership.id}`, jsonOptions("PATCH", { status: "removed" }, manager.cookie))).status, 200);
-    assert.equal((await fetch(`${baseUrl}/api/memberships/${memberMembership.id}`, jsonOptions("PATCH", {
-      status: "active", role: "owner"
-    }, owner.cookie))).status, 422);
-    assert.equal((await fetch(`${baseUrl}/api/memberships/M1001`, jsonOptions("PATCH", {
-      status: "active", role: "member"
-    }, owner.cookie))).status, 403);
-    assert.equal((await fetch(`${baseUrl}/api/memberships/${membership.id}`, jsonOptions("PATCH", { status: "removed" }, owner.cookie))).status, 200);
+    }, owner.cookie));
+    assert.equal(approved.status, 200);
+    assert.equal((await approved.json()).row.role, "member");
 
-    const adminManagerInvite = await fetch(`${baseUrl}/api/organizations/invite`, jsonOptions("POST", {
-      organizationId: "O1002", phone: "13700000015", name: "管理员邀请协管", role: "manager"
-    }, admin.cookie));
-    assert.equal(adminManagerInvite.status, 201);
-    const adminManagedMembership = (await adminManagerInvite.json()).row;
-    assert.equal((await fetch(`${baseUrl}/api/memberships/${adminManagedMembership.id}`, jsonOptions("PATCH", {
-      status: "removed"
-    }, admin.cookie))).status, 200);
+    const removedInvitationEndpoint = await fetch(`${baseUrl}/api/organizations/invite`, jsonOptions("POST", {
+      organizationId: "O1001", phone: "13700000088", name: "不再支持的组织邀请"
+    }, owner.cookie));
+    assert.equal(removedInvitationEndpoint.status, 404);
   });
 });
 

@@ -19,6 +19,7 @@ import { createSiteAdminRouter } from "./routes/site-admin.js";
 import { createPublicSiteRouter } from "./routes/public-site.js";
 import { projectForHistoricalRegistration, registrationContext } from "./services/events.js";
 import { replayFileCleanupJournal } from "./services/organizations.js";
+import { organizationForOwner, requireOrdinaryUser, requireOrganizationOwner } from "./services/access-control.js";
 import { publishDueScheduledContent, startScheduledContentPublisher } from "./services/scheduled-content-publisher.js";
 
 const PORT = Number(process.env.PORT || 4300);
@@ -83,43 +84,16 @@ function publicCertificate(certificate) {
   return safe;
 }
 
-const MANAGED_MEMBERSHIP_ROLES = ["manager", "member"];
-
 function isOrganizationOperational(db, organizationId) {
   const organization = db.organizations.find((item) => item.id === organizationId);
   return organization?.status === "active" && organization.reviewStatus === "approved";
 }
 
-function organizationRole(db, userId, organizationId) {
-  const user = db.users.find((item) => item.id === userId);
-  if (user?.type === "admin") return "admin";
-  const organization = db.organizations.find((item) => item.id === organizationId);
-  if (!organization || organization.status !== "active" || organization.reviewStatus !== "approved") return null;
-  return db.memberships.find(
-    (item) => item.userId === userId && item.organizationId === organizationId && item.status === "active"
-  )?.role || null;
-}
-
 function canManageOrganization(db, userId, organizationId) {
-  return isOrganizationOperational(db, organizationId)
-    && ["admin", "owner", "manager"].includes(organizationRole(db, userId, organizationId));
-}
-
-function canGrantOrganizationRole(db, userId, organizationId, role) {
-  if (!isOrganizationOperational(db, organizationId)) return false;
-  const currentRole = organizationRole(db, userId, organizationId);
-  if (["admin", "owner"].includes(currentRole)) return MANAGED_MEMBERSHIP_ROLES.includes(role);
-  return currentRole === "manager" && role === "member";
-}
-
-function canManageMembership(db, userId, membership, nextRole) {
-  if (!isOrganizationOperational(db, membership.organizationId)) return false;
-  if (membership.role === "owner") return false;
-  const currentRole = organizationRole(db, userId, membership.organizationId);
-  if (["admin", "owner"].includes(currentRole)) {
-    return MANAGED_MEMBERSHIP_ROLES.includes(membership.role) && MANAGED_MEMBERSHIP_ROLES.includes(nextRole);
-  }
-  return currentRole === "manager" && membership.role === "member" && nextRole === "member";
+  const user = db.users.find((item) => item.id === userId);
+  return user?.type === "organization"
+    && organizationForOwner(db, userId)?.id === organizationId
+    && isOrganizationOperational(db, organizationId);
 }
 
 function activeMemberIdsForManagedOrganizations(db, userId, organizationId = null) {
@@ -144,11 +118,13 @@ function findCertificateByRegistration(db, registrationId, slot) {
   return db.certificates.find((item) => item.registrationId === registrationId && (slot === undefined || item.slot === slot));
 }
 
-function organizationForOwner(db, userId) {
-  return db.organizations.find((item) => item.ownerUserId === userId);
-}
-
 function userOrganizations(db, userId) {
+  const user = db.users.find((item) => item.id === userId);
+  if (user?.type === "organization") {
+    const organization = organizationForOwner(db, userId);
+    return organization ? [organization] : [];
+  }
+  if (user?.type !== "ordinary") return [];
   const memberships = db.memberships.filter((item) => item.userId === userId && item.status === "active");
   return memberships
     .map((membership) => ({
@@ -536,6 +512,7 @@ app.get("/api/me/:userId", requireUser, requirePasswordReady, asyncRoute(async (
 app.post("/api/organizations/request", requireUser, requirePasswordReady, mutationAsyncRoute(async (req, res) => {
   const db = await readDb();
   const user = db.users.find((item) => item.id === req.user.id);
+  requireOrdinaryUser(user);
   const organization = db.organizations.find((item) => item.id === req.body.organizationId);
   if (!user || !organization) return res.status(404).json({ error: "用户或组织不存在" });
   if (organization.status !== "active" || organization.reviewStatus !== "approved") return res.status(403).json({ error: "组织尚未通过审核" });
@@ -558,40 +535,6 @@ app.post("/api/organizations/request", requireUser, requirePasswordReady, mutati
   res.status(201).json({ row: membership });
 }));
 
-app.post("/api/organizations/invite", requireUser, requirePasswordReady, mutationAsyncRoute(async (req, res) => {
-  const db = await readDb();
-  const role = req.body.role || "member";
-  if (!MANAGED_MEMBERSHIP_ROLES.includes(role)) return res.status(422).json({ error: "邀请角色不合法" });
-  const organization = db.organizations.find((item) => item.id === req.body.organizationId);
-  if (!organization) return res.status(404).json({ error: "组织不存在" });
-  if (!canGrantOrganizationRole(db, req.user.id, req.body.organizationId, role)) {
-    return res.status(403).json({ error: "无权邀请该角色" });
-  }
-  const phone = normalizePhone(req.body.phone);
-  const user = db.users.find((item) => normalizePhone(item.phone) === phone);
-  const existing = db.memberships.find(
-    (item) => item.organizationId === req.body.organizationId && ((user && item.userId === user.id) || normalizePhone(item.invitedPhone) === phone) && ["active", "invited", "pending"].includes(item.status)
-  );
-  if (existing) return res.status(409).json({ error: "该用户已在组织中或已有邀请/申请" });
-
-  const membership = {
-    id: id("M"),
-    userId: user?.id || null,
-    invitedPhone: phone,
-    invitedName: req.body.name || user?.name || "",
-    organizationId: req.body.organizationId,
-    role,
-    status: "invited",
-    direction: "org_invite",
-    note: req.body.note || "",
-    createdAt: now(),
-    updatedAt: now()
-  };
-  db.memberships.unshift(membership);
-  await writeDb(db);
-  res.status(201).json({ row: membership });
-}));
-
 app.patch("/api/memberships/:id", requireUser, requirePasswordReady, mutationAsyncRoute(async (req, res) => {
   const db = await readDb();
   const row = db.memberships.find((item) => item.id === req.params.id);
@@ -600,26 +543,19 @@ app.patch("/api/memberships/:id", requireUser, requirePasswordReady, mutationAsy
     return res.status(403).json({ error: "组织尚未通过审核" });
   }
 
-  const currentUser = req.user;
-  const acceptingSelfInvite = row.direction === "org_invite"
-    && row.status === "invited"
-    && MANAGED_MEMBERSHIP_ROLES.includes(row.role)
-    && (row.userId === currentUser.id || normalizePhone(row.invitedPhone) === normalizePhone(currentUser.phone));
   if (!["active", "rejected", "removed"].includes(req.body.status)) return res.status(422).json({ error: "状态不合法" });
-  const nextRole = req.body.role || row.role;
-  if (req.body.role && !MANAGED_MEMBERSHIP_ROLES.includes(req.body.role)) {
-    return res.status(422).json({ error: "成员角色不合法" });
+  let organization;
+  try {
+    organization = requireOrganizationOwner(db, req.user);
+  } catch (error) {
+    return res.status(error.status || 403).json({ error: error.message });
   }
-  const selfDecision = acceptingSelfInvite
-    && ["active", "rejected"].includes(req.body.status)
-    && (!req.body.role || req.body.role === row.role);
-  if (!selfDecision && !canManageMembership(db, currentUser.id, row, nextRole)) {
+  if (organization.id !== row.organizationId) {
     return res.status(403).json({ error: "无权处理该关系" });
   }
 
   row.status = req.body.status;
-  row.role = nextRole;
-  if (!row.userId && normalizePhone(row.invitedPhone) === normalizePhone(currentUser.phone) && req.body.status === "active") row.userId = currentUser.id;
+  row.role = "member";
   row.updatedAt = now();
   await writeDb(db);
   res.json({ row });

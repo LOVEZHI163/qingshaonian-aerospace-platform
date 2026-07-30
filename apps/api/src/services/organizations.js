@@ -127,11 +127,14 @@ export async function registerOrganization({ input, file, readDb, writeDb, hashP
   const db = await readDb();
   const rollbackDb = structuredClone(db);
   assertAccountAvailable(db, values.phone, values.creditCode);
+  const userId = makeId("U");
+  if (db.organizations.some((row) => row.ownerUserId === userId)) {
+    throw new OrganizationError(409, "一个组织账号只能负责一个组织");
+  }
+  const organizationId = makeId("O");
 
   let stored;
   try {
-    const userId = makeId("U");
-    const organizationId = makeId("O");
     stored = await saveFile({ category: "organization-documents", ownerId: organizationId, file });
     const user = {
       id: userId, name: values.name, phone: values.phone, password: await hashPassword(values.password), type: "organization", status: "active",
@@ -146,10 +149,6 @@ export async function registerOrganization({ input, file, readDb, writeDb, hashP
     organization.currentDocumentId = document.id;
     db.users.push(user);
     db.organizations.push(organization);
-    db.memberships.push({
-      id: makeId("M"), userId: user.id, organizationId: organization.id, role: "owner", status: "active", direction: "system",
-      note: "组织注册自动创建", createdAt: now(), updatedAt: now()
-    });
     db.organizationDocuments.push(document);
     await writeDb(db);
     return { user, organization, document };
@@ -209,8 +208,7 @@ export async function resubmitOrganization({ input, file, userId, readDb, writeD
   const db = await readDb();
   const rollbackDb = structuredClone(db);
   const organization = db.organizations.find((row) => row.ownerUserId === userId);
-  const owner = organization && db.memberships.some((row) => row.userId === userId && row.organizationId === organization.id && row.role === "owner" && row.status === "active");
-  if (!organization || !owner) throw new OrganizationError(403, "只有组织负责人可以修改组织资料");
+  if (!organization) throw new OrganizationError(403, "只有组织负责人可以修改组织资料");
   if (organization.reviewStatus !== "rejected") throw validationError("只有被驳回的组织可以重新提交");
   const organizationName = requiredText(input.organizationName || organization.name, "组织名称");
   const creditCode = requiredText(input.creditCode || organization.creditCode, "统一社会信用代码");

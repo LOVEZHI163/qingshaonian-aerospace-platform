@@ -84,9 +84,7 @@ export const seedDb = {
     { id: "O1002", name: "鹿城区青少年活动中心", code: "LC-QSNG", ownerUserId: "U2002", contactName: "王老师", contactPhone: "13800000012", status: "active", createdAt: "2026-06-27T06:31:30.000Z" }
   ],
   memberships: [
-    { id: "M1001", userId: "U2001", organizationId: "O1001", role: "owner", status: "active", direction: "system", note: "组织创建人", createdAt: "2026-06-27T06:31:00.000Z", updatedAt: "2026-06-27T06:31:00.000Z" },
-    { id: "M1002", userId: "U1001", organizationId: "O1001", role: "member", status: "active", direction: "user_request", note: "参加校队报名", createdAt: "2026-06-27T06:40:00.000Z", updatedAt: "2026-06-27T06:42:00.000Z" },
-    { id: "M1003", userId: null, invitedPhone: "13700000003", invitedName: "王梓涵家长", organizationId: "O1002", role: "member", status: "invited", direction: "org_invite", note: "邀请加入无人机队伍", createdAt: "2026-06-27T06:45:00.000Z", updatedAt: "2026-06-27T06:45:00.000Z" }
+    { id: "M1002", userId: "U1001", organizationId: "O1001", role: "member", status: "active", direction: "user_request", note: "参加校队报名", createdAt: "2026-06-27T06:40:00.000Z", updatedAt: "2026-06-27T06:42:00.000Z" }
   ],
   registrations: [
     {

@@ -153,7 +153,7 @@ test("rejected owner can replace credentials and resubmit organization for revie
   }, { prefix: "org-resubmit-" });
 });
 
-test("admin organization status disables owner and manager capabilities and persists the organization state", async () => {
+test("admin organization status disables only the unique owner capabilities and persists the organization state", async () => {
   await withTestServer(async ({ baseUrl, dbPath }) => {
     const register = await postOrganizationRegistration(baseUrl, { creditCode: "91330300TEST000071", phone: "13600009971" });
     const { organization } = await register.json();
@@ -163,18 +163,18 @@ test("admin organization status disables owner and manager capabilities and pers
     }))).status, 200);
 
     const owner = await loginAs(baseUrl, "13600009971", "Strong123");
-    const managerRegistration = await fetch(`${baseUrl}/api/auth/register/ordinary`, {
+    const ordinaryRegistration = await fetch(`${baseUrl}/api/auth/register/ordinary`, {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: "协管老师", phone: "13600009972", password: "Manager72" })
+      body: JSON.stringify({ name: "普通成员", phone: "13600009972", password: "Member72" })
     });
-    assert.equal(managerRegistration.status, 201);
-    const invitation = await fetch(`${baseUrl}/api/organizations/invite`, withSession(owner.cookie, {
+    assert.equal(ordinaryRegistration.status, 201);
+    const member = await loginAs(baseUrl, "13600009972", "Member72");
+    const request = await fetch(`${baseUrl}/api/organizations/request`, withSession(member.cookie, {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ organizationId: organization.id, phone: "13600009972", name: "协管老师", role: "manager" })
+      body: JSON.stringify({ organizationId: organization.id, role: "manager" })
     }));
-    const membership = (await invitation.json()).row;
-    const manager = await loginAs(baseUrl, "13600009972", "Manager72");
-    assert.equal((await fetch(`${baseUrl}/api/memberships/${membership.id}`, withSession(manager.cookie, {
+    const membership = (await request.json()).row;
+    assert.equal((await fetch(`${baseUrl}/api/memberships/${membership.id}`, withSession(owner.cookie, {
       method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "active" })
     }))).status, 200);
 
@@ -189,7 +189,7 @@ test("admin organization status disables owner and manager capabilities and pers
     const ownerRow = (await (await fetch(`${baseUrl}/api/users`, withSession(admin.cookie))).json()).rows.find((user) => user.id === organization.ownerUserId);
     assert.equal(ownerRow.status, "active");
     assert.equal((await fetch(`${baseUrl}/api/organizations/${organization.id}/registrations`, withSession(owner.cookie))).status, 403);
-    assert.equal((await fetch(`${baseUrl}/api/organizations/${organization.id}/registrations`, withSession(manager.cookie))).status, 403);
+    assert.equal((await fetch(`${baseUrl}/api/organizations/${organization.id}/registrations`, withSession(member.cookie))).status, 403);
     const stored = JSON.parse(await fs.readFile(dbPath, "utf8"));
     assert.equal(stored.organizations.find((row) => row.id === organization.id).status, "disabled");
 
@@ -198,11 +198,11 @@ test("admin organization status disables owner and manager capabilities and pers
     }));
     assert.equal(enabled.status, 200);
     assert.equal((await fetch(`${baseUrl}/api/organizations/${organization.id}/registrations`, withSession(owner.cookie))).status, 200);
-    assert.equal((await fetch(`${baseUrl}/api/organizations/${organization.id}/registrations`, withSession(manager.cookie))).status, 200);
+    assert.equal((await fetch(`${baseUrl}/api/organizations/${organization.id}/registrations`, withSession(member.cookie))).status, 403);
 
     const rows = (await (await fetch(`${baseUrl}/api/admin/organizations`, withSession(admin.cookie))).json()).rows;
     const row = rows.find((item) => item.id === organization.id);
-    assert.equal(row.memberCount, 2);
+    assert.equal(row.memberCount, 1);
     assert.equal(Object.hasOwn(row.documents[0], "filePath"), false);
     assert.equal(Object.hasOwn(row.documents[0], "storedName"), false);
   }, { prefix: "organization-status-" });
@@ -301,7 +301,26 @@ test("organization registrations reject pending, rejected, and disabled organiza
   }, { prefix: "organization-registration-gate-" });
 });
 
-test("concurrent organization registrations preserve every committed user, organization, membership, document, and file", async () => {
+test("organization registration rejects an account that already owns an organization", async () => {
+  const db = structuredClone(seedDb);
+  let saved = false;
+
+  await assert.rejects(() => registerOrganization({
+    input: {
+      name: "重复负责人", phone: "13600009970", password: "Strong123",
+      organizationName: "第二个组织", creditCode: "91330300TEST000070", documentType: "business_license"
+    },
+    file: uploadedFile(pdfBuffer, "license.pdf", "application/pdf"),
+    readDb: async () => structuredClone(db), writeDb: async () => {},
+    hashPassword: async (value) => value, validatePassword: () => "",
+    makeId: (() => { const values = ["U2001", "O2003"]; return () => values.shift(); })(),
+    now: () => "2026-07-30T00:00:00.000Z",
+    saveFile: async () => { saved = true; return {}; }
+  }), (error) => error.status === 409);
+  assert.equal(saved, false);
+});
+
+test("concurrent organization registrations preserve every committed user, organization, document, and file", async () => {
   await withTestServer(async ({ baseUrl, dbPath }) => {
     const [first, second] = await Promise.all([
       postOrganizationRegistration(baseUrl, { creditCode: "91330300TEST000030", phone: "13600009930", organizationName: "并发组织一" }),
@@ -314,7 +333,7 @@ test("concurrent organization registrations preserve every committed user, organ
     for (const payload of [firstPayload, secondPayload]) {
       assert.ok(db.users.some((row) => row.id === payload.user.id));
       assert.ok(db.organizations.some((row) => row.id === payload.organization.id));
-      assert.ok(db.memberships.some((row) => row.organizationId === payload.organization.id && row.userId === payload.user.id && row.role === "owner"));
+      assert.equal(db.memberships.some((row) => row.organizationId === payload.organization.id && row.userId === payload.user.id), false);
       const document = db.organizationDocuments.find((row) => row.id === payload.document.id);
       assert.ok(document);
       await fs.access(document.filePath);
@@ -410,7 +429,7 @@ test("organization resubmission maps a PostgreSQL credit-code conflict to 409 an
   const db = ensureDbShape({
     users: [],
     organizations: [{ id: "O2", ownerUserId: "U2", name: "Old", creditCode: "91330300TEST000042", reviewStatus: "rejected", createdAt: "2026-07-16T00:00:00.000Z" }],
-    memberships: [{ id: "M2", userId: "U2", organizationId: "O2", role: "owner", status: "active" }],
+    memberships: [],
     organizationDocuments: [],
     fileCleanupJournal: []
   });
