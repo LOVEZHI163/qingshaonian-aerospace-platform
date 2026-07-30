@@ -42,3 +42,9 @@ npm.cmd test -w apps/api -- --test-concurrency=1 --test-name-pattern="session id
 - 管理端列表、导出、编辑和成绩写入改为包含 `eventId` 的路由；旧不带赛事上下文的管理别名已移除。
 - 增加并发双提交、跨组织/置空编辑冲突、归档强制开启、资料聚合绕过和旧管理入口阻断测试。
 - 重复检查改为包含已取消报名，保持与精确身份唯一键一致。
+
+## Fix round 2（复审修复）
+
+- 管理员状态变更路由补齐 `requireWritableEvent`；归档赛事的编辑、成绩和状态三类显式赛事写入均被拒绝。
+- 重复检查改为精确匹配 `eventId + projectId + athleteKey`，同一学生不同赛项不再误报重复。
+- `registration-export.test.js` 与 `event-management.test.js` 已迁移到显式 `eventId` 的管理端列表、导出、创建和编辑路由。

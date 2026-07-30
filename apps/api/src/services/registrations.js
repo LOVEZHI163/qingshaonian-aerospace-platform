@@ -139,7 +139,9 @@ export function registrationDuplicateCheck(db, input, clock = () => new Date()) 
   const projectId = requireText(input?.projectId, "赛项");
   const { event } = registrationContext(db, { ...input, projectId, group }, clock);
   const key = athleteKey(athlete);
-  const matches = db.registrations.filter((row) => row.eventId === event.id && row.athleteKey === key);
+  const matches = db.registrations.filter((row) => (
+    row.eventId === event.id && row.projectId === projectId && row.athleteKey === key
+  ));
   return {
     duplicate: matches.length > 0,
     duplicateCount: matches.length,

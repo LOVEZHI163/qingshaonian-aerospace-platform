@@ -133,6 +133,7 @@ export function createRegistrationsRouter({ store, requireUser, requireAdmin, re
 
   router.patch("/admin/events/:eventId/registrations/:registrationId/status", ...admin, asyncRoute(async (req, res) => {
     const db = await store.readDb();
+    requireWritableEvent(db, req.params.eventId, clock);
     const row = db.registrations.find((item) => item.id === req.params.registrationId && item.eventId === req.params.eventId);
     if (!row) return res.status(404).json({ error: "Registration not found" });
     updateRegistrationStatus(db, row, req.body, req.user);

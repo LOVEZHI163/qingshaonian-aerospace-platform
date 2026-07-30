@@ -162,7 +162,7 @@ test("event management creates, validates, copies, publishes, and archives event
     assert.equal(copy.projects.every((row) => !sourceProjects.some((sourceRow) => sourceRow.id === row.id)), true);
     assert.equal(copy.projects.every((row) => row.allowedGroups.length === 4), true);
     assert.equal(copy.registrationCount, 0);
-    const registrations = await json(await fetch(`${baseUrl}/api/registrations`, withSession(admin.cookie)));
+    const registrations = await json(await fetch(`${baseUrl}/api/admin/events/${current.id}/registrations`, withSession(admin.cookie)));
     assert.equal(registrations.rows.some((row) => row.eventId === copy.event.id), false);
 
     const setCurrent = await fetch(`${baseUrl}/api/admin/events/${copy.event.id}/current`, jsonOptions("POST", {}, admin.cookie));
@@ -280,13 +280,14 @@ test("public event and registration APIs use the current database event in real 
     assert.deepEqual(publicClosed.groups, ["小学低段", "小学高段", "中学组", "职高/高中组"]);
     assert.deepEqual(publicClosed.grades, publicClosed.groups);
 
-    const closedRegistration = await fetch(`${baseUrl}/api/registrations`, jsonOptions("POST", {
+    const closedRegistration = await fetch(`${baseUrl}/api/me/events/${current.id}/registrations`, jsonOptions("POST", {
       athlete: { name: "窗口关闭学生", school: "测试学校", grade: "二年级", phone: "13600003001" },
       group: "小学低段",
       projectId: "rocket-duration"
     }, ordinary.cookie));
     assert.equal(closedRegistration.status, 409);
     const closedCheck = await fetch(`${baseUrl}/api/registrations/check`, jsonOptions("POST", {
+      eventId: current.id,
       athlete: { name: "窗口关闭学生", school: "测试学校", grade: "二年级", phone: "13600003001" },
       group: "小学低段",
       projectId: "rocket-duration"
@@ -307,7 +308,7 @@ test("public event and registration APIs use the current database event in real 
       instructorRequired: false, displayOrder: 0, allowedGroups: ["小学低段"]
     }, admin.cookie));
     const crossProject = (await json(crossProjectResponse)).row;
-    assert.equal((await fetch(`${baseUrl}/api/registrations`, jsonOptions("POST", {
+    assert.equal((await fetch(`${baseUrl}/api/me/events/${current.id}/registrations`, jsonOptions("POST", {
       athlete: { name: "跨届学生", school: "测试学校", grade: "二年级", phone: "13600003002" },
       group: "小学低段", projectId: crossProject.id
     }, ordinary.cookie))).status, 422);
@@ -315,7 +316,7 @@ test("public event and registration APIs use the current database event in real 
     await fetch(`${baseUrl}/api/admin/projects/rocket-duration`, jsonOptions("PATCH", {
       allowedGroups: ["小学低段"]
     }, admin.cookie));
-    assert.equal((await fetch(`${baseUrl}/api/registrations`, jsonOptions("POST", {
+    assert.equal((await fetch(`${baseUrl}/api/me/events/${current.id}/registrations`, jsonOptions("POST", {
       athlete: { name: "不允许组别学生", school: "测试学校", grade: "初二", phone: "13600003003" },
       group: "中学组", projectId: "rocket-duration"
     }, ordinary.cookie))).status, 422);
@@ -323,13 +324,13 @@ test("public event and registration APIs use the current database event in real 
     await fetch(`${baseUrl}/api/admin/projects/rocket-duration`, jsonOptions("PATCH", { enabled: false }, admin.cookie));
     const publicWithoutDisabled = await json(await fetch(`${baseUrl}/api/public/event`));
     assert.equal(publicWithoutDisabled.projects.some((project) => project.id === "rocket-duration"), false);
-    assert.equal((await fetch(`${baseUrl}/api/registrations`, jsonOptions("POST", {
+    assert.equal((await fetch(`${baseUrl}/api/me/events/${current.id}/registrations`, jsonOptions("POST", {
       athlete: { name: "停用项目学生", school: "测试学校", grade: "二年级", phone: "13600003004" },
       group: "小学低段", projectId: "rocket-duration"
     }, ordinary.cookie))).status, 422);
     await fetch(`${baseUrl}/api/admin/projects/rocket-duration`, jsonOptions("PATCH", { enabled: true }, admin.cookie));
 
-    const mismatchedEvent = await fetch(`${baseUrl}/api/registrations`, jsonOptions("POST", {
+    const mismatchedEvent = await fetch(`${baseUrl}/api/me/events/${current.id}/registrations`, jsonOptions("POST", {
       eventId: draftEvent.id,
       projectName: "伪造项目名",
       projectType: "team",
@@ -337,9 +338,9 @@ test("public event and registration APIs use the current database event in real 
       group: "小学低段",
       projectId: "rocket-duration"
     }, ordinary.cookie));
-    assert.equal(mismatchedEvent.status, 409);
+    assert.equal(mismatchedEvent.status, 422);
 
-    const valid = await fetch(`${baseUrl}/api/registrations`, jsonOptions("POST", {
+    const valid = await fetch(`${baseUrl}/api/me/events/${current.id}/registrations`, jsonOptions("POST", {
       eventId: current.id,
       projectName: "伪造项目名",
       projectType: "team",
@@ -353,7 +354,7 @@ test("public event and registration APIs use the current database event in real 
     assert.equal(validRow.projectName, "带降航天火箭留空比赛");
     assert.equal(validRow.projectType, "individual");
 
-    const unknownAdminProject = await fetch(`${baseUrl}/api/admin/registrations/${validRow.id}`, jsonOptions("PATCH", {
+    const unknownAdminProject = await fetch(`${baseUrl}/api/admin/events/${current.id}/registrations/${validRow.id}`, jsonOptions("PATCH", {
       projectId: "missing-project"
     }, admin.cookie));
     assert.equal(unknownAdminProject.status, 422);
@@ -365,7 +366,7 @@ test("public event and registration APIs use the current database event in real 
   });
 });
 
-test("archived registrations remain editable but cannot be moved across events", async () => {
+test("archived registrations reject administrator edits even with an explicit event id", async () => {
   await withServer(async (baseUrl) => {
     const admin = await loginAs(baseUrl, "13900000000", "admin123");
     const nextResponse = await fetch(`${baseUrl}/api/admin/events`, jsonOptions("POST", eventInput, admin.cookie));
@@ -384,19 +385,11 @@ test("archived registrations remain editable but cannot be moved across events",
     assert.equal((await fetch(`${baseUrl}/api/admin/events/${nextEvent.id}/current`, jsonOptions("POST", {}, admin.cookie))).status, 200);
     assert.equal((await fetch(`${baseUrl}/api/admin/events/wz-aerospace-2026/archive`, jsonOptions("POST", {}, admin.cookie))).status, 200);
 
-    const editArchived = await fetch(`${baseUrl}/api/admin/registrations/R20260627001`, jsonOptions("PATCH", {
+    const editArchived = await fetch(`${baseUrl}/api/admin/events/wz-aerospace-2026/registrations/R20260627001`, jsonOptions("PATCH", {
       projectId: "rocket-duration",
       group: "小学高段",
       instructor: "新指导老师"
     }, admin.cookie));
-    assert.equal(editArchived.status, 200);
-    assert.equal((await json(editArchived)).row.projectId, "rocket-duration");
-
-    const crossEvent = await fetch(`${baseUrl}/api/admin/registrations/R20260627001`, jsonOptions("PATCH", {
-      projectId: nextProject.id,
-      group: "小学高段"
-    }, admin.cookie));
-    assert.equal(crossEvent.status, 422);
-    assert.match((await json(crossEvent)).error, /其他赛事/);
+    assert.equal(editArchived.status, 409);
   });
 });

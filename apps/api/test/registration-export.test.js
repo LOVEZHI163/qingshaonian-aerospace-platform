@@ -23,7 +23,7 @@ async function loadWorkbook(response) {
 test("registration workbook exports filtered rows with the required headers and instructor", async () => {
   await withServer(async (baseUrl) => {
     const admin = await loginAs(baseUrl, "13900000000", "admin123");
-    const response = await fetch(`${baseUrl}/api/admin/registrations/export.xlsx?eventId=wz-aerospace-2026&group=%E4%B8%AD%E5%AD%A6%E7%BB%84&scope=filtered`, withSession(admin.cookie));
+    const response = await fetch(`${baseUrl}/api/admin/events/wz-aerospace-2026/registrations/export.xlsx?group=%E4%B8%AD%E5%AD%A6%E7%BB%84&scope=filtered`, withSession(admin.cookie));
     const workbook = await loadWorkbook(response);
     const sheet = workbook.getWorksheet("报名名单");
     assert.ok(sheet);
@@ -56,8 +56,8 @@ test("all exports require an existing event identifier", async () => {
   await withServer(async (baseUrl) => {
     const admin = await loginAs(baseUrl, "13900000000", "admin123");
     const missing = await fetch(`${baseUrl}/api/admin/registrations/export.xlsx?scope=all`, withSession(admin.cookie));
-    const unknown = await fetch(`${baseUrl}/api/admin/registrations/export.xlsx?scope=all&eventId=missing`, withSession(admin.cookie));
-    assert.equal(missing.status, 422);
+    const unknown = await fetch(`${baseUrl}/api/admin/events/missing/registrations/export.xlsx?scope=all`, withSession(admin.cookie));
+    assert.equal(missing.status, 404);
     assert.equal(unknown.status, 404);
   });
 });
