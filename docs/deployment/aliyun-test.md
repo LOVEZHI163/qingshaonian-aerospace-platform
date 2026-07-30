@@ -463,3 +463,11 @@ docker compose up -d --build
 - fixture 的产品删除接口返回 500，未将其记为删除成功。为完整回滚该直接创建的 fixture，按唯一赛事 ID 使用子表到赛事的数据库事务删除关联证书、报名、赛项、公开资料和赛事；提交后 fixture 事件/报名/证书均为 0，受限证书目录文件数为 0。该数据库操作没有删除或修改原有赛事/内容。
 - 先前“共 32 项”的自动化汇总已更正，不再作为下载验收依据；独立复跑的相关自动化为 `App.test.js` 22 项和访问控制 API 1 项，真实下载结论以上述 Chrome 证据为准。
 - 此轮后再次执行清理预览与精确确认串，随后从 `/root/aerogp-admin-credentials.txt` 的受限文件经 stdin 恢复唯一管理员。最终认证 smoke 全通过；终态计数为 `1|0|0|0|0|0|0|0|0|4|12|3`，四个 Compose 服务均为 `healthy`。凭据内容未回显、未写入日志或文档，仅经 stdin 传递。
+
+#### 归档赛事公开资料删除修复部署（2026-07-30）
+
+- 修复源版本：`83740470cafad0b2c5e7b1f3dc6ba2043f97020e`。彻底删除带公开赛事资料的归档赛事时，第一次持久化可由外键级联删除资料，但物理文件清理后的第二次持久化会写回内存中残留的资料，导致 PostgreSQL 外键失败和 HTTP 500。修复在删除赛事前同步删除内存 `eventPublicProfiles` 行。
+- TDD 证据：先在 `resource-cleanup.test.js` 给非当前归档赛事加入公开资料并断言 DELETE 后资料不存在；修复前该断言实际失败。最小修复后资源清理聚焦测试 5/5 通过，API 全量 316/316 通过。
+- 部署前完成且验证数据库备份 `backups/aerogp-20260730T063435Z.dump`（`pg_restore --list` 成功）、上传卷备份 `backups/uploads/aerogp-uploads-20260730T063435Z.tar.gz`（`tar -tzf` 成功）、旧源码 `backups/source-before-delete-profile-fix-20260730T063435Z.tgz` 与同时间戳 API/Web 回滚标签。预检通过后仅重建 API；服务器 `.release` 为上述完整 SHA。
+- 线上产品回归：以唯一 ID 建立非当前归档临时赛事，附加公开资料、赛项、报名和实际 PNG 文件。产品 DELETE 返回 HTTP 200，响应为删除 1 个文件且无失败；数据库复核赛事、公开资料、赛项、报名、证书均为 0，PNG 文件不存在。随后按预览/确认清理测试业务数据并经 stdin 恢复唯一管理员。
+- 最终认证 smoke 全通过；终态计数 `1|0|0|0|0|0|0|0|0|4|12|3`，API、PostgreSQL、Web、Backup 均为 `healthy`。没有使用 `docker compose down -v`，凭据未回显、未写入日志或文档，仅经 stdin 传递。
