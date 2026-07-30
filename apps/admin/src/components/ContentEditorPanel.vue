@@ -116,7 +116,8 @@ function focusSlug() {
   void nextTick(() => slugInput.value?.focus());
 }
 
-function focusBodyMedia() {
+function focusBodyMedia({ returnToEditor = false } = {}) {
+  if (returnToEditor) reviewing.value = false;
   void nextTick(() => bodyMediaSection.value?.focus());
 }
 
@@ -334,7 +335,7 @@ async function preview() {
     previewOpen.value = true;
   } catch (failure) {
     error.value = failure?.message || "预览加载失败";
-    if (failure?.code === "CONTENT_BODY_MEDIA_INVALID") focusBodyMedia();
+    if (failure?.code === "CONTENT_BODY_MEDIA_INVALID") focusBodyMedia({ returnToEditor: reviewing.value });
   }
   finally { busy.value = false; }
 }

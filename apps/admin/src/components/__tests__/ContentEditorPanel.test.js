@@ -305,6 +305,31 @@ describe("ContentEditorPanel", () => {
     wrapper.unmount();
   });
 
+  it("returns from publication review and focuses body media when review preview rejects an image", async () => {
+    const wrapper = mount(ContentEditorPanel, {
+      attachTo: document.body,
+      props: { contentId: "POST-1", events, profiles }
+    });
+    await flushPromises();
+    await wrapper.get('[data-action="save-and-review-content"]').trigger("click");
+    expect(wrapper.get('[data-content-publication-review]').exists()).toBe(true);
+    apiMock.mockRejectedValueOnce(Object.assign(new Error("正文图片无效"), {
+      status: 422,
+      code: "CONTENT_BODY_MEDIA_INVALID"
+    }));
+
+    await wrapper.get('[data-action="review-preview"]').trigger("click");
+    await flushPromises();
+
+    expect(wrapper.find('[data-content-publication-review]').exists()).toBe(false);
+    expect(document.activeElement).toBe(wrapper.get('[data-content-section="body-media"]').element);
+    expect(wrapper.vm.getPreviewDraft().body).toMatchObject({
+      title: row.title,
+      bodyHtml: "<p>正文</p>"
+    });
+    wrapper.unmount();
+  });
+
   it("shows rich editor notices as non-blocking status feedback", async () => {
     const wrapper = await mountEditor();
 

@@ -642,6 +642,14 @@ textarea {
 
 @media (max-width: 1100px) {
   .content-management-layout { grid-template-columns: 1fr; }
+  .content-editor-sticky-actions {
+    justify-content: flex-start;
+    overflow-x: auto;
+    gap: 8px;
+    padding: 8px;
+    overscroll-behavior-inline: contain;
+  }
+  .content-editor-sticky-actions button { flex: 0 0 auto; }
 }
 
 @media (max-width: 760px) {

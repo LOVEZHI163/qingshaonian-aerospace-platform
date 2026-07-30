@@ -88,6 +88,8 @@ describe("SiteContentPage", () => {
     expect(css).toMatch(/\.content-editor-sticky-actions\s*\{[^}]*min-height:\s*64px;/s);
     expect(css).toMatch(/\.content-editor-sticky-actions button:focus-visible\s*\{[^}]*outline:\s*3px solid #0b63ce;/s);
     expect(css).toMatch(/\.content-management-layout\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\);/s);
+    expect(css).toMatch(/@media \(max-width:\s*1100px\)[\s\S]*\.content-editor-sticky-actions\s*\{[^}]*overflow-x:\s*auto;[^}]*gap:\s*8px;[^}]*padding:\s*8px;/);
+    expect(css).toMatch(/@media \(max-width:\s*1100px\)[\s\S]*\.content-editor-sticky-actions button\s*\{[^}]*flex:\s*0 0 auto;/);
     expect(css).toMatch(/@media \(max-width:\s*760px\)[\s\S]*\.content-editor-section \.site-form-grid\s*\{[^}]*grid-template-columns:\s*1fr;/);
     expect(css).toMatch(/@media \(max-width:\s*760px\)[\s\S]*\.content-editor-sticky-actions\s*\{[^}]*overflow-x:\s*auto;/);
   });
