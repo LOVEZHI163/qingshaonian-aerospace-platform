@@ -53,3 +53,9 @@ npm.cmd test -w apps/api -- --test-concurrency=1 test/audit-dashboard.test.js
 - preview、commit 与取消调用 `requireWritableEvent`，归档赛事（包括 `force_open`）拒绝写入；commit 继续由服务层复核报名赛事与批次赛事一致。
 - 新增跨赛事、归档和旧入口门禁覆盖；最终证书/API 聚焦回归为 79/79 通过。
 - Tasks 8–10 必须把 `CertificateImportPanel.vue` 从旧的 `/api/admin/certificate-imports...` 调用迁移至上述显式赛事路径；本任务按边界未修改 Vue。
+
+## 审查修复 round 2
+
+- 追加提交：`3d8b0a2b2a04bf6db29dea21ba086ceea82f0aa9`（`test: cover archived certificate event writes`）。
+- 测试先将赛事设为 `registrationMode: "force_open"`，再归档；已断言 `EVENT_ARCHIVED` 拒绝导入 preview、commit、cancel，以及手工证书上传、PATCH、DELETE、bulk-status。
+- 最小相关回归：`certificate-import-event-context`、`certificate-imports`、`certificate-management` 共 47/47 通过。
