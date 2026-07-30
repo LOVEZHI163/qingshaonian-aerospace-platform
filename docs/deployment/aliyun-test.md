@@ -442,3 +442,14 @@ docker compose up -d --build
 ## 域名上线前
 
 正式使用 `aerogp.cn` 前需要：完成 ICP 备案、添加 DNS 解析、配置 HTTPS、更换应用测试账号及明文业务密码，并进行正式安全审查。
+
+### 多赛事账户与组织体系完整部署（2026-07-30）
+
+- 发布源版本：`b7520aab197b94dfa0d4ba043437311956ff1975`（`chore: verify multi-event account deployment`）。部署包由该提交的 Git archive 生成；Windows 对历史中不兼容的文件名无法直接归档，改由 WSL 对同一提交生成归档并在服务器解包，服务器 `/opt/aerogp/.release` 已复核为上述完整 SHA。
+- 部署前完成并验证数据库备份 `/backups/aerogp-20260730T054309Z.dump`、上传卷备份 `/backups/uploads/aerogp-uploads-20260730T054316Z-eeAEFH.tar.gz`，并保存旧源码归档 `backups/source-before-multi-event-20260730T054329Z.tgz`。升级前与候选源码预检均输出 `Upgrade preflight passed.`。
+- 保留可回滚镜像 `aerogp-api:rollback-20260730T054329Z`、`aerogp-web:rollback-20260730T054329Z`，以及受限权限的 `backups/multi-event-rollback-stamp`。全程未使用 `docker compose down -v`；如需回滚，先保留故障证据，再恢复旧源码或切换上述 API/Web 镜像并执行 `docker compose up -d --wait`，默认保留 PostgreSQL 与上传卷。
+- 经用户确认线上仅有测试数据后，先运行清理预览，再以精确确认串执行清理：保留赛事 4、赛项 12、项目组 48、站点设置 1、公开赛事资料 2、内容 3、媒体 12；删除测试业务数据（注册、组织、成员、证书、导入批次、结果、审计及会话等）和 1 个对应上传文件。执行后没有上传文件删除失败。
+- 通过 stdin 创建一个新的有效赛事管理员。凭据仅写入服务器 `/root/aerogp-admin-credentials.txt`，文件为 3 行且权限 `0600`；密码不在命令参数、文档、Git 或部署输出中。终态业务计数：用户 1、组织 0、成员 0、赛事参与 0、报名 0、成绩 0、证书 0、导入批次 0、审计日志 0；保留赛事 4、赛项 12、内容 3。
+- `docker compose build --pull` 与 `docker compose up -d --wait --wait-timeout 240` 成功；API、PostgreSQL、Web、Backup 均为 `healthy`，仅 Web 公开 `80`，API `4300` 和 PostgreSQL `5432` 未公开。构建中的依赖审计提示未阻断构建；清理脚本仅有既有 `pg` 弃用警告，未影响结果。
+- 最终远程 smoke 全部通过：健康检查、官网首页、公开赛事/内容详情、sitemap、品牌资源、管理员登录、管理员赛事列表、账户赛事列表、按赛事的管理员报名接口和已认证设置/内容接口均为 `200`；遗留 `/api/admin/registrations` 为预期 `404`，未认证设置接口为预期 `401`。
+- 真实 Chrome 验收：桌面 1920px 官网 `scrollWidth=1905`、控制台 error 为 0；360px 官网 `scrollWidth=345`、无横向溢出、error 为 0。移动导航可打开，唯一“用户登录”入口可进入 `/admin/`；后台登录页在 360px 下 `scrollWidth=360`、无横向溢出、error 为 0。验收结束后已恢复视口并关闭验收标签页。
