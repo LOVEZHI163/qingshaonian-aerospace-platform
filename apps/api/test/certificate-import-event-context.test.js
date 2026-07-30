@@ -66,6 +66,10 @@ test("certificate import writes require their URL event and reject archived or c
       assert.equal(response.status, 404, `${method} ${path}`);
     }
 
+    const forceOpen = await fetch(`${baseUrl}/api/admin/events/wz-aerospace-2026`, jsonOptions("PATCH", {
+      registrationMode: "force_open"
+    }, admin.cookie));
+    assert.equal(forceOpen.status, 200);
     const archive = await fetch(`${baseUrl}/api/admin/events/wz-aerospace-2026/archive`, jsonOptions("POST", {}, admin.cookie));
     assert.equal(archive.status, 200);
 
@@ -74,16 +78,25 @@ test("certificate import writes require their URL event and reject archived or c
       withSession(admin.cookie, { method: "POST" })
     );
     assert.equal(archivedPreview.status, 409);
+    assert.equal((await archivedPreview.json()).code, "EVENT_ARCHIVED");
     const archivedCommit = await fetch(
       `${baseUrl}/api/admin/events/wz-aerospace-2026/certificate-imports/B-E1/commit`,
       withSession(admin.cookie, { method: "POST" })
     );
     assert.equal(archivedCommit.status, 409);
+    assert.equal((await archivedCommit.json()).code, "EVENT_ARCHIVED");
+    const archivedCancel = await fetch(
+      `${baseUrl}/api/admin/events/wz-aerospace-2026/certificate-imports/B-E1`,
+      withSession(admin.cookie, { method: "DELETE" })
+    );
+    assert.equal(archivedCancel.status, 409);
+    assert.equal((await archivedCancel.json()).code, "EVENT_ARCHIVED");
     const archivedUpload = await fetch(
       `${baseUrl}/api/admin/events/wz-aerospace-2026/registrations/R20260627002/certificates/1`,
       withSession(admin.cookie, { method: "POST" })
     );
     assert.equal(archivedUpload.status, 409);
+    assert.equal((await archivedUpload.json()).code, "EVENT_ARCHIVED");
     for (const [method, path, body] of [
       ["PATCH", "/api/admin/events/wz-aerospace-2026/certificates/C-E1", { title: "archived" }],
       ["DELETE", "/api/admin/events/wz-aerospace-2026/certificates/C-E1"],
@@ -94,6 +107,7 @@ test("certificate import writes require their URL event and reject archived or c
         : withSession(admin.cookie, { method });
       const response = await fetch(`${baseUrl}${path}`, options);
       assert.equal(response.status, 409, `${method} ${path}`);
+      assert.equal((await response.json()).code, "EVENT_ARCHIVED", `${method} ${path}`);
     }
   }, { prefix: "certificate-import-event-context-" });
 });
