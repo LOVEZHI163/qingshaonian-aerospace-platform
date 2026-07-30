@@ -121,6 +121,12 @@ function syncProjectGroups(db, project) {
   db.projectGroups.push(...project.allowedGroups.map((groupName) => ({ projectId: project.id, groupName })));
 }
 
+function assertEventWritable(event) {
+  if (event.status === "archived" || event.archivedAt) {
+    throw businessError(409, "归档赛事不可修改");
+  }
+}
+
 export function createEvent(db, input, { makeId, clock }) {
   assertNoEventSystemFields(input);
   const fields = normalizeEventFields(input);
@@ -141,6 +147,7 @@ export function createEvent(db, input, { makeId, clock }) {
 export function updateEvent(db, eventId, input, { clock }) {
   const event = db.events.find((row) => row.id === eventId);
   if (!event) throw businessError(404, "赛事不存在");
+  assertEventWritable(event);
   const fields = normalizeEventFields(input, event);
   Object.assign(event, fields, { updatedAt: clock().toISOString() });
   return event;
@@ -219,6 +226,7 @@ export function updateProject(db, projectId, input) {
   }
   const project = db.projects.find((row) => row.id === projectId);
   if (!project) throw businessError(404, "赛项不存在");
+  assertEventWritable(db.events.find((row) => row.id === project.eventId));
   const fields = normalizeProjectFields(input, project);
   Object.assign(project, fields);
   syncProjectGroups(db, project);
@@ -228,6 +236,7 @@ export function updateProject(db, projectId, input) {
 export function deleteProject(db, projectId) {
   const index = db.projects.findIndex((row) => row.id === projectId);
   if (index < 0) throw businessError(404, "赛项不存在");
+  assertEventWritable(db.events.find((row) => row.id === db.projects[index].eventId));
   if (db.registrations.some((row) => row.projectId === projectId)) {
     throw businessError(409, "已有历史报名的赛项不能删除，请改为停用");
   }

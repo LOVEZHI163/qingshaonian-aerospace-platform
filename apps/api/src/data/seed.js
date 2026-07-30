@@ -114,7 +114,7 @@ export const seedDb = {
     {
       id: "R20260627002",
       source: "组织用户",
-      createdByUserId: "U2001",
+      createdByUserId: "U2002",
       personalUserId: null,
       organizationId: "O1002",
       createdVia: "organization",

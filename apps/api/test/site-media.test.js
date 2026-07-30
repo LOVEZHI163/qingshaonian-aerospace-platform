@@ -271,7 +271,38 @@ test("media listing requires a ready administrator and validates limit", async (
   }, { prefix: "site-media-list-auth-" });
 });
 
-test("site media attachments keep only the original and dangerous API uploads return 422", async () => {
+test("temporary-password administrators receive 428 from site media uploads", async () => {
+  await withTestServer(async ({ baseUrl }) => {
+    const admin = await loginAs(baseUrl, "13900000000", "admin123");
+    const reset = await fetch(`${baseUrl}/api/admin/users/U9001/reset-password`, withSession(admin.cookie, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password: "Temporary9" })
+    }));
+    assert.equal(reset.status, 200);
+    const temporaryAdmin = await loginAs(baseUrl, "13900000000", "Temporary9");
+
+    const response = await fetch(`${baseUrl}/api/admin/site-media`, withSession(temporaryAdmin.cookie, {
+      method: "POST",
+      body: mediaForm(PNG, { purpose: "content-body" })
+    }));
+    assert.equal(response.status, 428);
+    assert.equal((await response.json()).code, "PASSWORD_CHANGE_REQUIRED");
+  }, { prefix: "site-media-password-ready-" });
+});
+
+test("site media rejects unknown purposes", async () => {
+  await withTestServer(async ({ baseUrl }) => {
+    const admin = await loginAs(baseUrl, "13900000000", "admin123");
+    const response = await fetch(`${baseUrl}/api/admin/site-media`, withSession(admin.cookie, {
+      method: "POST",
+      body: mediaForm(PNG, { purpose: "unregistered-purpose" })
+    }));
+    assert.equal(response.status, 422);
+  }, { prefix: "site-media-purpose-" });
+});
+
+test("content attachments accept PDF files and keep only the original", async () => {
   await withTestServer(async ({ baseUrl, dbPath }) => {
     const admin = await loginAs(baseUrl, "13900000000", "admin123");
     for (const form of [
@@ -289,7 +320,7 @@ test("site media attachments keep only the original and dangerous API uploads re
 
     const upload = await fetch(`${baseUrl}/api/admin/site-media`, withSession(admin.cookie, {
       method: "POST",
-      body: mediaForm(PDF, { name: "guide.pdf", type: "application/pdf", purpose: "attachment" })
+      body: mediaForm(PDF, { name: "guide.pdf", type: "application/pdf", purpose: "content-attachment" })
     }));
     const payload = await upload.json();
     assert.equal(upload.status, 201, payload.error);

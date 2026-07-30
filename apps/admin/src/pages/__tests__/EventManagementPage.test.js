@@ -260,4 +260,33 @@ describe("EventManagementPage", () => {
     expect(wrapper.get('[data-action="open-cleanup"]').exists()).toBe(true);
     expect(wrapper.get('[data-action="open-delete"]').exists()).toBe(true);
   });
+
+  it("keeps archived event details and projects read-only", async () => {
+    const archived = { ...event, id: "E-OLD", name: "2025赛事", status: "archived", isCurrent: false, archivedAt: "2025-12-31T00:00:00.000Z" };
+    const archivedProject = { ...project, id: "P-OLD", eventId: archived.id };
+    const archivedProjectWithoutHistory = { ...project, id: "P-EMPTY", eventId: archived.id, name: "无报名赛项" };
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/admin/events") return { rows: [archived], projects: [archivedProject, archivedProjectWithoutHistory] };
+      if (path === "/api/admin/events/E-OLD/registrations?pageSize=100") {
+        return { rows: [{ id: "R-OLD", projectId: archivedProject.id }], total: 1, page: 1, pageSize: 100 };
+      }
+      if (path === "/api/admin/events/E-OLD/storage") return { certificateFiles: 0, importFiles: 0, totalBytes: 0 };
+      return { row: archived };
+    });
+    const wrapper = mount(EventManagementPage);
+    await flushPromises();
+
+    expect(wrapper.get('[data-readonly-event]').text()).toContain("已归档，只可查看");
+    expect(wrapper.get("form.event-form").findAll("input").every((input) => input.attributes("disabled") !== undefined)).toBe(true);
+    expect(wrapper.get("form.event-form").get("button.primary").attributes("disabled")).not.toBeUndefined();
+    expect(wrapper.findAll("[data-mode]").every((button) => button.attributes("disabled") !== undefined)).toBe(true);
+
+    await wrapper.get('[data-section="projects"]').trigger("click");
+    expect(wrapper.get('[data-readonly-projects]').text()).toContain("已归档，只可查看");
+    expect(wrapper.get('[data-action="edit-project"]').attributes("disabled")).not.toBeUndefined();
+    expect(wrapper.get('[data-action="disable-project"]').attributes("disabled")).not.toBeUndefined();
+    expect(wrapper.get('[data-action="delete-project"]').attributes("disabled")).not.toBeUndefined();
+    expect(wrapper.get("form.project-form").findAll("input").every((input) => input.attributes("disabled") !== undefined)).toBe(true);
+    expect(wrapper.get("form.project-form").get("button.primary").attributes("disabled")).not.toBeUndefined();
+  });
 });

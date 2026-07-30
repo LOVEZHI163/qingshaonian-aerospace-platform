@@ -232,10 +232,17 @@ CONFIRM_RESTORE=yes docker compose run --rm \
   backup /bin/sh /scripts/restore-postgres.sh /backups/备份文件.dump
 ```
 
-应用回滚只切换到已经验证过的 Git commit，再执行：
+应用回滚只切换到已经验证过的 Git commit。先把上一版本完整 SHA 保存到 `PREVIOUS_RELEASE`，再执行健康等待和 smoke；只有所有检查成功后才更新 `.release`：
 
 ```bash
-docker compose up -d --build
+PREVIOUS_RELEASE='<上一版本完整 SHA>'
+docker compose up -d --build --wait --wait-timeout 240
+curl -fsS http://127.0.0.1/healthz
+curl -fsS http://127.0.0.1/api/public/home >/dev/null
+curl -fsS http://127.0.0.1/admin/ >/dev/null
+BASE_URL=http://127.0.0.1 /bin/sh deploy/remote-smoke-test.sh
+printf '%s\n' "$PREVIOUS_RELEASE" > .release.next
+mv .release.next .release
 ```
 
 不要删除 `aerogp_postgres_data` 或 `aerogp_uploads_data` volume。若数据库结构已经变化，必须先验证旧版应用是否兼容当前数据库。
@@ -479,11 +486,19 @@ docker compose up -d --build
 - 统一备份时间戳：`20260730T171651Z`。数据库 `backups/aerogp-20260730T171651Z.dump`（58,241 字节）通过 `pg_restore --list`；上传卷 `backups/uploads/aerogp-uploads-20260730T171651Z.tar.gz`（16,719,656 字节）通过安全归档校验；旧源码 `backups/source-before-content-editor-20260730T171651Z.tgz`（3,801,708 字节）通过 `tar -tzf`。
 - 旧 API/Web 镜像分别保留为 `aerogp-api:rollback-20260730T171651Z`、`aerogp-web:rollback-20260730T171651Z`；`backups/content-editor-rollback-20260730T171651Z.txt` 记录前一 release、备份名与回滚标签，权限为 `0600`。部署过程中未删除 PostgreSQL 或 uploads 命名卷，也未执行 `docker compose down -v`。
 - API/Web 在同一窗口完成构建与重建；Backup 随后重建以挂载新部署树。最终 PostgreSQL、API、Web、Backup 均为 `running healthy`，API 4300 与 PostgreSQL 5432 未发布，只有 Web 映射宿主机 80。`/opt/aerogp/.release` 为上述完整 SHA。
-- Codex 内置浏览器真实验收通过：工具栏的段落、H2、H3、粗体、斜体、无序/有序列表、引用、链接、撤销、重做、清除格式和图片均可用；临时新闻 `media-editor-qa-20260730` 完成两张图片的 UI 上传、插入、媒体库选择、替换、移除、保存和 reload 持久化。
+- Codex 内置浏览器真实验收通过：工具栏的段落、H2、H3、粗体、斜体、无序/有序列表、引用、链接、撤销、重做、清除格式和图片均可用；临时新闻 `media-editor-qa-20260730` 完成两张图片的 UI 上传、插入、媒体库选择、替换、移除、保存和 reload 持久化。首次链路使用的两个文件名虽以 `.png` 结尾，真实字节均为 JPEG；该轮不能作为“真实 PNG 字节”证据，真实 PNG 复验由后续发布验收补记。
 - 904px 与 360px 编辑器均无整页横向溢出；904px sticky 操作栏在滚动到底后与最后图片相隔 279px，360px 操作栏切为 static 且自身可横向滚动，正文与操作栏均可达、互不遮挡。
 - 临时新闻经 UI 发布检查后发布成功。公开页桌面 1280px 和移动 360px 均无横向溢出、控制台 warn/error 均为 0；正文图片完整加载并在移动端收缩至约 321px。公开媒体 `M1785434383490866` 返回 HTTP 200、`image/jpeg` 和安全/缓存响应头；虽然测试文件扩展名为 `.png`，服务端按真实内容探测为 JPEG。
 - 正文引用媒体 `M1785434383490866` 时，删除 API 返回预期 409。验收结束后经 UI 下线并删除临时文章，再删除两张已无引用媒体，均返回 204。最终计数恢复为用户 2、赛事 6、内容 3、媒体 12、cleanup journal 0、active 管理员 1，没有遗留临时业务数据或媒体文件。
-- 最终 HTTP：`/`、`/admin/`、`/api/public/home`、`/healthz` 均为 200；管理员登录和 `/api/auth/me` 均为 200。内容详情 reload、媒体库和编辑器受保护图片分别覆盖了已认证内容详情、媒体列表和受保护预览路径；匿名管理员接口仍返回预期 401。
+- 最终 HTTP：`/`、`/admin/`、`/api/public/home`、`/healthz` 均为 200；管理员登录和 `/api/auth/me` 均为 200。受保护媒体预览的精确路由是 `GET /api/admin/site-media/:id/preview?variant=original|mobile|desktop`。本地集成测试 `private preview media requires an administrator session` 使用同一媒体验证管理员会话 200、匿名 401，并验证私有缓存响应头；浏览器验收确认编辑器中的认证预览可加载，但本轮没有把线上同一媒体的独立匿名/认证 HTTP 状态作为已执行证据。线上复核命令见下文。
+
+受保护预览线上复核命令（本轮未单独执行；`COOKIE_JAR` 应由静默登录流程生成，不得把密码写入命令历史）：
+
+```bash
+MEDIA_ID='<待复核媒体 ID>'
+test "$(curl -sS -o /dev/null -w '%{http_code}' "http://127.0.0.1/api/admin/site-media/${MEDIA_ID}/preview")" = 401
+test "$(curl -sS -b "$COOKIE_JAR" -o /dev/null -w '%{http_code}' "http://127.0.0.1/api/admin/site-media/${MEDIA_ID}/preview")" = 200
+```
 
 代码优先回滚（默认保留当前数据库和 uploads 卷）：
 
@@ -491,9 +506,17 @@ docker compose up -d --build
 cd /opt/aerogp
 docker image tag aerogp-api:rollback-20260730T171651Z aerogp-api:latest
 docker image tag aerogp-web:rollback-20260730T171651Z aerogp-web:latest
-docker compose up -d --no-build --force-recreate api web
+docker compose up -d --no-build --force-recreate --wait --wait-timeout 240 api web
 docker compose ps
+curl -fsS http://127.0.0.1/healthz
+curl -fsS http://127.0.0.1/api/public/home >/dev/null
+curl -fsS http://127.0.0.1/admin/ >/dev/null
+BASE_URL=http://127.0.0.1 /bin/sh deploy/remote-smoke-test.sh
+printf '%s\n' '83740470cafad0b2c5e7b1f3dc6ba2043f97020e' > .release.next
+mv .release.next .release
 ```
+
+最后两行只能在 `docker compose` 健康等待、三个显式 HTTP 检查和完整 smoke 全部成功后执行；任一检查失败时保留当前 `.release`，继续收集故障证据。
 
 如需从源码重建，先额外备份并保留故障日志，再把 `backups/source-before-content-editor-20260730T171651Z.tgz` 解压到 `/opt/aerogp/backups` 下的空目录，保留当前 `.env` 与 `backups` 后替换源码，运行预检并重建 API/Web。只有确认数据库迁移不兼容或数据损坏时才使用已验证 dump：
 

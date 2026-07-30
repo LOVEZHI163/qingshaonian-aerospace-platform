@@ -13,6 +13,17 @@ import {
 
 const SAFE_PATH_COMPONENT = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 const CERTIFICATE_IMAGE_EXTENSIONS = new Set(["png", "jpg"]);
+const SITE_MEDIA_PURPOSE_POLICIES = new Map([
+  ["cover", SITE_IMAGE_POLICY],
+  ["hero", SITE_IMAGE_POLICY],
+  ["event-hero", SITE_IMAGE_POLICY],
+  ["default-hero", SITE_IMAGE_POLICY],
+  ["share-image", SITE_IMAGE_POLICY],
+  ["content-cover", SITE_IMAGE_POLICY],
+  ["content-body", SITE_IMAGE_POLICY],
+  ["attachment", SITE_ATTACHMENT_POLICY],
+  ["content-attachment", SITE_ATTACHMENT_POLICY]
+]);
 
 function uploadRoot() {
   return path.resolve(process.env.UPLOAD_ROOT || "/data/uploads");
@@ -118,10 +129,17 @@ function siteMediaVariant(storedName, filePath, output) {
   };
 }
 
+export function siteMediaPolicyForPurpose(purpose) {
+  const policy = SITE_MEDIA_PURPOSE_POLICIES.get(purpose);
+  if (!policy) throw Object.assign(new Error("媒体用途不合法"), { status: 422 });
+  return policy;
+}
+
 export async function saveSiteMedia({ mediaId, file, purpose, fileSystem = fs, imageProcessor = sharp }) {
   const directory = siteMediaDirectory(mediaId);
-  const isAttachment = purpose === "attachment";
-  const detected = await validateUpload(file, isAttachment ? SITE_ATTACHMENT_POLICY : SITE_IMAGE_POLICY);
+  const policy = siteMediaPolicyForPurpose(purpose);
+  const isAttachment = policy === SITE_ATTACHMENT_POLICY;
+  const detected = await validateUpload(file, policy);
   const storedName = `original.${detected.ext}`;
   const filePath = path.resolve(directory, storedName);
   const originalName = safeOriginalName(file.originalname);

@@ -49,7 +49,7 @@ API 与 Web 在同一发布窗口执行 `docker compose up -d --build api web`�
 
 ## 真实浏览器验收
 
-使用 Codex 内置浏览器、唯一 active 管理员和普通 PNG 文件完成。凭据只用于登录会话，没有写入命令参数、报告或 Git。
+使用 Codex 内置浏览器和唯一 active 管理员完成首次链路。两个测试文件名均以 `.png` 结尾，但真实字节为 JPEG，因此本报告不把该轮记作“真实 PNG 字节”验收；真实 PNG 复验待新代码发布后由主任务补记。凭据只用于登录会话，没有写入命令参数、报告或 Git。
 
 ### 文本工具栏
 
@@ -91,6 +91,7 @@ API 与 Web 在同一发布窗口执行 `docker compose up -d --build api web`�
 
 - 已认证：管理员登录 200，`/api/auth/me` 200；草稿保存/reload、内容详情、媒体库与受保护编辑器图片均可访问。
 - 公开与匿名：`/`、`/admin/`、`/api/public/home`、`/healthz` 均为 200；匿名管理员设置接口为预期 401。
+- 受保护预览精确路由为 `GET /api/admin/site-media/:id/preview?variant=original|mobile|desktop`。本地集成测试 `private preview media requires an administrator session` 已使用同一媒体验证管理员会话 200、匿名 401，并验证 `Cache-Control: private, no-store`；浏览器验收确认编辑器认证预览可加载，但本轮没有单独执行线上同一媒体的匿名/认证 HTTP 对照。线上复核命令：先以静默登录生成 `COOKIE_JAR`，再分别执行匿名 `curl -o /dev/null -w '%{http_code}'`（期望 401）和带 `-b "$COOKIE_JAR"` 的同一路由请求（期望 200）。
 - `postgres`、`api`、`web`、`backup` 均为 `running healthy`。
 - API 4300 和 PostgreSQL 5432 未映射宿主机；只有 Web 发布 80。
 - 运行时 `.release`、容器状态、HTTP 状态、数据库计数和 cleanup journal 均在清理后重新读取确认。
@@ -103,9 +104,17 @@ API 与 Web 在同一发布窗口执行 `docker compose up -d --build api web`�
 cd /opt/aerogp
 docker image tag aerogp-api:rollback-20260730T171651Z aerogp-api:latest
 docker image tag aerogp-web:rollback-20260730T171651Z aerogp-web:latest
-docker compose up -d --no-build --force-recreate api web
+docker compose up -d --no-build --force-recreate --wait --wait-timeout 240 api web
 docker compose ps
+curl -fsS http://127.0.0.1/healthz
+curl -fsS http://127.0.0.1/api/public/home >/dev/null
+curl -fsS http://127.0.0.1/admin/ >/dev/null
+BASE_URL=http://127.0.0.1 /bin/sh deploy/remote-smoke-test.sh
+printf '%s\n' '83740470cafad0b2c5e7b1f3dc6ba2043f97020e' > .release.next
+mv .release.next .release
 ```
+
+`.release` 只在健康等待、三个显式 HTTP 检查和完整 smoke 均成功后改写；任一检查失败时保留原标记并继续收集故障证据。
 
 若需要从旧源码重建，把已验证的 `backups/source-before-content-editor-20260730T171651Z.tgz` 解压到 `/opt/aerogp/backups` 下的空目录；保留 `.env` 与 `backups`，替换其余源码，运行升级预检后重建 API/Web。
 

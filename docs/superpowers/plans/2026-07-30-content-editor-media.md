@@ -26,15 +26,15 @@
 
 ### API
 
-- Create: `apps/api/src/services/content-body-media.js`  
+- Create: `apps/api/src/services/content-body-media.js`
   负责从服务器清理后的 HTML 提取正文媒体 ID、校验媒体存在性/类型、返回正文媒体行。
-- Modify: `apps/api/src/services/site-admin.js`  
+- Modify: `apps/api/src/services/site-admin.js`
   在内容创建、更新、发布时校验正文图片，并在发布时提升正文媒体公开状态。
-- Modify: `apps/api/src/services/site-preview.js`  
+- Modify: `apps/api/src/services/site-preview.js`
   草稿预览使用与保存一致的正文媒体校验，但不持久化和不提升媒体状态。
-- Modify: `apps/api/src/services/site-media.js`  
+- Modify: `apps/api/src/services/site-media.js`
   将正文 HTML 纳入媒体引用保护。
-- Modify: `apps/api/src/routes/site-media.js`  
+- Modify: `apps/api/src/routes/site-media.js`
   增加管理员媒体列表接口。
 - Test: `apps/api/test/content-body-media.test.js`
 - Test: `apps/api/test/site-admin.test.js`
@@ -45,15 +45,15 @@
 
 - Modify: `apps/admin/package.json`
 - Modify: `package-lock.json`
-- Create: `apps/admin/src/lib/content-image-extension.js`  
+- Create: `apps/admin/src/lib/content-image-extension.js`
   TipTap 自定义 `figure/img/figcaption` 节点与 HTML 解析/序列化规则。
-- Create: `apps/admin/src/components/ContentImageView.vue`  
+- Create: `apps/admin/src/components/ContentImageView.vue`
   编辑态使用管理员预览 URL，提供选中态与图片说明展示。
-- Create: `apps/admin/src/components/ContentImageDialog.vue`  
+- Create: `apps/admin/src/components/ContentImageDialog.vue`
   上传新图片、查询已有媒体、搜索、填写 alt/caption 并返回选择结果。
-- Rewrite: `apps/admin/src/components/RichTextEditor.vue`  
+- Rewrite: `apps/admin/src/components/RichTextEditor.vue`
   TipTap 编辑器、工具栏、HTML/纯文本修复模式、图片对话框和版本同步。
-- Modify: `apps/admin/src/components/ContentEditorPanel.vue`  
+- Modify: `apps/admin/src/components/ContentEditorPanel.vue`
   接收正文媒体错误/提示，保持保存状态与正文焦点定位。
 - Modify: `apps/admin/src/styles/admin.css`
 - Test: `apps/admin/src/components/__tests__/RichTextEditor.test.js`

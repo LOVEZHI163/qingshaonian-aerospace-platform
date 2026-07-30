@@ -33,6 +33,14 @@ test("website data shape fills missing public site collections and default setti
   assert.equal(db.registrations.every((row) => !("userId" in row)), true);
 });
 
+test("seed organization registrations are created by their organization owner", () => {
+  for (const registration of seedDb.registrations.filter((row) => row.createdVia === "organization")) {
+    const organization = seedDb.organizations.find((row) => row.id === registration.organizationId);
+    assert.ok(organization, registration.id);
+    assert.equal(registration.createdByUserId, organization.ownerUserId, registration.id);
+  }
+});
+
 test("data store selects file persistence and keeps mutations", async () => {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "aerogp-store-"));
   const dbPath = path.join(tempDir, "db.json");

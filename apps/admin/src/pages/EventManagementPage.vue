@@ -25,6 +25,9 @@ const eventForm = reactive(emptyEvent());
 const projectForm = reactive(emptyProject());
 
 const selectedEvent = computed(() => events.value.find((row) => row.id === selectedId.value) || null);
+const selectedArchived = computed(() => Boolean(
+  selectedEvent.value?.archivedAt || selectedEvent.value?.status === "archived"
+));
 const selectedProjects = computed(() => projects.value
   .filter((row) => row.eventId === selectedId.value)
   .sort((left, right) => left.displayOrder - right.displayOrder));
@@ -144,6 +147,7 @@ async function perform(action, successText, { changed = true } = {}) {
 }
 
 async function saveEvent() {
+  if (selectedArchived.value) return;
   if (!validateEvent()) return;
   await perform(
     () => api(`/api/admin/events/${selectedId.value}`, { method: "PATCH", body: JSON.stringify(eventPayload()) }),
@@ -172,6 +176,7 @@ async function createDraft() {
 }
 
 async function updateMode(mode) {
+  if (selectedArchived.value) return;
   await perform(
     () => api(`/api/admin/events/${selectedId.value}`, { method: "PATCH", body: JSON.stringify({ registrationMode: mode }) }),
     "报名控制已更新"
@@ -205,6 +210,7 @@ async function eventDeleted() {
 }
 
 function editProject(row) {
+  if (selectedArchived.value) return;
   Object.assign(projectForm, emptyProject(), row, { allowedGroups: [...(row.allowedGroups || [])] });
 }
 
@@ -214,6 +220,7 @@ function projectPayload() {
 }
 
 async function saveProject() {
+  if (selectedArchived.value) return;
   if (!projectForm.name.trim() || !projectForm.category.trim() || projectForm.allowedGroups.length === 0) {
     pageError.value = "请填写赛项名称、类别并至少选择一个组别";
     return;
@@ -230,6 +237,7 @@ async function saveProject() {
 }
 
 async function disableProject(row) {
+  if (selectedArchived.value) return;
   await perform(
     () => api(`/api/admin/projects/${row.id}`, { method: "PATCH", body: JSON.stringify({ ...Object.fromEntries(PROJECT_FIELDS.map((field) => [field, row[field]])), enabled: false }) }),
     "赛项已停用"
@@ -237,6 +245,7 @@ async function disableProject(row) {
 }
 
 async function deleteProject(row) {
+  if (selectedArchived.value) return;
   if (!window.confirm(`确认删除赛项“${row.name}”？`)) return;
   await perform(() => api(`/api/admin/projects/${row.id}`, { method: "DELETE" }), "赛项已删除");
 }
@@ -281,28 +290,29 @@ onMounted(() => loadEvents({ preserveSelection: false }));
         <div class="event-editor-stack">
           <form class="panel event-form" @submit.prevent="selectedId ? saveEvent() : createDraft()">
             <div class="panel-title"><h3>{{ selectedId ? "编辑赛事" : "新建赛事" }}</h3><span v-if="selectedEvent?.isCurrent">当前赛事</span></div>
+            <p v-if="selectedArchived" class="hint" data-readonly-event>赛事已归档，只可查看；不能再修改赛事或赛项。</p>
             <div class="two">
-              <label>赛事名称<input v-model="eventForm.name" /><small v-if="fieldErrors.name">{{ fieldErrors.name }}</small></label>
-              <label>主题<input v-model="eventForm.theme" /><small v-if="fieldErrors.theme">{{ fieldErrors.theme }}</small></label>
+              <label>赛事名称<input v-model="eventForm.name" :disabled="selectedArchived" /><small v-if="fieldErrors.name">{{ fieldErrors.name }}</small></label>
+              <label>主题<input v-model="eventForm.theme" :disabled="selectedArchived" /><small v-if="fieldErrors.theme">{{ fieldErrors.theme }}</small></label>
             </div>
             <div class="two">
-              <label>比赛日期说明<input v-model="eventForm.dateLabel" /><small v-if="fieldErrors.dateLabel">{{ fieldErrors.dateLabel }}</small></label>
-              <label>比赛地点<input v-model="eventForm.venue" /><small v-if="fieldErrors.venue">{{ fieldErrors.venue }}</small></label>
+              <label>比赛日期说明<input v-model="eventForm.dateLabel" :disabled="selectedArchived" /><small v-if="fieldErrors.dateLabel">{{ fieldErrors.dateLabel }}</small></label>
+              <label>比赛地点<input v-model="eventForm.venue" :disabled="selectedArchived" /><small v-if="fieldErrors.venue">{{ fieldErrors.venue }}</small></label>
             </div>
-            <label>联系方式<input v-model="eventForm.contact" /><small v-if="fieldErrors.contact">{{ fieldErrors.contact }}</small></label>
+            <label>联系方式<input v-model="eventForm.contact" :disabled="selectedArchived" /><small v-if="fieldErrors.contact">{{ fieldErrors.contact }}</small></label>
             <div class="two">
-              <label>报名开始<input v-model="eventForm.registrationStartAt" type="datetime-local" /><small v-if="fieldErrors.registrationStartAt">{{ fieldErrors.registrationStartAt }}</small></label>
-              <label>报名截止<input v-model="eventForm.registrationEndAt" type="datetime-local" /><small v-if="fieldErrors.registrationEndAt">{{ fieldErrors.registrationEndAt }}</small></label>
+              <label>报名开始<input v-model="eventForm.registrationStartAt" type="datetime-local" :disabled="selectedArchived" /><small v-if="fieldErrors.registrationStartAt">{{ fieldErrors.registrationStartAt }}</small></label>
+              <label>报名截止<input v-model="eventForm.registrationEndAt" type="datetime-local" :disabled="selectedArchived" /><small v-if="fieldErrors.registrationEndAt">{{ fieldErrors.registrationEndAt }}</small></label>
             </div>
             <div v-if="selectedId" class="registration-modes">
-              <button type="button" data-mode="automatic" :disabled="saving" @click="updateMode('automatic')">自动</button>
-              <button type="button" data-mode="force_open" :disabled="saving" @click="updateMode('force_open')">临时开放</button>
-              <button type="button" data-mode="force_closed" :disabled="saving" @click="updateMode('force_closed')">临时关闭</button>
+              <button type="button" data-mode="automatic" :disabled="saving || selectedArchived" @click="updateMode('automatic')">自动</button>
+              <button type="button" data-mode="force_open" :disabled="saving || selectedArchived" @click="updateMode('force_open')">临时开放</button>
+              <button type="button" data-mode="force_closed" :disabled="saving || selectedArchived" @click="updateMode('force_closed')">临时关闭</button>
             </div>
             <div class="form-actions">
-              <button class="primary" :disabled="saving">{{ selectedId ? "保存赛事" : "创建草稿" }}</button>
+              <button class="primary" :disabled="saving || selectedArchived">{{ selectedId ? "保存赛事" : "创建草稿" }}</button>
               <button v-if="selectedId" type="button" data-action="copy-event" :disabled="saving" @click="copySelected">复制</button>
-              <button v-if="selectedId && !selectedEvent?.isCurrent" type="button" :disabled="saving" @click="setCurrent">设为当前</button>
+              <button v-if="selectedId && !selectedEvent?.isCurrent && !selectedArchived" type="button" :disabled="saving" @click="setCurrent">设为当前</button>
               <button v-if="selectedId && selectedEvent?.status !== 'archived'" type="button" class="reject" :disabled="saving" @click="archiveSelected">归档</button>
             </div>
           </form>
@@ -326,29 +336,30 @@ onMounted(() => loadEvents({ preserveSelection: false }));
       <p v-if="!selectedId" class="panel empty-state">请先创建或选择赛事。</p>
       <section v-else class="panel project-panel">
           <div class="panel-title"><h3>赛项与组别</h3><span>{{ selectedProjects.length }} 个赛项</span></div>
+          <p v-if="selectedArchived" class="hint" data-readonly-projects>赛事已归档，只可查看；赛项编辑、停用和删除均已禁用。</p>
           <div class="project-list">
             <article v-for="row in selectedProjects" :key="row.id">
               <div><strong>{{ row.name }}</strong><span>{{ row.category }} · {{ row.type === 'team' ? '团体赛' : '个人赛' }}</span><small>{{ row.allowedGroups.join('、') }}</small></div>
               <div class="project-actions">
-                <button type="button" class="mini" @click="editProject(row)">编辑</button>
-                <button v-if="registrationCount(row.id)" type="button" class="mini reject" data-action="disable-project" :disabled="!row.enabled || saving" @click="disableProject(row)">停用</button>
-                <button v-else type="button" class="mini reject" data-action="delete-project" :disabled="saving" @click="deleteProject(row)">删除</button>
+                <button type="button" class="mini" data-action="edit-project" :disabled="selectedArchived" @click="editProject(row)">编辑</button>
+                <button v-if="registrationCount(row.id)" type="button" class="mini reject" data-action="disable-project" :disabled="selectedArchived || !row.enabled || saving" @click="disableProject(row)">停用</button>
+                <button v-else type="button" class="mini reject" data-action="delete-project" :disabled="selectedArchived || saving" @click="deleteProject(row)">删除</button>
               </div>
             </article>
             <p v-if="selectedProjects.length === 0">暂无赛项。</p>
           </div>
           <form class="project-form" @submit.prevent="saveProject">
             <h4>{{ projectForm.id ? "编辑赛项" : "新增赛项" }}</h4>
-            <div class="two"><label>赛项名称<input v-model="projectForm.name" /></label><label>类别<input v-model="projectForm.category" /></label></div>
+            <div class="two"><label>赛项名称<input v-model="projectForm.name" :disabled="selectedArchived" /></label><label>类别<input v-model="projectForm.category" :disabled="selectedArchived" /></label></div>
             <div class="two">
-              <label>类型<select v-model="projectForm.type"><option value="individual">个人赛</option><option value="team">团体赛</option></select></label>
-              <label>显示顺序<input v-model.number="projectForm.displayOrder" type="number" min="0" /></label>
+              <label>类型<select v-model="projectForm.type" :disabled="selectedArchived"><option value="individual">个人赛</option><option value="team">团体赛</option></select></label>
+              <label>显示顺序<input v-model.number="projectForm.displayOrder" type="number" min="0" :disabled="selectedArchived" /></label>
             </div>
             <div class="checkbox-row">
-              <label v-for="group in GROUPS" :key="group"><input v-model="projectForm.allowedGroups" type="checkbox" :value="group" />{{ group }}</label>
+              <label v-for="group in GROUPS" :key="group"><input v-model="projectForm.allowedGroups" type="checkbox" :value="group" :disabled="selectedArchived" />{{ group }}</label>
             </div>
-            <div class="checkbox-row"><label><input v-model="projectForm.enabled" type="checkbox" />启用</label><label><input v-model="projectForm.instructorRequired" type="checkbox" />必须填写指导老师</label></div>
-            <div class="form-actions"><button class="primary" :disabled="saving">{{ projectForm.id ? "保存赛项" : "新增赛项" }}</button><button v-if="projectForm.id" type="button" @click="Object.assign(projectForm, emptyProject())">取消编辑</button></div>
+            <div class="checkbox-row"><label><input v-model="projectForm.enabled" type="checkbox" :disabled="selectedArchived" />启用</label><label><input v-model="projectForm.instructorRequired" type="checkbox" :disabled="selectedArchived" />必须填写指导老师</label></div>
+            <div class="form-actions"><button class="primary" :disabled="saving || selectedArchived">{{ projectForm.id ? "保存赛项" : "新增赛项" }}</button><button v-if="projectForm.id" type="button" @click="Object.assign(projectForm, emptyProject())">取消编辑</button></div>
           </form>
       </section>
     </div>

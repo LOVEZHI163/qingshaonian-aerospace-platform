@@ -261,6 +261,45 @@ test("project management validates fixed groups and prevents deleting historical
   });
 });
 
+test("archived events reject event and project mutations without changing stored data", async () => {
+  await withServer(async (baseUrl) => {
+    const admin = await loginAs(baseUrl, "13900000000", "admin123");
+    const createEventResponse = await fetch(`${baseUrl}/api/admin/events`, jsonOptions("POST", eventInput, admin.cookie));
+    assert.equal(createEventResponse.status, 201);
+    const archivedEvent = (await json(createEventResponse)).row;
+    const createProjectResponse = await fetch(`${baseUrl}/api/admin/events/${archivedEvent.id}/projects`, jsonOptions("POST", {
+      name: "归档保护赛项",
+      type: "individual",
+      category: "航空创新",
+      enabled: true,
+      instructorRequired: false,
+      displayOrder: 7,
+      allowedGroups: ["小学低段"]
+    }, admin.cookie));
+    assert.equal(createProjectResponse.status, 201);
+    const archivedProject = (await json(createProjectResponse)).row;
+    assert.equal((await fetch(`${baseUrl}/api/admin/events/${archivedEvent.id}/archive`, jsonOptions("POST", {}, admin.cookie))).status, 200);
+
+    const before = await json(await fetch(`${baseUrl}/api/admin/events`, withSession(admin.cookie)));
+    const beforeEvent = before.rows.find((row) => row.id === archivedEvent.id);
+    const beforeProject = before.projects.find((row) => row.id === archivedProject.id);
+
+    assert.equal((await fetch(`${baseUrl}/api/admin/events/${archivedEvent.id}`, jsonOptions("PATCH", {
+      theme: "不应写入的新主题"
+    }, admin.cookie))).status, 409);
+    assert.equal((await fetch(`${baseUrl}/api/admin/projects/${archivedProject.id}`, jsonOptions("PATCH", {
+      enabled: false
+    }, admin.cookie))).status, 409);
+    assert.equal((await fetch(`${baseUrl}/api/admin/projects/${archivedProject.id}`, withSession(admin.cookie, {
+      method: "DELETE"
+    }))).status, 409);
+
+    const after = await json(await fetch(`${baseUrl}/api/admin/events`, withSession(admin.cookie)));
+    assert.deepEqual(after.rows.find((row) => row.id === archivedEvent.id), beforeEvent);
+    assert.deepEqual(after.projects.find((row) => row.id === archivedProject.id), beforeProject);
+  });
+});
+
 test("public event and registration APIs use the current database event in real time", async () => {
   await withServer(async (baseUrl) => {
     const admin = await loginAs(baseUrl, "13900000000", "admin123");

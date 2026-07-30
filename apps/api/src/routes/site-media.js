@@ -3,7 +3,7 @@ import multer from "multer";
 import path from "node:path";
 
 import { SITE_ATTACHMENT_POLICY } from "../files/policy.js";
-import { deleteSiteMedia, readSiteMedia, saveSiteMedia } from "../files/storage.js";
+import { deleteSiteMedia, readSiteMedia, saveSiteMedia, siteMediaPolicyForPurpose } from "../files/storage.js";
 import { assertMediaUnreferenced } from "../services/site-media.js";
 
 function routeError(status, message, code) {
@@ -60,6 +60,7 @@ export function createSiteMediaRouter({
     if (!req.file) throw routeError(422, "媒体文件不能为空");
     const purpose = String(req.body.purpose || "").trim();
     if (!purpose) throw routeError(422, "媒体用途不能为空");
+    siteMediaPolicyForPurpose(purpose);
     const mediaId = makeId("M");
     const originalDb = await store.readDb();
     let stored;
