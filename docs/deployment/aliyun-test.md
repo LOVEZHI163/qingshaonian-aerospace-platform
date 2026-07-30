@@ -471,3 +471,38 @@ docker compose up -d --build
 - 部署前完成且验证数据库备份 `backups/aerogp-20260730T063435Z.dump`（`pg_restore --list` 成功）、上传卷备份 `backups/uploads/aerogp-uploads-20260730T063435Z.tar.gz`（`tar -tzf` 成功）、旧源码 `backups/source-before-delete-profile-fix-20260730T063435Z.tgz` 与同时间戳 API/Web 回滚标签。预检通过后仅重建 API；服务器 `.release` 为上述完整 SHA。
 - 线上产品回归：以唯一 ID 建立非当前归档临时赛事，附加公开资料、赛项、报名和实际 PNG 文件。产品 DELETE 返回 HTTP 200，响应为删除 1 个文件且无失败；数据库复核赛事、公开资料、赛项、报名、证书均为 0，PNG 文件不存在。随后按预览/确认清理测试业务数据并经 stdin 恢复唯一管理员。
 - 最终认证 smoke 全通过；终态计数 `1|0|0|0|0|0|0|0|0|4|12|3`，API、PostgreSQL、Web、Backup 均为 `healthy`。没有使用 `docker compose down -v`，凭据未回显、未写入日志或文档，仅经 stdin 传递。
+
+### 内容编辑器与正文媒体完整部署（2026-07-31）
+
+- 发布版本：`94d3ff8a1059fd66eaa63592bd842054e75ee635`。部署包严格由该提交的 `git archive HEAD` 生成；归档包含 363 个条目、大小 6,594,560 字节，SHA-256 为 `aadd2cf0c2fb36c73fdcb66d131779e1c2c33ab4545d2592c4c6eea5e335d5bd`。候选源码和切换后的升级预检均输出 `Upgrade preflight passed.`。
+- 本地发布门禁：`git diff --check` 通过；API 使用 `--test-concurrency=1` 串行跑完 325/325；Admin 337/337；Web 134/134；根生产构建和 `deploy/verify-config.ps1` 均通过。构建只有已知的 Vite 动态/静态导入及 Admin chunk 大小提示。
+- 统一备份时间戳：`20260730T171651Z`。数据库 `backups/aerogp-20260730T171651Z.dump`（58,241 字节）通过 `pg_restore --list`；上传卷 `backups/uploads/aerogp-uploads-20260730T171651Z.tar.gz`（16,719,656 字节）通过安全归档校验；旧源码 `backups/source-before-content-editor-20260730T171651Z.tgz`（3,801,708 字节）通过 `tar -tzf`。
+- 旧 API/Web 镜像分别保留为 `aerogp-api:rollback-20260730T171651Z`、`aerogp-web:rollback-20260730T171651Z`；`backups/content-editor-rollback-20260730T171651Z.txt` 记录前一 release、备份名与回滚标签，权限为 `0600`。部署过程中未删除 PostgreSQL 或 uploads 命名卷，也未执行 `docker compose down -v`。
+- API/Web 在同一窗口完成构建与重建；Backup 随后重建以挂载新部署树。最终 PostgreSQL、API、Web、Backup 均为 `running healthy`，API 4300 与 PostgreSQL 5432 未发布，只有 Web 映射宿主机 80。`/opt/aerogp/.release` 为上述完整 SHA。
+- Codex 内置浏览器真实验收通过：工具栏的段落、H2、H3、粗体、斜体、无序/有序列表、引用、链接、撤销、重做、清除格式和图片均可用；临时新闻 `media-editor-qa-20260730` 完成两张图片的 UI 上传、插入、媒体库选择、替换、移除、保存和 reload 持久化。
+- 904px 与 360px 编辑器均无整页横向溢出；904px sticky 操作栏在滚动到底后与最后图片相隔 279px，360px 操作栏切为 static 且自身可横向滚动，正文与操作栏均可达、互不遮挡。
+- 临时新闻经 UI 发布检查后发布成功。公开页桌面 1280px 和移动 360px 均无横向溢出、控制台 warn/error 均为 0；正文图片完整加载并在移动端收缩至约 321px。公开媒体 `M1785434383490866` 返回 HTTP 200、`image/jpeg` 和安全/缓存响应头；虽然测试文件扩展名为 `.png`，服务端按真实内容探测为 JPEG。
+- 正文引用媒体 `M1785434383490866` 时，删除 API 返回预期 409。验收结束后经 UI 下线并删除临时文章，再删除两张已无引用媒体，均返回 204。最终计数恢复为用户 2、赛事 6、内容 3、媒体 12、cleanup journal 0、active 管理员 1，没有遗留临时业务数据或媒体文件。
+- 最终 HTTP：`/`、`/admin/`、`/api/public/home`、`/healthz` 均为 200；管理员登录和 `/api/auth/me` 均为 200。内容详情 reload、媒体库和编辑器受保护图片分别覆盖了已认证内容详情、媒体列表和受保护预览路径；匿名管理员接口仍返回预期 401。
+
+代码优先回滚（默认保留当前数据库和 uploads 卷）：
+
+```bash
+cd /opt/aerogp
+docker image tag aerogp-api:rollback-20260730T171651Z aerogp-api:latest
+docker image tag aerogp-web:rollback-20260730T171651Z aerogp-web:latest
+docker compose up -d --no-build --force-recreate api web
+docker compose ps
+```
+
+如需从源码重建，先额外备份并保留故障日志，再把 `backups/source-before-content-editor-20260730T171651Z.tgz` 解压到 `/opt/aerogp/backups` 下的空目录，保留当前 `.env` 与 `backups` 后替换源码，运行预检并重建 API/Web。只有确认数据库迁移不兼容或数据损坏时才使用已验证 dump：
+
+```bash
+cd /opt/aerogp
+CONFIRM_RESTORE=yes docker compose run --rm \
+  -e CONFIRM_RESTORE=yes \
+  backup /bin/sh /scripts/restore-postgres.sh \
+  /backups/aerogp-20260730T171651Z.dump
+```
+
+上传卷恢复仍按本手册“恢复与回滚”章节执行：先停止 API、额外备份当前卷、重新验证归档，在空目录检查清单后再复制；禁止直接覆盖运行中的卷。
