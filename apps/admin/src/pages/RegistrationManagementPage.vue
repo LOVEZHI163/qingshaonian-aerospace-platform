@@ -4,56 +4,58 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref } from "vue";
 import { api, apiBlob } from "../lib/api.js";
 import { createBlobDownloadManager } from "../lib/download.js";
 
-const props = defineProps({ initialEventId: { type: String, default: "" } });
+const props = defineProps({ eventId: { type: String, default: "" } });
 const emit = defineEmits(["open-certificates"]);
 const events = ref([]); const projects = ref([]); const organizations = ref([]); const rows = ref([]);
 const total = ref(0); const refreshedAt = ref(""); const loading = ref(false); const error = ref(""); const success = ref("");
-const filters = reactive({ eventId: "", status: "", group: "", projectId: "", organizationId: "", q: "", page: 1, pageSize: 25 });
+const filters = reactive({ status: "", group: "", projectId: "", organizationId: "", q: "", page: 1, pageSize: 25 });
 const editRow = ref(null); const resultRow = ref(null);
 const edit = reactive({ organizationId: "", athlete: { name: "", school: "", grade: "", phone: "" }, projectId: "", instructor: "" });
 const result = reactive({ awardName: "", rank: "", score: "" });
 const downloads = createBlobDownloadManager();
-const eventProjects = computed(() => projects.value.filter((project) => !filters.eventId || project.eventId === filters.eventId));
+const eventProjects = computed(() => projects.value.filter((project) => project.eventId === props.eventId));
 const groups = computed(() => [...new Set(eventProjects.value.flatMap((project) => project.allowedGroups || []))]);
 const pageCount = computed(() => Math.max(1, Math.ceil(total.value / filters.pageSize)));
-const selectedEventId = computed(() => filters.eventId || events.value.find((event) => event.isCurrent)?.id || "");
+const selectedEventId = computed(() => props.eventId);
+const archived = computed(() => events.value.find((event) => event.id === props.eventId)?.status === "archived");
 
 function query({ includePaging = true, scope } = {}) {
   const params = new URLSearchParams();
+  params.set("eventId", props.eventId);
   for (const [key, value] of Object.entries(filters)) if (value && (includePaging || !["page", "pageSize"].includes(key))) params.set(key, value);
   if (scope) params.set("scope", scope);
   return params.toString();
 }
 function resetPage() { filters.page = 1; loadRows(); }
 async function loadRows() {
+  if (!props.eventId) return;
   loading.value = true; error.value = "";
   try {
-    const payload = await api(`/api/admin/registrations?${query()}`);
+    const payload = await api(`/api/admin/events/${encodeURIComponent(props.eventId)}/registrations?${query()}`);
     rows.value = payload.rows || []; total.value = payload.total || 0; refreshedAt.value = payload.refreshedAt || "";
   } catch (cause) { error.value = cause.message || "报名列表加载失败"; } finally { loading.value = false; }
 }
 async function loadPage() {
+  if (!props.eventId) return;
   try {
     const [eventPayload, organizationPayload] = await Promise.all([api("/api/admin/events"), api("/api/admin/organizations")]);
     events.value = eventPayload.rows || []; projects.value = eventPayload.projects || []; organizations.value = organizationPayload.rows || [];
-    filters.eventId = events.value.some((event) => event.id === props.initialEventId)
-      ? props.initialEventId
-      : events.value.find((event) => event.isCurrent)?.id || events.value[0]?.id || "";
     await loadRows();
   } catch (cause) { error.value = cause.message || "报名管理加载失败"; }
 }
 async function status(row, next) {
+  if (archived.value) return;
   const rejectReason = next === "rejected" ? window.prompt("请输入驳回原因", "信息需补充") : "";
   if (next === "rejected" && rejectReason === null) return;
-  try { await api(`/api/registrations/${row.id}/status`, { method: "PATCH", body: JSON.stringify({ status: next, rejectReason }) }); success.value = next === "approved" ? "报名已审核通过" : "报名已驳回"; await loadRows(); } catch (cause) { error.value = cause.message; }
+  try { await api(`/api/admin/events/${encodeURIComponent(props.eventId)}/registrations/${row.id}/status`, { method: "PATCH", body: JSON.stringify({ status: next, rejectReason }) }); success.value = next === "approved" ? "报名已审核通过" : "报名已驳回"; await loadRows(); } catch (cause) { error.value = cause.message; }
 }
 function beginEdit(row) { editRow.value = row; Object.assign(edit, { organizationId: row.organizationId || "", athlete: { ...row.athlete }, projectId: row.projectId, instructor: row.instructor || "" }); }
-async function saveEdit() { try { await api(`/api/admin/registrations/${editRow.value.id}`, { method: "PATCH", body: JSON.stringify(edit) }); editRow.value = null; success.value = "报名信息已修改"; await loadRows(); } catch (cause) { error.value = cause.message; } }
+async function saveEdit() { try { await api(`/api/admin/events/${encodeURIComponent(props.eventId)}/registrations/${editRow.value.id}`, { method: "PATCH", body: JSON.stringify(edit) }); editRow.value = null; success.value = "报名信息已修改"; await loadRows(); } catch (cause) { error.value = cause.message; } }
 function beginResult(row) { resultRow.value = row; Object.assign(result, { awardName: row.awardName || "", rank: row.rank || "", score: row.score || "" }); }
-async function saveResult() { try { await api(`/api/admin/registrations/${resultRow.value.id}/result`, { method: "POST", body: JSON.stringify(result) }); resultRow.value = null; success.value = "成绩已保存"; await loadRows(); } catch (cause) { error.value = cause.message; } }
+async function saveResult() { try { await api(`/api/admin/events/${encodeURIComponent(props.eventId)}/registrations/${resultRow.value.id}/result`, { method: "POST", body: JSON.stringify(result) }); resultRow.value = null; success.value = "成绩已保存"; await loadRows(); } catch (cause) { error.value = cause.message; } }
 async function download(kind) {
   const eventId = selectedEventId.value; if (!eventId) return;
-  const path = kind === "template" ? `/api/admin/events/${eventId}/certificate-template.xlsx` : `/api/admin/registrations/export.xlsx?${kind === "all" ? `eventId=${encodeURIComponent(eventId)}&scope=all` : `${query({ includePaging: false, scope: "filtered" })}`}`;
+  const path = kind === "template" ? `/api/admin/events/${eventId}/certificate-template.xlsx` : `/api/admin/events/${encodeURIComponent(eventId)}/registrations/export.xlsx?${kind === "all" ? "scope=all" : `${query({ includePaging: false, scope: "filtered" })}`}`;
   try {
     const blob = await apiBlob(path); downloads.save(blob, kind === "template" ? "证书模板.xlsx" : "报名名单.xlsx");
   } catch (cause) { error.value = cause.message || "下载失败"; }
@@ -65,8 +67,8 @@ onBeforeUnmount(() => downloads.dispose());
 <template>
   <section class="registration-management"><div class="page-title-row"><div><h2>报名管理</h2><p>审核报名、录入成绩并导出赛事名单。</p></div><button class="dark" data-action="refresh" :disabled="loading" @click="loadRows">刷新</button></div>
     <p v-if="error" class="message">{{ error }}</p><p v-if="success" class="success-message">{{ success }}</p>
-    <section class="panel"><div class="registration-filter-grid">
-      <select v-model="filters.eventId" data-filter="eventId" @change="resetPage"><option v-for="event in events" :key="event.id" :value="event.id">{{ event.name }}</option></select>
+    <p v-if="!eventId" class="hint empty-state">请先从顶部选择赛事。</p>
+    <section v-else class="panel"><div class="registration-filter-grid">
       <select v-model="filters.status" @change="resetPage"><option value="">全部状态</option><option value="pending">待审核</option><option value="approved">已通过</option><option value="rejected">已驳回</option><option value="cancelled">已取消</option></select>
       <select v-model="filters.group" @change="resetPage"><option value="">全部组别</option><option v-for="group in groups" :key="group" :value="group">{{ group }}</option></select>
       <select v-model="filters.projectId" @change="resetPage"><option value="">全部赛项</option><option v-for="project in eventProjects" :key="project.id" :value="project.id">{{ project.name }}</option></select>

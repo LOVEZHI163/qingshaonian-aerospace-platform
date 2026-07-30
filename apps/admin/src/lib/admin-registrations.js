@@ -29,15 +29,17 @@ function limitError() {
 }
 
 function requestPath(filters, page) {
+  const eventId = String(filters?.eventId || "").trim();
+  if (!eventId) throw new Error("必须选择赛事后才能读取报名数据");
   const params = new URLSearchParams();
   for (const [key, value] of Object.entries(filters || {})) {
-    if (value !== undefined && value !== null && value !== "" && key !== "page" && key !== "pageSize") {
+    if (value !== undefined && value !== null && value !== "" && key !== "page" && key !== "pageSize" && key !== "eventId") {
       params.set(key, String(value));
     }
   }
   if (page > 1) params.set("page", String(page));
   params.set("pageSize", String(PAGE_SIZE_LIMIT));
-  return `/api/admin/registrations?${params}`;
+  return `/api/admin/events/${encodeURIComponent(eventId)}/registrations?${params}`;
 }
 
 function metadata(payload) {

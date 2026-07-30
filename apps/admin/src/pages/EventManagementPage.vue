@@ -89,17 +89,16 @@ async function loadEvents({ preserveSelection = true } = {}) {
   loading.value = true;
   pageError.value = "";
   try {
-    const [eventPayload, registrationPayload] = await Promise.all([
-      api("/api/admin/events"),
-      loadAdminRegistrations()
-    ]);
+    const eventPayload = await api("/api/admin/events");
     events.value = eventPayload.rows || [];
     projects.value = eventPayload.projects || [];
-    registrations.value = registrationPayload;
     const nextId = preserveSelection && events.value.some((row) => row.id === selectedId.value)
       ? selectedId.value
       : events.value.find((row) => row.isCurrent)?.id || events.value[0]?.id || "";
-    if (nextId) selectEvent(nextId);
+    if (nextId) {
+      selectEvent(nextId);
+      registrations.value = await loadAdminRegistrations({ eventId: nextId });
+    } else registrations.value = [];
   } catch (error) {
     pageError.value = error.message || "赛事加载失败";
   } finally {

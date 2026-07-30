@@ -33,7 +33,7 @@ async function loadRecoverablePreviews(eventId = props.eventId) {
     return;
   }
   try {
-    const payload = await api(`/api/admin/certificate-imports?eventId=${encodeURIComponent(eventId)}`);
+    const payload = await api(`/api/admin/events/${encodeURIComponent(eventId)}/certificate-imports`);
     if (generation !== recoveryRequestGeneration || eventId !== props.eventId) return;
     recoverablePreviews.value = Array.isArray(payload?.rows) ? payload.rows : [];
   } catch (cause) {
@@ -103,7 +103,7 @@ async function previewImport() {
     const body = new FormData();
     body.append("workbook", selectedFile.value);
     body.append("eventId", props.eventId);
-    preview.value = await api("/api/admin/certificate-imports/preview", { method: "POST", body });
+    preview.value = await api(`/api/admin/events/${encodeURIComponent(props.eventId)}/certificate-imports/preview`, { method: "POST", body });
     removeRecoverablePreview(preview.value?.id);
   } catch (cause) {
     error.value = cause.message || "预检查失败，请核对文件后重试。";
@@ -118,7 +118,7 @@ async function downloadErrors() {
   action.value = "errors";
   error.value = "";
   try {
-    const blob = await apiBlob(`/api/admin/certificate-imports/${preview.value.id}/errors.xlsx`);
+    const blob = await apiBlob(`/api/admin/events/${encodeURIComponent(props.eventId)}/certificate-imports/${preview.value.id}/errors.xlsx`);
     downloads.save(blob, "证书导入错误报告.xlsx");
   } catch (cause) {
     error.value = cause.message || "错误报告下载失败，请稍后重试。";
@@ -132,7 +132,7 @@ async function commitImport() {
   action.value = "commit";
   error.value = "";
   try {
-    const committed = await api(`/api/admin/certificate-imports/${preview.value.id}/commit`, { method: "POST" });
+    const committed = await api(`/api/admin/events/${encodeURIComponent(props.eventId)}/certificate-imports/${preview.value.id}/commit`, { method: "POST" });
     removeRecoverablePreview(preview.value.id);
     preview.value = null;
     clearSelectedFile();
@@ -154,7 +154,7 @@ async function cancelPreview(batch) {
   action.value = "cancel";
   error.value = "";
   try {
-    await api(`/api/admin/certificate-imports/${batch.id}`, { method: "DELETE" });
+    await api(`/api/admin/events/${encodeURIComponent(props.eventId)}/certificate-imports/${batch.id}`, { method: "DELETE" });
     if (preview.value?.id === batch.id) preview.value = null;
     removeRecoverablePreview(batch.id);
     success.value = "已取消本次预检查，正式数据未发生变化。";

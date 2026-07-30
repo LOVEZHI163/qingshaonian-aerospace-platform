@@ -1,10 +1,11 @@
-import { flushPromises, mount } from "@vue/test-utils";
+import { flushPromises, mount as vueMount } from "@vue/test-utils";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { apiMock } = vi.hoisted(() => ({ apiMock: vi.fn() }));
 vi.mock("../../lib/api.js", () => ({ api: apiMock }));
 
 import DashboardPage from "../DashboardPage.vue";
+const mount = (component, options = {}) => vueMount(component, { ...options, props: { eventId: "E1", ...(options.props || {}) } });
 
 const dashboard = {
   event: { id: "E1", name: "2026航空航天创新比赛", status: "published", isCurrent: true },
@@ -24,7 +25,7 @@ describe("DashboardPage", () => {
     const wrapper = mount(DashboardPage);
     await flushPromises();
 
-    expect(apiMock).toHaveBeenCalledWith("/api/admin/dashboard");
+    expect(apiMock).toHaveBeenCalledWith("/api/admin/dashboard?eventId=E1");
     expect(wrapper.text()).toContain("2026航空航天创新比赛");
     expect(wrapper.text()).toContain("管理员临时关闭");
     expect(wrapper.get('[data-count="pending-registrations"]').text()).toContain("3");

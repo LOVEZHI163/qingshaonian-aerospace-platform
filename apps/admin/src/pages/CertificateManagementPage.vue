@@ -9,7 +9,7 @@ import { createBlobDownloadManager } from "../lib/download.js";
 
 const props = defineProps({
   initialRegistrationId: { type: String, default: "" },
-  initialEventId: { type: String, default: "" }
+  eventId: { type: String, default: "" }
 });
 
 const activeSection = ref(props.initialRegistrationId ? "manual" : "list");
@@ -24,8 +24,7 @@ const loading = ref(false);
 const bulkLoading = ref(false);
 const error = ref("");
 const success = ref("");
-const listFilters = reactive({ eventId: "", status: "", group: "", projectId: "", q: "" });
-const importEventId = ref("");
+const listFilters = reactive({ status: "", group: "", projectId: "", q: "" });
 const certificatePage = reactive({ page: 1, pageSize: 20, total: 0 });
 const downloads = createBlobDownloadManager();
 let pageGeneration = 0;
@@ -33,7 +32,8 @@ let metadataGeneration = 0;
 let suppressFilterReload = false;
 
 const eventProjects = computed(() => projects.value
-  .filter((project) => !listFilters.eventId || project.eventId === listFilters.eventId));
+  .filter((project) => project.eventId === props.eventId));
+const archived = computed(() => events.value.find((event) => event.id === props.eventId)?.status === "archived");
 const groups = computed(() => [...new Set(eventProjects.value.flatMap((project) => project.allowedGroups || []))]);
 const certificatePageCount = computed(() => Math.max(1, Math.ceil(certificatePage.total / certificatePage.pageSize)));
 
@@ -44,7 +44,6 @@ function registrationFor(certificate) {
 function matchesListFilters(certificate) {
   const registration = registrationFor(certificate);
   if (listFilters.status && certificate.status !== listFilters.status) return false;
-  if (listFilters.eventId && registration.eventId !== listFilters.eventId) return false;
   if (listFilters.group && registration.group !== listFilters.group) return false;
   if (listFilters.projectId && registration.projectId !== listFilters.projectId) return false;
   const keyword = listFilters.q.trim().toLowerCase();
@@ -101,7 +100,7 @@ watch(selectedIds, (ids) => {
 function certificateListPath() {
   const params = new URLSearchParams();
   const query = {
-    eventId: listFilters.eventId,
+    eventId: props.eventId,
     status: listFilters.status,
     group: listFilters.group,
     projectId: listFilters.projectId,
@@ -114,7 +113,7 @@ function certificateListPath() {
   params.set("direction", "desc");
   params.set("page", String(certificatePage.page));
   params.set("pageSize", String(certificatePage.pageSize));
-  return `/api/admin/certificates?${params}`;
+  return `/api/admin/events/${encodeURIComponent(props.eventId)}/certificates?${params}`;
 }
 
 function applyCertificatePage(payload) {
@@ -131,6 +130,7 @@ function applyCertificatePage(payload) {
 }
 
 async function loadCertificateList({ propagate = false } = {}) {
+  if (!props.eventId) return false;
   const generation = ++pageGeneration;
   loading.value = true;
   error.value = "";
@@ -157,17 +157,9 @@ async function loadEventMetadata() {
     if (generation !== metadataGeneration) return false;
     events.value = payload.rows || [];
     projects.value = payload.projects || [];
-    const requestedEventId = props.initialEventId && events.value.some((event) => event.id === props.initialEventId)
-      ? props.initialEventId
-      : "";
-    const defaultEventId = requestedEventId
-      || events.value.find((event) => event.isCurrent)?.id
-      || events.value[0]?.id
-      || "";
+    if (archived.value) activeSection.value = "list";
     suppressFilterReload = true;
-    if (!listFilters.eventId) listFilters.eventId = defaultEventId;
     suppressFilterReload = false;
-    if (!importEventId.value) importEventId.value = defaultEventId;
     metadataLoaded.value = true;
     return true;
   } catch (cause) {
@@ -178,18 +170,6 @@ async function loadEventMetadata() {
     return false;
   }
 }
-
-watch(() => listFilters.eventId, (eventId, previousEventId) => {
-  if (eventId === previousEventId || suppressFilterReload) return;
-  suppressFilterReload = true;
-  listFilters.group = "";
-  listFilters.projectId = "";
-  suppressFilterReload = false;
-  certificatePage.page = 1;
-  selectedIds.value = [];
-  success.value = "";
-  void loadCertificateList();
-}, { flush: "sync" });
 
 watch([
   () => listFilters.status,
@@ -227,6 +207,7 @@ async function afterManualChange(change) {
 }
 
 async function bulkChangeStatus(status) {
+  if (archived.value) return;
   reconcileSelectedCertificates();
   const expectedCurrentStatus = status === "published" ? "draft" : "published";
   if (!selectedIds.value.length || selectedCertificateStatus.value !== expectedCurrentStatus) return;
@@ -235,7 +216,7 @@ async function bulkChangeStatus(status) {
   error.value = "";
   success.value = "";
   try {
-    await api("/api/admin/certificates/bulk-status", {
+    await api(`/api/admin/events/${encodeURIComponent(props.eventId)}/certificates/bulk-status`, {
       method: "POST",
       body: JSON.stringify({ ids, status })
     });
@@ -293,7 +274,7 @@ function goCertificatePage(page) {
 }
 
 onMounted(async () => {
-  if (await loadEventMetadata()) await loadCertificateList();
+  if (props.eventId && await loadEventMetadata()) await loadCertificateList();
 });
 onBeforeUnmount(() => {
   pageGeneration += 1;
@@ -309,10 +290,12 @@ onBeforeUnmount(() => {
       <button type="button" class="dark" data-action="refresh-certificates" :disabled="loading" @click="loadCertificateList">{{ loading ? "正在刷新…" : "刷新" }}</button>
     </div>
 
+    <p v-if="!eventId" class="hint empty-state">请先从顶部选择赛事。</p>
+    <template v-else>
     <nav class="certificate-section-tabs" role="tablist" aria-label="证书管理分类">
       <button type="button" role="tab" data-certificate-section="list" :class="{ active: activeSection === 'list' }" :aria-selected="activeSection === 'list'" @click="activeSection = 'list'">证书列表</button>
-      <button type="button" role="tab" data-certificate-section="manual" :class="{ active: activeSection === 'manual' }" :aria-selected="activeSection === 'manual'" @click="activeSection = 'manual'">手动录入</button>
-      <button type="button" role="tab" data-certificate-section="import" :class="{ active: activeSection === 'import' }" :aria-selected="activeSection === 'import'" @click="activeSection = 'import'">批量导入</button>
+      <button v-if="!archived" type="button" role="tab" data-certificate-section="manual" :class="{ active: activeSection === 'manual' }" :aria-selected="activeSection === 'manual'" @click="activeSection = 'manual'">手动录入</button>
+      <button v-if="!archived" type="button" role="tab" data-certificate-section="import" :class="{ active: activeSection === 'import' }" :aria-selected="activeSection === 'import'" @click="activeSection = 'import'">批量导入</button>
     </nav>
 
     <p v-if="error" class="message" role="alert">{{ error }}</p>
@@ -322,14 +305,13 @@ onBeforeUnmount(() => {
     <section v-show="activeSection === 'list'" class="panel certificate-list-panel" data-section-panel="list">
       <div class="page-title-row">
         <div><h3>证书列表</h3><p>可按赛事、状态、组别、赛项和姓名筛选。</p></div>
-        <div class="bulk-actions">
+        <div v-if="!archived" class="bulk-actions">
           <span>已选 {{ selectedIds.length }} 张</span>
           <button type="button" class="primary" data-action="bulk-publish" :disabled="selectedCertificateStatus !== 'draft' || bulkLoading" @click="bulkPublish">{{ bulkLoading && selectedCertificateStatus === "draft" ? "正在发布…" : "批量发布" }}</button>
           <button type="button" class="ghost" data-action="bulk-withdraw" :disabled="selectedCertificateStatus !== 'published' || bulkLoading" @click="bulkWithdraw">{{ bulkLoading && selectedCertificateStatus === "published" ? "正在撤回…" : "批量撤回" }}</button>
         </div>
       </div>
       <div class="certificate-filter-grid">
-        <label>赛事<select v-model="listFilters.eventId" data-list-event><option value="">全部赛事</option><option v-for="event in events" :key="event.id" :value="event.id">{{ event.name }}</option></select></label>
         <label>状态<select v-model="listFilters.status"><option value="">全部状态</option><option value="draft">未发布</option><option value="published">已发布</option></select></label>
         <label>组别<select v-model="listFilters.group"><option value="">全部组别</option><option v-for="group in groups" :key="group" :value="group">{{ group }}</option></select></label>
         <label>赛项<select v-model="listFilters.projectId"><option value="">全部赛项</option><option v-for="project in eventProjects" :key="project.id" :value="project.id">{{ project.name }}</option></select></label>
@@ -369,24 +351,20 @@ onBeforeUnmount(() => {
     </section>
 
     <ManualCertificateEntryPanel
-      v-if="metadataLoaded"
+      v-if="metadataLoaded && !archived"
       v-show="activeSection === 'manual'"
       data-section-panel="manual"
       :events="events"
-      :initial-event-id="initialEventId"
+      :initial-event-id="eventId"
       :initial-registration-id="initialRegistrationId"
       @changed="afterManualChange"
     />
 
-    <section v-show="activeSection === 'import'" class="certificate-import-section" data-section-panel="import">
-      <label>导入赛事
-        <select v-model="importEventId" data-import-event>
-          <option v-for="event in events" :key="event.id" :value="event.id">{{ event.name }}</option>
-        </select>
-      </label>
-      <CertificateImportPanel :event-id="importEventId" @committed="afterImport" />
+    <section v-if="!archived" v-show="activeSection === 'import'" class="certificate-import-section" data-section-panel="import">
+      <CertificateImportPanel :event-id="eventId" @committed="afterImport" />
     </section>
 
     <FilePreviewDialog :file="previewTarget" @close="previewTarget = null" />
+    </template>
   </section>
 </template>

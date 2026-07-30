@@ -278,7 +278,7 @@ describe("App session integration", () => {
     await flushPromises();
 
     expect(wrapper.find(".certificate-management-page").exists()).toBe(true);
-    expect(wrapper.text()).toContain("Excel 导入证书");
+    expect(wrapper.text()).toContain("请先从顶部选择赛事");
     expect(wrapper.text()).not.toContain("证书编号");
     expect(wrapper.text()).not.toContain("ZIP");
   });
@@ -304,24 +304,22 @@ describe("App session integration", () => {
           { id: "P0", eventId: "E0", name: "历史赛项", allowedGroups: ["中学组"] }
         ]
       };
-      if (path === "/api/admin/certificates") return { rows: [] };
-      if (path === "/api/admin/registrations?pageSize=100") return { rows: [], total: 0, page: 1, pageSize: 100 };
-      if (path.includes("/api/admin/registrations?") && path.includes("eventId=E0")) {
+      if (path.startsWith("/api/admin/events/E0/certificates?")) return { rows: [], total: 0, page: 1, pageSize: 20 };
+      if (path.startsWith("/api/admin/events/E0/registrations?")) {
         return { rows: [historicalRegistration], total: 1, page: 1, pageSize: path.includes("pageSize=25") ? 25 : 100, refreshedAt: "2026-07-17T08:00:00.000Z" };
       }
-      if (path.includes("/api/admin/registrations?")) return { rows: [], total: 0, page: 1, pageSize: path.includes("pageSize=25") ? 25 : 100 };
+      if (path.includes("/api/admin/events/") && path.includes("/registrations?")) return { rows: [], total: 0, page: 1, pageSize: path.includes("pageSize=25") ? 25 : 100 };
       return { rows: [] };
     });
     const wrapper = mount(App);
     await flushPromises();
+    await wrapper.get("[data-event-switcher]").setValue("E0");
     await wrapper.get('[data-nav="registrations"]').trigger("click");
-    await flushPromises();
-    await wrapper.get('[data-filter="eventId"]').setValue("E0");
     await flushPromises();
     await wrapper.get('[data-action="manage-certificates"]').trigger("click");
     await flushPromises();
 
-    expect(wrapper.get("[data-list-event]").element.value).toBe("E0");
+    expect(wrapper.get("[data-event-switcher]").element.value).toBe("E0");
     expect(wrapper.get("[data-manual-selected]").text()).toContain("R-HISTORICAL");
   });
 

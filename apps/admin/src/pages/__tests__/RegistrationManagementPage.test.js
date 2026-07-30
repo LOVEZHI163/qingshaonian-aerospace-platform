@@ -1,10 +1,11 @@
-import { flushPromises, mount } from "@vue/test-utils";
+import { flushPromises, mount as vueMount } from "@vue/test-utils";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { apiMock, apiBlobMock } = vi.hoisted(() => ({ apiMock: vi.fn(), apiBlobMock: vi.fn() }));
 vi.mock("../../lib/api.js", () => ({ api: apiMock, apiBlob: apiBlobMock }));
 
 import RegistrationManagementPage from "../RegistrationManagementPage.vue";
+const mount = (component, options = {}) => vueMount(component, { ...options, props: { eventId: "E1", ...(options.props || {}) } });
 
 const event = { id: "E1", name: "2026 航空赛事", isCurrent: true };
 const project = { id: "P1", eventId: "E1", name: "纸飞机", allowedGroups: ["小学低段"] };
@@ -17,7 +18,7 @@ function mockLoads() {
   apiMock.mockImplementation(async (path) => {
     if (path === "/api/admin/events") return { rows: [event], projects: [project] };
     if (path === "/api/admin/organizations") return { rows: [{ id: "O1", name: "实验小学" }] };
-    if (path.startsWith("/api/admin/registrations?")) return { rows: [registration], total: 1, page: 1, pageSize: 25, refreshedAt: "2026-07-17T08:00:00.000Z" };
+    if (path.startsWith("/api/admin/events/E1/registrations?")) return { rows: [registration], total: 1, page: 1, pageSize: 25, refreshedAt: "2026-07-17T08:00:00.000Z" };
     return { row: registration };
   });
 }
@@ -37,7 +38,7 @@ describe("RegistrationManagementPage", () => {
     expect(wrapper.text()).toContain("编辑");
     expect(wrapper.text()).toContain("成绩");
     expect(wrapper.text()).toContain("证书");
-    expect(wrapper.find('[data-filter="eventId"]').exists()).toBe(true);
+    expect(wrapper.find('[data-filter="eventId"]').exists()).toBe(false);
     expect(wrapper.find('[data-action="export-filtered"]').exists()).toBe(true);
     expect(wrapper.find('[data-action="export-all"]').exists()).toBe(true);
     expect(wrapper.find('[data-action="certificate-template"]').exists()).toBe(true);
@@ -49,7 +50,7 @@ describe("RegistrationManagementPage", () => {
     await wrapper.get('[data-action="refresh"]').trigger("click");
     await flushPromises();
 
-    expect(apiMock.mock.calls.filter(([path]) => path.startsWith("/api/admin/registrations?")).length).toBeGreaterThan(1);
+    expect(apiMock.mock.calls.filter(([path]) => path.startsWith("/api/admin/events/E1/registrations?")).length).toBeGreaterThan(1);
     expect(wrapper.text()).not.toContain("证书编号");
   });
 

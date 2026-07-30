@@ -35,6 +35,8 @@ const initialEventContext = initialView && SAFE_EVENT_ID.test(initialParams.get(
   ? initialParams.get("eventId") || initialParams.get("eventSlug")
   : "";
 const initialEventId = initialEventContext;
+const adminEvents = ref([]);
+const adminEventId = ref(initialEventId);
 const initialContentId = initialView === "siteContent" && SAFE_EVENT_ID.test(initialParams.get("contentId") || "")
   ? initialParams.get("contentId")
   : "";
@@ -148,6 +150,22 @@ async function loadAccountEvents() {
   }
 }
 
+async function loadAdminEvents() {
+  if (currentUser.value?.type !== "admin") return;
+  try {
+    const payload = await api("/api/admin/events");
+    adminEvents.value = payload.rows || [];
+    if (adminEventId.value && !adminEvents.value.some((event) => event.id === adminEventId.value)) adminEventId.value = "";
+  } catch (error) {
+    message.value = error.message || "赛事列表加载失败，请稍后重试";
+  }
+}
+
+function setAdminEventId(eventId) {
+  adminEventId.value = eventId || "";
+  certificateRegistrationId.value = "";
+}
+
 function targetView(user = currentUser.value) {
   if (!user || !initialView) return defaultView(user);
   if (user.type === "organization" && initialView === "organizationWorkspace") {
@@ -184,6 +202,7 @@ async function login(credentials) {
   try {
     const user = await session.login(credentials);
     await loadAccountEvents();
+    await loadAdminEvents();
     currentView.value = user.mustChangePassword ? "password" : targetView(user);
   } catch (error) {
     message.value = error.message;
@@ -197,6 +216,7 @@ async function changePassword() {
     session.setUser(payload.user, session.organizations.value);
     Object.assign(passwordChangeForm, { currentPassword: "", newPassword: "" });
     await loadAccountEvents();
+    await loadAdminEvents();
     currentView.value = targetView(payload.user);
     message.value = "密码修改成功";
   } catch (error) {
@@ -227,11 +247,7 @@ function logout() {
 }
 
 function commitAdminNavigation(key) {
-  if (key === "registrations") managementEventId.value = "";
-  if (key === "certificates") {
-    certificateRegistrationId.value = "";
-    certificateEventId.value = "";
-  }
+  if (key !== "certificates") certificateRegistrationId.value = "";
   if (key !== "siteContent") siteContentId.value = "";
   currentView.value = key === "registrations" ? "registration" : key;
 }
@@ -266,8 +282,11 @@ function openAccountEvent({ eventId, mode }) {
 }
 
 function openCertificateManagement(registration) {
+  if (!registration?.eventId || registration.eventId !== adminEventId.value) {
+    message.value = "报名与当前赛事不一致，请重新选择赛事后再管理证书";
+    return;
+  }
   certificateRegistrationId.value = registration?.id || "";
-  certificateEventId.value = registration?.eventId || "";
   currentView.value = "certificates";
 }
 
@@ -298,13 +317,15 @@ watch(currentView, (view) => {
   if (!["registration", "organizationWorkspace"].includes(view)) selectedRegistrationEvent.value = null;
 });
 
-watch([currentView, selectedEventId, certificateEventId, siteContentId, () => currentUser.value?.type], ([view, eventId, certificateId, contentId, userType]) => {
+watch([currentView, selectedEventId, certificateEventId, siteContentId, adminEventId, () => currentUser.value?.type], ([view, eventId, certificateId, contentId, _adminEvent, userType]) => {
   if (!userType || !DEEP_LINK_VIEWS.has(view)) return;
   const url = new URL(window.location.href);
   url.searchParams.set("view", view);
   if (userType === "admin") {
     if (view === "siteContent" && contentId) url.searchParams.set("contentId", contentId);
     else url.searchParams.delete("contentId");
+    if (["overview", "registration", "certificates"].includes(view) && adminEventId.value) url.searchParams.set("eventId", adminEventId.value);
+    else url.searchParams.delete("eventId");
   } else {
     url.searchParams.delete("contentId");
     url.searchParams.delete("eventSlug");
@@ -324,6 +345,7 @@ onMounted(async () => {
   await session.restore();
   if (currentUser.value && !currentUser.value.mustChangePassword) {
     await loadAccountEvents();
+    await loadAdminEvents();
     currentView.value = targetView();
   }
 });
@@ -345,15 +367,15 @@ onMounted(async () => {
     </form>
   </section>
 
-  <AdminShell v-else-if="currentUser.type === 'admin'" :active="adminActive" @navigate="navigateAdmin">
+  <AdminShell v-else-if="currentUser.type === 'admin'" :active="adminActive" :events="adminEvents" :event-id="adminEventId" @update:event-id="setAdminEventId" @navigate="navigateAdmin">
     <template #header><div><strong>{{ currentUser.name }}</strong><span>{{ eventData.event.name || "赛事管理平台" }}</span></div><button type="button" class="ghost" data-action="logout" @click="logout">退出登录</button></template>
     <p v-if="message" class="message">{{ message }}</p>
-    <DashboardPage v-if="currentView === 'overview'" @navigate="navigateAdmin" />
+    <DashboardPage v-if="currentView === 'overview'" :event-id="adminEventId" @navigate="navigateAdmin" />
     <EventManagementPage v-else-if="currentView === 'events'" @event-changed="loadEvent" />
     <SiteContentPage v-else-if="currentView === 'siteContent'" ref="siteContentPage" :initial-content-id="siteContentId" @content-id="siteContentId = $event || ''" @navigate="navigateAdmin" />
     <OrganizationManagementPage v-else-if="currentView === 'organizations'" />
-    <RegistrationManagementPage :key="`registration-management:${managementEventId}`" v-else-if="currentView === 'registration'" :initial-event-id="managementEventId" @open-certificates="openCertificateManagement" />
-    <CertificateManagementPage :key="`certificate-management:${certificateEventId}:${certificateRegistrationId}`" v-else-if="currentView === 'certificates'" :initial-registration-id="certificateRegistrationId" :initial-event-id="certificateEventId" />
+    <RegistrationManagementPage :key="`registration-management:${adminEventId}`" v-else-if="currentView === 'registration'" :event-id="adminEventId" @open-certificates="openCertificateManagement" />
+    <CertificateManagementPage :key="`certificate-management:${adminEventId}:${certificateRegistrationId}`" v-else-if="currentView === 'certificates'" :event-id="adminEventId" :initial-registration-id="certificateRegistrationId" />
     <UserManagementPage v-else-if="currentView === 'users'" @error="handleError" />
   </AdminShell>
 

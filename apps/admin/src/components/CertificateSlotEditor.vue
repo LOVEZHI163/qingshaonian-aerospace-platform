@@ -88,11 +88,11 @@ async function saveSlot(slot) {
       const body = new FormData();
       body.append("title", forms[slot].title.trim());
       body.append("certificate", forms[slot].file);
-      await api(`/api/admin/registrations/${props.registration.id}/certificates/${slot}`, { method: "POST", body });
+      await api(`/api/admin/events/${encodeURIComponent(props.registration.eventId)}/registrations/${props.registration.id}/certificates/${slot}`, { method: "POST", body });
       forms[slot].file = null;
       success.value = "";
     } else {
-      await api(`/api/admin/certificates/${current.id}`, {
+      await api(`/api/admin/events/${encodeURIComponent(props.registration.eventId)}/certificates/${current.id}`, {
         method: "PATCH",
         body: JSON.stringify({ title: forms[slot].title.trim() })
       });
@@ -112,7 +112,7 @@ async function changeStatus(certificate, status) {
   error.value = "";
   success.value = "";
   try {
-    await api("/api/admin/certificates/bulk-status", {
+    await api(`/api/admin/events/${encodeURIComponent(props.registration.eventId)}/certificates/bulk-status`, {
       method: "POST",
       body: JSON.stringify({ ids: [certificate.id], status })
     });
@@ -144,7 +144,7 @@ async function confirmDelete() {
   error.value = "";
   success.value = "";
   try {
-    await api(`/api/admin/certificates/${certificate.id}`, { method: "DELETE" });
+    await api(`/api/admin/events/${encodeURIComponent(props.registration.eventId)}/certificates/${certificate.id}`, { method: "DELETE" });
     deleteTarget.value = null;
     success.value = "";
     emit("changed", { message: "证书已删除。" });

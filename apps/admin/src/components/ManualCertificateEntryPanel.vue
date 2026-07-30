@@ -110,7 +110,8 @@ function certificateListPath(registrationId) {
     page: "1",
     pageSize: "2"
   });
-  return `/api/admin/certificates?${params}`;
+  params.set("eventId", eventId.value);
+  return `/api/admin/events/${encodeURIComponent(eventId.value)}/certificates?${params}`;
 }
 
 async function loadSelectedCertificates(registrationId) {
@@ -195,7 +196,7 @@ async function saveResult() {
   error.value = "";
   success.value = "";
   try {
-    const payload = await api(`/api/admin/registrations/${registrationId}/result`, {
+    const payload = await api(`/api/admin/events/${encodeURIComponent(eventIdSnapshot)}/registrations/${registrationId}/result`, {
       method: "POST",
       body: JSON.stringify({
         awardName: result.awardName,

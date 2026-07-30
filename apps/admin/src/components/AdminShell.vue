@@ -1,9 +1,13 @@
 <script setup>
+import EventContextSwitcher from "./EventContextSwitcher.vue";
+
 defineProps({
-  active: { type: String, default: "overview" }
+  active: { type: String, default: "overview" },
+  events: { type: Array, default: () => [] },
+  eventId: { type: String, default: "" }
 });
 
-defineEmits(["navigate"]);
+defineEmits(["navigate", "update:eventId"]);
 
 const items = [
   ["overview", "概览"],
@@ -32,7 +36,7 @@ const items = [
       </nav>
     </aside>
     <div class="admin-workspace">
-      <header class="admin-header"><slot name="header" /></header>
+      <header class="admin-header"><slot name="header" /><EventContextSwitcher :events="events" :model-value="eventId" include-archived @update:model-value="$emit('update:eventId', $event)" /></header>
       <main class="admin-main"><slot /></main>
     </div>
   </div>

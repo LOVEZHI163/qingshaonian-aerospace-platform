@@ -1,4 +1,4 @@
-import { flushPromises, mount } from "@vue/test-utils";
+import { flushPromises, mount as vueMount } from "@vue/test-utils";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { apiMock, apiBlobMock } = vi.hoisted(() => ({ apiMock: vi.fn(), apiBlobMock: vi.fn() }));
@@ -11,6 +11,7 @@ vi.mock("../../lib/api.js", () => ({
 import CertificateImportPanel from "../../components/CertificateImportPanel.vue";
 import ManualCertificateEntryPanel from "../../components/ManualCertificateEntryPanel.vue";
 import CertificateManagementPage from "../CertificateManagementPage.vue";
+const mount = (component, options = {}) => vueMount(component, { ...options, props: { eventId: "E1", ...(options.props || {}) } });
 
 const event = { id: "E1", name: "2026 青少年航空赛", isCurrent: true };
 const eventTwo = { id: "E2", name: "2027 青少年航空赛", isCurrent: false };
@@ -72,11 +73,11 @@ const preview = {
 };
 
 function isRegistrationRequest(path) {
-  return path.startsWith("/api/admin/registrations?");
+  return path.startsWith("/api/admin/events/E1/registrations?");
 }
 
 function isCertificateRequest(path) {
-  return path === "/api/admin/certificates" || path.startsWith("/api/admin/certificates?");
+  return path.startsWith("/api/admin/events/E1/certificates?");
 }
 
 function installApi({
@@ -89,12 +90,12 @@ function installApi({
     if (path === "/api/admin/events") return { rows: eventRows, projects: projectRows };
     if (isRegistrationRequest(path)) return { rows: [registration], total: 1, page: 1, pageSize: 100 };
     if (isCertificateRequest(path)) return { rows: certificates, total: certificates.length, page: 1, pageSize: 20 };
-    if (path.startsWith("/api/admin/certificate-imports?eventId=")) return { rows: [] };
-    if (path === "/api/admin/certificate-imports/preview" && options.method === "POST") return previewPayload;
-    if (path === "/api/admin/certificate-imports/B1/commit" && options.method === "POST") {
+    if (path === "/api/admin/events/E1/certificate-imports") return { rows: [] };
+    if (path === "/api/admin/events/E1/certificate-imports/preview" && options.method === "POST") return previewPayload;
+    if (path === "/api/admin/events/E1/certificate-imports/B1/commit" && options.method === "POST") {
       return { id: "B1", status: "committed", createdCount: 1, replacedCount: 1 };
     }
-    if (path === "/api/admin/certificates/bulk-status" && options.method === "POST") return { rows: certificates };
+    if (path === "/api/admin/events/E1/certificates/bulk-status" && options.method === "POST") return { rows: certificates };
     return {};
   });
 }
@@ -146,21 +147,19 @@ describe("CertificateManagementPage", () => {
     expect(wrapper.get('[data-section-panel="import"]').isVisible()).toBe(false);
   });
 
-  it("keeps list filters, manual search, and import event independent", async () => {
+  it("keeps list filters and manual search within the supplied event context", async () => {
     const wrapper = mount(CertificateManagementPage);
     await flushPromises();
 
     await wrapper.get("[data-list-query]").setValue("张三");
     await openCertificateSection(wrapper, "manual");
     await wrapper.get("[data-manual-name]").setValue("李四");
-    await openCertificateSection(wrapper, "import");
-    await wrapper.get("[data-import-event]").setValue("E2");
     await openCertificateSection(wrapper, "list");
 
     expect(wrapper.get("[data-list-query]").element.value).toBe("张三");
-    expect(wrapper.get("[data-list-event]").element.value).toBe("E1");
     expect(wrapper.get("[data-manual-name]").element.value).toBe("李四");
-    expect(wrapper.get("[data-import-event]").element.value).toBe("E2");
+    expect(wrapper.find("[data-list-event]").exists()).toBe(false);
+    expect(wrapper.find("[data-import-event]").exists()).toBe(false);
   });
 
   it("opens manual entry for an initial registration", async () => {
@@ -257,7 +256,7 @@ describe("CertificateManagementPage", () => {
 
     await wrapper.get('[data-action="download-errors"]').trigger("click");
     await flushPromises();
-    expect(apiBlobMock).toHaveBeenCalledWith("/api/admin/certificate-imports/B1/errors.xlsx");
+    expect(apiBlobMock).toHaveBeenCalledWith("/api/admin/events/E1/certificate-imports/B1/errors.xlsx");
     await wrapper.get('[data-action="commit-import"]').trigger("click");
     await flushPromises();
     expect(wrapper.text()).toContain("已保存为未发布证书");
@@ -284,7 +283,7 @@ describe("CertificateManagementPage", () => {
     await wrapper.get('[data-action="bulk-publish"]').trigger("click");
     await flushPromises();
 
-    expect(apiMock).toHaveBeenCalledWith("/api/admin/certificates/bulk-status", {
+    expect(apiMock).toHaveBeenCalledWith("/api/admin/events/E1/certificates/bulk-status", {
       method: "POST",
       body: JSON.stringify({ ids: ["C1", "C2"], status: "published" })
     });
@@ -341,50 +340,25 @@ describe("CertificateManagementPage", () => {
     expect(wrapper.find('[data-action="download-C1"]').exists()).toBe(false);
   });
 
-  it("resets dependent list filters and requests only certificates when the list event changes", async () => {
+  it("requests only the supplied event certificates when list filters change", async () => {
     const wrapper = mount(CertificateManagementPage);
     await flushPromises();
     const selects = wrapper.findAll(".certificate-filter-grid select");
-    await selects[2].setValue("小学低段");
-    await selects[3].setValue("P1");
+    await selects[1].setValue("小学低段");
+    await selects[2].setValue("P1");
     apiMock.mockClear();
-    await selects[0].setValue("E2");
+    await selects[0].setValue("draft");
     await flushPromises();
 
-    expect(selects[2].element.value).toBe("");
-    expect(selects[3].element.value).toBe("");
-    expect(apiMock.mock.calls.some(([path]) => isCertificateRequest(path) && path.includes("eventId=E2"))).toBe(true);
+    expect(apiMock.mock.calls.some(([path]) => isCertificateRequest(path) && path.includes("eventId=E1"))).toBe(true);
     expect(apiMock.mock.calls.some(([path]) => isRegistrationRequest(path))).toBe(false);
   });
 
-  it("ignores an older list response after rapid event changes", async () => {
-    const oldEvent = deferred();
-    let initialLoaded = false;
-    apiMock.mockImplementation((path) => {
-      if (path === "/api/admin/events") return Promise.resolve({ rows: [event, eventTwo], projects: [project, projectTwo] });
-      if (path.startsWith("/api/admin/certificate-imports?")) return Promise.resolve({ rows: [] });
-      if (isCertificateRequest(path)) {
-        const params = new URL(path, "http://admin.local").searchParams;
-        if (!initialLoaded) {
-          initialLoaded = true;
-          return Promise.resolve({ rows: [certificateOne], total: 1, page: 1, pageSize: 20 });
-        }
-        if (params.get("eventId") === "E2") return oldEvent.promise;
-        return Promise.resolve({ rows: [{ ...certificateOne, title: "最新证书" }], total: 1, page: 1, pageSize: 20 });
-      }
-      return Promise.resolve({});
-    });
+  it("does not render a per-page event selector", async () => {
     const wrapper = mount(CertificateManagementPage);
     await flushPromises();
-    const eventSelect = wrapper.get("[data-list-event]");
-    await eventSelect.setValue("E2");
-    await eventSelect.setValue("E1");
-    await flushPromises();
-    oldEvent.resolve({ rows: [{ ...certificateOne, title: "过期证书" }], total: 1, page: 1, pageSize: 20 });
-    await flushPromises();
-
-    expect(wrapper.text()).toContain("最新证书");
-    expect(wrapper.text()).not.toContain("过期证书");
+    expect(wrapper.find("[data-list-event]").exists()).toBe(false);
+    expect(wrapper.find("[data-import-event]").exists()).toBe(false);
   });
 
   it("does not show bulk success when the certificate refresh fails", async () => {

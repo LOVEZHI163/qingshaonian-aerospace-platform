@@ -1,9 +1,10 @@
 <script setup>
-import { computed, onMounted, ref } from "vue";
+import { computed, ref, watch } from "vue";
 
 import { api } from "../lib/api.js";
 
 defineEmits(["navigate"]);
+const props = defineProps({ eventId: { type: String, default: "" } });
 
 const data = ref({
   event: {},
@@ -13,7 +14,6 @@ const data = ref({
   recentImports: [],
   recentAuditLogs: []
 });
-const selectedEventId = ref("");
 const loading = ref(false);
 const error = ref("");
 
@@ -43,7 +43,8 @@ function formatTime(value) {
   }).format(new Date(value));
 }
 
-async function load(eventId = "") {
+async function load(eventId = props.eventId) {
+  if (!eventId) return;
   loading.value = true;
   error.value = "";
   try {
@@ -58,7 +59,6 @@ async function load(eventId = "") {
       recentImports: payload.recentImports || [],
       recentAuditLogs: payload.recentAuditLogs || []
     };
-    selectedEventId.value = payload.event?.id || eventId;
   } catch (loadError) {
     error.value = loadError.message || "概览加载失败";
   } finally {
@@ -66,7 +66,7 @@ async function load(eventId = "") {
   }
 }
 
-onMounted(() => load());
+watch(() => props.eventId, (eventId) => { void load(eventId); }, { immediate: true });
 </script>
 
 <template>
