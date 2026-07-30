@@ -162,10 +162,9 @@ export function createOrganizationsRouter({ store, requireUser, requireAdmin, re
     const db = await deps.readDb();
     const document = db.organizationDocuments.find((row) => row.id === req.params.documentId && row.organizationId === req.params.id && !row.cleanedAt);
     if (!document) return res.status(404).json({ error: "资质文件不存在" });
-    const isAdmin = req.user.type === "admin";
     const isOwner = req.user.type === "organization"
       && db.organizations.some((organization) => organization.id === req.params.id && organization.status === "active" && organization.ownerUserId === req.user.id);
-    if (!isAdmin && !isOwner) return res.status(403).json({ error: "无权下载该组织资质" });
+    if (!isOwner) return res.status(403).json({ error: "无权下载该组织资质" });
     res.type(document.mimeType).attachment(document.originalName).sendFile(document.filePath);
   }));
 

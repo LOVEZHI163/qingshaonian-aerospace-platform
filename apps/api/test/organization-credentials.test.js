@@ -115,6 +115,8 @@ test("organization registration review keeps pending organizations outside organ
     assert.equal(reviewedOrganization.documents[0].isCurrent, true);
     assert.equal(Object.hasOwn(reviewedOrganization.documents[0], "filePath"), false);
 
+    const adminCredential = await fetch(`${baseUrl}/api/organizations/${payload.organization.id}/credential/${payload.document.id}`, withSession(admin.cookie));
+    assert.equal(adminCredential.status, 403);
     const credential = await fetch(`${baseUrl}/api/organizations/${payload.organization.id}/credential/${payload.document.id}`, withSession(owner.cookie));
     assert.equal(credential.status, 200);
     assert.deepEqual(Buffer.from(await credential.arrayBuffer()), pdfBuffer);
