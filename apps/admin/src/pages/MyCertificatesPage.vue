@@ -12,6 +12,7 @@ const certificates = ref([]);
 const loading = ref(true);
 const queryEventId = ref(props.eventId);
 const queryMessage = ref("");
+const lastLoadedEventId = ref(null);
 const downloads = createBlobDownloadManager();
 const managedOrganizations = computed(() => (session.organizations.value || []).filter((item) => item.status === "active" && item.reviewStatus === "approved" && ["owner", "manager"].includes(item.membershipRole)));
 const ordinaryUser = computed(() => session.user.value?.type === "ordinary");
@@ -27,7 +28,8 @@ async function download(certificate) {
   }
 }
 
-async function loadCertificates(eventId = props.eventId) {
+async function loadCertificates(eventId = props.eventId, { reload = false } = {}) {
+  if (ordinaryUser.value && eventId && !reload && lastLoadedEventId.value === eventId) return;
   loading.value = true;
   certificates.value = [];
   try {
@@ -39,6 +41,7 @@ async function loadCertificates(eventId = props.eventId) {
       queryMessage.value = "请输入赛事 ID 查询已发布证书；历史归档赛事也可查询。";
     } else {
       queryMessage.value = "";
+      lastLoadedEventId.value = eventId;
       certificates.value = (await api(`/api/me/events/${encodeURIComponent(eventId)}/certificates`)).rows || [];
     }
   } catch (error) {
@@ -55,12 +58,16 @@ async function queryCertificates() {
     return;
   }
   queryEventId.value = eventId;
+  if (eventId === props.eventId) {
+    await loadCertificates(eventId, { reload: true });
+    return;
+  }
   emit("event-id", eventId);
-  await loadCertificates(eventId);
+  await loadCertificates(eventId, { reload: true });
 }
 
 onMounted(async () => {
-  await loadCertificates(props.eventId);
+  await loadCertificates(props.eventId, { reload: true });
 });
 onBeforeUnmount(() => downloads.dispose());
 </script>

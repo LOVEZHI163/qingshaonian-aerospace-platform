@@ -168,6 +168,39 @@ describe("App session integration", () => {
     expect(new URLSearchParams(window.location.search).get("eventId")).toBe("E-ARCHIVED");
   });
 
+  it("switches an active event certificate view to one historical event without retaining the active context", async () => {
+    sessionUser.value = { id: "U1", type: "ordinary", name: "用户", mustChangePassword: false };
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/public/event") return publicData();
+      if (path === "/api/me/events") return { rows: [{ event: { id: "E1", name: "当前赛事" }, registrationState: "open", organizations: [] }] };
+      if (path === "/api/me/registration-context?eventId=E1") return { event: { id: "E1", name: "当前赛事" }, organizations: [], projects: [], grades: [] };
+      if (path === "/api/me/events/E1/certificates") return { rows: [] };
+      if (path === "/api/me/events/E-ARCHIVED/certificates") return { rows: [{ id: "C1", title: "历史证书" }] };
+      return { rows: [] };
+    });
+    const wrapper = mount(App);
+    await flushPromises();
+    await wrapper.get('[data-event-card="E1"] [data-action="open"]').trigger("click");
+    await flushPromises();
+    await wrapper.get('[data-user-nav="certificates"]').trigger("click");
+    await flushPromises();
+    apiMock.mockClear();
+
+    await wrapper.get('[data-field="certificate-event-id"]').setValue("E-ARCHIVED");
+    await wrapper.get('[data-action="query-certificates"]').trigger("submit");
+    await flushPromises();
+
+    expect(new URLSearchParams(window.location.search).get("eventId")).toBe("E-ARCHIVED");
+    expect(wrapper.get(".topbar").text()).toContain("历史赛事证书查询");
+    expect(wrapper.text()).toContain("历史证书");
+    expect(apiMock.mock.calls.filter(([path]) => path === "/api/me/events/E-ARCHIVED/certificates").map(([path]) => path)).toEqual(["/api/me/events/E-ARCHIVED/certificates"]);
+
+    await wrapper.get('[data-user-nav="eventCenter"]').trigger("click");
+    await flushPromises();
+    expect(new URLSearchParams(window.location.search).has("eventId")).toBe(false);
+    expect(wrapper.find('[data-user-nav="registration"]').exists()).toBe(false);
+  });
+
   it("continues to reject an archived registration deep link outside active event rows", async () => {
     window.history.replaceState({}, "", "/admin/?view=registration&eventId=E-ARCHIVED");
     sessionUser.value = { id: "U1", type: "ordinary", name: "用户", mustChangePassword: false };

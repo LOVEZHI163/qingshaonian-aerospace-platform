@@ -69,7 +69,7 @@ const userNavigation = computed(() => {
 });
 const userHeaderEvent = computed(() => {
   if (currentView.value === "eventCenter") return { name: "赛事中心", date: "", venue: "", registrationDeadline: "" };
-  if (currentUser.value?.type === "ordinary" && currentView.value === "certificates" && certificateEventId.value && !selectedAccountEvent.value) {
+  if (currentUser.value?.type === "ordinary" && currentView.value === "certificates" && certificateEventId.value && certificateEventId.value !== selectedEventId.value) {
     return { name: "历史赛事证书查询", date: "", venue: "", registrationDeadline: "" };
   }
   if (currentUser.value?.type === "ordinary" && selectedAccountEvent.value?.event) {
@@ -245,6 +245,12 @@ function navigateUser(key) {
 
 function setCertificateEventId(eventId) {
   if (!SAFE_EVENT_ID.test(eventId || "")) return;
+  if (certificateEventId.value === eventId && !selectedEventId.value) return;
+  if (eventId !== selectedEventId.value) {
+    selectedEventId.value = "";
+    registrationEventId.value = "";
+    recordsEventId.value = "";
+  }
   certificateEventId.value = eventId;
 }
 
@@ -352,7 +358,7 @@ onMounted(async () => {
       <EventCenterPage v-if="currentView === 'eventCenter'" :account-type="currentUser.type" @open-event="openAccountEvent" />
       <RegistrationPage v-if="currentView === 'registration'" :event-id="registrationEventId" :account-type="currentUser.type" :event-organizations="selectedAccountEvent?.organizations || []" :registration-state="selectedAccountEvent?.registrationState || ''" :fallback-context="{ projects: eventData.projects }" @context="useRegistrationEvent" @registered="message = '报名已提交，等待审核'" @error="handleError" />
       <RegistrationRecordsPage :key="`records:${recordsEventId}`" v-else-if="currentView === 'registrationRecords'" :event-id="recordsEventId" @error="handleError" />
-      <MyCertificatesPage :key="`certificates:${certificateEventId}`" v-else-if="currentView === 'certificates'" :event-id="certificateEventId" @event-id="setCertificateEventId" @error="handleError" />
+      <MyCertificatesPage v-else-if="currentView === 'certificates'" :event-id="certificateEventId" @event-id="setCertificateEventId" @error="handleError" />
       <OrganizationConsolePage v-else-if="currentView === 'organization'" @error="handleError" />
     </main>
   </div>

@@ -82,7 +82,7 @@ describe("ordinary user event workflow", () => {
     certificates.unmount();
   });
 
-  it("queries published historical certificates by an explicit event id without an active event", async () => {
+  it("queries a historical certificate event id without an active event", async () => {
     apiMock.mockImplementation(async (path) => {
       if (path === "/api/me/events/E-ARCHIVED/certificates") return { rows: [{ id: "C1", title: "历史证书" }] };
       throw new Error(`unexpected API path ${path}`);
@@ -92,10 +92,8 @@ describe("ordinary user event workflow", () => {
 
     await wrapper.get('[data-field="certificate-event-id"]').setValue("E-ARCHIVED");
     await wrapper.get('[data-action="query-certificates"]').trigger("submit");
-    await flushPromises();
-
-    expect(apiMock).toHaveBeenCalledWith("/api/me/events/E-ARCHIVED/certificates");
-    expect(wrapper.text()).toContain("历史证书");
     expect(wrapper.emitted("event-id")?.[0]).toEqual(["E-ARCHIVED"]);
+    await flushPromises();
+    expect(apiMock).toHaveBeenCalledWith("/api/me/events/E-ARCHIVED/certificates");
   });
 });
