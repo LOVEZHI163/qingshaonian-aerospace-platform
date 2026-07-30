@@ -16,6 +16,20 @@ function openRegistration(eventId) {
   emit("open-event", { eventId, mode: "registration" });
 }
 
+function openOrganizationWorkspace(eventId) {
+  emit("open-event", { eventId, mode: "organizationWorkspace" });
+}
+
+async function joinEvent(row) {
+  try {
+    await api(`/api/organization/events/${encodeURIComponent(row.event.id)}/join`, { method: "POST" });
+    row.participationState = "joined";
+    openOrganizationWorkspace(row.event.id);
+  } catch (requestError) {
+    error.value = requestError.message || "加入赛事失败，请稍后重试";
+  }
+}
+
 async function loadEvents() {
   loading.value = true;
   error.value = "";
@@ -48,6 +62,8 @@ onMounted(loadEvents);
         <template v-else-if="accountType === 'organization'">
           <p class="hint">{{ participationStateText[row.participationState] || "资质不可用" }}</p>
           <p v-if="row.summary" class="hint">报名 {{ row.summary.registrationCount || 0 }} 人 · 待审核 {{ row.summary.pendingRegistrationCount || 0 }} 人 · 证书 {{ row.summary.certificateCount || 0 }} 份</p>
+          <button v-if="row.participationState === 'available'" type="button" class="primary" data-action="join-event" @click="joinEvent(row)">加入赛事</button>
+          <button v-else-if="row.participationState === 'joined'" type="button" class="primary" data-action="open-workspace" @click="openOrganizationWorkspace(row.event.id)">进入赛事工作台</button>
         </template>
         <button v-if="accountType === 'ordinary'" type="button" class="primary" data-action="open" @click="openRegistration(row.event.id)">进入报名</button>
       </article>

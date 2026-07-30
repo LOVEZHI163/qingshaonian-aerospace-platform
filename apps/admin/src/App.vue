@@ -10,6 +10,7 @@ import EventCenterPage from "./pages/EventCenterPage.vue";
 import EventManagementPage from "./pages/EventManagementPage.vue";
 import MyCertificatesPage from "./pages/MyCertificatesPage.vue";
 import OrganizationConsolePage from "./pages/OrganizationConsolePage.vue";
+import OrganizationEventWorkspacePage from "./pages/OrganizationEventWorkspacePage.vue";
 import OrganizationManagementPage from "./pages/OrganizationManagementPage.vue";
 import RegistrationManagementPage from "./pages/RegistrationManagementPage.vue";
 import RegistrationPage from "./pages/RegistrationPage.vue";
@@ -54,7 +55,7 @@ const selectedAccountEvent = computed(() => accountEvents.value.find((row) => ro
 const approvedOrganization = computed(() => (session.organizations.value || []).find((organization) => (
   organization.status === "active"
   && organization.reviewStatus === "approved"
-  && ["owner", "manager", undefined].includes(organization.membershipRole)
+  && organization.ownerUserId === currentUser.value?.id
 )));
 const adminActive = computed(() => currentView.value === "registration" ? "registrations" : currentView.value);
 const userNavigation = computed(() => {
@@ -65,7 +66,7 @@ const userNavigation = computed(() => {
     return navigation;
   }
   if (!approvedOrganization.value) return [["eventCenter", "赛事中心"], ["organization", "审核进度"]];
-  return [["eventCenter", "赛事中心"], ["registration", "报名"], ["registrationRecords", "报名记录"], ["certificates", "证书查询"], ["organization", "组织控制台"]];
+  return [["eventCenter", "赛事中心"], ["organizationWorkspace", "赛事工作台"], ["organization", "组织与成员"], ["certificates", "历史证书"]];
 });
 const userHeaderEvent = computed(() => {
   if (currentView.value === "eventCenter") return { name: "赛事中心", date: "", venue: "", registrationDeadline: "" };
@@ -161,9 +162,9 @@ function targetView(user = currentUser.value) {
   const allowed = user.type === "admin"
     ? new Set(["overview", "events", "siteContent", "organizations", "registration", "certificates", "users"])
     : user.type === "organization"
-      ? new Set(["registration", "registrationRecords", "certificates", "organization"])
+      ? new Set(["eventCenter", "organizationWorkspace", "certificates", "organization"])
       : new Set(["eventCenter", "registration", "registrationRecords", "certificates"]);
-  if (user.type === "organization") return new Set(["eventCenter", "registration", "registrationRecords", "certificates", "organization", "organizationWorkspace"]).has(initialView)
+  if (user.type === "organization") return new Set(["eventCenter", "organizationWorkspace", "certificates", "organization"]).has(initialView)
     ? initialView
     : defaultView(user);
   return allowed.has(initialView) ? initialView : defaultView(user);
@@ -356,9 +357,10 @@ onMounted(async () => {
       <header class="topbar"><div><h2>{{ userHeaderEvent.name || "赛事报名平台" }}</h2><p>{{ userHeaderEvent.date }} · {{ userHeaderEvent.venue }} · 报名截止 {{ userHeaderEvent.registrationDeadline }}</p></div></header>
       <p v-if="message" class="message">{{ message }}</p>
       <EventCenterPage v-if="currentView === 'eventCenter'" :account-type="currentUser.type" @open-event="openAccountEvent" />
-      <RegistrationPage v-if="currentView === 'registration'" :event-id="registrationEventId" :account-type="currentUser.type" :event-organizations="selectedAccountEvent?.organizations || []" :registration-state="selectedAccountEvent?.registrationState || ''" :fallback-context="{ projects: eventData.projects }" @context="useRegistrationEvent" @registered="message = '报名已提交，等待审核'" @error="handleError" />
+      <RegistrationPage v-if="currentUser.type === 'ordinary' && currentView === 'registration'" :event-id="registrationEventId" :account-type="currentUser.type" :event-organizations="selectedAccountEvent?.organizations || []" :registration-state="selectedAccountEvent?.registrationState || ''" :fallback-context="{ projects: eventData.projects }" @context="useRegistrationEvent" @registered="message = '报名已提交，等待审核'" @error="handleError" />
       <RegistrationRecordsPage :key="`records:${recordsEventId}`" v-else-if="currentView === 'registrationRecords'" :event-id="recordsEventId" @error="handleError" />
       <MyCertificatesPage v-else-if="currentView === 'certificates'" :event-id="certificateEventId" @event-id="setCertificateEventId" @error="handleError" />
+      <OrganizationEventWorkspacePage v-else-if="currentView === 'organizationWorkspace'" :event-id="selectedEventId" @error="handleError" />
       <OrganizationConsolePage v-else-if="currentView === 'organization'" @error="handleError" />
     </main>
   </div>

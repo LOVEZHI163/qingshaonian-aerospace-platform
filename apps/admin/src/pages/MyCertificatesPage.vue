@@ -14,8 +14,8 @@ const queryEventId = ref(props.eventId);
 const queryMessage = ref("");
 const lastLoadedEventId = ref(null);
 const downloads = createBlobDownloadManager();
-const managedOrganizations = computed(() => (session.organizations.value || []).filter((item) => item.status === "active" && item.reviewStatus === "approved" && ["owner", "manager"].includes(item.membershipRole)));
 const ordinaryUser = computed(() => session.user.value?.type === "ordinary");
+const organizationUser = computed(() => session.user.value?.type === "organization");
 const validEventId = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 
 async function download(certificate) {
@@ -33,10 +33,11 @@ async function loadCertificates(eventId = props.eventId, { reload = false } = {}
   loading.value = true;
   certificates.value = [];
   try {
-    if (session.user.value?.type === "organization") {
-      const query = props.eventId ? `?eventId=${encodeURIComponent(props.eventId)}` : "";
-      const payloads = await Promise.all(managedOrganizations.value.map((organization) => api(`/api/organizations/${organization.id}/certificates${query}`)));
-      certificates.value = payloads.flatMap((payload) => payload.rows || []);
+    if (organizationUser.value && !eventId) {
+      queryMessage.value = "请输入赛事 ID 查询本组织已发布的证书；已归档赛事仍可查询。";
+    } else if (organizationUser.value) {
+      queryMessage.value = "";
+      certificates.value = (await api(`/api/organization/events/${encodeURIComponent(eventId)}/certificates`)).rows || [];
     } else if (!eventId) {
       queryMessage.value = "请输入赛事 ID 查询已发布证书；历史归档赛事也可查询。";
     } else {
@@ -75,8 +76,8 @@ onBeforeUnmount(() => downloads.dispose());
 <template>
   <section class="panel my-certificates-page" data-testid="my-certificates-page">
     <div class="panel-title"><h3>我的证书</h3><span>{{ certificates.length }} 张</span></div>
-    <p class="hint">{{ session.user.value?.type === "organization" ? "显示当前组织 active 成员的已发布证书。" : "显示当前赛事中本人已发布的证书。" }}</p>
-    <form v-if="ordinaryUser" class="certificate-event-query" data-action="query-certificates" @submit.prevent="queryCertificates">
+    <p class="hint">{{ organizationUser ? "显示当前组织在所选赛事中的已发布证书。" : "显示当前赛事中本人已发布的证书。" }}</p>
+    <form v-if="ordinaryUser || organizationUser" class="certificate-event-query" data-action="query-certificates" @submit.prevent="queryCertificates">
       <label>赛事 ID<input v-model="queryEventId" data-field="certificate-event-id" autocomplete="off" placeholder="例如 E-ARCHIVED" /></label>
       <button type="submit" class="mini">查询证书</button>
     </form>
