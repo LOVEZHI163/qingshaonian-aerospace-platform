@@ -189,6 +189,82 @@ test("private preview media requires an administrator session", async () => {
   }, { prefix: "site-media-preview-" });
 });
 
+test("admin lists recent image media without storage fields", async () => {
+  await withTestServer(async ({ baseUrl, dbPath }) => {
+    const admin = await loginAs(baseUrl, "13900000000", "admin123");
+    await mutateDb(dbPath, (db) => {
+      db.mediaAssets = [
+        {
+          id: "M-OLD",
+          eventId: "EVENT-1",
+          purpose: "hero",
+          visibility: "public",
+          originalName: "hero-old.png",
+          storedName: "original.png",
+          filePath: "/private/uploads/M-OLD/original.png",
+          mimeType: "image/png",
+          sizeBytes: 12,
+          width: 1,
+          height: 1,
+          variants: { mobile: { filePath: "/private/uploads/M-OLD/mobile.webp" } },
+          createdAt: "2026-07-20T10:00:00.000Z",
+          cleanedAt: null
+        },
+        {
+          id: "M-NEW",
+          eventId: "EVENT-1",
+          purpose: "hero",
+          visibility: "draft",
+          originalName: "hero-new.webp",
+          storedName: "original.webp",
+          filePath: "/private/uploads/M-NEW/original.webp",
+          mimeType: "image/webp",
+          sizeBytes: 24,
+          width: 2,
+          height: 3,
+          variants: { desktop: { filePath: "/private/uploads/M-NEW/desktop.webp" } },
+          createdAt: "2026-07-21T10:00:00.000Z",
+          cleanedAt: null
+        },
+        {
+          id: "M-PDF",
+          purpose: "hero",
+          originalName: "hero-guide.pdf",
+          mimeType: "application/pdf",
+          createdAt: "2026-07-22T10:00:00.000Z",
+          cleanedAt: null
+        },
+        {
+          id: "M-CLEANED",
+          purpose: "hero",
+          originalName: "hero-removed.png",
+          mimeType: "image/png",
+          createdAt: "2026-07-23T10:00:00.000Z",
+          cleanedAt: "2026-07-24T10:00:00.000Z"
+        }
+      ];
+    });
+
+    const response = await fetch(`${baseUrl}/api/admin/site-media?kind=image&limit=2&q=hero`, withSession(admin.cookie));
+    assert.equal(response.status, 200);
+    const payload = await response.json();
+    assert.deepEqual(payload.rows.map((row) => row.id), ["M-NEW", "M-OLD"]);
+    assert.equal(payload.rows.every((row) => row.mimeType.startsWith("image/")), true);
+    assert.deepEqual(Object.keys(payload.rows[0]).sort(), [
+      "createdAt", "eventId", "height", "id", "mimeType", "originalName", "previewUrl", "purpose", "sizeBytes", "visibility", "width"
+    ]);
+    assert.equal(payload.rows[0].previewUrl, "/api/admin/site-media/M-NEW/preview");
+  }, { prefix: "site-media-list-" });
+});
+
+test("media listing requires a ready administrator and validates limit", async () => {
+  await withTestServer(async ({ baseUrl }) => {
+    const admin = await loginAs(baseUrl, "13900000000", "admin123");
+    assert.equal((await fetch(`${baseUrl}/api/admin/site-media`)).status, 401);
+    assert.equal((await fetch(`${baseUrl}/api/admin/site-media?limit=101`, withSession(admin.cookie))).status, 422);
+  }, { prefix: "site-media-list-auth-" });
+});
+
 test("site media attachments keep only the original and dangerous API uploads return 422", async () => {
   await withTestServer(async ({ baseUrl, dbPath }) => {
     const admin = await loginAs(baseUrl, "13900000000", "admin123");

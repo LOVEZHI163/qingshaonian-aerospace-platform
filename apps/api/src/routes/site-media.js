@@ -135,6 +135,35 @@ export function createSiteMediaRouter({
       .send(file.buffer);
   }));
 
+  router.get("/admin/site-media", ...admin, asyncRoute(async (req, res) => {
+    const limit = req.query.limit === undefined ? 100 : Number(req.query.limit);
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw routeError(422, "媒体数量范围为 1 至 100");
+    const kind = String(req.query.kind || "").trim();
+    if (kind && kind !== "image") throw routeError(422, "媒体类型筛选无效");
+    const query = String(req.query.q || "").trim().toLowerCase();
+    const db = await store.readDb();
+    const rows = (db.mediaAssets || [])
+      .filter((row) => !row.cleanedAt)
+      .filter((row) => kind !== "image" || ["image/png", "image/jpeg", "image/webp"].includes(row.mimeType))
+      .filter((row) => !query || [row.id, row.originalName].some((value) => String(value || "").toLowerCase().includes(query)))
+      .sort((left, right) => String(right.createdAt).localeCompare(String(left.createdAt)) || String(right.id).localeCompare(String(left.id)))
+      .slice(0, limit)
+      .map(({ id, eventId, purpose, visibility, originalName, mimeType, sizeBytes, width, height, createdAt }) => ({
+        id,
+        eventId,
+        purpose,
+        visibility,
+        originalName,
+        mimeType,
+        sizeBytes,
+        width,
+        height,
+        createdAt,
+        previewUrl: `/api/admin/site-media/${encodeURIComponent(id)}/preview`
+      }));
+    res.json({ rows });
+  }));
+
   router.get("/admin/site-media/:id/preview", ...admin, asyncRoute(async (req, res) => {
     const variant = String(req.query.variant || "original");
     if (!["original", "mobile", "desktop"].includes(variant)) throw routeError(422, "媒体变体无效");
