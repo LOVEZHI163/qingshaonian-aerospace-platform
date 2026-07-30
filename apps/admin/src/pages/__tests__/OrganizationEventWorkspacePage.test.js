@@ -77,6 +77,27 @@ describe("OrganizationEventWorkspacePage", () => {
     expect(wrapper.emitted("open-event")[0][0]).toEqual({ eventId: "E2", mode: "organizationWorkspace" });
   });
 
+  it("edits an active organization registration through its event-scoped endpoint", async () => {
+    apiMock.mockImplementation(async (path, options) => {
+      if (path === "/api/organization/events/E2/workspace") return { event, summary: {}, projects: [{ id: "P1", name: "无人机" }], registrations: [registration] };
+      if (path === "/api/organization/events/E2/registrations" && !options?.method) return { rows: [registration] };
+      if (path === "/api/organization/events/E2/registrations/R1" && options?.method === "PATCH") return { row: { ...registration, instructor: "王老师" } };
+      return { rows: [] };
+    });
+    const wrapper = mount(OrganizationEventWorkspacePage, { props: { eventId: "E2" } });
+    await flushPromises();
+    await wrapper.get('[data-workspace-tab="records"]').trigger("click");
+    await wrapper.get('[data-action="edit-organization-registration-R1"]').trigger("click");
+    await wrapper.get('input[data-field="instructor"]').setValue("王老师");
+    await wrapper.get('[data-testid="organization-registration-editor"]').trigger("submit");
+    await flushPromises();
+
+    expect(apiMock).toHaveBeenCalledWith("/api/organization/events/E2/registrations/R1", expect.objectContaining({
+      method: "PATCH",
+      body: JSON.stringify({ athlete: registration.athlete, projectId: "P1", instructor: "王老师" })
+    }));
+  });
+
   it("keeps archived workspaces read-only while retaining results and certificates", async () => {
     apiMock.mockImplementation(async (path) => {
       if (path === "/api/organization/events/E2/workspace") return { event: { ...event, archivedAt: "2026-01-01" }, summary: {}, registrations: [registration] };
@@ -89,6 +110,8 @@ describe("OrganizationEventWorkspacePage", () => {
     expect(wrapper.find('[data-testid="organization-registration-form"]').exists()).toBe(false);
     await wrapper.get('[data-workspace-tab="results"]').trigger("click");
     expect(wrapper.text()).toContain("一等奖");
+    await wrapper.get('[data-workspace-tab="records"]').trigger("click");
+    expect(wrapper.find('[data-action="edit-organization-registration-R1"]').exists()).toBe(false);
     await wrapper.get('[data-workspace-tab="certificates"]').trigger("click");
     await flushPromises();
     expect(wrapper.text()).toContain("获奖证书");

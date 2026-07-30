@@ -6,13 +6,14 @@ import { api, apiBlob } from "../lib/api.js";
 import { createBlobDownloadManager } from "../lib/download.js";
 
 const props = defineProps({ eventId: { type: String, default: "" } });
-const emit = defineEmits(["error"]);
+const emit = defineEmits(["error", "context", "access-denied"]);
 const workspace = ref(null);
 const registrations = ref([]);
 const certificates = ref([]);
 const activeTab = ref("registration");
 const loading = ref(true);
 const loadingCertificates = ref(false);
+const editingRegistration = ref(null);
 const downloads = createBlobDownloadManager();
 const event = computed(() => workspace.value?.event || {});
 const summary = computed(() => workspace.value?.summary || {});
@@ -27,10 +28,12 @@ async function loadWorkspace() {
   try {
     const payload = await api(`/api/organization/events/${encodeURIComponent(props.eventId)}/workspace`);
     workspace.value = payload || {};
+    emit("context", payload?.event || null);
     registrations.value = Array.isArray(payload?.registrations) ? payload.registrations : [];
     await loadRegistrations();
   } catch (error) {
-    emit("error", error.message || "赛事工作台加载失败");
+    if ([403, 404].includes(error.status)) emit("access-denied", error);
+    else emit("error", error.message || "赛事工作台加载失败");
   } finally {
     loading.value = false;
   }
@@ -77,6 +80,12 @@ function registered() {
   void loadRegistrations();
 }
 
+function savedRegistration(payload) {
+  const row = payload?.row;
+  if (row) registrations.value = registrations.value.map((item) => item.id === row.id ? row : item);
+  editingRegistration.value = null;
+}
+
 onMounted(loadWorkspace);
 onBeforeUnmount(() => downloads.dispose());
 </script>
@@ -92,7 +101,7 @@ onBeforeUnmount(() => downloads.dispose());
       </nav>
       <OrganizationAthleteRegistrationForm v-if="activeTab === 'registration' && !archived" :event-id="props.eventId" :projects="workspace.projects || []" @registered="registered" @error="emit('error', $event)" />
       <div v-else-if="activeTab === 'registration'" class="panel event-context-empty"><h3>归档赛事不可新增报名</h3><p class="hint">仍可在报名记录、成绩和证书页签查看历史数据。</p></div>
-      <section v-else-if="activeTab === 'records'" class="panel workspace-table"><div class="panel-title"><h3>报名记录</h3><button type="button" class="mini" data-action="export-organization-registrations" @click="exportRegistrations">导出名单</button></div><div class="table-wrap"><table><thead><tr><th>姓名</th><th>学校/年级</th><th>赛项</th><th>审核状态</th></tr></thead><tbody><tr v-for="row in registrations" :key="row.id"><td>{{ row.athlete?.name }}</td><td>{{ row.athlete?.school }}<br /><span>{{ row.athlete?.grade }}</span></td><td>{{ row.projectName }}</td><td>{{ row.status }}</td></tr></tbody></table><p v-if="!registrations.length" class="hint empty-state">暂无报名记录。</p></div></section>
+      <section v-else-if="activeTab === 'records'" class="panel workspace-table"><div class="panel-title"><h3>报名记录</h3><button type="button" class="mini" data-action="export-organization-registrations" @click="exportRegistrations">导出名单</button></div><OrganizationAthleteRegistrationForm v-if="editingRegistration && !archived" :event-id="props.eventId" :projects="workspace.projects || []" :registration="editingRegistration" @registered="savedRegistration" @error="emit('error', $event)" /><div class="table-wrap"><table><thead><tr><th>姓名</th><th>学校/年级</th><th>赛项</th><th>审核状态</th><th v-if="!archived">操作</th></tr></thead><tbody><tr v-for="row in registrations" :key="row.id"><td>{{ row.athlete?.name }}</td><td>{{ row.athlete?.school }}<br /><span>{{ row.athlete?.grade }}</span></td><td>{{ row.projectName }}</td><td>{{ row.status }}</td><td v-if="!archived"><button type="button" class="mini" :data-action="`edit-organization-registration-${row.id}`" @click="editingRegistration = row">编辑</button></td></tr></tbody></table><p v-if="!registrations.length" class="hint empty-state">暂无报名记录。</p></div></section>
       <section v-else-if="activeTab === 'results'" class="panel workspace-table"><div class="panel-title"><h3>成绩与奖项</h3></div><div class="table-wrap"><table><thead><tr><th>姓名</th><th>赛项</th><th>奖项</th><th>名次</th><th>成绩</th></tr></thead><tbody><tr v-for="row in registrations" :key="row.id"><td>{{ row.athlete?.name }}</td><td>{{ row.projectName }}</td><td>{{ row.awardName || "-" }}</td><td>{{ row.rank || "-" }}</td><td>{{ row.score || "-" }}</td></tr></tbody></table><p v-if="!registrations.length" class="hint empty-state">暂无成绩记录。</p></div></section>
       <section v-else class="panel workspace-table"><div class="panel-title"><h3>组织证书</h3><span>{{ certificates.length }} 张</span></div><p v-if="loadingCertificates" class="hint">正在加载证书…</p><div v-else class="table-wrap"><table><thead><tr><th>姓名</th><th>赛项</th><th>证书名称</th><th>操作</th></tr></thead><tbody><tr v-for="certificate in certificates" :key="certificate.id"><td>{{ certificate.athlete?.name || certificate.registration?.athlete?.name }}</td><td>{{ certificate.projectName }}</td><td>{{ certificate.title || certificate.awardName }}</td><td><button v-if="certificate.downloadUrl" type="button" class="mini" @click="apiBlob(certificate.downloadUrl).then((blob) => downloads.save(blob, certificate.fileName || certificate.title)).catch((error) => emit('error', error.message))">下载</button><span v-else>-</span></td></tr></tbody></table><p v-if="!certificates.length" class="hint empty-state">暂无可下载证书。</p></div></section>
     </template>

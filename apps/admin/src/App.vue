@@ -81,7 +81,7 @@ const userHeaderEvent = computed(() => {
       registrationDeadline: event.registrationDeadline || String(event.registrationEndAt || "").slice(0, 10)
     };
   }
-  if (currentView.value !== "registration") return eventData.value.event;
+  if (currentView.value !== "registration" && currentView.value !== "organizationWorkspace") return eventData.value.event;
   if (selectedRegistrationEvent.value) {
     const event = selectedRegistrationEvent.value;
     return {
@@ -150,6 +150,11 @@ async function loadAccountEvents() {
 
 function targetView(user = currentUser.value) {
   if (!user || !initialView) return defaultView(user);
+  if (user.type === "organization" && initialView === "organizationWorkspace") {
+    if (!initialEventId) return "eventCenter";
+    selectEventContext(initialEventId);
+    return "organizationWorkspace";
+  }
   if (user.type === "ordinary" && initialView === "certificates") {
     restoreCertificateEventContext();
     return "certificates";
@@ -270,6 +275,12 @@ function handleError(error) {
   message.value = String(error || "操作失败，请稍后重试");
 }
 
+function handleWorkspaceAccessDenied(error) {
+  selectEventContext("");
+  currentView.value = "eventCenter";
+  handleError(error?.message || "无权访问该赛事工作台");
+}
+
 function useRegistrationEvent(event) {
   selectedRegistrationEvent.value = event || null;
 }
@@ -284,7 +295,7 @@ watch(approvedOrganization, (organization) => {
 });
 
 watch(currentView, (view) => {
-  if (view !== "registration") selectedRegistrationEvent.value = null;
+  if (!["registration", "organizationWorkspace"].includes(view)) selectedRegistrationEvent.value = null;
 });
 
 watch([currentView, selectedEventId, certificateEventId, siteContentId, () => currentUser.value?.type], ([view, eventId, certificateId, contentId, userType]) => {
@@ -360,7 +371,7 @@ onMounted(async () => {
       <RegistrationPage v-if="currentUser.type === 'ordinary' && currentView === 'registration'" :event-id="registrationEventId" :account-type="currentUser.type" :event-organizations="selectedAccountEvent?.organizations || []" :registration-state="selectedAccountEvent?.registrationState || ''" :fallback-context="{ projects: eventData.projects }" @context="useRegistrationEvent" @registered="message = '报名已提交，等待审核'" @error="handleError" />
       <RegistrationRecordsPage :key="`records:${recordsEventId}`" v-else-if="currentView === 'registrationRecords'" :event-id="recordsEventId" @error="handleError" />
       <MyCertificatesPage v-else-if="currentView === 'certificates'" :event-id="certificateEventId" @event-id="setCertificateEventId" @error="handleError" />
-      <OrganizationEventWorkspacePage v-else-if="currentView === 'organizationWorkspace'" :event-id="selectedEventId" @error="handleError" />
+      <OrganizationEventWorkspacePage v-else-if="currentView === 'organizationWorkspace'" :event-id="selectedEventId" @context="useRegistrationEvent" @access-denied="handleWorkspaceAccessDenied" @error="handleError" />
       <OrganizationConsolePage v-else-if="currentView === 'organization'" @error="handleError" />
     </main>
   </div>
