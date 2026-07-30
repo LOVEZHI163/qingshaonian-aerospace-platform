@@ -86,7 +86,7 @@ async function readDb(dbPath) {
 }
 
 async function previewWorkbook(baseUrl, cookie, buffer, name, eventId) {
-  return fetch(`${baseUrl}/api/admin/certificate-imports/preview`, withSession(cookie, {
+  return fetch(`${baseUrl}/api/admin/events/wz-aerospace-2026/certificate-imports/preview`, withSession(cookie, {
     method: "POST",
     body: workbookForm(buffer, name, eventId)
   }));
@@ -119,8 +119,8 @@ test("certificate import preview keeps formal data unchanged, reports mixed rows
       replacing: certificate.replacing,
       previewUrl: certificate.previewUrl
     })), [
-      { slot: 1, title: "一等奖证书", mimeType: "image/png", replacing: false, previewUrl: `/api/admin/certificate-imports/${preview.id}/previews/2/1` },
-      { slot: 2, title: "优秀选手证书", mimeType: "image/png", replacing: false, previewUrl: `/api/admin/certificate-imports/${preview.id}/previews/2/2` }
+      { slot: 1, title: "一等奖证书", mimeType: "image/png", replacing: false, previewUrl: `/api/admin/events/wz-aerospace-2026/certificate-imports/${preview.id}/previews/2/1` },
+      { slot: 2, title: "优秀选手证书", mimeType: "image/png", replacing: false, previewUrl: `/api/admin/events/wz-aerospace-2026/certificate-imports/${preview.id}/previews/2/2` }
     ]);
     assert.equal(JSON.stringify(preview).includes(tempDir), false);
     assert.equal(JSON.stringify(preview).includes("relativePath"), false);
@@ -140,7 +140,7 @@ test("certificate import preview keeps formal data unchanged, reports mixed rows
     assert.equal(image.headers.get("content-type"), "image/png");
     assert.deepEqual(Buffer.from(await image.arrayBuffer()), ONE_PIXEL_PNG);
 
-    const errorReport = await fetch(`${baseUrl}/api/admin/certificate-imports/${preview.id}/errors.xlsx`, withSession(admin.cookie));
+    const errorReport = await fetch(`${baseUrl}/api/admin/events/wz-aerospace-2026/certificate-imports/${preview.id}/errors.xlsx`, withSession(admin.cookie));
     assert.equal(errorReport.status, 200);
     assert.match(errorReport.headers.get("content-type") || "", /spreadsheetml/);
     const reportWorkbook = new ExcelJS.Workbook();
@@ -152,7 +152,7 @@ test("certificate import preview keeps formal data unchanged, reports mixed rows
     assert.equal(reportSheet.getCell("B2").value, "R-UNKNOWN");
     assert.ok(String(reportSheet.getCell("C2").value || ""));
 
-    const commitResponse = await fetch(`${baseUrl}/api/admin/certificate-imports/${preview.id}/commit`, withSession(admin.cookie, { method: "POST" }));
+    const commitResponse = await fetch(`${baseUrl}/api/admin/events/wz-aerospace-2026/certificate-imports/${preview.id}/commit`, withSession(admin.cookie, { method: "POST" }));
     assert.equal(commitResponse.status, 200);
     const commit = await commitResponse.json();
     assert.deepEqual(commit, { id: preview.id, status: "committed", createdCount: 2, replacedCount: 0 });
@@ -182,7 +182,7 @@ test("certificate import preview keeps formal data unchanged, reports mixed rows
     }]);
     await assert.rejects(fs.access(stagingDir));
 
-    const duplicateCommit = await fetch(`${baseUrl}/api/admin/certificate-imports/${preview.id}/commit`, withSession(admin.cookie, { method: "POST" }));
+    const duplicateCommit = await fetch(`${baseUrl}/api/admin/events/wz-aerospace-2026/certificate-imports/${preview.id}/commit`, withSession(admin.cookie, { method: "POST" }));
     assert.equal(duplicateCommit.status, 409);
 
     const replacementResponse = await previewWorkbook(baseUrl, admin.cookie, workbook, "replacement.xlsx");
@@ -194,7 +194,7 @@ test("certificate import preview keeps formal data unchanged, reports mixed rows
 
     const replacementStagingDir = path.join(tempDir, "uploads", "import-staging", replacement.id);
     assert.equal((await fs.readdir(replacementStagingDir)).length, 2);
-    const cancel = await fetch(`${baseUrl}/api/admin/certificate-imports/${replacement.id}`, withSession(admin.cookie, { method: "DELETE" }));
+    const cancel = await fetch(`${baseUrl}/api/admin/events/wz-aerospace-2026/certificate-imports/${replacement.id}`, withSession(admin.cookie, { method: "DELETE" }));
     assert.equal(cancel.status, 204);
     await assert.rejects(fs.access(replacementStagingDir));
     const cancelledDb = await readDb(dbPath);
@@ -219,7 +219,7 @@ test("certificate import preview rejects a staged path that escapes its batch di
     batch.previewJson[0].certificates[0].relativePath = "../../../../secret.txt";
     await fs.writeFile(dbPath, JSON.stringify(db, null, 2), "utf8");
 
-    const response = await fetch(`${baseUrl}/api/admin/certificate-imports/${preview.id}/previews/2/1`, withSession(admin.cookie));
+    const response = await fetch(`${baseUrl}/api/admin/events/wz-aerospace-2026/certificate-imports/${preview.id}/previews/2/1`, withSession(admin.cookie));
     assert.equal(response.status, 404);
     assert.equal((await response.text()).includes("must-not-leak"), false);
   }, { prefix: "certificate-import-traversal-" });
@@ -1291,7 +1291,7 @@ test("certificate import lists recoverable preview batches only for the selected
     const preview = await created.json();
 
     const response = await fetch(
-      `${baseUrl}/api/admin/certificate-imports?eventId=wz-aerospace-2026`,
+      `${baseUrl}/api/admin/events/wz-aerospace-2026/certificate-imports`,
       withSession(admin.cookie)
     );
     assert.equal(response.status, 200);

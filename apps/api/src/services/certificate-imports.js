@@ -141,7 +141,7 @@ function sameCertificateState(left, right) {
     && left?.version === right?.version;
 }
 
-function publicCandidate(batchId, candidate) {
+function publicCandidate(batch, candidate) {
   return {
     rowNumber: candidate.rowNumber,
     registrationId: candidate.registrationId,
@@ -153,7 +153,7 @@ function publicCandidate(batchId, candidate) {
       title: certificate.title,
       mimeType: certificate.mimeType,
       replacing: certificate.replacing,
-      previewUrl: `/api/admin/certificate-imports/${batchId}/previews/${candidate.rowNumber}/${certificate.slot}`
+      previewUrl: `/api/admin/events/${batch.eventId}/certificate-imports/${batch.id}/previews/${candidate.rowNumber}/${certificate.slot}`
     }))
   };
 }
@@ -167,7 +167,7 @@ export function publicCertificateImportPreview(batch, errors = []) {
     errorCount: batch.errorCount,
     replaceCount: batch.replaceCount,
     createdAt: batch.createdAt,
-    candidates: batch.previewJson.map((candidate) => publicCandidate(batch.id, candidate)),
+    candidates: batch.previewJson.map((candidate) => publicCandidate(batch, candidate)),
     errors: errors.map(({ rowNumber, registrationId, message }) => ({ rowNumber, registrationId, message }))
   };
 }

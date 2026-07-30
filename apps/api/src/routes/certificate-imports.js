@@ -3,6 +3,7 @@ import multer from "multer";
 
 import { buildCertificateErrorReport } from "../certificates/error-report.js";
 import {
+  CertificateImportError,
   cancelCertificateImport,
   listActiveCertificateImportPreviews,
   commitCertificateImport,
@@ -10,6 +11,7 @@ import {
   loadCertificateImportPreview,
   previewCertificateImport
 } from "../services/certificate-imports.js";
+import { requireWritableEvent } from "../services/access-control.js";
 
 export function createCertificateImportsRouter({
   store,
@@ -32,28 +34,53 @@ export function createCertificateImportsRouter({
   });
   const deps = { store, makeId, now };
 
-  router.post("/admin/certificate-imports/preview", ...admin, uploadWorkbook, mutationAsyncRoute(async (req, res) => {
-    const eventId = String(req.body?.eventId || "").trim();
-    if (!eventId) throw new CertificateImportError(422, "请选择赛事后再导入证书");
-    const preview = await previewCertificateImport({ ...deps, file: req.file, eventId, userId: req.user.id });
+  function eventForRead(db, eventId) {
+    const event = db.events.find((row) => row.id === eventId);
+    if (!event) throw new CertificateImportError(404, "Event not found");
+    return event;
+  }
+
+  function batchForEvent(db, eventId, batchId) {
+    const batch = db.certificateImportBatches.find((row) => row.id === batchId && row.eventId === eventId);
+    if (!batch) throw new CertificateImportError(404, "Certificate import batch not found");
+    return batch;
+  }
+
+  router.post("/admin/events/:eventId/certificate-imports/preview", ...admin, uploadWorkbook, mutationAsyncRoute(async (req, res) => {
+    const db = await store.readDb();
+    requireWritableEvent(db, req.params.eventId);
+    const bodyEventId = String(req.body?.eventId || "").trim();
+    if (bodyEventId && bodyEventId !== req.params.eventId) throw new CertificateImportError(422, "Event id does not match URL");
+    const preview = await previewCertificateImport({ ...deps, file: req.file, eventId: req.params.eventId, userId: req.user.id });
     res.status(201).json(preview);
   }));
 
-  router.get("/admin/certificate-imports", ...admin, mutationAsyncRoute(async (req, res) => {
-    const rows = await listActiveCertificateImportPreviews({ ...deps, eventId: req.query.eventId });
+  router.get("/admin/events/:eventId/certificate-imports", ...admin, mutationAsyncRoute(async (req, res) => {
+    const db = await store.readDb();
+    eventForRead(db, req.params.eventId);
+    const rows = await listActiveCertificateImportPreviews({ ...deps, eventId: req.params.eventId });
     res.json({ rows });
   }));
 
-  router.post("/admin/certificate-imports/:id/commit", ...admin, mutationAsyncRoute(async (req, res) => {
+  router.post("/admin/events/:eventId/certificate-imports/:id/commit", ...admin, mutationAsyncRoute(async (req, res) => {
+    const db = await store.readDb();
+    requireWritableEvent(db, req.params.eventId);
+    batchForEvent(db, req.params.eventId, req.params.id);
     res.json(await commitCertificateImport({ ...deps, batchId: req.params.id, actor: req.user }));
   }));
 
-  router.delete("/admin/certificate-imports/:id", ...admin, mutationAsyncRoute(async (req, res) => {
+  router.delete("/admin/events/:eventId/certificate-imports/:id", ...admin, mutationAsyncRoute(async (req, res) => {
+    const db = await store.readDb();
+    requireWritableEvent(db, req.params.eventId);
+    batchForEvent(db, req.params.eventId, req.params.id);
     await cancelCertificateImport({ ...deps, batchId: req.params.id });
     res.status(204).end();
   }));
 
-  router.get("/admin/certificate-imports/:id/previews/:rowNumber/:slot", ...admin, asyncRoute(async (req, res) => {
+  router.get("/admin/events/:eventId/certificate-imports/:id/previews/:rowNumber/:slot", ...admin, asyncRoute(async (req, res) => {
+    const db = await store.readDb();
+    eventForRead(db, req.params.eventId);
+    batchForEvent(db, req.params.eventId, req.params.id);
     const preview = await loadCertificateImportPreview({
       store,
       batchId: req.params.id,
@@ -63,7 +90,10 @@ export function createCertificateImportsRouter({
     res.set("Cache-Control", "no-store").type(preview.mimeType).send(preview.buffer);
   }));
 
-  router.get("/admin/certificate-imports/:id/errors.xlsx", ...admin, asyncRoute(async (req, res) => {
+  router.get("/admin/events/:eventId/certificate-imports/:id/errors.xlsx", ...admin, asyncRoute(async (req, res) => {
+    const db = await store.readDb();
+    eventForRead(db, req.params.eventId);
+    batchForEvent(db, req.params.eventId, req.params.id);
     const { batch, errors } = await loadCertificateImportErrors({ store, batchId: req.params.id });
     const report = await buildCertificateErrorReport(batch, errors);
     res
