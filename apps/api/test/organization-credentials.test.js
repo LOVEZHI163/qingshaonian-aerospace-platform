@@ -165,6 +165,9 @@ test("admin organization status disables only the unique owner capabilities and 
     }))).status, 200);
 
     const owner = await loginAs(baseUrl, "13600009971", "Strong123");
+    assert.equal((await fetch(`${baseUrl}/api/organization/events/wz-aerospace-2026/join`, withSession(owner.cookie, {
+      method: "POST"
+    }))).status, 201);
     const ordinaryRegistration = await fetch(`${baseUrl}/api/auth/register/ordinary`, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name: "普通成员", phone: "13600009972", password: "Member72" })
@@ -190,8 +193,8 @@ test("admin organization status disables only the unique owner capabilities and 
     }))).status, 403);
     const ownerRow = (await (await fetch(`${baseUrl}/api/users`, withSession(admin.cookie))).json()).rows.find((user) => user.id === organization.ownerUserId);
     assert.equal(ownerRow.status, "active");
-    assert.equal((await fetch(`${baseUrl}/api/organizations/${organization.id}/registrations`, withSession(owner.cookie))).status, 403);
-    assert.equal((await fetch(`${baseUrl}/api/organizations/${organization.id}/registrations`, withSession(member.cookie))).status, 403);
+    assert.equal((await fetch(`${baseUrl}/api/organization/events/wz-aerospace-2026/registrations`, withSession(owner.cookie))).status, 403);
+    assert.equal((await fetch(`${baseUrl}/api/organization/events/wz-aerospace-2026/registrations`, withSession(member.cookie))).status, 403);
     const stored = JSON.parse(await fs.readFile(dbPath, "utf8"));
     assert.equal(stored.organizations.find((row) => row.id === organization.id).status, "disabled");
 
@@ -199,8 +202,8 @@ test("admin organization status disables only the unique owner capabilities and 
       method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "active" })
     }));
     assert.equal(enabled.status, 200);
-    assert.equal((await fetch(`${baseUrl}/api/organizations/${organization.id}/registrations`, withSession(owner.cookie))).status, 200);
-    assert.equal((await fetch(`${baseUrl}/api/organizations/${organization.id}/registrations`, withSession(member.cookie))).status, 403);
+    assert.equal((await fetch(`${baseUrl}/api/organization/events/wz-aerospace-2026/registrations`, withSession(owner.cookie))).status, 200);
+    assert.equal((await fetch(`${baseUrl}/api/organization/events/wz-aerospace-2026/registrations`, withSession(member.cookie))).status, 403);
 
     const rows = (await (await fetch(`${baseUrl}/api/admin/organizations`, withSession(admin.cookie))).json()).rows;
     const row = rows.find((item) => item.id === organization.id);
@@ -256,11 +259,10 @@ test("organization registrations reject pending, rejected, and disabled organiza
     await fetch(`${baseUrl}/api/admin/events/wz-aerospace-2026`, withSession(admin.cookie, {
       method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ registrationMode: "force_open" })
     }));
-    const registration = (phone) => fetch(`${baseUrl}/api/registrations`, withSession(owner.cookie, {
+    const registration = (phone) => fetch(`${baseUrl}/api/organization/events/wz-aerospace-2026/registrations`, withSession(owner.cookie, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        organizationId: organization.id,
         athlete: { name: "组织代报名学生", school: "待审核学校", grade: "初二", phone },
         group: "中学组", projectId: "drone-relay"
       })
@@ -281,6 +283,9 @@ test("organization registrations reject pending, rejected, and disabled organiza
       method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "approved", reason: "" })
     }));
     assert.equal(approveReview.status, 200);
+    assert.equal((await fetch(`${baseUrl}/api/organization/events/wz-aerospace-2026/join`, withSession(owner.cookie, {
+      method: "POST"
+    }))).status, 201);
     const db = JSON.parse(await fs.readFile(dbPath, "utf8"));
     db.organizations.find((row) => row.id === organization.id).status = "disabled";
     await fs.writeFile(dbPath, JSON.stringify(db), "utf8");
@@ -292,7 +297,7 @@ test("organization registrations reject pending, rejected, and disabled organiza
     });
     assert.equal(personalRegister.status, 201);
     const personal = await loginAs(baseUrl, "13600009923", "Strong123");
-    const personalRegistration = await fetch(`${baseUrl}/api/registrations`, withSession(personal.cookie, {
+    const personalRegistration = await fetch(`${baseUrl}/api/me/events/wz-aerospace-2026/registrations`, withSession(personal.cookie, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         athlete: { name: "个人报名学生", school: "个人学校", grade: "初二", phone: "13600009924" },

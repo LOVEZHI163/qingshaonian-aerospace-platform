@@ -59,13 +59,34 @@ escaped_password="$(printf '%s' "$admin_password" | sed 's/\\/\\\\/g; s/"/\\"/g'
 login_payload="{\"phone\":\"${escaped_phone}\",\"password\":\"${escaped_password}\"}"
 
 printf '%s' "$login_payload" | \
-  assert_status "login" 200 \
+assert_status "login" 200 \
     -c "$cookie_jar" \
     -H 'Content-Type: application/json' \
     --data-binary @- \
     "$base_url/api/auth/login"
 
 unset admin_password escaped_password login_payload
+
+assert_status "admin-events" 200 \
+  -b "$cookie_jar" \
+  "$base_url/api/admin/events"
+event_id="$(json_path 'let input="";process.stdin.on("data",chunk=>input+=chunk).on("end",()=>{const data=JSON.parse(input);const event=(data.rows||[]).find(item=>item.status === "published" && !item.archivedAt);if(event&&event.id)process.stdout.write(encodeURIComponent(event.id));});')"
+if test -z "$event_id"; then
+  echo "No published, non-archived event is available for administrator smoke coverage" >&2
+  exit 1
+fi
+
+assert_status "account-events" 200 \
+  -b "$cookie_jar" \
+  "$base_url/api/me/events"
+assert_status "admin-registrations-event" 200 \
+  -b "$cookie_jar" \
+  "$base_url/api/admin/events/${event_id}/registrations"
+# The pre-upgrade query route intentionally does not exist: administrators must
+# put the event context in the path and cannot fall back to an implicit event.
+assert_status "admin-registrations-legacy-rejected" 404 \
+  -b "$cookie_jar" \
+  "$base_url/api/admin/registrations"
 
 assert_status "authenticated-site-settings" 200 \
   -b "$cookie_jar" \

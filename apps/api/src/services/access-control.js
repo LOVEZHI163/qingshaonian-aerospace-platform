@@ -38,6 +38,12 @@ export function requireWritableEvent(db, eventId, _clock) {
 
 export function requireOrganizationEventParticipation(db, user, eventId, { writable = false } = {}) {
   const organization = requireOrganizationOwner(db, user);
+  if (organization.status !== "active") {
+    throw businessError(403, "组织已停用", "ORGANIZATION_DISABLED");
+  }
+  if (organization.reviewStatus !== "approved") {
+    throw businessError(403, "组织资质尚未通过", "ORGANIZATION_NOT_APPROVED");
+  }
   const event = writable
     ? requireWritableEvent(db, eventId)
     : db.events.find((row) => row.id === eventId);

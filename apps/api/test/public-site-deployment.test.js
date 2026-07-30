@@ -140,6 +140,10 @@ test("remote smoke discovers public resources dynamically and checks admin autho
     "sitemap",
     "brand-mark",
     "brand-wordmark",
+    "admin-events",
+    "account-events",
+    "admin-registrations-event",
+    "admin-registrations-legacy-rejected",
     "authenticated-site-settings",
     "authenticated-site-content",
     "unauthenticated-site-settings"
@@ -154,6 +158,9 @@ test("remote smoke discovers public resources dynamically and checks admin autho
   assert.match(smoke, /encodeURIComponent/);
   assert.match(smoke, /public-event-skipped=no-public-event/);
   assert.match(smoke, /public-content-detail-skipped=no-public-content/);
+  assert.match(smoke, /status === "published" && !item\.archivedAt/);
+  assert.match(smoke, /\/api\/admin\/events\/\$\{event_id\}\/registrations/);
+  assert.match(smoke, /\/api\/admin\/registrations/);
   assert.doesNotMatch(smoke, /\/api\/public\/events\/(?:E\d+|[a-z0-9-]{4,})["']/i);
   assert.doesNotMatch(smoke, /set -[^\r\n]*x/);
   assert.doesNotMatch(smoke, /echo[^\r\n]*(?:password|cookie)|cat[^\r\n]*(?:cookie|response)/i);

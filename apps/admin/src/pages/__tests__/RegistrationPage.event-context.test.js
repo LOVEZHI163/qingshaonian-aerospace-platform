@@ -63,4 +63,20 @@ describe("RegistrationPage selected event context", () => {
     expect(wrapper.text()).not.toContain("其他赛事项目");
     expect(apiMock).not.toHaveBeenCalled();
   });
+
+  it("never falls back to the legacy registration endpoint for a non-ordinary account", async () => {
+    const wrapper = mount(RegistrationPage, { props: { eventId: "E2", accountType: "organization" } });
+    await flushPromises();
+
+    const inputs = wrapper.findAll("form.form-panel input");
+    await inputs[0].setValue("张三");
+    await inputs[1].setValue("实验小学");
+    await inputs[2].setValue("二年级");
+    await inputs[3].setValue("13600005002");
+    await flushPromises();
+    await wrapper.get("form.form-panel").trigger("submit");
+    await flushPromises();
+
+    expect(apiMock.mock.calls.some(([path]) => path === "/api/registrations")).toBe(false);
+  });
 });

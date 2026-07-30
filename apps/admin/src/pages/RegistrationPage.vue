@@ -63,6 +63,10 @@ async function submit() {
     emit("error", "该组织尚未加入本赛事，暂不能关联组织");
     return;
   }
+  if (!ordinaryUser.value) {
+    emit("error", "请从组织赛事工作台提交报名");
+    return;
+  }
   try {
     const payload = {
       organizationId: form.organizationId || null,
@@ -70,11 +74,7 @@ async function submit() {
       projectId: form.projectId,
       instructor: form.instructor
     };
-    if (ordinaryUser.value) {
-      await api(`/api/me/events/${encodeURIComponent(props.eventId)}/registrations`, { method: "POST", body: JSON.stringify(payload) });
-    } else {
-      await api("/api/registrations", { method: "POST", body: JSON.stringify({ ...payload, eventId: form.eventId }) });
-    }
+    await api(`/api/me/events/${encodeURIComponent(props.eventId)}/registrations`, { method: "POST", body: JSON.stringify(payload) });
     Object.assign(form.athlete, { name: "", school: selectedOrganization.value?.name || "", grade: "", phone: "" });
     form.instructor = "";
     emit("registered");
