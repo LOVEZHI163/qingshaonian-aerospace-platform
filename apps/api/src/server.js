@@ -488,10 +488,12 @@ app.delete("/api/admin/users/:id", requireAdmin, requirePasswordReady, mutationA
   if (db.organizationDocuments.some((document) => ownedOrganizationIds.includes(document.organizationId) && !document.cleanedAt)) {
     return res.status(409).json({ error: "组织仍有资质文件，请先完成资源清理流程" });
   }
+  if (db.registrations.some((registration) => registration.createdByUserId === user.id || registration.personalUserId === user.id)) {
+    return res.status(409).json({ error: "用户仍有关联报名，不能删除" });
+  }
   db.users = db.users.filter((item) => item.id !== user.id);
   db.organizations = db.organizations.filter((org) => org.ownerUserId !== user.id);
   db.memberships = db.memberships.filter((membership) => membership.userId !== user.id && !ownedOrganizationIds.includes(membership.organizationId));
-  db.registrations = db.registrations.map((registration) => registration.userId === user.id ? { ...registration, userId: null } : registration);
   db.certificates = db.certificates.map((certificate) => certificate.userId === user.id ? { ...certificate, userId: null } : certificate);
   await writeDb(db);
   res.json({ ok: true });
@@ -514,7 +516,7 @@ app.get("/api/me/:userId", requireUser, requirePasswordReady, asyncRoute(async (
     user: publicUser(user),
     organizations: userOrganizations(db, user.id),
     memberships: db.memberships.filter((item) => item.userId === user.id || item.invitedPhone === user.phone),
-    registrations: db.registrations.filter((item) => item.userId === user.id)
+    registrations: db.registrations.filter((item) => item.personalUserId === user.id)
   });
 }));
 
@@ -570,30 +572,10 @@ app.patch("/api/memberships/:id", requireUser, requirePasswordReady, mutationAsy
   res.json({ row });
 }));
 
-app.get("/api/me/registrations", requireUser, requirePasswordReady, asyncRoute(async (req, res) => {
-  const db = await readDb();
-  const eventId = eventFilter(req.query.eventId);
-  res.json({
-    rows: db.registrations.filter((item) => item.userId === req.user.id && (!eventId || item.eventId === eventId))
-  });
-}));
-
 app.get("/api/organizations/:id/members", requireUser, requirePasswordReady, asyncRoute(async (req, res) => {
   const db = await readDb();
   if (!canManageOrganization(db, req.user.id, req.params.id)) return res.status(403).json({ error: "无权查看该组织成员" });
   res.json({ rows: db.memberships.filter((membership) => membership.organizationId === req.params.id) });
-}));
-
-app.get("/api/organizations/:id/registrations", requireUser, requirePasswordReady, asyncRoute(async (req, res) => {
-  const db = await readDb();
-  if (!canManageOrganization(db, req.user.id, req.params.id)) return res.status(403).json({ error: "无权查看该组织记录" });
-  const eventId = eventFilter(req.query.eventId);
-  const memberIds = activeMemberIdsForManagedOrganizations(db, req.user.id, req.params.id);
-  res.json({
-    rows: db.registrations.filter((row) => row.organizationId === req.params.id
-      && memberIds.includes(row.userId)
-      && (!eventId || row.eventId === eventId))
-  });
 }));
 
 app.post("/api/registrations/check", requireUser, requirePasswordReady, asyncRoute(async (req, res) => {
@@ -608,50 +590,6 @@ app.post("/api/registrations/check", requireUser, requirePasswordReady, asyncRou
     individualUsed: matches.some((row) => row.projectType === "individual"),
     teamUsed: matches.some((row) => row.projectType === "team")
   });
-}));
-
-app.post("/api/registrations", requireUser, requirePasswordReady, mutationAsyncRoute(async (req, res) => {
-  const db = await readDb();
-  const { event, project } = registrationContext(db, req.body);
-  const validation = validateRegistration(req.body, db.registrations, project, event.id);
-  if (!validation.ok) return res.status(422).json(validation);
-
-  const organization = db.organizations.find((item) => item.id === req.body.organizationId);
-  if (req.body.organizationId && !organization) return res.status(404).json({ error: "组织不存在" });
-  if (organization) {
-    if (organization.status !== "active" || organization.reviewStatus !== "approved") {
-      return res.status(403).json({ error: "组织尚未通过审核或已停用" });
-    }
-    const activeMembership = db.memberships.some((item) =>
-      item.userId === req.user.id && item.organizationId === organization.id && item.status === "active"
-    );
-    if (!activeMembership && !canManageOrganization(db, req.user.id, organization.id)) {
-      return res.status(403).json({ error: "无权使用该组织报名" });
-    }
-  }
-  const row = {
-    id: id("R"),
-    eventId: event.id,
-    source: req.body.source || "普通用户",
-    userId: req.user.id,
-    organizationId: req.body.organizationId || null,
-    organization: organization?.name || req.body.organization || "",
-    athlete: req.body.athlete,
-    athleteKey: validation.athleteKey,
-    group: req.body.group,
-    projectId: project.id,
-    projectName: project.name,
-    projectType: validation.projectType,
-    instructor: req.body.instructor || "",
-    status: "pending",
-    rejectReason: "",
-    createdAt: now(),
-    updatedAt: now()
-  };
-
-  db.registrations.unshift(row);
-  await writeDb(db);
-  res.status(201).json({ row, duplicateCount: validation.duplicateCount });
 }));
 
 app.post("/api/admin/registrations/:id/result", requireAdmin, requirePasswordReady, mutationAsyncRoute(async (req, res) => {

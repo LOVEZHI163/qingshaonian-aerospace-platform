@@ -24,11 +24,14 @@ export function requireOrganizationOwner(db, user) {
 
 export function requireWritableEvent(db, eventId, _clock) {
   const event = db.events.find((row) => row.id === eventId);
-  if (!event || event.status !== "published") {
+  if (!event) {
     throw businessError(404, "赛事不存在或尚未发布", "EVENT_NOT_AVAILABLE");
   }
   if (event.archivedAt || event.status === "archived") {
     throw businessError(409, "赛事已归档，只允许查看历史信息", "EVENT_ARCHIVED");
+  }
+  if (event.status !== "published") {
+    throw businessError(404, "赛事不存在或尚未发布", "EVENT_NOT_AVAILABLE");
   }
   return event;
 }

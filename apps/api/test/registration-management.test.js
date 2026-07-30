@@ -31,8 +31,10 @@ async function openRegistration(baseUrl, cookie) {
 test("registration context defaults exactly one active organization and school search deduplicates approved sources", async () => {
   await withServer(async (baseUrl) => {
     const ordinary = await loginAs(baseUrl, "13800000001", "123456");
+    const owner = await loginAs(baseUrl, "13800000011", "123456");
     const admin = await loginAs(baseUrl, "13900000000", "admin123");
     await openRegistration(baseUrl, admin.cookie);
+    assert.equal((await fetch(`${baseUrl}/api/organization/events/wz-aerospace-2026/join`, withSession(owner.cookie, { method: "POST" }))).status, 201);
     const contextResponse = await fetch(`${baseUrl}/api/me/registration-context`, withSession(ordinary.cookie));
     assert.equal(contextResponse.status, 200);
     const context = await json(contextResponse);
@@ -121,7 +123,7 @@ test("event context requires an explicit selection when multiple published event
     assert.equal(mismatch.status, 422);
     assert.match((await json(mismatch)).error, /赛项不属于/);
 
-    const created = await fetch(`${baseUrl}/api/registrations`, withSession(ordinary.cookie, {
+    const created = await fetch(`${baseUrl}/api/me/events/E2/registrations`, withSession(ordinary.cookie, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -185,20 +187,23 @@ test("event context rejects unknown, hidden, archived, draft and closed events",
 test("registration derives the group from actual grade and rejects a project outside that group", async () => {
   await withServer(async (baseUrl) => {
     const ordinary = await loginAs(baseUrl, "13800000001", "123456");
+    const owner = await loginAs(baseUrl, "13800000011", "123456");
     const admin = await loginAs(baseUrl, "13900000000", "admin123");
     await openRegistration(baseUrl, admin.cookie);
+    assert.equal((await fetch(`${baseUrl}/api/organization/events/wz-aerospace-2026/join`, withSession(owner.cookie, { method: "POST" }))).status, 201);
 
     const checkResponse = await fetch(`${baseUrl}/api/registrations/check`, withSession(ordinary.cookie, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        eventId: "wz-aerospace-2026",
         athlete: { name: "派生组别学生", school: "温州市实验小学", grade: "五年级", phone: "13800000031" },
         group: "伪造组别", projectId: "paper-plane-gate"
       })
     }));
     assert.equal(checkResponse.status, 200);
 
-    const createdResponse = await fetch(`${baseUrl}/api/registrations`, withSession(ordinary.cookie, {
+    const createdResponse = await fetch(`${baseUrl}/api/me/events/wz-aerospace-2026/registrations`, withSession(ordinary.cookie, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -221,7 +226,7 @@ test("registration derives the group from actual grade and rejects a project out
       })
     }));
     assert.equal(projectResponse.status, 200);
-    const deniedResponse = await fetch(`${baseUrl}/api/registrations`, withSession(ordinary.cookie, {
+    const deniedResponse = await fetch(`${baseUrl}/api/me/events/wz-aerospace-2026/registrations`, withSession(ordinary.cookie, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -283,25 +288,28 @@ test("registration status changes enforce the owner's event window while adminis
   await withServer(async (baseUrl) => {
     const ordinary = await loginAs(baseUrl, "13800000001", "123456");
     const admin = await loginAs(baseUrl, "13900000000", "admin123");
-    const status = (id, payload, cookie) => fetch(`${baseUrl}/api/registrations/${id}/status`, withSession(cookie, {
+    const personalStatus = (id, payload, cookie) => fetch(`${baseUrl}/api/me/events/wz-aerospace-2026/registrations/${id}/status`, withSession(cookie, {
+      method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload)
+    }));
+    const adminStatus = (id, payload, cookie) => fetch(`${baseUrl}/api/admin/events/wz-aerospace-2026/registrations/${id}/status`, withSession(cookie, {
       method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload)
     }));
 
     assert.equal((await fetch(`${baseUrl}/api/admin/events/wz-aerospace-2026`, withSession(admin.cookie, {
       method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ registrationMode: "force_closed" })
     }))).status, 200);
-    assert.equal((await status("R20260627001", { status: "cancelled" }, ordinary.cookie)).status, 409);
-    assert.equal((await status("R20260627002", { status: "rejected" }, admin.cookie)).status, 200);
+    assert.equal((await personalStatus("R20260627001", { status: "cancelled" }, ordinary.cookie)).status, 409);
+    assert.equal((await adminStatus("R20260627002", { status: "rejected" }, admin.cookie)).status, 200);
 
     assert.equal((await fetch(`${baseUrl}/api/admin/events/wz-aerospace-2026`, withSession(admin.cookie, {
       method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ registrationMode: "automatic" })
     }))).status, 200);
-    assert.equal((await status("R20260627001", { status: "cancelled" }, ordinary.cookie)).status, 409);
+    assert.equal((await personalStatus("R20260627001", { status: "cancelled" }, ordinary.cookie)).status, 409);
 
     await openRegistration(baseUrl, admin.cookie);
-    assert.equal((await status("R20260627002", { status: "cancelled" }, ordinary.cookie)).status, 403);
-    assert.equal((await status("R20260627001", { status: "approved" }, ordinary.cookie)).status, 403);
-    assert.equal((await status("R20260627001", { status: "cancelled" }, ordinary.cookie)).status, 200);
+    assert.equal((await personalStatus("R20260627002", { status: "cancelled" }, ordinary.cookie)).status, 404);
+    assert.equal((await personalStatus("R20260627001", { status: "approved" }, ordinary.cookie)).status, 403);
+    assert.equal((await personalStatus("R20260627001", { status: "cancelled" }, ordinary.cookie)).status, 200);
   });
 });
 
@@ -314,7 +322,7 @@ test("ordinary registration edits require an active membership while administrat
       method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload)
     }));
 
-    assert.equal((await patch("/api/registrations/R20260627001", { organizationId: "O1002" }, ordinary.cookie)).status, 403);
+    assert.equal((await patch("/api/me/events/wz-aerospace-2026/registrations/R20260627001", { organizationId: "O1002" }, ordinary.cookie)).status, 403);
     const adminResponse = await patch("/api/admin/registrations/R20260627001", { organizationId: "O1002" }, admin.cookie);
     assert.equal(adminResponse.status, 200);
     assert.equal((await json(adminResponse)).row.organizationId, "O1002");

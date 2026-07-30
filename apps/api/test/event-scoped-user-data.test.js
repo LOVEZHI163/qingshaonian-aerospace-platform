@@ -11,46 +11,43 @@ async function mutateDb(dbPath, mutation) {
   await fs.writeFile(dbPath, `${JSON.stringify(db, null, 2)}\n`, "utf8");
 }
 
-test("personal result and certificate queries retain a validated event context", async () => {
+test("personal registration reads retain an explicit event-scoped ownership context", async () => {
   await withTestServer(async ({ baseUrl, dbPath }) => {
     const ordinary = await loginAs(baseUrl, "13800000001", "123456");
     await mutateDb(dbPath, (db) => {
       db.registrations = ["E1", "E2"].map((eventId) => ({
         id: `R-${eventId}`,
         eventId,
-        userId: ordinary.user.id,
+        createdByUserId: ordinary.user.id,
+        personalUserId: ordinary.user.id,
+        organizationId: null,
+        createdVia: "personal",
         athlete: { name: `学生-${eventId}`, school: "实验学校", grade: "三年级" },
         projectName: `赛项-${eventId}`,
         status: "approved"
       }));
-      db.certificates = ["E1", "E2"].map((eventId) => ({
-        id: `C-${eventId}`,
-        registrationId: `R-${eventId}`,
-        slot: 1,
-        title: `证书-${eventId}`,
-        status: "published",
-        fileName: `${eventId}.png`,
-        uploadedAt: "2026-01-01T00:00:00.000Z",
-        publishedAt: "2026-01-01T00:00:00.000Z",
-        updatedAt: "2026-01-01T00:00:00.000Z"
+      db.events = ["E1", "E2"].map((id) => ({
+        ...db.events[0], id, isCurrent: id === "E1", archivedAt: null, status: "published"
       }));
     });
 
     const records = await (await fetch(
-      `${baseUrl}/api/me/registrations?eventId=E2`,
+      `${baseUrl}/api/me/events/E2/registrations`,
       withSession(ordinary.cookie)
     )).json();
     assert.deepEqual(records.rows.map((row) => row.id), ["R-E2"]);
 
-    const certificates = await (await fetch(
-      `${baseUrl}/api/me/certificates?eventId=E2`,
-      withSession(ordinary.cookie)
-    )).json();
-    assert.deepEqual(certificates.rows.map((row) => row.id), ["C-E2"]);
-
-    for (const path of ["/api/me/registrations", "/api/me/certificates"]) {
+    for (const path of ["/api/me/events/%3Cscript%3E/registrations"]) {
       const response = await fetch(`${baseUrl}${path}?eventId=%3Cscript%3E`, withSession(ordinary.cookie));
-      assert.equal(response.status, 422, path);
+      assert.equal(response.status, 404, path);
     }
   }, { prefix: "aerogp-event-scoped-user-data-" });
+});
+
+test("legacy personal registration read cannot bypass the event-scoped ownership endpoint", async () => {
+  await withTestServer(async ({ baseUrl }) => {
+    const ordinary = await loginAs(baseUrl, "13800000001", "123456");
+    const response = await fetch(`${baseUrl}/api/me/registrations?eventId=wz-aerospace-2026`, withSession(ordinary.cookie));
+    assert.equal(response.status, 404);
+  });
 });

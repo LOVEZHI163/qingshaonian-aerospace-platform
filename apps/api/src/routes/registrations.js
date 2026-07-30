@@ -5,17 +5,17 @@ import { buildCertificateTemplate } from "../certificates/template.js";
 import { buildBoundRegistrationWorkbook, contentDisposition } from "../exports/registration-workbook.js";
 
 import {
+  createOrMergeRegistration,
   findSchools,
   filterAdminRegistrations,
   listAdminRegistrations,
   prepareAdminRegistrationUpdate,
   prepareOrdinaryRegistrationUpdate,
-  prepareRegistrationCreate,
   registrationDuplicateCheck,
   registrationContextPayload,
   updateRegistrationStatus
 } from "../services/registrations.js";
-import { recordAudit } from "../services/audit.js";
+import { requireOrganizationEventParticipation, requireOrdinaryUser } from "../services/access-control.js";
 
 export function createRegistrationsRouter({ store, requireUser, requireAdmin, requirePasswordReady, asyncRoute, makeId, now, clock = () => new Date() }) {
   const router = express.Router();
@@ -30,6 +30,113 @@ export function createRegistrationsRouter({ store, requireUser, requireAdmin, re
   router.get("/me/registration-context", ...user, asyncRoute(async (req, res) => {
     const db = await store.readDb();
     res.json(registrationContextPayload(db, req.user.id, req.query, clock));
+  }));
+
+  function eventScopedInput(req) {
+    if (req.body?.eventId && req.body.eventId !== req.params.eventId) {
+      throw Object.assign(new Error("Event id does not match URL"), { status: 422, code: "EVENT_ID_MISMATCH" });
+    }
+    return { ...(req.body || {}), eventId: req.params.eventId };
+  }
+
+  router.get("/me/events/:eventId/registrations", ...user, asyncRoute(async (req, res) => {
+    requireOrdinaryUser(req.user);
+    const db = await store.readDb();
+    if (!db.events.some((event) => event.id === req.params.eventId)) {
+      return res.status(404).json({ error: "Event not found", code: "EVENT_NOT_AVAILABLE" });
+    }
+    res.json({ rows: db.registrations.filter((row) => (
+      row.eventId === req.params.eventId && row.personalUserId === req.user.id
+    )) });
+  }));
+
+  router.post("/me/events/:eventId/registrations", ...user, asyncRoute(async (req, res) => {
+    requireOrdinaryUser(req.user);
+    const db = await store.readDb();
+    const result = createOrMergeRegistration(db, eventScopedInput(req), req.user, "personal", { makeId, now, clock });
+    await store.writeDb(db);
+    res.status(result.created ? 201 : 200).json(result);
+  }));
+
+  router.get("/organization/events/:eventId/registrations", ...user, asyncRoute(async (req, res) => {
+    const db = await store.readDb();
+    const { organization } = requireOrganizationEventParticipation(db, req.user, req.params.eventId);
+    res.json({ rows: db.registrations.filter((row) => (
+      row.eventId === req.params.eventId && row.organizationId === organization.id
+    )) });
+  }));
+
+  router.post("/organization/events/:eventId/registrations", ...user, asyncRoute(async (req, res) => {
+    const db = await store.readDb();
+    const result = createOrMergeRegistration(db, eventScopedInput(req), req.user, "organization", { makeId, now, clock });
+    await store.writeDb(db);
+    res.status(result.created ? 201 : 200).json(result);
+  }));
+
+  function applyRegistrationUpdate(row, prepared, timestamp) {
+    Object.assign(row, {
+      organizationId: prepared.organizationId,
+      organization: prepared.organization?.name || "",
+      athlete: prepared.athlete,
+      athleteKey: prepared.validation.athleteKey,
+      group: prepared.group,
+      projectId: prepared.project.id,
+      projectName: prepared.project.name,
+      projectType: prepared.validation.projectType,
+      instructor: prepared.instructor,
+      updatedAt: timestamp
+    });
+  }
+
+  router.patch("/me/events/:eventId/registrations/:registrationId", ...user, asyncRoute(async (req, res) => {
+    requireOrdinaryUser(req.user);
+    const db = await store.readDb();
+    const row = db.registrations.find((item) => item.id === req.params.registrationId && item.eventId === req.params.eventId);
+    if (!row) return res.status(404).json({ error: "Registration not found" });
+    const prepared = prepareOrdinaryRegistrationUpdate(db, row, eventScopedInput(req), req.user.id);
+    if (prepared.organizationId && !db.organizationEventParticipations.some((item) => (
+      item.organizationId === prepared.organizationId && item.eventId === req.params.eventId
+    ))) {
+      throw Object.assign(new Error("Organization has not joined this event"), { status: 403, code: "ORGANIZATION_NOT_JOINED" });
+    }
+    applyRegistrationUpdate(row, prepared, now());
+    await store.writeDb(db);
+    res.json({ row });
+  }));
+
+  router.patch("/organization/events/:eventId/registrations/:registrationId", ...user, asyncRoute(async (req, res) => {
+    const db = await store.readDb();
+    const { organization } = requireOrganizationEventParticipation(db, req.user, req.params.eventId, { writable: true });
+    const row = db.registrations.find((item) => item.id === req.params.registrationId && item.eventId === req.params.eventId && item.organizationId === organization.id);
+    if (!row) return res.status(404).json({ error: "Registration not found" });
+    if (req.body?.organizationId && req.body.organizationId !== organization.id) {
+      throw Object.assign(new Error("Organization id does not match owner"), { status: 403 });
+    }
+    const prepared = prepareAdminRegistrationUpdate(db, row, { ...eventScopedInput(req), organizationId: organization.id });
+    applyRegistrationUpdate(row, prepared, now());
+    await store.writeDb(db);
+    res.json({ row });
+  }));
+
+  router.patch("/me/events/:eventId/registrations/:registrationId/status", ...user, asyncRoute(async (req, res) => {
+    requireOrdinaryUser(req.user);
+    const db = await store.readDb();
+    const row = db.registrations.find((item) => item.id === req.params.registrationId && item.eventId === req.params.eventId && item.personalUserId === req.user.id);
+    if (!row) return res.status(404).json({ error: "Registration not found" });
+    updateRegistrationStatus(db, row, req.body, req.user);
+    row.updatedAt = now();
+    await store.writeDb(db);
+    res.json({ row });
+  }));
+
+  router.patch("/admin/events/:eventId/registrations/:registrationId/status", ...admin, asyncRoute(async (req, res) => {
+    const db = await store.readDb();
+    const row = db.registrations.find((item) => item.id === req.params.registrationId && item.eventId === req.params.eventId);
+    if (!row) return res.status(404).json({ error: "Registration not found" });
+    updateRegistrationStatus(db, row, req.body, req.user);
+    row.updatedAt = now();
+    await store.writeDb(db);
+    res.json({ row });
   }));
 
   router.get("/admin/registrations", ...admin, asyncRoute(async (req, res) => {
@@ -81,21 +188,6 @@ export function createRegistrationsRouter({ store, requireUser, requireAdmin, re
     res.json(registrationDuplicateCheck(db, req.body, clock));
   }));
 
-  router.post("/registrations", ...user, asyncRoute(async (req, res) => {
-    const db = await store.readDb();
-    const prepared = prepareRegistrationCreate(db, req.body, req.user.id, clock);
-    const row = {
-      id: makeId("R"), eventId: prepared.event.id, source: "普通用户", userId: req.user.id,
-      organizationId: prepared.organization?.id || null, organization: prepared.organization?.name || "",
-      athlete: prepared.athlete, athleteKey: prepared.validation.athleteKey, group: prepared.group,
-      projectId: prepared.project.id, projectName: prepared.project.name, projectType: prepared.validation.projectType,
-      instructor: String(req.body.instructor || "").trim(), status: "pending", rejectReason: "", createdAt: now(), updatedAt: now()
-    };
-    db.registrations.unshift(row);
-    await store.writeDb(db);
-    res.status(201).json({ row, duplicateCount: prepared.validation.duplicateCount });
-  }));
-
   router.patch("/admin/registrations/:id", ...admin, asyncRoute(async (req, res) => {
     const db = await store.readDb();
     const row = db.registrations.find((item) => item.id === req.params.id);
@@ -106,47 +198,6 @@ export function createRegistrationsRouter({ store, requireUser, requireAdmin, re
       athleteKey: prepared.validation.athleteKey, group: prepared.group, projectId: prepared.project.id,
       projectName: prepared.project.name, projectType: prepared.validation.projectType, instructor: prepared.instructor, updatedAt: now()
     });
-    const certificate = db.certificates.find((item) => item.registrationId === row.id);
-    if (certificate) {
-      certificate.userId = row.userId || null;
-      certificate.organizationId = row.organizationId || null;
-    }
-    await store.writeDb(db);
-    res.json({ row });
-  }));
-
-  router.patch("/registrations/:id", ...user, asyncRoute(async (req, res) => {
-    const db = await store.readDb();
-    const row = db.registrations.find((item) => item.id === req.params.id);
-    if (!row) return res.status(404).json({ error: "报名记录不存在" });
-    const prepared = prepareOrdinaryRegistrationUpdate(db, row, req.body, req.user.id);
-    Object.assign(row, {
-      organizationId: prepared.organizationId, organization: prepared.organization?.name || "", athlete: prepared.athlete,
-      athleteKey: prepared.validation.athleteKey, group: prepared.group, projectId: prepared.project.id,
-      projectName: prepared.project.name, projectType: prepared.validation.projectType, instructor: prepared.instructor, updatedAt: now()
-    });
-    const certificate = db.certificates.find((item) => item.registrationId === row.id);
-    if (certificate) certificate.organizationId = row.organizationId || null;
-    await store.writeDb(db);
-    res.json({ row });
-  }));
-
-  router.patch("/registrations/:id/status", ...user, asyncRoute(async (req, res) => {
-    const db = await store.readDb();
-    const row = db.registrations.find((item) => item.id === req.params.id);
-    if (!row) return res.status(404).json({ error: "报名记录不存在" });
-    updateRegistrationStatus(db, row, req.body, req.user);
-    row.updatedAt = now();
-    if (req.user.type === "admin" && ["approved", "rejected"].includes(row.status)) {
-      recordAudit(db, {
-        actor: req.user,
-        action: "registration.review",
-        targetType: "registration",
-        targetId: row.id,
-        summary: `${row.athlete?.name || row.id}的${row.projectName}报名审核为${row.status === "approved" ? "通过" : "驳回"}`,
-        createdAt: now()
-      });
-    }
     await store.writeDb(db);
     res.json({ row });
   }));

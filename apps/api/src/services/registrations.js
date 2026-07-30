@@ -1,6 +1,8 @@
 import { GRADE_GROUPS, groupForGrade } from "../domain/grades.js";
 import { isRegistrationOpen } from "../domain/registration-window.js";
 import { businessError, projectForHistoricalRegistration, publishedRegistrationEvent, registrationContext } from "./events.js";
+import { recordAudit } from "./audit.js";
+import { requireOrdinaryUser, requireOrganizationEventParticipation, requireWritableEvent } from "./access-control.js";
 
 function normalizeText(value) {
   return String(value || "").trim().replace(/\s+/g, "").toLowerCase();
@@ -105,10 +107,10 @@ export function validateRegistration(input, existingRows, project, eventId, igno
   }
   const key = athleteKey(athlete);
   const projectType = project?.type || "individual";
-  const activeRows = existingRows.filter((row) => row.id !== ignoreId && row.eventId === eventId && row.status !== "cancelled");
+  const activeRows = existingRows.filter((row) => row.id !== ignoreId && row.eventId === eventId);
   const sameAthleteRows = activeRows.filter((row) => row.athleteKey === key);
-  if (sameAthleteRows.some((row) => row.projectType === projectType)) {
-    errors.push(projectType === "individual" ? "该运动员已报名一个个人赛" : "该运动员已报名一个团体赛");
+  if (sameAthleteRows.some((row) => row.projectId === input.projectId)) {
+    errors.push("该运动员已报名该赛项");
   }
   return { ok: errors.length === 0, errors, athleteKey: key, projectType, duplicateCount: sameAthleteRows.length };
 }
@@ -130,6 +132,7 @@ export function prepareRegistrationCreate(db, input, userId, clock = () => new D
 }
 
 export function registrationDuplicateCheck(db, input, clock = () => new Date()) {
+  requireEventId(input?.eventId);
   const athlete = input?.athlete || input || {};
   const group = groupForGrade(athlete.grade);
   if (!group) throw businessError(422, "实际年级不合法");
@@ -172,7 +175,7 @@ export function prepareAdminRegistrationUpdate(db, row, input) {
 }
 
 export function prepareOrdinaryRegistrationUpdate(db, row, input, userId) {
-  if (row.userId !== userId) throw businessError(403, "无权修改该报名");
+  if (row.personalUserId !== userId) throw businessError(403, "无权修改该报名");
   assertRegistrationWindowOpen(db, row.eventId);
   const athlete = input.athlete || row.athlete;
   requireText(athlete.name, "姓名");
@@ -195,7 +198,7 @@ export function updateRegistrationStatus(db, row, input, user) {
   const status = String(input?.status || "");
   if (!new Set(["approved", "rejected", "cancelled", "pending"]).has(status)) throw businessError(422, "状态不合法");
   if (user.type !== "admin") {
-    if (row.userId !== user.id) throw businessError(403, "无权修改该报名");
+    if (row.personalUserId !== user.id) throw businessError(403, "无权修改该报名");
     if (status !== "cancelled") throw businessError(403, "普通用户只能取消自己的报名");
     assertRegistrationWindowOpen(db, row.eventId);
   }
@@ -232,4 +235,138 @@ export function listAdminRegistrations(db, query, clock = () => new Date()) {
     grade: row.athlete?.grade || ""
   }));
   return { rows, total, page, pageSize, refreshedAt: clock().toISOString() };
+}
+
+export function findRegistrationIdentity(db, eventId, projectId, key) {
+  return db.registrations.find((row) => (
+    row.eventId === eventId
+    && row.projectId === projectId
+    && row.athleteKey === key
+  )) || null;
+}
+
+function requireEventId(value) {
+  const eventId = String(value || "").trim();
+  if (!eventId) throw businessError(422, "缺少赛事上下文", "EVENT_ID_REQUIRED");
+  return eventId;
+}
+
+function requireOperationalOrganization(db, organizationId) {
+  const organization = db.organizations.find((row) => row.id === organizationId);
+  if (!organization) throw businessError(404, "组织不存在", "ORGANIZATION_NOT_FOUND");
+  if (organization.status !== "active") {
+    throw businessError(403, "组织已停用", "ORGANIZATION_DISABLED");
+  }
+  if (organization.reviewStatus !== "approved") {
+    throw businessError(403, "组织资质尚未通过", "ORGANIZATION_NOT_APPROVED");
+  }
+  return organization;
+}
+
+function requireActiveMembershipOrganization(db, userId, organizationId, eventId) {
+  const organization = requireOperationalOrganization(db, organizationId);
+  const membership = db.memberships.find((row) => (
+    row.userId === userId && row.organizationId === organization.id && row.status === "active"
+  ));
+  if (!membership) throw businessError(403, "当前用户不是该组织有效成员", "MEMBERSHIP_NOT_ACTIVE");
+  const participation = db.organizationEventParticipations.find((row) => (
+    row.organizationId === organization.id && row.eventId === eventId
+  ));
+  if (!participation) throw businessError(403, "组织尚未加入该赛事", "ORGANIZATION_NOT_JOINED");
+  return organization;
+}
+
+function requireOpenRegistrationEvent(db, eventId, clock) {
+  const event = requireWritableEvent(db, eventId, clock);
+  const window = isRegistrationOpen(event, clock());
+  if (!window.open) throw businessError(409, window.reason, "REGISTRATION_CLOSED");
+  return event;
+}
+
+function validateCreateForEvent(db, input, event, actor, channel) {
+  const athlete = input?.athlete || {};
+  requireText(athlete.name, "姓名");
+  requireText(athlete.school, "学校");
+  requireText(athlete.grade, "年级");
+  requireText(athlete.phone, "手机号/家长手机号");
+  const group = groupForGrade(athlete.grade);
+  if (!group) throw businessError(422, "实际年级不合法");
+  const projectId = requireText(input?.projectId, "赛项");
+  const project = validateProjectForRegistration(db, event.id, projectId, group);
+  let organization = null;
+  if (channel === "personal") {
+    requireOrdinaryUser(actor);
+    if (input?.organizationId) {
+      organization = requireActiveMembershipOrganization(db, actor.id, input.organizationId, event.id);
+    }
+  } else if (channel === "organization") {
+    const scope = requireOrganizationEventParticipation(db, actor, event.id, { writable: true });
+    organization = requireOperationalOrganization(db, scope.organization.id);
+  } else {
+    throw businessError(422, "报名渠道不合法");
+  }
+  return { athlete, group, project, organization, key: athleteKey(athlete) };
+}
+
+function checkPersonalOwnership(row, userId) {
+  if (row.personalUserId && row.personalUserId !== userId) {
+    throw businessError(409, "该报名已关联其他个人账号", "REGISTRATION_OWNED_BY_OTHER_USER");
+  }
+  return row.personalUserId !== userId;
+}
+
+function checkOrganizationOwnership(row, organizationId) {
+  if (row.organizationId && row.organizationId !== organizationId) {
+    throw businessError(409, "该报名已关联其他组织", "REGISTRATION_OWNED_BY_OTHER_ORGANIZATION");
+  }
+  return row.organizationId !== organizationId;
+}
+
+export function createOrMergeRegistration(db, input, actor, channel, {
+  makeId,
+  now = () => new Date().toISOString(),
+  clock = () => new Date()
+} = {}) {
+  const eventId = requireEventId(input?.eventId);
+  const event = requireOpenRegistrationEvent(db, eventId, clock);
+  const prepared = validateCreateForEvent(db, input, event, actor, channel);
+  const existing = findRegistrationIdentity(db, event.id, prepared.project.id, prepared.key);
+  const personalUserId = channel === "personal" ? actor.id : null;
+  const organizationId = prepared.organization?.id || null;
+  const timestamp = now();
+
+  if (!existing) {
+    const row = {
+      id: makeId("R"), eventId: event.id, source: channel, createdByUserId: actor.id,
+      personalUserId, organizationId, createdVia: channel, organization: prepared.organization?.name || "",
+      athlete: prepared.athlete, athleteKey: prepared.key, group: prepared.group,
+      projectId: prepared.project.id, projectName: prepared.project.name, projectType: prepared.project.type,
+      instructor: String(input?.instructor || "").trim(), status: "pending", rejectReason: "",
+      createdAt: timestamp, updatedAt: timestamp
+    };
+    db.registrations.unshift(row);
+    return { row, created: true, merged: false };
+  }
+
+  // Validate both prospective ownerships before changing either field.
+  const addPersonal = personalUserId ? checkPersonalOwnership(existing, personalUserId) : false;
+  const addOrganization = organizationId ? checkOrganizationOwnership(existing, organizationId) : false;
+  const merged = addPersonal || addOrganization;
+  if (merged) {
+    if (addPersonal) existing.personalUserId = personalUserId;
+    if (addOrganization) {
+      existing.organizationId = organizationId;
+      existing.organization = prepared.organization.name;
+    }
+    existing.updatedAt = timestamp;
+    recordAudit(db, {
+      actor,
+      action: "registration.ownership.merge",
+      targetType: "registration",
+      targetId: existing.id,
+      summary: `报名 ${existing.id} 的归属已合并`,
+      createdAt: timestamp
+    });
+  }
+  return { row: existing, created: false, merged };
 }
