@@ -38,6 +38,7 @@ test("every business API requires a session and every administrator API rejects 
       "/api/registrations",
       "/api/admin/registrations/export.xlsx?eventId=wz-aerospace-2026&scope=all",
       "/api/organizations",
+      "/api/me/events",
       "/api/me/registrations",
       "/api/me/certificates",
       "/api/organizations/O1001/registrations",
@@ -50,6 +51,7 @@ test("every business API requires a session and every administrator API rejects 
     }
     for (const [route, body] of [
       ["/api/organizations/request", { organizationId: "O1001" }],
+      ["/api/organization/events/wz-aerospace-2026/join", {}],
       ["/api/registrations/check", { athlete: {} }],
       ["/api/registrations", {}]
     ]) {

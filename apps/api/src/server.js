@@ -17,6 +17,7 @@ import { createResourcesRouter } from "./routes/resources.js";
 import { createSiteMediaRouter } from "./routes/site-media.js";
 import { createSiteAdminRouter } from "./routes/site-admin.js";
 import { createPublicSiteRouter } from "./routes/public-site.js";
+import { createAccountEventsRouter } from "./routes/account-events.js";
 import { projectForHistoricalRegistration, registrationContext } from "./services/events.js";
 import { replayFileCleanupJournal } from "./services/organizations.js";
 import { organizationForOwner, requireOrdinaryUser, requireOrganizationOwner } from "./services/access-control.js";
@@ -197,6 +198,14 @@ app.use("/api", createOrganizationsRouter({
   makeId: id,
   now,
   publicUser
+}));
+
+app.use("/api", createAccountEventsRouter({
+  store: dataStore,
+  requireUser,
+  requirePasswordReady,
+  asyncRoute: mutationAsyncRoute,
+  now
 }));
 
 app.use("/api", createEventsRouter({
