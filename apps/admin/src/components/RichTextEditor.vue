@@ -18,7 +18,7 @@ const mode = ref("visual");
 const value = ref(sanitizeEditorHtml(props.modelValue));
 const repairValue = ref("");
 const textRepair = ref("");
-const lastEmitted = ref(null);
+const pendingWriteback = ref(null);
 const pendingExternal = ref(null);
 const toolbarState = ref({
   paragraph: false,
@@ -43,7 +43,7 @@ function htmlPlainText(html) {
     if (node.nodeType !== Node.ELEMENT_NODE) return "";
     if (node.tagName === "BR") return "\n";
     const text = [...node.childNodes].map(textOf).join("");
-    return blockTags.has(node.tagName) ? `${text}\n` : text;
+    return blockTags.has(node.tagName) && !text.endsWith("\n") ? `${text}\n` : text;
   }
   return [...container.childNodes].map(textOf).join("")
     .replaceAll("\u00a0", " ")
@@ -89,7 +89,8 @@ const editor = useEditor({
       code: false,
       codeBlock: false,
       horizontalRule: false,
-      link: false
+      link: false,
+      trailingNode: false
     }),
     Link.configure({
       openOnClick: false,
@@ -112,7 +113,7 @@ const editor = useEditor({
     const safe = sanitizeEditorHtml(raw);
     if (raw !== safe) current.commands.setContent(safe, { emitUpdate: false });
     value.value = safe;
-    lastEmitted.value = safe;
+    pendingWriteback.value = { html: safe, revision: props.revision };
     pendingExternal.value = null;
     emit("update:modelValue", safe);
     syncToolbar(current);
@@ -142,8 +143,13 @@ defineExpose({ editor });
 watch([() => props.modelValue, () => props.revision], ([next, revision], [, previousRevision]) => {
   const safe = sanitizeEditorHtml(next);
   const revisionChanged = revision !== previousRevision;
+  const marker = pendingWriteback.value;
+  const isSelfWriteback = !revisionChanged
+    && marker?.revision === revision
+    && marker.html === safe;
+  pendingWriteback.value = null;
 
-  if (!revisionChanged && safe === lastEmitted.value) {
+  if (isSelfWriteback) {
     value.value = safe;
     return;
   }
@@ -186,7 +192,7 @@ function updateHtmlRepair(event) {
   repairValue.value = event.target.value;
   const safe = sanitizeEditorHtml(repairValue.value);
   value.value = safe;
-  lastEmitted.value = safe;
+  pendingWriteback.value = { html: safe, revision: props.revision };
   emit("update:modelValue", safe);
 }
 
@@ -194,7 +200,7 @@ function updateTextRepair(event) {
   textRepair.value = event.target.value;
   const safe = plainTextHtml(textRepair.value);
   value.value = safe;
-  lastEmitted.value = safe;
+  pendingWriteback.value = { html: safe, revision: props.revision };
   emit("update:modelValue", safe);
 }
 

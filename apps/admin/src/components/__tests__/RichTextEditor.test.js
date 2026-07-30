@@ -73,9 +73,22 @@ describe("RichTextEditor", () => {
 
     await wrapper.get('[data-command="undo"]').trigger("click");
     expect(wrapper.get('[data-command="redo"]').attributes("disabled")).toBeUndefined();
-    await wrapper.get('[data-command="clear-formatting"]').trigger("click");
-    expect(wrapper.emitted("update:modelValue").at(-1)[0]).toContain("<p>");
     wrapper.unmount();
+  });
+
+  it("emits a new plain paragraph when clearing marks and structural formatting", async () => {
+    const wrapper = await mountEditor({ props: { modelValue: "<p>正文</p>" } });
+    wrapper.vm.editor.commands.setContent('<blockquote><h2><strong><em><a href="https://example.com">正文</a></em></strong></h2></blockquote>', { emitUpdate: false });
+    wrapper.vm.editor.commands.selectAll();
+    const emissionCount = wrapper.emitted("update:modelValue")?.length || 0;
+
+    await wrapper.get('[data-command="clear-formatting"]').trigger("click");
+
+    const emissions = wrapper.emitted("update:modelValue") || [];
+    expect(emissions.length).toBeGreaterThan(emissionCount);
+    const html = emissions.at(-1)[0];
+    expect(html).toBe("<p>正文</p>");
+    expect(html).not.toMatch(/strong|em|href|<a|h2|blockquote|ul|ol/i);
   });
 
   it("keeps the document and selection during same-revision parent writeback", async () => {
@@ -91,6 +104,35 @@ describe("RichTextEditor", () => {
     expect(wrapper.vm.editor).toBe(editor);
     expect(wrapper.vm.editor.state.selection.from).toBe(selectionFrom);
     expect(wrapper.vm.editor.getHTML()).toBe(emittedHtml);
+  });
+
+  it("does not mistake a repeated external value for stale same-revision writeback", async () => {
+    const wrapper = await mountEditor({
+      props: { modelValue: "<p>初始</p>", revision: 1 }
+    });
+    wrapper.vm.editor.commands.setContent("<p>本地 A</p>");
+    const localA = wrapper.emitted("update:modelValue").at(-1)[0];
+
+    await wrapper.setProps({ modelValue: localA, revision: 1 });
+    await wrapper.setProps({ modelValue: "<p>外部 B</p>", revision: 1 });
+    expect(wrapper.vm.editor.getHTML()).toBe("<p>外部 B</p>");
+    await wrapper.setProps({ modelValue: localA, revision: 1 });
+
+    expect(wrapper.vm.editor.getHTML()).toBe(localA);
+  });
+
+  it("does not carry a same-revision writeback marker across revisions", async () => {
+    const wrapper = await mountEditor({
+      props: { modelValue: "<p>初始</p>", revision: 1 }
+    });
+    wrapper.vm.editor.commands.setContent("<p>本地 A</p>");
+    const localA = wrapper.emitted("update:modelValue").at(-1)[0];
+
+    await wrapper.setProps({ modelValue: localA, revision: 2 });
+    await wrapper.setProps({ modelValue: "<p>外部 B</p>", revision: 2 });
+    await wrapper.setProps({ modelValue: localA, revision: 2 });
+
+    expect(wrapper.vm.editor.getHTML()).toBe(localA);
   });
 
   it("reserves an internal image dialog toolbar hook without prompting for a URL", async () => {
@@ -127,6 +169,19 @@ describe("RichTextEditor", () => {
     expect(wrapper.get('[data-rich-editor="html"]').element.value).toContain("<p>第一行</p>");
     await wrapper.get('[data-editor-mode="text"]').trigger("click");
     expect(wrapper.get('[data-rich-editor="text"]').element.value).toContain("第一行");
+  });
+
+  it("does not create blank lines from TipTap list item paragraphs in plain-text repair", async () => {
+    const wrapper = await mountEditor({ props: { modelValue: "<p>项目一</p><p>项目二</p>" } });
+    wrapper.vm.editor.commands.selectAll();
+    wrapper.vm.editor.commands.toggleBulletList();
+    expect(wrapper.vm.editor.getHTML()).toContain("<ul><li><p>项目一</p></li><li><p>项目二</p></li></ul>");
+
+    await wrapper.get('[data-editor-mode="text"]').trigger("click");
+    const textarea = wrapper.get('[data-rich-editor="text"]');
+    expect(textarea.element.value).toBe("项目一\n项目二");
+    await textarea.setValue(`${textarea.element.value}\n项目三`);
+    expect(wrapper.emitted("update:modelValue").at(-1)[0]).toBe("<p>项目一</p><p>项目二</p><p>项目三</p>");
   });
 
   it("preserves managed image markup in the client sanitizer while rejecting unsafe image sources", () => {
