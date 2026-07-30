@@ -39,9 +39,9 @@ test("every business API requires a session and every administrator API rejects 
       "/api/admin/registrations/export.xlsx?eventId=wz-aerospace-2026&scope=all",
       "/api/organizations",
       "/api/me/events",
-      "/api/me/registrations",
+      "/api/me/events/wz-aerospace-2026/registrations",
       "/api/me/certificates",
-      "/api/organizations/O1001/registrations",
+      "/api/organization/events/wz-aerospace-2026/registrations",
       "/api/organizations/O1001/certificates",
       "/api/admin/certificates",
       "/api/certificates/not-found/file"
@@ -53,7 +53,7 @@ test("every business API requires a session and every administrator API rejects 
       ["/api/organizations/request", { organizationId: "O1001" }],
       ["/api/organization/events/wz-aerospace-2026/join", {}],
       ["/api/registrations/check", { athlete: {} }],
-      ["/api/registrations", {}]
+      ["/api/me/events/wz-aerospace-2026/registrations", {}]
     ]) {
       assert.equal((await fetch(`${baseUrl}${route}`, jsonOptions("POST", body))).status, 401, route);
     }
@@ -92,6 +92,7 @@ test("session identity cannot be replaced through body, query, or path values", 
     assert.equal((await fetch(`${baseUrl}/api/admin/events/wz-aerospace-2026`, jsonOptions("PATCH", {
       registrationMode: "force_open"
     }, admin.cookie))).status, 200);
+    assert.equal((await fetch(`${baseUrl}/api/organization/events/wz-aerospace-2026/join`, withSession(owner.cookie, { method: "POST" }))).status, 201);
 
     const foreignProfile = await fetch(`${baseUrl}/api/me/U2001`, withSession(ordinary.cookie));
     assert.equal(foreignProfile.status, 403);
@@ -99,9 +100,9 @@ test("session identity cannot be replaced through body, query, or path values", 
     assert.equal(ownProfile.status, 200);
 
     const forgedQuery = new URLSearchParams({ userId: "U2001" });
-    const ownRegistrations = await fetch(`${baseUrl}/api/me/registrations?${forgedQuery}`, withSession(ordinary.cookie));
+    const ownRegistrations = await fetch(`${baseUrl}/api/me/events/wz-aerospace-2026/registrations?${forgedQuery}`, withSession(ordinary.cookie));
     assert.equal(ownRegistrations.status, 200);
-    assert.deepEqual((await ownRegistrations.json()).rows.map((row) => row.userId), ["U1001"]);
+    assert.deepEqual((await ownRegistrations.json()).rows.map((row) => row.personalUserId), ["U1001"]);
 
     const organizations = await fetch(`${baseUrl}/api/organizations`, withSession(ordinary.cookie));
     const organizationPayload = await organizations.json();
@@ -113,6 +114,7 @@ test("session identity cannot be replaced through body, query, or path values", 
     assert.equal(userRows.every((row) => !("password" in row) && !("sessionVersion" in row)), true);
 
     const duplicateCheck = await fetch(`${baseUrl}/api/registrations/check`, jsonOptions("POST", {
+      eventId: "wz-aerospace-2026",
       athlete: { name: "陈宇航", school: "温州市实验小学", grade: "五年级", phone: "13800000001" },
       group: "小学高段",
       projectId: "paper-plane-gate"
@@ -123,7 +125,7 @@ test("session identity cannot be replaced through body, query, or path values", 
     assert.equal("matches" in duplicatePayload, false);
     assert.equal("athleteKey" in duplicatePayload, false);
 
-    const forgedRegistration = await fetch(`${baseUrl}/api/registrations`, jsonOptions("POST", {
+    const forgedRegistration = await fetch(`${baseUrl}/api/me/events/wz-aerospace-2026/registrations`, jsonOptions("POST", {
       userId: "U2001",
       organizationId: "O1001",
       source: "伪造来源",
@@ -133,9 +135,9 @@ test("session identity cannot be replaced through body, query, or path values", 
       instructor: "林老师"
     }, ordinary.cookie));
     assert.equal(forgedRegistration.status, 201);
-    assert.equal((await forgedRegistration.json()).row.userId, "U1001");
+    assert.equal((await forgedRegistration.json()).row.personalUserId, "U1001");
 
-    const unrelatedOrganization = await fetch(`${baseUrl}/api/registrations`, jsonOptions("POST", {
+    const unrelatedOrganization = await fetch(`${baseUrl}/api/me/events/wz-aerospace-2026/registrations`, jsonOptions("POST", {
       organizationId: "O1002",
       athlete: { name: "测试学生乙", school: "其他学校", grade: "初二", phone: "13600001002" },
       group: "中学组",
@@ -143,7 +145,7 @@ test("session identity cannot be replaced through body, query, or path values", 
     }, ordinary.cookie));
     assert.equal(unrelatedOrganization.status, 403);
 
-    const unknownOrganization = await fetch(`${baseUrl}/api/registrations`, jsonOptions("POST", {
+    const unknownOrganization = await fetch(`${baseUrl}/api/me/events/wz-aerospace-2026/registrations`, jsonOptions("POST", {
       organizationId: "O-NOT-FOUND",
       athlete: { name: "测试学生丙", school: "其他学校", grade: "初二", phone: "13600001003" },
       group: "中学组",
@@ -151,7 +153,7 @@ test("session identity cannot be replaced through body, query, or path values", 
     }, ordinary.cookie));
     assert.equal(unknownOrganization.status, 404);
 
-    const privateRegistration = await fetch(`${baseUrl}/api/registrations`, jsonOptions("POST", {
+    const privateRegistration = await fetch(`${baseUrl}/api/me/events/wz-aerospace-2026/registrations`, jsonOptions("POST", {
       athlete: { name: "私人参赛者", school: "个人学校", grade: "初二", phone: "13600001004" },
       group: "中学组",
       projectId: "drone-relay"
@@ -159,26 +161,26 @@ test("session identity cannot be replaced through body, query, or path values", 
     assert.equal(privateRegistration.status, 201);
     const privateRegistrationId = (await privateRegistration.json()).row.id;
 
-    assert.equal((await fetch(`${baseUrl}/api/organizations/O1002/registrations`, withSession(ordinary.cookie))).status, 403);
+    assert.equal((await fetch(`${baseUrl}/api/organization/events/wz-aerospace-2026/registrations`, withSession(ordinary.cookie))).status, 403);
     assert.equal((await fetch(`${baseUrl}/api/organizations/O1002/certificates`, withSession(ordinary.cookie))).status, 403);
-    assert.equal((await fetch(`${baseUrl}/api/organizations/O1001/registrations`, withSession(ordinary.cookie))).status, 403);
+    assert.equal((await fetch(`${baseUrl}/api/organization/events/wz-aerospace-2026/registrations`, withSession(ordinary.cookie))).status, 403);
     assert.equal((await fetch(`${baseUrl}/api/organizations/O1001/certificates`, withSession(ordinary.cookie))).status, 403);
     assert.equal((await fetch(`${baseUrl}/api/organizations/invite`, jsonOptions("POST", {
       organizationId: "O1002", phone: "13700000001", name: "越权邀请"
     }, ordinary.cookie))).status, 404);
-    const ownerOrganizationRows = await fetch(`${baseUrl}/api/organizations/O1001/registrations`, withSession(owner.cookie));
+    const ownerOrganizationRows = await fetch(`${baseUrl}/api/organization/events/wz-aerospace-2026/registrations`, withSession(owner.cookie));
     assert.equal(ownerOrganizationRows.status, 200);
     const ownerRows = (await ownerOrganizationRows.json()).rows;
     assert.equal(ownerRows.every((row) => row.organizationId === "O1001"), true);
     assert.equal(ownerRows.some((row) => row.id === "R20260627002"), false);
     assert.equal(ownerRows.some((row) => row.id === privateRegistrationId), false);
-    const adminOrganizationRows = await fetch(`${baseUrl}/api/organizations/O1001/registrations`, withSession(admin.cookie));
+    const adminOrganizationRows = await fetch(`${baseUrl}/api/organization/events/wz-aerospace-2026/registrations`, withSession(admin.cookie));
     assert.equal(adminOrganizationRows.status, 403);
 
-    assert.equal((await fetch(`${baseUrl}/api/registrations/R20260627001/status`, jsonOptions("PATCH", { status: "approved" }, ordinary.cookie))).status, 403);
-    assert.equal((await fetch(`${baseUrl}/api/registrations/R20260627002/status`, jsonOptions("PATCH", { status: "cancelled" }, ordinary.cookie))).status, 403);
-    assert.equal((await fetch(`${baseUrl}/api/registrations/R20260627001/status`, jsonOptions("PATCH", { status: "cancelled" }, ordinary.cookie))).status, 200);
-    assert.equal((await fetch(`${baseUrl}/api/registrations/R20260627002/status`, jsonOptions("PATCH", { status: "rejected" }, admin.cookie))).status, 200);
+    assert.equal((await fetch(`${baseUrl}/api/me/events/wz-aerospace-2026/registrations/R20260627001/status`, jsonOptions("PATCH", { status: "approved" }, ordinary.cookie))).status, 403);
+    assert.equal((await fetch(`${baseUrl}/api/me/events/wz-aerospace-2026/registrations/R20260627002/status`, jsonOptions("PATCH", { status: "cancelled" }, ordinary.cookie))).status, 404);
+    assert.equal((await fetch(`${baseUrl}/api/me/events/wz-aerospace-2026/registrations/R20260627001/status`, jsonOptions("PATCH", { status: "cancelled" }, ordinary.cookie))).status, 200);
+    assert.equal((await fetch(`${baseUrl}/api/admin/events/wz-aerospace-2026/registrations/R20260627002/status`, jsonOptions("PATCH", { status: "rejected" }, admin.cookie))).status, 200);
   });
 });
 
@@ -280,7 +282,7 @@ test("temporary-password users must change password and only the current session
     const first = await loginAs(baseUrl, "13800000001", "TempPass9");
     const second = await loginAs(baseUrl, "13800000001", "TempPass9");
     assert.equal((await fetch(`${baseUrl}/api/auth/me`, withSession(first.cookie))).status, 200);
-    const blocked = await fetch(`${baseUrl}/api/me/registrations`, withSession(first.cookie));
+    const blocked = await fetch(`${baseUrl}/api/me/events/wz-aerospace-2026/registrations`, withSession(first.cookie));
     assert.equal(blocked.status, 428);
     assert.equal((await blocked.json()).code, "PASSWORD_CHANGE_REQUIRED");
 
@@ -293,7 +295,7 @@ test("temporary-password users must change password and only the current session
       currentPassword: "TempPass9", newPassword: "TempPass9"
     }, first.cookie));
     assert.equal(unchanged.status, 422);
-    assert.equal((await fetch(`${baseUrl}/api/me/registrations`, withSession(first.cookie))).status, 428);
+    assert.equal((await fetch(`${baseUrl}/api/me/events/wz-aerospace-2026/registrations`, withSession(first.cookie))).status, 428);
 
     const changed = await fetch(`${baseUrl}/api/auth/change-password`, jsonOptions("POST", {
       currentPassword: "TempPass9", newPassword: "NextPass2"
@@ -303,7 +305,7 @@ test("temporary-password users must change password and only the current session
     assert.equal(changedPayload.user.mustChangePassword, false);
     assert.equal("password" in changedPayload.user, false);
     assert.equal("sessionVersion" in changedPayload.user, false);
-    assert.equal((await fetch(`${baseUrl}/api/me/registrations`, withSession(first.cookie))).status, 200);
+    assert.equal((await fetch(`${baseUrl}/api/me/events/wz-aerospace-2026/registrations`, withSession(first.cookie))).status, 200);
     assert.equal((await fetch(`${baseUrl}/api/auth/me`, withSession(second.cookie))).status, 401);
   });
 });

@@ -13,6 +13,14 @@ npm.cmd test -w apps/api -- --test-concurrency=1 test/multi-event-registration-m
 
 结果：18/18 通过。
 
+另已通过 Task4 迁移过的授权读取与会话用例：
+
+```powershell
+npm.cmd test -w apps/api -- --test-concurrency=1 --test-name-pattern="session identity|temporary-password" test/authorization.test.js
+```
+
+结果：2/2 通过。
+
 ## 自审
 
 - 报名统一使用 `createdByUserId`、`personalUserId`、`organizationId`、`createdVia`；新建和合并路径未写入 `registration.userId`。
@@ -24,4 +32,4 @@ npm.cmd test -w apps/api -- --test-concurrency=1 test/multi-event-registration-m
 ## 关注点
 
 - 证书所有权推导、证书读写接口和证书冗余字段清理严格留给 Task 5；本任务未实现该部分。
-- `authorization.test.js` 中仍有面向已移除旧报名/组织读取路径的断言及证书场景，属于后续消费者迁移与 Task 5 范围，未在本任务扩展处理。
+- `authorization.test.js` 中 Task4 的个人/组织报名读取、创建和状态变更断言已迁移；仅证书场景仍保留给 Task 5。
