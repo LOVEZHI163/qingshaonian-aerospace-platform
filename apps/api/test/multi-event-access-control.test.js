@@ -5,7 +5,7 @@ import { organizationForOwner, requireOrganizationOwner, requireOrdinaryUser, re
 
 test("access control identifies ownership from organizations instead of membership roles", () => {
   const db = {
-    organizations: [{ id: "O1001", ownerUserId: "U2001" }],
+    organizations: [{ id: "O1001", ownerUserId: "U2001", status: "active", reviewStatus: "approved" }],
     events: [{ id: "E1001", status: "published", archivedAt: null }],
     organizationEventParticipations: [{ organizationId: "O1001", eventId: "E1001" }]
   };
