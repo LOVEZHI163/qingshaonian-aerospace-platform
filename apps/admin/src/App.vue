@@ -102,9 +102,22 @@ function restoreAccountEventContext() {
   if (!initialEventContext) return true;
   if (!session.accountEvents) return true;
   const resolvedEventId = resolveAccountEventId(initialEventContext);
-  if (!resolvedEventId) return false;
+  if (!resolvedEventId) {
+    selectEventContext("");
+    return false;
+  }
   selectEventContext(resolvedEventId);
   return true;
+}
+
+async function loadAccountEvents() {
+  try {
+    await session.loadAccountEvents?.();
+    return true;
+  } catch (error) {
+    message.value = error.message || "赛事列表加载失败，请稍后重试";
+    return false;
+  }
 }
 
 function targetView(user = currentUser.value) {
@@ -133,7 +146,7 @@ async function login(credentials) {
   message.value = "";
   try {
     const user = await session.login(credentials);
-    await session.loadAccountEvents?.();
+    await loadAccountEvents();
     currentView.value = user.mustChangePassword ? "password" : targetView(user);
   } catch (error) {
     message.value = error.message;
@@ -146,7 +159,7 @@ async function changePassword() {
     const payload = await api("/api/auth/change-password", { method: "POST", body: JSON.stringify(passwordChangeForm) });
     session.setUser(payload.user, session.organizations.value);
     Object.assign(passwordChangeForm, { currentPassword: "", newPassword: "" });
-    await session.loadAccountEvents?.();
+    await loadAccountEvents();
     currentView.value = targetView(payload.user);
     message.value = "密码修改成功";
   } catch (error) {
@@ -254,7 +267,7 @@ onMounted(async () => {
   }
   await session.restore();
   if (currentUser.value && !currentUser.value.mustChangePassword) {
-    try { await session.loadAccountEvents?.(); } catch (error) { message.value = error.message; }
+    await loadAccountEvents();
     currentView.value = targetView();
   }
 });

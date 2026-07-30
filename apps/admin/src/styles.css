@@ -9,6 +9,8 @@
 .event-center-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); gap: 1rem; }
 .event-center-card { display: grid; align-content: start; gap: .65rem; }
 .event-center-card .panel-title { margin-bottom: 0; }
+.event-center-error { display: flex; align-items: center; gap: .75rem; flex-wrap: wrap; }
+.event-center-error .message { margin: 0; }
 .event-state-not_started, .event-state-open, .event-state-closed { font-style: normal; font-size: .82rem; padding: .2rem .5rem; border-radius: 999px; }
 .event-state-not_started { color: #8a5a00; background: #fff6d8; }
 .event-state-open { color: #166534; background: #dcfce7; }

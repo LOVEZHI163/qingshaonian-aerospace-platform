@@ -16,7 +16,9 @@ function openRegistration(eventId) {
   emit("open-event", { eventId, mode: "registration" });
 }
 
-onMounted(async () => {
+async function loadEvents() {
+  loading.value = true;
+  error.value = "";
   try {
     const payload = await api("/api/me/events");
     rows.value = Array.isArray(payload?.rows) ? payload.rows.filter((row) => row?.event?.id) : [];
@@ -25,7 +27,9 @@ onMounted(async () => {
   } finally {
     loading.value = false;
   }
-});
+}
+
+onMounted(loadEvents);
 </script>
 
 <template>
@@ -34,7 +38,7 @@ onMounted(async () => {
       <div><h2>赛事中心</h2><p>请选择要查看和操作的赛事。</p></div>
     </div>
     <p v-if="loading" class="hint">正在加载可访问赛事…</p>
-    <p v-else-if="error" class="message">{{ error }}</p>
+    <div v-else-if="error" class="event-center-error"><p class="message">{{ error }}</p><button type="button" class="ghost" data-action="retry-event-center" @click="loadEvents">重新加载</button></div>
     <p v-else-if="rows.length === 0" class="hint empty-state">暂无可访问赛事</p>
     <div v-else class="event-center-grid">
       <article v-for="row in rows" :key="row.event.id" class="panel event-center-card" :data-event-card="row.event.id">

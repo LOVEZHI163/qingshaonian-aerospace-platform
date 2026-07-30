@@ -37,6 +37,7 @@ function publicData() {
 
 describe("App session integration", () => {
   beforeEach(() => {
+    window.history.replaceState({}, "", "/");
     apiMock.mockReset();
     sessionUser.value = null;
     restoring.value = false;
@@ -123,6 +124,45 @@ describe("App session integration", () => {
     expect(wrapper.find('[data-testid="event-center-page"]').exists()).toBe(true);
     expect(wrapper.find(".registration-page").exists()).toBe(false);
     expect(apiMock.mock.calls.some(([path]) => path.includes("registration-context"))).toBe(false);
+  });
+
+  it("keeps a logged-in account in the event center when account events cannot load", async () => {
+    sessionUser.value = { id: "U1", type: "ordinary", name: "用户", mustChangePassword: false };
+    session.loadAccountEvents.mockRejectedValueOnce(new Error("赛事列表暂不可用"));
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/public/event") return publicData();
+      if (path === "/api/me/events") throw new Error("赛事列表暂不可用");
+      return { rows: [] };
+    });
+    const wrapper = mount(App);
+    await flushPromises();
+
+    expect(wrapper.find('[data-testid="event-center-page"]').exists()).toBe(true);
+    expect(wrapper.text()).toContain("赛事列表暂不可用");
+    expect(wrapper.get('[data-action="retry-event-center"]').exists()).toBe(true);
+  });
+
+  it("clears an unavailable deep-link event context before later business navigation", async () => {
+    window.history.replaceState({}, "", "/admin/?view=registration&eventId=E2&eventSlug=old-event");
+    sessionUser.value = { id: "U1", type: "ordinary", name: "用户", mustChangePassword: false };
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/public/event") return publicData();
+      if (path === "/api/me/events") return { rows: [{ event: { id: "E1", slug: "available-event", name: "赛事一" } }] };
+      if (path === "/api/me/registration-context") return { organizations: [], projects: [], grades: [] };
+      return { rows: [] };
+    });
+    const wrapper = mount(App);
+    await flushPromises();
+
+    expect(wrapper.find('[data-testid="event-center-page"]').exists()).toBe(true);
+    expect(new URLSearchParams(window.location.search).get("view")).toBe("eventCenter");
+    expect(new URLSearchParams(window.location.search).has("eventId")).toBe(false);
+    expect(new URLSearchParams(window.location.search).has("eventSlug")).toBe(false);
+
+    await wrapper.get('[data-user-nav="registration"]').trigger("click");
+    await flushPromises();
+    expect(new URLSearchParams(window.location.search).has("eventId")).toBe(false);
+    expect(apiMock.mock.calls.some(([path]) => path.includes("eventId=E2"))).toBe(false);
   });
 
   it("shows overview by default and exposes the event settings workflow", async () => {

@@ -37,6 +37,19 @@ describe("EventCenterPage", () => {
     expect(wrapper.text()).toContain("暂无可访问赛事");
   });
 
+  it("shows a retry action when loading the event center fails", async () => {
+    apiMock
+      .mockRejectedValueOnce(new Error("赛事服务暂不可用"))
+      .mockResolvedValueOnce({ rows: [{ event: { id: "E1", name: "赛事一" }, registrationState: "open" }] });
+    const wrapper = mount(EventCenterPage, { props: { accountType: "ordinary" } });
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("赛事服务暂不可用");
+    await wrapper.get('[data-action="retry-event-center"]').trigger("click");
+    await flushPromises();
+    expect(wrapper.findAll("[data-event-card]")).toHaveLength(1);
+  });
+
   it("shows organization participation availability without performing a join", async () => {
     apiMock.mockResolvedValue({ rows: [
       { event: { id: "E1", name: "赛事一" }, registrationState: "open", participationState: "available" },
