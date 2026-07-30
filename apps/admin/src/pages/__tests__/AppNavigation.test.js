@@ -277,7 +277,7 @@ describe("role based application navigation", () => {
         projects: []
       };
       if (path === "/api/admin/organizations") return { rows: [] };
-      if (path.startsWith("/api/admin/registrations?")) return { rows: [], total: 0 };
+      if (path.startsWith("/api/admin/events/E2/registrations?")) return { rows: [], total: 0, page: 1, pageSize: 25 };
       return { rows: [] };
     });
 
@@ -286,8 +286,8 @@ describe("role based application navigation", () => {
 
     expect(wrapper.find(".registration-management").exists()).toBe(true);
     expect(wrapper.find('[data-testid="registration-records-page"]').exists()).toBe(false);
-    const request = apiMock.mock.calls.map(([path]) => path).find((path) => path.startsWith("/api/admin/registrations?"));
-    expect(new URLSearchParams(request.split("?")[1]).get("eventId")).toBe("E2");
+    const request = apiMock.mock.calls.map(([path]) => path).find((path) => path.startsWith("/api/admin/events/E2/registrations?"));
+    expect(request).toContain("/api/admin/events/E2/registrations?");
   });
 
   it("reloads administrator registration management without the records deep-link filter when its current navigation item is clicked", async () => {
@@ -300,7 +300,7 @@ describe("role based application navigation", () => {
         projects: []
       };
       if (path === "/api/admin/organizations") return { rows: [] };
-      if (path.startsWith("/api/admin/registrations?")) return { rows: [], total: 0 };
+      if (path.startsWith("/api/admin/events/E2/registrations?")) return { rows: [], total: 0, page: 1, pageSize: 25 };
       return { rows: [] };
     });
 
@@ -309,14 +309,14 @@ describe("role based application navigation", () => {
 
     const registrationRequests = () => apiMock.mock.calls
       .map(([path]) => path)
-      .filter((path) => path.startsWith("/api/admin/registrations?"));
-    expect(new URLSearchParams(registrationRequests().at(-1).split("?")[1]).get("eventId")).toBe("E2");
+      .filter((path) => path.startsWith("/api/admin/events/E2/registrations?"));
+    expect(registrationRequests().at(-1)).toContain("/api/admin/events/E2/registrations?");
 
     await wrapper.get('[data-nav="registrations"]').trigger("click");
     await flushPromises();
 
-    expect(registrationRequests().length).toBeGreaterThan(1);
-    expect(new URLSearchParams(registrationRequests().at(-1).split("?")[1]).get("eventId")).toBe("E1");
+    expect(registrationRequests()).toHaveLength(1);
+    expect(registrationRequests().at(-1)).toContain("/api/admin/events/E2/registrations?");
   });
 
   it("reloads administrator certificate management without the event deep-link filter when its current navigation item is clicked", async () => {
@@ -328,7 +328,7 @@ describe("role based application navigation", () => {
         rows: [{ id: "E1", name: "Current event", isCurrent: true }, { id: "E2", name: "Target event", isCurrent: false }],
         projects: []
       };
-      if (path.startsWith("/api/admin/certificates?")) return { rows: [], total: 0, page: 1, pageSize: 50 };
+      if (path.startsWith("/api/admin/events/E2/certificates?")) return { rows: [], total: 0, page: 1, pageSize: 50 };
       return { rows: [] };
     });
 
@@ -337,14 +337,14 @@ describe("role based application navigation", () => {
 
     const certificateRequests = () => apiMock.mock.calls
       .map(([path]) => path)
-      .filter((path) => path.startsWith("/api/admin/certificates?"));
-    expect(new URLSearchParams(certificateRequests().at(-1).split("?")[1]).get("eventId")).toBe("E2");
+      .filter((path) => path.startsWith("/api/admin/events/E2/certificates?"));
+    expect(certificateRequests().at(-1)).toContain("/api/admin/events/E2/certificates?");
 
     await wrapper.get('[data-nav="certificates"]').trigger("click");
     await flushPromises();
 
-    expect(certificateRequests().length).toBeGreaterThan(1);
-    expect(new URLSearchParams(certificateRequests().at(-1).split("?")[1]).get("eventId")).toBe("E1");
+    expect(certificateRequests()).toHaveLength(1);
+    expect(certificateRequests().at(-1)).toContain("/api/admin/events/E2/certificates?");
   });
 
   it.each([

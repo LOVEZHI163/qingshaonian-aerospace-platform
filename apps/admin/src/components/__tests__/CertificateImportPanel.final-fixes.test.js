@@ -32,11 +32,11 @@ describe("CertificateImportPanel final fixes", () => {
     apiMock.mockReset();
     apiBlobMock.mockReset();
     apiMock.mockImplementation(async (path, options = {}) => {
-      if (path === "/api/admin/certificate-imports?eventId=E1") return { rows: [recoverablePreview] };
-      if (path === "/api/admin/certificate-imports/preview" && options.method === "POST") {
+      if (path === "/api/admin/events/E1/certificate-imports") return { rows: [recoverablePreview] };
+      if (path === "/api/admin/events/E1/certificate-imports/preview" && options.method === "POST") {
         return { ...recoverablePreview, id: "B-new", originalName: "新导入.xlsx" };
       }
-      if (path === "/api/admin/certificate-imports/B-recoverable" && options.method === "DELETE") return {};
+      if (path === "/api/admin/events/E1/certificate-imports/B-recoverable" && options.method === "DELETE") return {};
       return { rows: [] };
     });
     URL.createObjectURL = vi.fn(() => "blob:download");
@@ -52,7 +52,7 @@ describe("CertificateImportPanel final fixes", () => {
     const wrapper = mount(CertificateImportPanel, { props: { eventId: "E1" } });
     await flushPromises();
 
-    expect(apiMock).toHaveBeenCalledWith("/api/admin/certificate-imports?eventId=E1");
+    expect(apiMock).toHaveBeenCalledWith("/api/admin/events/E1/certificate-imports");
     expect(wrapper.get('[data-action="resume-import-B-recoverable"]').text()).toContain("恢复");
 
     await wrapper.get('[data-action="resume-import-B-recoverable"]').trigger("click");
@@ -61,7 +61,7 @@ describe("CertificateImportPanel final fixes", () => {
 
     await wrapper.get('[data-action="cancel-import"]').trigger("click");
     await flushPromises();
-    expect(apiMock).toHaveBeenCalledWith("/api/admin/certificate-imports/B-recoverable", { method: "DELETE" });
+    expect(apiMock).toHaveBeenCalledWith("/api/admin/events/E1/certificate-imports/B-recoverable", { method: "DELETE" });
   });
 
   it("预检查随工作簿提交当前赛事 ID", async () => {
@@ -72,7 +72,7 @@ describe("CertificateImportPanel final fixes", () => {
     await wrapper.get('[data-action="preview-import"]').trigger("click");
     await flushPromises();
 
-    const previewCall = apiMock.mock.calls.find(([path, options]) => path === "/api/admin/certificate-imports/preview" && options?.method === "POST");
+    const previewCall = apiMock.mock.calls.find(([path, options]) => path === "/api/admin/events/E1/certificate-imports/preview" && options?.method === "POST");
     expect(previewCall?.[1].body).toBeInstanceOf(FormData);
     expect(previewCall?.[1].body.get("eventId")).toBe("E1");
   });

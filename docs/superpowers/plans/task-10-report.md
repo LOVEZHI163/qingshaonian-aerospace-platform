@@ -29,19 +29,22 @@ git diff --check
 # clean
 ```
 
-## 全量管理端测试遗留
+## Review Fix Round 1
 
-全量命令 `npm.cmd test -w apps/admin` 的结果为 **279 passed、26 failed**。这里的“26”是失败用例数，分布在下列 **8 个测试文件**；它们仍在断言本任务明确移除的旧 API 或旧的页面内赛事选择器，需在后续测试迁移中按新的全局 `eventId` 上下文更新。
+- `ManualCertificateEntryPanel` 移除内部 `eventId` 状态、页内赛事下拉框和切换逻辑；现在仅接收父级 `eventId`，所有报名、证书和成绩请求均使用该 prop。父级赛事切换以页面 key 重建组件，从而清理本地搜索、预览和批次状态。
+- `DashboardPage` 删除遗留的二级赛事选择器与未定义的 `selectedEventId`；没有 `eventId` 时只显示选择提示，不请求仪表盘也不渲染统计面板。
+- `RegistrationManagementPage` 新增 `eventArchived` 输入，并结合赛事元数据识别归档状态。归档赛事保持报名列表和导出只读可用，隐藏审核、驳回、编辑、成绩和证书写操作；对应函数也在前端短路。
+- 迁移旧测试夹具：报名分页、证书导入、证书槽位、手动录入、证书分页、赛事设置及管理员深链测试均改为显式 `eventId` 和 `/api/admin/events/:eventId/...` 路径；删除了认可页内赛事选择器或重复点击导航后清空赛事上下文的断言。
 
-| 测试文件 | 失败数 | 原因 |
-| --- | ---: | --- |
-| `apps/admin/src/pages/__tests__/CertificateManagementPage.final-fixes.test.js` | 4 | 未向页面传入 `eventId`，并断言旧证书列表路径或页面自行选择当前赛事。 |
-| `apps/admin/src/pages/__tests__/EventManagementPage.test.js` | 3 | 仍模拟无 `eventId` 的全量报名分页路径；现在报名分页必须使用选中赛事的 `/api/admin/events/:eventId/registrations`。 |
-| `apps/admin/src/components/__tests__/ManualCertificateEntryPanel.test.js` | 2 | 仍断言旧的 `/api/admin/registrations/:id/result`，应改为带赛事路径的成绩写入。 |
-| `apps/admin/src/pages/__tests__/AppNavigation.test.js` | 3 | 仍查找旧报名/证书 URL 与“点击当前导航会清空页内赛事筛选”的行为；统一顶栏上下文不应清空已选赛事。 |
-| `apps/admin/src/__tests__/App.test.js` | 2 | 旧断言期望管理员进入证书页即出现导入区，以及从报名页内赛事筛选器切换历史赛事；现在均必须经顶部上下文选择。 |
-| `apps/admin/src/components/__tests__/CertificateSlotEditor.final-fixes.test.js` | 3 | fixture 的报名记录缺少 `eventId`，且仍断言无赛事的证书上传、更新和删除 URL。 |
-| `apps/admin/src/components/__tests__/CertificateImportPanel.final-fixes.test.js` | 2 | 仍断言旧的导入预检、恢复和取消路径，应改为 `/api/admin/events/:eventId/certificate-imports/...`。 |
-| `apps/admin/src/lib/__tests__/admin-registrations.test.js` | 7 | 分页辅助测试未提供必填 `eventId`，且期望旧的全局报名 URL。 |
+## Review Fix Round 1 验证
 
-这些失败均为测试夹具/断言迁移工作，不代表已提交的生产代码仍会调用旧 API；交付前的聚焦上下文套件和 Vite 构建已通过。
+```powershell
+npm.cmd test -w apps/admin
+# 33 files, 305 passed, 0 failed
+
+npm.cmd run build -w apps/admin
+# vite build passed
+
+git diff --check
+# clean
+```

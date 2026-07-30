@@ -34,7 +34,7 @@ const project = {
 function mockLoads(registrations = []) {
   apiMock.mockImplementation(async (path) => {
     if (path === "/api/admin/events") return { rows: [event], projects: [project] };
-    if (path === "/api/admin/registrations?pageSize=100") return { rows: registrations, total: registrations.length, page: 1, pageSize: 100 };
+    if (path === "/api/admin/events/E1/registrations?pageSize=100") return { rows: registrations, total: registrations.length, page: 1, pageSize: 100 };
     return { row: event };
   });
 }
@@ -87,7 +87,7 @@ describe("EventManagementPage", () => {
   it("shows a project empty state when no event exists", async () => {
     apiMock.mockImplementation(async (path) => {
       if (path === "/api/admin/events") return { rows: [], projects: [] };
-      if (path === "/api/admin/registrations?pageSize=100") return { rows: [], total: 0, page: 1, pageSize: 100 };
+      if (path === "/api/admin/events/E1/registrations?pageSize=100") return { rows: [], total: 0, page: 1, pageSize: 100 };
       return { rows: [] };
     });
     const wrapper = mount(EventManagementPage);
@@ -102,7 +102,7 @@ describe("EventManagementPage", () => {
     const secondProject = { ...project, id: "P2", eventId: "E2", name: "无人机竞速" };
     apiMock.mockImplementation(async (path) => {
       if (path === "/api/admin/events") return { rows: [event, secondEvent], projects: [project, secondProject] };
-      if (path === "/api/admin/registrations?pageSize=100") return { rows: [], total: 0, page: 1, pageSize: 100 };
+      if (path === "/api/admin/events/E1/registrations?pageSize=100") return { rows: [], total: 0, page: 1, pageSize: 100 };
       return { rows: [] };
     });
     const wrapper = mount(EventManagementPage);
@@ -160,15 +160,15 @@ describe("EventManagementPage", () => {
     const firstPage = Array.from({ length: 100 }, (_, index) => ({ id: `R${index + 1}`, projectId: "P1" }));
     apiMock.mockImplementation(async (path) => {
       if (path === "/api/admin/events") return { rows: [event], projects: [project] };
-      if (path === "/api/admin/registrations?pageSize=100") return { rows: firstPage, total: 101, page: 1, pageSize: 100 };
-      if (path === "/api/admin/registrations?page=2&pageSize=100") return { rows: [{ id: "R101", projectId: "P1" }], total: 101, page: 2, pageSize: 100 };
+      if (path === "/api/admin/events/E1/registrations?pageSize=100") return { rows: firstPage, total: 101, page: 1, pageSize: 100 };
+      if (path === "/api/admin/events/E1/registrations?page=2&pageSize=100") return { rows: [{ id: "R101", projectId: "P1" }], total: 101, page: 2, pageSize: 100 };
       return { row: event };
     });
     const wrapper = mount(EventManagementPage);
     await flushPromises();
     await wrapper.get('[data-section="projects"]').trigger("click");
 
-    expect(apiMock).toHaveBeenCalledWith("/api/admin/registrations?page=2&pageSize=100");
+    expect(apiMock).toHaveBeenCalledWith("/api/admin/events/E1/registrations?page=2&pageSize=100");
     expect(wrapper.find('[data-action="delete-project"]').exists()).toBe(false);
     expect(wrapper.get('[data-action="disable-project"]').text()).toContain("停用");
   });
@@ -177,7 +177,7 @@ describe("EventManagementPage", () => {
     let registrationRequests = 0;
     apiMock.mockImplementation(async (path) => {
       if (path === "/api/admin/events") return { rows: [event], projects: [project] };
-      if (path === "/api/admin/registrations?pageSize=100") {
+      if (path === "/api/admin/events/E1/registrations?pageSize=100") {
         registrationRequests += 1;
         return registrationRequests === 1
           ? { rows: [{ id: "R1", projectId: "P1" }], total: 1, page: 1, pageSize: 100 }
@@ -208,7 +208,7 @@ describe("EventManagementPage", () => {
         return { row };
       }
       if (path === "/api/admin/events") return { rows, projects: [] };
-      if (path === "/api/admin/registrations?pageSize=100") return { rows: [], total: 0, page: 1, pageSize: 100 };
+      if (path === "/api/admin/events/E1/registrations?pageSize=100") return { rows: [], total: 0, page: 1, pageSize: 100 };
       return { row: event };
     });
     const wrapper = mount(EventManagementPage);
@@ -250,7 +250,7 @@ describe("EventManagementPage", () => {
     const archived = { ...event, id: "E-OLD", name: "2025赛事", status: "archived", isCurrent: false };
     apiMock.mockImplementation(async (path) => {
       if (path === "/api/admin/events") return { rows: [archived], projects: [] };
-      if (path === "/api/admin/registrations?pageSize=100") return { rows: [], total: 0, page: 1, pageSize: 100 };
+      if (path === "/api/admin/events/E-OLD/registrations?pageSize=100") return { rows: [], total: 0, page: 1, pageSize: 100 };
       if (path === "/api/admin/events/E-OLD/storage") return { certificateFiles: 1, importFiles: 0, totalBytes: 100 };
       return { row: archived };
     });

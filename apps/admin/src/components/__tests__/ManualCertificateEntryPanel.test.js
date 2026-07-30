@@ -1,4 +1,4 @@
-import { flushPromises, mount } from "@vue/test-utils";
+import { flushPromises, mount as vueMount } from "@vue/test-utils";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { apiMock, loadAdminRegistrationsMock } = vi.hoisted(() => ({
@@ -13,6 +13,10 @@ vi.mock("../../lib/admin-registrations.js", () => ({
 
 import CertificateSlotEditor from "../CertificateSlotEditor.vue";
 import ManualCertificateEntryPanel from "../ManualCertificateEntryPanel.vue";
+const mount = (component, options = {}) => vueMount(component, {
+  ...options,
+  props: { ...options.props, eventId: options.props?.eventId ?? options.props?.initialEventId ?? "" }
+});
 
 const events = [
   { id: "E1", name: "2026 青少年航空赛" },
@@ -121,7 +125,7 @@ describe("ManualCertificateEntryPanel", () => {
     expect(apiMock).toHaveBeenCalledWith(expect.stringContaining("registrationId=R2"));
   });
 
-  it("clears old results when the event changes", async () => {
+  it("does not render an independent event selector", async () => {
     loadAdminRegistrationsMock.mockResolvedValue([sameNameProjectOne]);
     const wrapper = mount(ManualCertificateEntryPanel, { props: { events, initialEventId: "E1" } });
     await wrapper.get("[data-manual-name]").setValue("张三");
@@ -129,9 +133,8 @@ describe("ManualCertificateEntryPanel", () => {
     await flushPromises();
     expect(wrapper.findAll("[data-manual-result]")).toHaveLength(1);
 
-    await wrapper.get("[data-manual-event]").setValue("E2");
-    expect(wrapper.findAll("[data-manual-result]")).toHaveLength(0);
-    expect(wrapper.get("[data-manual-name]").element.value).toBe("");
+    expect(wrapper.find("[data-manual-event]").exists()).toBe(false);
+    expect(wrapper.findAll("[data-manual-result]")).toHaveLength(1);
   });
 
   it("ignores an older search response", async () => {
@@ -217,7 +220,7 @@ describe("ManualCertificateEntryPanel", () => {
     await wrapper.get('[data-result="score"]').setValue("99");
     await wrapper.get('[data-action="save-result"]').trigger("click");
     await flushPromises();
-    expect(apiMock).toHaveBeenCalledWith("/api/admin/registrations/R1/result", {
+    expect(apiMock).toHaveBeenCalledWith("/api/admin/events/E1/registrations/R1/result", {
       method: "POST",
       body: JSON.stringify({ awardName: "一等奖", rank: "1", score: "99" })
     });
@@ -315,7 +318,7 @@ describe("ManualCertificateEntryPanel", () => {
     await wrapper.get('[data-action="save-result"]').trigger("click");
     await flushPromises();
 
-    expect(apiMock).toHaveBeenCalledWith("/api/admin/registrations/R1/result", {
+    expect(apiMock).toHaveBeenCalledWith("/api/admin/events/E1/registrations/R1/result", {
       method: "POST",
       body: JSON.stringify({ awardName: "", rank: "", score: "" })
     });
@@ -342,11 +345,11 @@ describe("ManualCertificateEntryPanel", () => {
     expect(wrapper.emitted("changed")).toEqual([[{ message: "证书位置 2 已保存。" }]]);
   });
 
-  it("ignores an older result save after the event context changes", async () => {
+  it("does not expose an independent event selector during a result save", async () => {
     const olderSave = deferred();
     loadAdminRegistrationsMock.mockResolvedValue([sameNameProjectOne]);
     apiMock.mockImplementation((path, options = {}) => {
-      if (path === "/api/admin/registrations/R1/result" && options.method === "POST") return olderSave.promise;
+      if (path === "/api/admin/events/E1/registrations/R1/result" && options.method === "POST") return olderSave.promise;
       return Promise.resolve({ rows: [] });
     });
     const wrapper = mount(ManualCertificateEntryPanel, { props: { events, initialEventId: "E1" } });
@@ -358,14 +361,11 @@ describe("ManualCertificateEntryPanel", () => {
 
     await wrapper.get('[data-result="awardName"]').setValue("一等奖");
     await wrapper.get('[data-action="save-result"]').trigger("click");
-    await wrapper.get("[data-manual-event]").setValue("E2");
-    await wrapper.get("form").trigger("submit");
-    expect(wrapper.get('[role="alert"]').text()).toContain("请输入学生姓名");
+    expect(wrapper.find("[data-manual-event]").exists()).toBe(false);
 
     olderSave.resolve({ row: { ...sameNameProjectOne, awardName: "一等奖" } });
     await flushPromises();
-    expect(wrapper.get('[role="alert"]').text()).toContain("请输入学生姓名");
-    expect(wrapper.text()).not.toContain("成绩已保存");
+    expect(wrapper.text()).toContain("成绩已保存");
   });
 
   it("opens an approved direct registration by exact id", async () => {

@@ -8,6 +8,7 @@ import CertificateSlotEditor from "../CertificateSlotEditor.vue";
 
 const registration = {
   id: "R1",
+  eventId: "E1",
   athlete: { name: "张三", school: "实验小学" },
   group: "小学低段",
   projectName: "纸飞机"
@@ -45,8 +46,8 @@ describe("CertificateSlotEditor final fixes", () => {
     const slotOne = deferred();
     const slotTwo = deferred();
     apiMock.mockImplementation((path, options = {}) => {
-      if (path === "/api/admin/certificates/C1" && options.method === "PATCH") return slotOne.promise;
-      if (path === "/api/admin/certificates/C2" && options.method === "PATCH") return slotTwo.promise;
+      if (path === "/api/admin/events/E1/certificates/C1" && options.method === "PATCH") return slotOne.promise;
+      if (path === "/api/admin/events/E1/certificates/C2" && options.method === "PATCH") return slotTwo.promise;
       return Promise.resolve({});
     });
     const wrapper = mount(CertificateSlotEditor, { props: { registration, certificates } });
@@ -80,7 +81,7 @@ describe("CertificateSlotEditor final fixes", () => {
     await wrapper.get('[data-action="save-slot-2"]').trigger("click");
     await flushPromises();
 
-    const upload = apiMock.mock.calls.find(([path, options]) => path === "/api/admin/registrations/R1/certificates/2" && options?.method === "POST");
+    const upload = apiMock.mock.calls.find(([path, options]) => path === "/api/admin/events/E1/registrations/R1/certificates/2" && options?.method === "POST");
     expect(upload?.[1].body).toBeInstanceOf(FormData);
     expect(upload?.[1].body.get("certificate").name).toBe("第二张.pdf");
     expect(wrapper.find('input[placeholder="证书编号"]').exists()).toBe(false);
@@ -100,7 +101,7 @@ describe("CertificateSlotEditor final fixes", () => {
     await wrapper.get('[data-action="request-delete-C1"]').trigger("click");
     await wrapper.get('[data-action="confirm-delete"]').trigger("click");
     await flushPromises();
-    expect(apiMock).toHaveBeenCalledWith("/api/admin/certificates/C1", { method: "DELETE" });
+    expect(apiMock).toHaveBeenCalledWith("/api/admin/events/E1/certificates/C1", { method: "DELETE" });
     expect(wrapper.get('[role="alert"]').text()).toContain("删除失败，请稍后重试");
   });
 });

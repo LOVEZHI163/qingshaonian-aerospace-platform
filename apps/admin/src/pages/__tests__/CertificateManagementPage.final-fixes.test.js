@@ -1,4 +1,4 @@
-import { flushPromises, mount } from "@vue/test-utils";
+import { flushPromises, mount as vueMount } from "@vue/test-utils";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { apiMock, apiBlobMock } = vi.hoisted(() => ({ apiMock: vi.fn(), apiBlobMock: vi.fn() }));
@@ -9,6 +9,7 @@ vi.mock("../../lib/api.js", () => ({
 }));
 
 import CertificateManagementPage from "../CertificateManagementPage.vue";
+const mount = (component, options = {}) => vueMount(component, { ...options, props: { eventId: "E1", ...(options.props || {}) } });
 
 const event = { id: "E1", name: "青少年航空赛", isCurrent: true };
 const project = { id: "P1", eventId: "E1", name: "纸飞机", allowedGroups: ["小学低段"] };
@@ -42,11 +43,11 @@ const publishedCertificate = {
 };
 
 function isRegistrationRequest(path) {
-  return path === "/api/admin/registrations?pageSize=100" || path.startsWith("/api/admin/registrations?eventId=");
+  return path.startsWith("/api/admin/events/E1/registrations?");
 }
 
 function isCertificateRequest(path) {
-  return path === "/api/admin/certificates" || path.startsWith("/api/admin/certificates?");
+  return path.startsWith("/api/admin/events/E1/certificates?");
 }
 
 function deferred() {
@@ -60,8 +61,8 @@ function standardResponse(certificates = [draftCertificate, publishedCertificate
     if (path === "/api/admin/events") return { rows: [event], projects: [project] };
     if (isRegistrationRequest(path)) return { rows: [registration], total: 1, page: 1, pageSize: 100 };
     if (isCertificateRequest(path)) return { rows: certificates, total: certificates.length, page: 1, pageSize: 20 };
-    if (path === "/api/admin/certificate-imports?eventId=E1") return { rows: [] };
-    if (path === "/api/admin/certificates/bulk-status" && options.method === "POST") return { rows: [] };
+    if (path === "/api/admin/events/E1/certificate-imports") return { rows: [] };
+    if (path === "/api/admin/events/E1/certificates/bulk-status" && options.method === "POST") return { rows: [] };
     return {};
   });
 }
@@ -97,7 +98,7 @@ describe("CertificateManagementPage final fixes", () => {
     await wrapper.get('[data-action="bulk-withdraw"]').trigger("click");
     await flushPromises();
 
-    expect(apiMock).toHaveBeenCalledWith("/api/admin/certificates/bulk-status", {
+    expect(apiMock).toHaveBeenCalledWith("/api/admin/events/E1/certificates/bulk-status", {
       method: "POST",
       body: JSON.stringify({ ids: ["C-published"], status: "draft" })
     });
@@ -115,7 +116,7 @@ describe("CertificateManagementPage final fixes", () => {
         certificateCalls += 1;
         return certificateCalls === 1 ? stale.promise : fresh.promise;
       }
-      if (path === "/api/admin/certificate-imports?eventId=E1") return Promise.resolve({ rows: [] });
+      if (path === "/api/admin/events/E1/certificate-imports") return Promise.resolve({ rows: [] });
       return Promise.resolve({});
     });
     const wrapper = mount(CertificateManagementPage);
@@ -161,7 +162,7 @@ describe("CertificateManagementPage final fixes", () => {
           pageSize: 20
         });
       }
-      if (path === "/api/admin/certificate-imports?eventId=E1") return Promise.resolve({ rows: [] });
+      if (path === "/api/admin/events/E1/certificate-imports") return Promise.resolve({ rows: [] });
       return Promise.resolve({});
     });
     const wrapper = mount(CertificateManagementPage);
@@ -200,7 +201,7 @@ describe("CertificateManagementPage final fixes", () => {
           pageSize: 20
         };
       }
-      if (path === "/api/admin/certificate-imports?eventId=E1") return { rows: [] };
+      if (path === "/api/admin/events/E1/certificate-imports") return { rows: [] };
       return {};
     });
     const wrapper = mount(CertificateManagementPage);
@@ -210,7 +211,7 @@ describe("CertificateManagementPage final fixes", () => {
     await flushPromises();
     expect(certificatePaths.some((path) => new URL(path, "http://admin.local").searchParams.get("page") === "2")).toBe(true);
 
-    await wrapper.findAll(".certificate-filter-grid select")[1].setValue("draft");
+    await wrapper.findAll(".certificate-filter-grid select")[0].setValue("draft");
     await flushPromises();
     const listRequestPaths = certificatePaths.filter((path) => !new URL(path, "http://admin.local").searchParams.has("registrationId"));
     const lastRequest = new URL(listRequestPaths.at(-1), "http://admin.local").searchParams;

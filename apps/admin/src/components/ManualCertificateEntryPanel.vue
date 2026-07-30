@@ -7,16 +7,12 @@ import CertificateSlotEditor from "./CertificateSlotEditor.vue";
 
 const props = defineProps({
   events: { type: Array, default: () => [] },
-  initialEventId: { type: String, default: "" },
+  eventId: { type: String, default: "" },
   initialRegistrationId: { type: String, default: "" }
 });
 
 const emit = defineEmits(["changed"]);
 
-const initialEvent = props.events.find((event) => event.id === props.initialEventId)
-  || props.events.find((event) => event.isCurrent)
-  || props.events[0];
-const eventId = ref(initialEvent?.id || "");
 const athleteName = ref("");
 const searchRows = ref([]);
 const selectedRegistrationId = ref("");
@@ -47,19 +43,6 @@ function clearSelection() {
   Object.assign(result, { awardName: "", rank: "", score: "" });
 }
 
-function changeEvent() {
-  searchGeneration += 1;
-  certificateGeneration += 1;
-  athleteName.value = "";
-  searchRows.value = [];
-  searchAttempted.value = false;
-  searchLoading.value = false;
-  certificateLoading.value = false;
-  error.value = "";
-  success.value = "";
-  clearSelection();
-}
-
 async function searchByName() {
   const generation = ++searchGeneration;
   certificateGeneration += 1;
@@ -71,7 +54,7 @@ async function searchByName() {
   success.value = "";
   clearSelection();
 
-  if (!eventId.value) {
+  if (!props.eventId) {
     error.value = "请先选择赛事后再查询。";
     return;
   }
@@ -85,7 +68,7 @@ async function searchByName() {
   searchAttempted.value = true;
   try {
     const rows = await loadAdminRegistrations({
-      eventId: eventId.value,
+      eventId: props.eventId,
       status: "approved",
       athleteName: name
     });
@@ -110,8 +93,8 @@ function certificateListPath(registrationId) {
     page: "1",
     pageSize: "2"
   });
-  params.set("eventId", eventId.value);
-  return `/api/admin/events/${encodeURIComponent(eventId.value)}/certificates?${params}`;
+  params.set("eventId", props.eventId);
+  return `/api/admin/events/${encodeURIComponent(props.eventId)}/certificates?${params}`;
 }
 
 async function loadSelectedCertificates(registrationId) {
@@ -159,12 +142,12 @@ async function selectRegistration(row) {
 }
 
 async function openDirectRegistration() {
-  if (!props.initialRegistrationId || !eventId.value) return;
+  if (!props.initialRegistrationId || !props.eventId) return;
   const generation = ++searchGeneration;
   searchLoading.value = true;
   error.value = "";
   try {
-    const rows = await loadAdminRegistrations({ eventId: eventId.value, q: props.initialRegistrationId });
+    const rows = await loadAdminRegistrations({ eventId: props.eventId, q: props.initialRegistrationId });
     if (generation !== searchGeneration) return;
     const row = rows.find((registration) => registration.id === props.initialRegistrationId);
     if (!row) {
@@ -190,7 +173,7 @@ async function saveResult() {
   const registration = selectedRegistration.value;
   if (!registration) return;
   const registrationId = registration.id;
-  const eventIdSnapshot = eventId.value;
+  const eventIdSnapshot = props.eventId;
   const generation = ++resultGeneration;
   resultLoading.value = true;
   error.value = "";
@@ -206,7 +189,7 @@ async function saveResult() {
     });
     if (generation !== resultGeneration
       || selectedRegistrationId.value !== registrationId
-      || eventId.value !== eventIdSnapshot) return;
+      || props.eventId !== eventIdSnapshot) return;
     const saved = payload?.row || { ...registration, ...result };
     const index = searchRows.value.findIndex((row) => row.id === registrationId);
     if (index >= 0) searchRows.value.splice(index, 1, saved);
@@ -215,7 +198,7 @@ async function saveResult() {
   } catch (cause) {
     if (generation === resultGeneration
       && selectedRegistrationId.value === registrationId
-      && eventId.value === eventIdSnapshot) {
+      && props.eventId === eventIdSnapshot) {
       error.value = cause.message || "成绩保存失败，请稍后重试。";
     }
   } finally {
@@ -243,12 +226,6 @@ onMounted(openDirectRegistration);
 <template>
   <section>
     <form @submit.prevent="searchByName">
-      <label>
-        赛事
-        <select v-model="eventId" data-manual-event @change="changeEvent">
-          <option v-for="event in events" :key="event.id" :value="event.id">{{ event.name }}</option>
-        </select>
-      </label>
       <label>
         学生姓名
         <input v-model="athleteName" data-manual-name autocomplete="off">

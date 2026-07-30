@@ -355,7 +355,7 @@ onBeforeUnmount(() => {
       v-show="activeSection === 'manual'"
       data-section-panel="manual"
       :events="events"
-      :initial-event-id="eventId"
+      :event-id="eventId"
       :initial-registration-id="initialRegistrationId"
       @changed="afterManualChange"
     />

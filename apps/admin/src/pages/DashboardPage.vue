@@ -55,7 +55,6 @@ async function load(eventId = props.eventId) {
       ...payload,
       counts: { ...data.value.counts, ...(payload.counts || {}) },
       registrationWindow: { ...data.value.registrationWindow, ...(payload.registrationWindow || {}) },
-      events: payload.events || [],
       recentImports: payload.recentImports || [],
       recentAuditLogs: payload.recentAuditLogs || []
     };
@@ -77,33 +76,27 @@ watch(() => props.eventId, (eventId) => { void load(eventId); }, { immediate: tr
         <h3>管理概览</h3>
         <p>{{ data.event.name || "请选择赛事" }}</p>
       </div>
-      <label v-if="data.events.length" class="event-selector">查看赛事
-        <select v-model="selectedEventId" data-filter="dashboard-event" @change="load(selectedEventId)">
-          <option v-for="event in data.events" :key="event.id" :value="event.id">
-            {{ event.name }}{{ event.isCurrent ? "（当前）" : "" }}
-          </option>
-        </select>
-      </label>
     </div>
 
-    <p v-if="error" class="message danger">{{ error }}</p>
+    <p v-if="!eventId" class="hint">请先从顶部选择赛事。</p>
+    <p v-else-if="error" class="message danger">{{ error }}</p>
     <p v-else-if="loading" class="hint">正在更新概览…</p>
 
-    <div class="status-strip">
+    <div v-if="eventId" class="status-strip">
       <span><strong>赛事状态</strong>{{ eventStatus }}</span>
       <span :class="data.registrationWindow.open ? 'open' : 'closed'">
         <strong>报名窗口</strong>{{ data.registrationWindow.reason }}
       </span>
     </div>
 
-    <div class="dashboard-counts">
+    <div v-if="eventId" class="dashboard-counts">
       <article data-count="registrations"><span>报名总数</span><strong>{{ data.counts.registrations }}</strong></article>
       <article data-count="pending-registrations"><span>待审核报名</span><strong>{{ data.counts.pendingRegistrations }}</strong><button type="button" data-dashboard-target="registrations" @click="$emit('navigate', 'registrations')">去审核</button></article>
       <article data-count="pending-organizations"><span>待审核组织</span><strong>{{ data.counts.pendingOrganizations }}</strong><button type="button" data-dashboard-target="organizations" @click="$emit('navigate', 'organizations')">去审核</button></article>
       <article data-count="draft-certificates"><span>未发布证书</span><strong>{{ data.counts.draftCertificates }}</strong><button type="button" data-dashboard-target="certificates" @click="$emit('navigate', 'certificates')">去检查</button></article>
     </div>
 
-    <div class="dashboard-detail-grid">
+    <div v-if="eventId" class="dashboard-detail-grid">
       <section>
         <div class="section-title"><h4>最近证书导入</h4><span>最多 5 条</span></div>
         <div v-if="data.recentImports.length" class="compact-list">
