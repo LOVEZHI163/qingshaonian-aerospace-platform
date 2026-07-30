@@ -48,3 +48,26 @@ git diff --check
 ## 已知警告
 
 `npm.cmd run build` 成功，但 web 的 Vite reporter 保留三条既有 chunk 提示：`HomePage.jsx`、`EventDetailPage.jsx`、`ContentDetailPage.jsx` 同时被动态和静态导入，因此不会被移入独立 chunk。该任务未触及这些导入关系，未新增构建错误或失败。
+
+## Review Fix Round 1
+
+- 阻塞项：原 320px 规则只覆盖了部分表单动作按钮，`.mini`、认证页签、赛事页签、工具栏和卡片中的其他实际 `<button>` 未获得统一的 44px 最小触控高度。
+- 修复：在 `@media (max-width: 480px)` 中增加通用 `button { min-height: 44px; }`，因此覆盖所有实际按钮；不影响 checkbox 等 `input` 控件。
+- 链接式操作：凭证链接、站点预览回退链接和文件操作控件同时采用 44px 最小高度与 inline-flex 垂直居中，避免仅文字区域可触达。
+- 新增 `apps/admin/src/__tests__/ResponsiveStyles.test.js` 静态回归，锁定 480px 下的通用按钮及三类链接式操作规则。
+
+### Round 1 验证
+
+```powershell
+npm.cmd test -w apps/web -- --run
+# 6 files, 133 passed
+
+npm.cmd test -w apps/admin
+# 34 files, 306 passed
+
+npm.cmd run build
+# web 与 admin Vite production build passed
+
+git diff --check
+# clean
+```

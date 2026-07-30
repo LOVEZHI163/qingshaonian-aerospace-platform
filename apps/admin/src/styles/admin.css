@@ -1528,6 +1528,18 @@ em.invited {
 }
 
 @media (max-width: 480px) {
+  button {
+    min-height: 44px;
+  }
+
+  .credential-link,
+  .site-preview-fallback,
+  .file-action {
+    display: inline-flex;
+    min-height: 44px;
+    align-items: center;
+  }
+
   .admin-header,
   .admin-main,
   .user-shell > main,
