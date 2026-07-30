@@ -28,14 +28,13 @@ describe("RegistrationPage selected event context", () => {
     apiMock.mockImplementation(async (path) => {
       if (path === "/api/me/registration-context?eventId=E2") return context();
       if (path.startsWith("/api/schools")) return { rows: [] };
-      if (path === "/api/registrations/check") return { duplicate: false };
-      if (path === "/api/registrations") return { row: { id: "R2", eventId: "E2" } };
+      if (path === "/api/me/events/E2/registrations") return { row: { id: "R2", eventId: "E2" } };
       throw new Error(`unexpected API path ${path}`);
     });
   });
 
-  it("uses one event id for context, duplicate checks and submission", async () => {
-    const wrapper = mount(RegistrationPage, { props: { eventId: "E2" } });
+  it("uses one event id for context and ordinary-user submission", async () => {
+    const wrapper = mount(RegistrationPage, { props: { eventId: "E2", accountType: "ordinary" } });
     await flushPromises();
 
     expect(apiMock).toHaveBeenCalledWith("/api/me/registration-context?eventId=E2");
@@ -48,23 +47,20 @@ describe("RegistrationPage selected event context", () => {
     await inputs[3].setValue("13600005001");
     await flushPromises();
 
-    const duplicateCall = apiMock.mock.calls.find(([path]) => path === "/api/registrations/check");
-    expect(JSON.parse(duplicateCall[1].body)).toMatchObject({ eventId: "E2", projectId: "P-E2" });
-
     await wrapper.get("form.form-panel").trigger("submit");
     await flushPromises();
-    const createCall = apiMock.mock.calls.find(([path]) => path === "/api/registrations");
-    expect(JSON.parse(createCall[1].body)).toMatchObject({ eventId: "E2", projectId: "P-E2" });
+    const createCall = apiMock.mock.calls.find(([path]) => path === "/api/me/events/E2/registrations");
+    expect(JSON.parse(createCall[1].body)).toMatchObject({ projectId: "P-E2" });
   });
 
-  it("surfaces a missing-event selection error instead of using fallback projects", async () => {
-    apiMock.mockRejectedValueOnce(new Error("存在多场可报名赛事，请选择赛事"));
+  it("rejects an empty event context instead of using fallback projects", async () => {
     const wrapper = mount(RegistrationPage, {
-      props: { fallbackContext: { projects: [{ id: "P-OTHER", name: "其他赛事项目" }] } }
+      props: { accountType: "ordinary", fallbackContext: { projects: [{ id: "P-OTHER", name: "其他赛事项目" }] } }
     });
     await flushPromises();
 
-    expect(wrapper.emitted("error")?.[0]).toEqual(["存在多场可报名赛事，请选择赛事"]);
+    expect(wrapper.text()).toContain("请先选择赛事");
     expect(wrapper.text()).not.toContain("其他赛事项目");
+    expect(apiMock).not.toHaveBeenCalled();
   });
 });

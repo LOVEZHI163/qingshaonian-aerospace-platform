@@ -25,12 +25,14 @@ async function download(certificate) {
 
 onMounted(async () => {
   try {
-    const query = props.eventId ? `?eventId=${encodeURIComponent(props.eventId)}` : "";
     if (session.user.value?.type === "organization") {
+      const query = props.eventId ? `?eventId=${encodeURIComponent(props.eventId)}` : "";
       const payloads = await Promise.all(managedOrganizations.value.map((organization) => api(`/api/organizations/${organization.id}/certificates${query}`)));
       certificates.value = payloads.flatMap((payload) => payload.rows || []);
+    } else if (!props.eventId) {
+      emit("error", "请选择赛事后查询该赛事的已发布证书");
     } else {
-      certificates.value = (await api(`/api/me/certificates${query}`)).rows || [];
+      certificates.value = (await api(`/api/me/events/${encodeURIComponent(props.eventId)}/certificates`)).rows || [];
     }
   } catch (error) {
     emit("error", error.message);
@@ -44,7 +46,7 @@ onBeforeUnmount(() => downloads.dispose());
 <template>
   <section class="panel my-certificates-page" data-testid="my-certificates-page">
     <div class="panel-title"><h3>我的证书</h3><span>{{ certificates.length }} 张</span></div>
-    <p class="hint">{{ session.user.value?.type === "organization" ? "显示当前组织 active 成员的已发布证书。" : "显示本人已发布证书。" }}</p>
+    <p class="hint">{{ session.user.value?.type === "organization" ? "显示当前组织 active 成员的已发布证书。" : "显示当前赛事中本人已发布的证书。" }}</p>
     <p v-if="loading" class="hint">正在加载证书…</p>
     <div v-else class="table-wrap"><table class="certificate-table"><thead><tr><th>姓名</th><th>学校/年级</th><th>赛项</th><th>证书名称</th><th>发布状态</th><th>操作</th></tr></thead><tbody>
       <tr v-for="certificate in certificates" :key="certificate.id"><td>{{ certificate.athlete?.name || "-" }}</td><td>{{ certificate.athlete?.school || "-" }}<br /><span>{{ certificate.athlete?.grade || "-" }}</span></td><td>{{ certificate.projectName || "-" }}</td><td>{{ certificate.title || certificate.awardName || "证书" }}</td><td><em class="published">已发布</em><br /><span>{{ certificate.publishedAt?.slice(0, 10) || "-" }}</span></td><td><span v-if="certificate.cleanedAt" class="unavailable-file">原文件已清理</span><button v-else-if="certificate.downloadUrl" class="mini" data-action="download-user-certificate" @click="download(certificate)">下载</button><span v-else class="unavailable-file">文件暂不可下载</span></td></tr>

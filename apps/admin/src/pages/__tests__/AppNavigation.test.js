@@ -217,7 +217,7 @@ describe("role based application navigation", () => {
   it("includes the event center before ordinary-user business navigation", async () => {
     const wrapper = await mountFor({ id: "U1", type: "ordinary", name: "普通用户", phone: "13800000001", mustChangePassword: false }); mounted.push(wrapper);
     const labels = wrapper.findAll("[data-user-nav]").map((item) => item.text());
-    expect(labels).toEqual(["赛事中心", "报名", "报名记录", "证书查询"]);
+    expect(labels).toEqual(["赛事中心", "证书查询"]);
     expect(wrapper.text()).not.toContain("普通用户管理");
     expect(apiMock.mock.calls.some(([path]) => path === "/api/users" || path.startsWith("/api/admin/"))).toBe(false);
   });
@@ -248,8 +248,8 @@ describe("role based application navigation", () => {
   });
 
   it.each([
-    ["records", "registration-records-page", "/api/me/registrations?eventId=E2"],
-    ["certificates", "my-certificates-page", "/api/me/certificates?eventId=E2"]
+    ["records", "registration-records-page", "/api/me/events/E2/registrations"],
+    ["certificates", "my-certificates-page", "/api/me/events/E2/certificates"]
   ])("restores the public %s deep link and keeps its validated event filter", async (view, testId, expectedPath) => {
     window.history.replaceState({}, "", `/admin/?view=${view}&eventId=E2`);
     session.user.value = { id: "U1", type: "ordinary", name: "普通用户", phone: "13800000001", mustChangePassword: false };
@@ -348,24 +348,25 @@ describe("role based application navigation", () => {
   });
 
   it.each([
-    ["records", "registrationRecords", "/api/me/registrations?eventId=E2", "/api/me/registrations"],
-    ["certificates", "certificates", "/api/me/certificates?eventId=E2", "/api/me/certificates"]
-  ])("reloads %s without the deep-link event filter when its current navigation item is clicked", async (view, navigation, filteredPath, unfilteredPath) => {
+    ["records", "registrationRecords", "/api/me/events/E2/registrations"],
+    ["certificates", "certificates", "/api/me/events/E2/certificates"]
+  ])("keeps the selected event when navigating to %s from a deep link", async (view, navigation, eventPath) => {
     window.history.replaceState({}, "", `/admin/?view=${view}&eventId=E2`);
     session.user.value = { id: "U1", type: "ordinary", name: "普通用户", phone: "13800000001", mustChangePassword: false };
     apiMock.mockImplementation(async (path) => {
       if (path === "/api/public/event") return { event: { id: "E1", name: "当前赛事 E1" }, projects: [], grades: [] };
-      if (path === filteredPath || path === unfilteredPath) return { rows: [] };
+      if (path === eventPath) return { rows: [] };
       return { rows: [] };
     });
 
     const wrapper = mount(App); mounted.push(wrapper);
     await flushPromises();
-    expect(apiMock).toHaveBeenCalledWith(filteredPath);
+    expect(apiMock).toHaveBeenCalledWith(eventPath);
 
     await wrapper.get(`[data-user-nav="${navigation}"]`).trigger("click");
     await flushPromises();
-    expect(apiMock).toHaveBeenCalledWith(unfilteredPath);
+    expect(new URLSearchParams(window.location.search).get("eventId")).toBe("E2");
+    expect(apiMock.mock.calls.filter(([path]) => path === eventPath)).toHaveLength(1);
   });
 
   it("does not expose the organization console to a pending organization from a registration deep link", async () => {
@@ -438,11 +439,11 @@ describe("role based application navigation", () => {
 
   it("shows cleaned certificate history without a broken download action", async () => {
     session.user.value = { id: "U1", type: "ordinary", name: "张三" };
-    apiMock.mockImplementation(async (path) => path === "/api/me/certificates" ? { rows: [{
+    apiMock.mockImplementation(async (path) => path === "/api/me/events/E2/certificates" ? { rows: [{
       id: "C1", title: "一等奖", status: "published", cleanedAt: "2026-07-18T00:00:00.000Z",
       athlete: { name: "张三", school: "实验学校", grade: "三年级" }, projectName: "纸飞机"
     }] } : { rows: [] });
-    const wrapper = mount(MyCertificatesPage); mounted.push(wrapper);
+    const wrapper = mount(MyCertificatesPage, { props: { eventId: "E2" } }); mounted.push(wrapper);
     await flushPromises();
 
     expect(wrapper.text()).toContain("原文件已清理");

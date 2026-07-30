@@ -9,6 +9,14 @@
   margin-bottom: 18px;
 }
 
+.event-context-empty {
+  max-width: 620px;
+}
+
+.organization-unavailable {
+  color: #9a3412;
+}
+
 .site-settings-form,
 .event-profile-form {
   display: grid;

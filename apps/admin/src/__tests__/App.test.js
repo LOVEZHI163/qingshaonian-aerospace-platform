@@ -92,6 +92,31 @@ describe("App session integration", () => {
     expect(wrapper.find('[data-testid="event-center-page"]').exists()).toBe(true);
   });
 
+  it("keeps ordinary registration actions behind an explicit event context and clears it on return", async () => {
+    sessionUser.value = { id: "U1", type: "ordinary", name: "用户", mustChangePassword: false };
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/public/event") return publicData();
+      if (path === "/api/me/events") return { rows: [{ event: { id: "E2", name: "春季赛" }, registrationState: "open", registrationCount: 0, organizations: [] }] };
+      if (path === "/api/me/registration-context?eventId=E2") return { event: { id: "E2", name: "春季赛" }, organizations: [], projects: [], grades: [] };
+      return { rows: [] };
+    });
+    const wrapper = mount(App);
+    await flushPromises();
+
+    expect(wrapper.find('[data-user-nav="registration"]').exists()).toBe(false);
+    expect(wrapper.find('[data-user-nav="registrationRecords"]').exists()).toBe(false);
+
+    await wrapper.get('[data-event-card="E2"] [data-action="open"]').trigger("click");
+    await flushPromises();
+    expect(wrapper.find('[data-user-nav="registration"]').exists()).toBe(true);
+    expect(new URLSearchParams(window.location.search).get("eventId")).toBe("E2");
+
+    await wrapper.get('[data-user-nav="eventCenter"]').trigger("click");
+    await flushPromises();
+    expect(new URLSearchParams(window.location.search).has("eventId")).toBe(false);
+    expect(wrapper.find('[data-user-nav="registration"]').exists()).toBe(false);
+  });
+
   it("restores an authorized event slug as its canonical event id", async () => {
     window.history.replaceState({}, "", "/admin/?view=registration&eventSlug=spring-cup");
     sessionUser.value = { id: "U1", type: "ordinary", name: "用户", mustChangePassword: false };
@@ -159,9 +184,9 @@ describe("App session integration", () => {
     expect(new URLSearchParams(window.location.search).has("eventId")).toBe(false);
     expect(new URLSearchParams(window.location.search).has("eventSlug")).toBe(false);
 
-    await wrapper.get('[data-user-nav="registration"]').trigger("click");
+    await wrapper.get('[data-event-card="E1"] [data-action="open"]').trigger("click");
     await flushPromises();
-    expect(new URLSearchParams(window.location.search).has("eventId")).toBe(false);
+    expect(new URLSearchParams(window.location.search).get("eventId")).toBe("E1");
     expect(apiMock.mock.calls.some(([path]) => path.includes("eventId=E2"))).toBe(false);
   });
 
@@ -321,14 +346,16 @@ describe("App session integration", () => {
       if (path === "/api/public/features") return { smsPasswordResetEnabled: false };
       if (path === "/api/organizations") return { rows: [], memberships: [] };
       if (path === "/api/me/U1") return { memberships: [] };
-      if (path === "/api/me/registrations") return { rows: [] };
-      if (path === "/api/me/certificates") return { rows: [{
+      if (path === "/api/me/events") return { rows: [{ event: { id: "E1", name: "测试赛事" }, registrationState: "open", organizations: [] }] };
+      if (path === "/api/me/events/E1/certificates") return { rows: [{
         id: "C1", userId: "U1", title: "飞行之星", status: "published", fileName: "star.pdf",
         downloadUrl: "/returned/user-certificate", athlete: { name: "用户" }
       }] };
       return { rows: [] };
     });
     const wrapper = mount(App);
+    await flushPromises();
+    await wrapper.get('[data-event-card="E1"] [data-action="open"]').trigger("click");
     await flushPromises();
     const certificateNav = wrapper.findAll("aside button").find((button) => button.text() === "证书查询");
     await certificateNav.trigger("click");
@@ -339,33 +366,33 @@ describe("App session integration", () => {
     expect(wrapper.text()).not.toContain("证书编号");
   });
 
-  it("uses the current event group and project in duplicate checks", async () => {
+  it("submits the current event group and project through the scoped endpoint", async () => {
     sessionUser.value = { id: "U1", type: "ordinary", name: "用户" };
     apiMock.mockImplementation(async (path) => {
-      if (path === "/api/public/event") return {
-        event: { name: "测试赛事" },
-        grades: ["小学低段", "小学高段", "中学组", "职高/高中组"],
-        projects: [{ id: "P1", name: "纸飞机", type: "individual" }]
-      };
+      if (path === "/api/public/event") return publicData();
       if (path === "/api/public/features") return { smsPasswordResetEnabled: false };
-      if (path === "/api/organizations") return { rows: [] };
-      if (path === "/api/me/U1") return { memberships: [] };
-      if (path === "/api/me/registrations" || path === "/api/me/certificates") return { rows: [] };
-      if (path === "/api/registrations/check") return { duplicate: false };
+      if (path === "/api/me/events") return { rows: [{ event: { id: "E1", name: "测试赛事" }, registrationState: "open", organizations: [] }] };
+      if (path === "/api/me/registration-context?eventId=E1") return {
+        event: { id: "E1", name: "测试赛事" }, organizations: [],
+        grades: [{ id: "primary", name: "小学低段", grades: ["三年级"] }],
+        projects: [{ id: "P1", eventId: "E1", name: "纸飞机", type: "individual", allowedGroups: ["小学低段"] }]
+      };
+      if (path === "/api/me/events/E1/registrations") return { row: { id: "R1" } };
       return { rows: [] };
     });
     const wrapper = mount(App);
     await flushPromises();
-    await wrapper.get('[data-user-nav="registration"]').trigger("click");
+    await wrapper.get('[data-event-card="E1"] [data-action="open"]').trigger("click");
     await flushPromises();
     const inputs = wrapper.findAll("form.form-panel input");
     await inputs[0].setValue("张三");
     await inputs[1].setValue("温州市实验小学");
     await inputs[2].setValue("三年级");
     await inputs[3].setValue("13800000001");
+    await wrapper.get("form.form-panel").trigger("submit");
     await flushPromises();
 
-    const call = apiMock.mock.calls.find(([path]) => path === "/api/registrations/check");
-    expect(JSON.parse(call[1].body)).toMatchObject({ projectId: "P1", group: "小学低段" });
+    const call = apiMock.mock.calls.find(([path]) => path === "/api/me/events/E1/registrations");
+    expect(JSON.parse(call[1].body)).toMatchObject({ projectId: "P1" });
   });
 });

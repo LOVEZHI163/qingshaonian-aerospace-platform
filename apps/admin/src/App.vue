@@ -49,6 +49,7 @@ const passwordChangeForm = reactive({ currentPassword: "", newPassword: "" });
 const roleText = { ordinary: "普通用户", organization: "组织用户", admin: "超级管理员" };
 
 const accountEvents = computed(() => session.accountEvents?.value || []);
+const selectedAccountEvent = computed(() => accountEvents.value.find((row) => row?.event?.id === selectedEventId.value) || null);
 
 const approvedOrganization = computed(() => (session.organizations.value || []).find((organization) => (
   organization.status === "active"
@@ -58,13 +59,24 @@ const approvedOrganization = computed(() => (session.organizations.value || []).
 const adminActive = computed(() => currentView.value === "registration" ? "registrations" : currentView.value);
 const userNavigation = computed(() => {
   if (currentUser.value?.type === "ordinary") {
-    return [["eventCenter", "赛事中心"], ["registration", "报名"], ["registrationRecords", "报名记录"], ["certificates", "证书查询"]];
+    const navigation = [["eventCenter", "赛事中心"]];
+    if (selectedEventId.value) navigation.push(["registration", "报名"], ["registrationRecords", "当前报名"]);
+    navigation.push(["certificates", "证书查询"]);
+    return navigation;
   }
   if (!approvedOrganization.value) return [["eventCenter", "赛事中心"], ["organization", "审核进度"]];
   return [["eventCenter", "赛事中心"], ["registration", "报名"], ["registrationRecords", "报名记录"], ["certificates", "证书查询"], ["organization", "组织控制台"]];
 });
 const userHeaderEvent = computed(() => {
   if (currentView.value === "eventCenter") return { name: "赛事中心", date: "", venue: "", registrationDeadline: "" };
+  if (currentUser.value?.type === "ordinary" && selectedAccountEvent.value?.event) {
+    const event = selectedAccountEvent.value.event;
+    return {
+      ...event,
+      date: event.date || event.dateLabel || "",
+      registrationDeadline: event.registrationDeadline || String(event.registrationEndAt || "").slice(0, 10)
+    };
+  }
   if (currentView.value !== "registration") return eventData.value.event;
   if (selectedRegistrationEvent.value) {
     const event = selectedRegistrationEvent.value;
@@ -205,9 +217,10 @@ function navigateAdmin(key) {
 
 function navigateUser(key) {
   if (key === "eventCenter") selectEventContext("");
-  if (key === "registration") registrationEventId.value = "";
-  if (key === "registrationRecords") recordsEventId.value = "";
-  if (key === "certificates") certificateEventId.value = "";
+  if (currentUser.value?.type === "ordinary" && ["registration", "registrationRecords"].includes(key) && !selectedEventId.value) {
+    currentView.value = "eventCenter";
+    return;
+  }
   currentView.value = key;
 }
 
@@ -312,7 +325,7 @@ onMounted(async () => {
       <header class="topbar"><div><h2>{{ userHeaderEvent.name || "赛事报名平台" }}</h2><p>{{ userHeaderEvent.date }} · {{ userHeaderEvent.venue }} · 报名截止 {{ userHeaderEvent.registrationDeadline }}</p></div></header>
       <p v-if="message" class="message">{{ message }}</p>
       <EventCenterPage v-if="currentView === 'eventCenter'" :account-type="currentUser.type" @open-event="openAccountEvent" />
-      <RegistrationPage v-if="currentView === 'registration'" :event-id="registrationEventId" :fallback-context="{ projects: eventData.projects }" @context="useRegistrationEvent" @registered="message = '报名已提交，等待审核'" @error="handleError" />
+      <RegistrationPage v-if="currentView === 'registration'" :event-id="registrationEventId" :account-type="currentUser.type" :event-organizations="selectedAccountEvent?.organizations || []" :registration-state="selectedAccountEvent?.registrationState || ''" :fallback-context="{ projects: eventData.projects }" @context="useRegistrationEvent" @registered="message = '报名已提交，等待审核'" @error="handleError" />
       <RegistrationRecordsPage :key="`records:${recordsEventId}`" v-else-if="currentView === 'registrationRecords'" :event-id="recordsEventId" @error="handleError" />
       <MyCertificatesPage :key="`certificates:${certificateEventId}`" v-else-if="currentView === 'certificates'" :event-id="certificateEventId" @error="handleError" />
       <OrganizationConsolePage v-else-if="currentView === 'organization'" @error="handleError" />

@@ -14,12 +14,14 @@ const managedOrganizations = computed(() => (session.organizations.value || []).
 
 onMounted(async () => {
   try {
-    const query = props.eventId ? `?eventId=${encodeURIComponent(props.eventId)}` : "";
     if (session.user.value?.type === "organization") {
+      const query = props.eventId ? `?eventId=${encodeURIComponent(props.eventId)}` : "";
       const payloads = await Promise.all(managedOrganizations.value.map((organization) => api(`/api/organizations/${organization.id}/registrations${query}`)));
       rows.value = payloads.flatMap((payload) => payload.rows || []);
+    } else if (!props.eventId) {
+      emit("error", "请先从赛事中心选择赛事后查看当前报名");
     } else {
-      rows.value = (await api(`/api/me/registrations${query}`)).rows || [];
+      rows.value = (await api(`/api/me/events/${encodeURIComponent(props.eventId)}/registrations`)).rows || [];
     }
   } catch (error) {
     emit("error", error.message);
@@ -32,7 +34,7 @@ onMounted(async () => {
 <template>
   <section class="panel registration-records-page" data-testid="registration-records-page">
     <div class="panel-title"><h3>报名记录</h3><span>{{ rows.length }} 条</span></div>
-    <p class="hint">{{ session.user.value?.type === "organization" ? "显示当前组织 active 成员的跨赛事报名记录。" : "显示本人的跨赛事报名记录。" }}</p>
+    <p class="hint">{{ session.user.value?.type === "organization" ? "显示当前组织 active 成员的跨赛事报名记录。" : "仅显示当前赛事中本人的报名记录。" }}</p>
     <p v-if="loading" class="hint">正在加载报名记录…</p>
     <div v-else class="table-wrap"><table class="registration-record-table"><thead><tr><th>编号</th><th>姓名</th><th>学校/年级</th><th>组织</th><th>赛项</th><th>指导老师</th><th>审核状态</th><th>成绩/奖项</th></tr></thead><tbody>
       <tr v-for="row in rows" :key="row.id"><td>{{ row.id }}</td><td>{{ row.athlete?.name }}</td><td>{{ row.athlete?.school }}<br /><span>{{ row.athlete?.grade }}</span></td><td>{{ row.organization || row.organizationName || "个人报名" }}</td><td>{{ row.projectName }}<br /><span>{{ row.projectType === "team" ? "团体赛" : "个人赛" }}</span></td><td>{{ row.instructor || "-" }}</td><td><em :class="row.status">{{ statusText[row.status] || row.status }}</em><p v-if="row.rejectReason" class="hint">驳回原因：{{ row.rejectReason }}</p></td><td>{{ row.awardName || "未录入" }}<br /><span>名次 {{ row.rank || "-" }} · 成绩 {{ row.score || "-" }}</span></td></tr>
