@@ -1,3 +1,5 @@
+import { contentBodyMediaIds } from "./content-body-media.js";
+
 export class SiteMediaError extends Error {
   constructor(status, message, code) {
     super(message);
@@ -12,6 +14,7 @@ export function mediaReference(db, mediaId) {
   if ((db.eventPublicProfiles || []).some((row) => row.heroMediaId === mediaId)) return "赛事公开资料";
   if ((db.contentPosts || []).some((row) => row.coverMediaId === mediaId)) return "文章封面";
   if ((db.contentAttachments || []).some((row) => row.mediaId === mediaId)) return "文章附件";
+  if ((db.contentPosts || []).some((post) => contentBodyMediaIds(post.bodyHtml).includes(mediaId))) return "文章正文";
   return null;
 }
 

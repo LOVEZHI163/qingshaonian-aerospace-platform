@@ -10,6 +10,17 @@ function routeError(status, message, code) {
   return Object.assign(new Error(message), { status, ...(code ? { code } : {}) });
 }
 
+function adminMediaDto(row) {
+  const { filePath, variants = {}, ...media } = row;
+  return {
+    ...media,
+    variants: Object.fromEntries(Object.entries(variants).map(([name, variant]) => {
+      const { filePath: variantFilePath, ...safeVariant } = variant;
+      return [name, safeVariant];
+    }))
+  };
+}
+
 function uploadError(error) {
   if (error?.status) return error;
   if (/^(A non-empty|File exceeds|Unsupported file signature|Invalid PDF signature)/.test(String(error?.message || ""))) {
@@ -59,7 +70,7 @@ export function createSiteMediaRouter({
       db.mediaAssets ||= [];
       db.mediaAssets.push(row);
       await store.writeDb(db);
-      res.status(201).json({ row });
+      res.status(201).json({ row: adminMediaDto(row) });
     } catch (error) {
       const orphan = stored || error.cleanupTarget;
       let cleanupError = error.cleanupError;

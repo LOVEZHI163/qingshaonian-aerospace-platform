@@ -1,4 +1,5 @@
 import { sanitizeContentHtml } from "../content/sanitize.js";
+import { contentBodyMedia } from "./content-body-media.js";
 import {
   buildContentDetailView,
   buildEventDetailView,
@@ -135,6 +136,7 @@ function buildContentPreview(db, input, now) {
   };
   const eventId = (Object.hasOwn(sanitizedInput, "eventId") ? sanitizedInput.eventId : current?.eventId) || null;
   eventFor(db, eventId, { optional: true });
+  contentBodyMedia(db, sanitizedInput.bodyHtml);
   const coverMediaId = Object.hasOwn(sanitizedInput, "coverMediaId")
     ? sanitizedInput.coverMediaId
     : current?.coverMediaId;

@@ -8,6 +8,7 @@ import sharp from "sharp";
 
 import { readSiteMedia } from "../src/files/storage.js";
 import { createSiteMediaRouter } from "../src/routes/site-media.js";
+import { assertMediaUnreferenced, mediaReference } from "../src/services/site-media.js";
 import { withTestServer } from "../test-support/server.js";
 import { loginAs, withSession } from "./helpers/api-client.js";
 
@@ -155,6 +156,7 @@ test("site media upload is admin-only, draft-private, and serves public derivati
     assert.equal(row.width, 1);
     assert.equal(row.height, 1);
     assert.deepEqual(Object.keys(row.variants).sort(), ["desktop", "mobile"]);
+    assert.equal(JSON.stringify(row).includes("filePath"), false);
 
     assert.equal((await fetch(`${baseUrl}/api/public/media/${row.id}`)).status, 404);
     await setMediaVisibility(dbPath, row.id, "public");
@@ -245,6 +247,10 @@ test("site media deletion blocks every managed reference before creating cleanup
       (db) => {
         db.contentPosts = [];
         db.contentAttachments.push({ contentId: "POST-REF", mediaId: media.id, label: "附件", displayOrder: 0 });
+      },
+      (db) => {
+        db.contentAttachments = [];
+        db.contentPosts = [{ id: "POST-BODY-REF", bodyHtml: `<img src="/api/public/media/${media.id}">` }];
       }
     ];
 
@@ -257,13 +263,29 @@ test("site media deletion blocks every managed reference before creating cleanup
       assert.equal(persisted.fileCleanupJournal.length, 0);
     }
 
-    await mutateDb(dbPath, (db) => { db.contentAttachments = []; });
+    await mutateDb(dbPath, (db) => { db.contentPosts = []; db.contentAttachments = []; });
     const removed = await fetch(`${baseUrl}/api/admin/site-media/${media.id}`, withSession(admin.cookie, { method: "DELETE" }));
     assert.equal(removed.status, 204);
     const persisted = JSON.parse(await fs.readFile(dbPath, "utf8"));
     assert.equal(persisted.mediaAssets.some((row) => row.id === media.id), false);
     assert.equal(persisted.fileCleanupJournal.length, 0);
   }, { prefix: "site-media-delete-" });
+});
+
+test("body references prevent media deletion until the reference is removed", () => {
+  const db = {
+    contentPosts: [{ id: "POST", bodyHtml: '<img src="/api/public/media/BODY">' }]
+  };
+
+  assert.equal(mediaReference(db, "BODY"), "文章正文");
+  assert.throws(
+    () => assertMediaUnreferenced(db, "BODY"),
+    (error) => error.status === 409 && error.code === "MEDIA_IN_USE"
+  );
+
+  db.contentPosts[0].bodyHtml = "<p>已移除图片</p>";
+  assert.equal(mediaReference(db, "BODY"), null);
+  assert.doesNotThrow(() => assertMediaUnreferenced(db, "BODY"));
 });
 
 test("site media physical deletion failure preserves metadata and journals the managed directory", async () => {

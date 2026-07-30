@@ -353,11 +353,60 @@ test("site admin content CRUD defaults to drafts, rejects conflicts, and preserv
   }, { prefix: "site-admin-content-crud-" });
 });
 
+test("saving content rejects a missing body image without changing media visibility", async () => {
+  await withTestServer(async ({ baseUrl, dbPath }) => {
+    const admin = await loginAs(baseUrl, "13900000000", "admin123");
+    await mutateDb(dbPath, (db) => {
+      db.mediaAssets.push({
+        id: "PRIVATE",
+        eventId: null,
+        purpose: "cover",
+        visibility: "draft",
+        originalName: "private.png",
+        storedName: "private.png",
+        filePath: "C:/uploads/PRIVATE.png",
+        mimeType: "image/png",
+        sizeBytes: 1,
+        width: 1,
+        height: 1,
+        variants: {},
+        createdBy: admin.user.id,
+        createdAt: "2026-07-19T00:00:00.000Z",
+        cleanedAt: null
+      });
+    });
+    const before = (await readDb(dbPath)).mediaAssets;
+
+    const rejectedCreate = await jsonRequest(`${baseUrl}/api/admin/content`, admin.cookie, "POST", contentInput({
+      slug: "missing-body-create",
+      bodyHtml: '<img src="/api/public/media/MISSING">'
+    }));
+    const rejectedCreateBody = await rejectedCreate.json();
+    assert.equal(rejectedCreate.status, 422);
+    assert.equal(rejectedCreateBody.code, "CONTENT_BODY_MEDIA_INVALID");
+    assert.deepEqual((await readDb(dbPath)).mediaAssets, before);
+
+    const createdResponse = await jsonRequest(`${baseUrl}/api/admin/content`, admin.cookie, "POST", contentInput({
+      slug: "missing-body-update"
+    }));
+    const created = (await createdResponse.json()).row;
+    assert.equal(createdResponse.status, 201);
+    const rejectedUpdate = await jsonRequest(`${baseUrl}/api/admin/content/${created.id}`, admin.cookie, "PATCH", {
+      version: created.version,
+      bodyHtml: '<img src="/api/public/media/MISSING">'
+    });
+    const rejectedUpdateBody = await rejectedUpdate.json();
+    assert.equal(rejectedUpdate.status, 422);
+    assert.equal(rejectedUpdateBody.code, "CONTENT_BODY_MEDIA_INVALID");
+    assert.deepEqual((await readDb(dbPath)).mediaAssets, before);
+  }, { prefix: "content-body-media-save-" });
+});
+
 test("content publish is atomic, sanitizes previews, promotes media, records audit, and offline hides without deletion", async () => {
   await withTestServer(async ({ baseUrl, dbPath }) => {
     const admin = await loginAs(baseUrl, "13900000000", "admin123");
     await mutateDb(dbPath, (db) => {
-      for (const id of ["COVER", "ATTACHMENT"]) {
+      for (const id of ["COVER", "ATTACHMENT", "BODY"]) {
         db.mediaAssets.push({
           id,
           eventId: EVENT_ID,
@@ -379,7 +428,7 @@ test("content publish is atomic, sanitizes previews, promotes media, records aud
     });
     const created = await jsonRequest(`${baseUrl}/api/admin/content`, admin.cookie, "POST", contentInput({
       slug: "content-publish-atomic",
-      bodyHtml: '<p onclick="bad()">安全<script>alert(1)</script></p><img src="/api/public/media/ATTACHMENT">',
+      bodyHtml: '<p onclick="bad()">安全<script>alert(1)</script></p><img src="/api/public/media/BODY">',
       coverMediaId: "COVER",
       attachments: [{ mediaId: "ATTACHMENT", label: "资料", displayOrder: 0 }]
     }));
@@ -410,12 +459,14 @@ test("content publish is atomic, sanitizes previews, promotes media, records aud
 
     persisted = await readDb(dbPath);
     assert.equal(persisted.mediaAssets.every((row) => row.visibility === "public"), true);
+    assert.equal(persisted.mediaAssets.find((row) => row.id === "BODY").visibility, "public");
     assert.ok(persisted.auditLogs.some((row) => row.action === "content.publish" && row.targetId === draft.id));
 
     const detail = await fetch(`${baseUrl}/api/admin/content/${draft.id}`, withSession(admin.cookie));
     const detailRow = (await detail.json()).row;
     assert.equal(detailRow.previewHtml, published.bodyHtml);
     assert.deepEqual(detailRow.attachments.map((item) => item.mediaId), ["ATTACHMENT"]);
+    assert.equal(JSON.stringify(detailRow).includes("filePath"), false);
 
     const offlineResponse = await jsonRequest(`${baseUrl}/api/admin/content/${draft.id}/offline`, admin.cookie, "POST", { version: published.version });
     const offline = (await offlineResponse.json()).row;
@@ -424,7 +475,7 @@ test("content publish is atomic, sanitizes previews, promotes media, records aud
     assert.equal(isPublicPost(offline, new Date("2100-01-01T00:00:00.000Z")), false);
 
     persisted = await readDb(dbPath);
-    assert.equal(persisted.mediaAssets.length, 2);
+    assert.equal(persisted.mediaAssets.length, 3);
     assert.equal(persisted.mediaAssets.every((row) => row.visibility === "public"), true);
     assert.ok(persisted.auditLogs.some((row) => row.action === "content.offline" && row.targetId === draft.id));
   }, { prefix: "content-publish-atomic-" });

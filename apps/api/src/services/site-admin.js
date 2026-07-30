@@ -1,4 +1,5 @@
 import { sanitizeContentHtml } from "../content/sanitize.js";
+import { contentBodyMedia, contentBodyMediaIds } from "./content-body-media.js";
 import { normalizeContentInput } from "./content-publishing.js";
 import { eventProfileSlugIsLocked } from "./event-profile-publication.js";
 import { promoteContentMedia, promoteMedia } from "./site-media.js";
@@ -71,6 +72,18 @@ function media(db, mediaId, label) {
   const row = (db.mediaAssets || []).find((item) => item.id === mediaId && !item.cleanedAt);
   if (!row) fail(422, `${label}不存在或已失效`);
   return row;
+}
+
+function safeMediaDto(row) {
+  if (!row) return null;
+  const { filePath, variants = {}, ...media } = row;
+  return {
+    ...media,
+    variants: Object.fromEntries(Object.entries(variants).map(([name, variant]) => {
+      const { filePath: variantFilePath, ...safeVariant } = variant;
+      return [name, safeVariant];
+    }))
+  };
 }
 
 function normalizeSlug(value) {
@@ -207,6 +220,8 @@ export function createContent(db, input, { id, actor, now } = {}) {
     sortOrder: input?.sortOrder ?? 0,
     coverMediaId: input?.coverMediaId || null
   }, null, timestamp);
+  row.bodyHtml = sanitizeContentHtml(row.bodyHtml);
+  contentBodyMedia(db, row.bodyHtml);
   Object.assign(row, { id, createdBy: actor.id, createdAt: timestamp, updatedAt: timestamp });
   const attachments = normalizeAttachments(db, id, input?.attachments || []);
   db.contentPosts ||= [];
@@ -250,6 +265,8 @@ function buildContentUpdateCandidate(db, contentId, input, {
     version: current.version
   };
   const next = normalizeContentInput(candidate, current, now);
+  next.bodyHtml = sanitizeContentHtml(next.bodyHtml);
+  contentBodyMedia(db, next.bodyHtml);
   if (next.status === "scheduled") assertContentReadyForPublication(db, next);
   next.version = versionAfterMutation(current.version, incrementVersion);
   next.createdBy = current.createdBy;
@@ -291,7 +308,7 @@ export function contentDetail(db, contentId) {
     .sort((left, right) => left.displayOrder - right.displayOrder || left.mediaId.localeCompare(right.mediaId))
     .map((attachment) => ({
       ...attachment,
-      media: (db.mediaAssets || []).find((item) => item.id === attachment.mediaId) || null
+      media: safeMediaDto((db.mediaAssets || []).find((item) => item.id === attachment.mediaId))
     }));
   return { ...row, attachments, previewHtml: sanitizeContentHtml(row.bodyHtml) };
 }
@@ -314,6 +331,7 @@ export function publishContent(db, contentId, input, { now, incrementVersion = t
   assertVersion(input, current, "CONTENT_VERSION_CONFLICT");
   assertContentReferences(db, current);
   const bodyHtml = assertContentReadyForPublication(db, current);
+  contentBodyMedia(db, bodyHtml);
   const timestamp = new Date(now).toISOString();
   const next = normalizeContentInput({
     version: current.version,
@@ -325,6 +343,7 @@ export function publishContent(db, contentId, input, { now, incrementVersion = t
   next.updatedAt = timestamp;
   db.contentPosts[db.contentPosts.indexOf(current)] = next;
   promoteContentMedia(db, contentId);
+  promoteMedia(db, contentBodyMediaIds(bodyHtml));
   return next;
 }
 

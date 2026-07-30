@@ -127,6 +127,32 @@ test("pure content preview accepts an existing draft with its current version", 
   assert.deepEqual(db, before);
 });
 
+test("content preview rejects a missing body image without changing media visibility", () => {
+  const db = structuredClone(seedDb);
+  db.mediaAssets.push({ id: "PRIVATE", mimeType: "image/png", visibility: "draft", cleanedAt: null });
+  const before = structuredClone(db);
+
+  assert.throws(
+    () => buildSitePreview(db, "content", {
+      slug: "preview-missing-image",
+      eventId: null,
+      type: "news",
+      title: "预览图片校验",
+      summary: "",
+      bodyHtml: '<img src="/api/public/media/MISSING">',
+      status: "draft",
+      publishAt: null,
+      pinned: false,
+      sortOrder: 0,
+      coverMediaId: null,
+      attachments: []
+    }, { now: "2026-07-22T00:00:00.000Z" }),
+    (error) => error.status === 422 && error.code === "CONTENT_BODY_MEDIA_INVALID"
+  );
+
+  assert.deepEqual(db, before);
+});
+
 test("content preview reuses create and update lifecycle rules on its clone", () => {
   const now = "2026-07-22T00:00:00.000Z";
   const db = structuredClone(seedDb);
