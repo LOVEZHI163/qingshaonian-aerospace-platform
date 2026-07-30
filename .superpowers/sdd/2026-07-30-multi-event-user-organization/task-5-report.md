@@ -45,4 +45,11 @@ npm.cmd test -w apps/api -- --test-concurrency=1 test/audit-dashboard.test.js
 ## 后续关注点
 
 - 旧管理端前端仍调用旧证书接口，留给 Tasks 8–10 迁移：`CertificateManagementPage.vue` 的列表/手工录入调用，以及 `CertificateImportPanel.vue` 的批量导入调用。该任务未提前修改 UI。
-- 证书 Excel 导入路由当前仍保留既有路径和 body 中的 `eventId`；Task 6 的管理员 API 赛事上下文改造应统一迁移该组导入、预览、提交与错误报告路径。
+
+## 审查修复 round 1
+
+- 追加提交：`96d63c2c02f1b6961ef9e3d946a5aa9bb56e9d33`（`fix: scope certificate imports to events`）。
+- Excel 导入 API 已迁至 `/api/admin/events/:eventId/certificate-imports/...`：preview、列表、commit、取消、图片预览和错误报告均验证 URL 赛事与导入批次一致；旧无赛事上下文的写入口已移除。
+- preview、commit 与取消调用 `requireWritableEvent`，归档赛事（包括 `force_open`）拒绝写入；commit 继续由服务层复核报名赛事与批次赛事一致。
+- 新增跨赛事、归档和旧入口门禁覆盖；最终证书/API 聚焦回归为 79/79 通过。
+- Tasks 8–10 必须把 `CertificateImportPanel.vue` 从旧的 `/api/admin/certificate-imports...` 调用迁移至上述显式赛事路径；本任务按边界未修改 Vue。
