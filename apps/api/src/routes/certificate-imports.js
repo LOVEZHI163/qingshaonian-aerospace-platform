@@ -12,6 +12,7 @@ import {
   previewCertificateImport
 } from "../services/certificate-imports.js";
 import { requireWritableEvent } from "../services/access-control.js";
+import { requireEventId } from "../services/registrations.js";
 
 export function createCertificateImportsRouter({
   store,
@@ -35,9 +36,7 @@ export function createCertificateImportsRouter({
   const deps = { store, makeId, now };
 
   function eventForRead(db, eventId) {
-    const event = db.events.find((row) => row.id === eventId);
-    if (!event) throw new CertificateImportError(404, "Event not found");
-    return event;
+    return requireEventId(db, eventId);
   }
 
   function batchForEvent(db, eventId, batchId) {
@@ -48,7 +47,7 @@ export function createCertificateImportsRouter({
 
   router.post("/admin/events/:eventId/certificate-imports/preview", ...admin, uploadWorkbook, mutationAsyncRoute(async (req, res) => {
     const db = await store.readDb();
-    requireWritableEvent(db, req.params.eventId);
+    requireWritableEvent(db, eventForRead(db, req.params.eventId).id);
     const bodyEventId = String(req.body?.eventId || "").trim();
     if (bodyEventId && bodyEventId !== req.params.eventId) throw new CertificateImportError(422, "Event id does not match URL");
     const preview = await previewCertificateImport({ ...deps, file: req.file, eventId: req.params.eventId, userId: req.user.id });
@@ -64,14 +63,14 @@ export function createCertificateImportsRouter({
 
   router.post("/admin/events/:eventId/certificate-imports/:id/commit", ...admin, mutationAsyncRoute(async (req, res) => {
     const db = await store.readDb();
-    requireWritableEvent(db, req.params.eventId);
+    requireWritableEvent(db, eventForRead(db, req.params.eventId).id);
     batchForEvent(db, req.params.eventId, req.params.id);
     res.json(await commitCertificateImport({ ...deps, batchId: req.params.id, actor: req.user }));
   }));
 
   router.delete("/admin/events/:eventId/certificate-imports/:id", ...admin, mutationAsyncRoute(async (req, res) => {
     const db = await store.readDb();
-    requireWritableEvent(db, req.params.eventId);
+    requireWritableEvent(db, eventForRead(db, req.params.eventId).id);
     batchForEvent(db, req.params.eventId, req.params.id);
     await cancelCertificateImport({ ...deps, batchId: req.params.id });
     res.status(204).end();

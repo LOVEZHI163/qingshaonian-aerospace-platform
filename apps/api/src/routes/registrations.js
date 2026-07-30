@@ -11,6 +11,7 @@ import {
   listAdminRegistrations,
   prepareAdminRegistrationUpdate,
   prepareOrdinaryRegistrationUpdate,
+  requireEventId,
   registrationDuplicateCheck,
   registrationContextPayload,
   updateRegistrationStatus
@@ -188,7 +189,7 @@ export function createRegistrationsRouter({ store, requireUser, requireAdmin, re
 
   router.get("/admin/events/:eventId/registrations", ...admin, asyncRoute(async (req, res) => {
     const db = await store.readDb();
-    if (!db.events.some((event) => event.id === req.params.eventId)) return res.status(404).json({ error: "Event not found" });
+    requireEventId(db, req.params.eventId);
     res.json(listAdminRegistrations(db, { ...req.query, eventId: req.params.eventId }, clock));
   }));
 
@@ -196,7 +197,7 @@ export function createRegistrationsRouter({ store, requireUser, requireAdmin, re
     const scope = req.query.scope || "filtered";
     if (!new Set(["filtered", "all"]).has(scope)) return res.status(422).json({ error: "导出范围不合法" });
     const db = await store.readDb();
-    if (!db.events.some((event) => event.id === req.params.eventId)) return res.status(404).json({ error: "赛事不存在" });
+    requireEventId(db, req.params.eventId);
     const query = { ...req.query, eventId: req.params.eventId };
     const workbook = buildBoundRegistrationWorkbook(filterAdminRegistrations(db, query));
     const suffix = scope === "all" ? "全部名单" : "筛选名单";
@@ -209,8 +210,7 @@ export function createRegistrationsRouter({ store, requireUser, requireAdmin, re
 
   router.get("/admin/events/:eventId/certificate-template.xlsx", ...admin, asyncRoute(async (req, res) => {
     const db = await store.readDb();
-    const event = db.events.find((item) => item.id === req.params.eventId);
-    if (!event) return res.status(404).json({ error: "赛事不存在" });
+    const event = requireEventId(db, req.params.eventId);
     const rows = filterAdminRegistrations(db, { eventId: event.id, status: "approved" });
     if (rows.length > MAX_CERTIFICATE_ROWS) {
       const error = new Error(`证书模板最多支持 ${MAX_CERTIFICATE_ROWS.toLocaleString("en-US")} 条已审核报名`);

@@ -14,6 +14,7 @@ import {
 } from "../services/certificates.js";
 import { recordAudit } from "../services/audit.js";
 import { requireOrganizationEventParticipation, requireWritableEvent } from "../services/access-control.js";
+import { requireEventId } from "../services/registrations.js";
 
 export const defaultCertificateStorage = {
   saveFile: saveCertificateFile,
@@ -29,21 +30,8 @@ const MIME_BY_EXTENSION = new Map([
   ["webp", "image/webp"]
 ]);
 
-const SAFE_EVENT_FILTER = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
-
-function eventIdOrError(value) {
-  if (value === undefined) throw new CertificateError(422, "An event is required");
-  if (typeof value !== "string" || !SAFE_EVENT_FILTER.test(value)) {
-    throw new CertificateError(422, "赛事筛选不合法");
-  }
-  return value;
-}
-
 function eventOrError(db, value) {
-  const eventId = eventIdOrError(value);
-  const event = db.events.find((row) => row.id === eventId);
-  if (!event) throw new CertificateError(404, "Event not found");
-  return event;
+  return requireEventId(db, value);
 }
 
 function registrationForEvent(db, eventId, registrationId) {
@@ -272,7 +260,7 @@ export function createCertificatesRouter({
   });
   const approvedManualUpload = asyncRoute(async (req, _res, next) => {
     const db = await store.readDb();
-    requireWritableEvent(db, eventIdOrError(req.params.eventId));
+    requireWritableEvent(db, eventOrError(db, req.params.eventId).id);
     approvedManualCertificateRegistration(db, req.params.eventId, req.params.id);
     next();
   });
@@ -280,7 +268,7 @@ export function createCertificatesRouter({
   router.post("/admin/events/:eventId/registrations/:id/certificates/:slot", ...admin, approvedManualUpload, uploadOne, mutationAsyncRoute(async (req, res) => {
     const originalDb = await store.readDb();
     const db = structuredClone(originalDb);
-    requireWritableEvent(db, eventIdOrError(req.params.eventId));
+    requireWritableEvent(db, eventOrError(db, req.params.eventId).id);
     const registration = approvedManualCertificateRegistration(db, req.params.eventId, req.params.id);
     if (!req.file) throw new CertificateError(422, "证书文件不能为空");
 
@@ -327,7 +315,7 @@ export function createCertificatesRouter({
 
   router.patch("/admin/events/:eventId/certificates/:id", ...admin, mutationAsyncRoute(async (req, res) => {
     const db = await store.readDb();
-    requireWritableEvent(db, eventIdOrError(req.params.eventId));
+    requireWritableEvent(db, eventOrError(db, req.params.eventId).id);
     certificateForEvent(db, req.params.eventId, req.params.id);
     const certificate = updateCertificateMetadata(db, {
       certificateId: req.params.id,
@@ -344,7 +332,7 @@ export function createCertificatesRouter({
 
   router.delete("/admin/events/:eventId/certificates/:id", ...admin, mutationAsyncRoute(async (req, res) => {
     const db = await store.readDb();
-    requireWritableEvent(db, eventIdOrError(req.params.eventId));
+    requireWritableEvent(db, eventOrError(db, req.params.eventId).id);
     certificateForEvent(db, req.params.eventId, req.params.id);
     const certificate = removeCertificate(db, req.params.id);
     const marker = cleanupMarker({ makeId, filePath: certificate.filePath, category: "certificate-manual-deleted", now });
@@ -364,7 +352,7 @@ export function createCertificatesRouter({
 
   router.post("/admin/events/:eventId/certificates/bulk-status", ...admin, mutationAsyncRoute(async (req, res) => {
     const db = await store.readDb();
-    requireWritableEvent(db, eventIdOrError(req.params.eventId));
+    requireWritableEvent(db, eventOrError(db, req.params.eventId).id);
     for (const id of req.body.ids || []) certificateForEvent(db, req.params.eventId, id);
     const rows = setCertificateStatuses(db, req.body.ids, req.body.status, now());
     recordAudit(db, {

@@ -1,6 +1,7 @@
 import express from "express";
 
 import { isRegistrationOpen } from "../domain/registration-window.js";
+import { requireEventId } from "../services/registrations.js";
 
 function positiveInteger(value, fallback, name, maximum) {
   if (value === undefined || value === "") return fallback;
@@ -33,12 +34,6 @@ function publicImport(batch) {
   };
 }
 
-function selectedEvent(db, eventId) {
-  if (eventId) return db.events.find((event) => event.id === eventId);
-  return db.events.find((event) => event.isCurrent)
-    || sortNewest(db.events.map((event) => ({ ...event, createdAt: event.updatedAt || event.createdAt })))[0];
-}
-
 function dashboardPayload(db, event, clock) {
   const registrations = db.registrations.filter((row) => row.eventId === event.id);
   const registrationIds = new Set(registrations.map((row) => row.id));
@@ -69,9 +64,7 @@ export function createDashboardRouter({ store, requireAdmin, requirePasswordRead
 
   router.get("/admin/dashboard", ...admin, asyncRoute(async (req, res) => {
     const db = await store.readDb();
-    const eventId = String(req.query.eventId || "").trim();
-    const event = selectedEvent(db, eventId);
-    if (!event) return res.status(404).json({ error: "赛事不存在" });
+    const event = requireEventId(db, req.query.eventId);
     res.json(dashboardPayload(db, event, clock));
   }));
 

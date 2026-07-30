@@ -52,13 +52,12 @@ test("registration workbook certificate template includes only approved registra
   });
 });
 
-test("all exports require an existing event identifier", async () => {
+test("event-scoped exports reject an unavailable URL event", async () => {
   await withServer(async (baseUrl) => {
     const admin = await loginAs(baseUrl, "13900000000", "admin123");
-    const missing = await fetch(`${baseUrl}/api/admin/registrations/export.xlsx?scope=all`, withSession(admin.cookie));
     const unknown = await fetch(`${baseUrl}/api/admin/events/missing/registrations/export.xlsx?scope=all`, withSession(admin.cookie));
-    assert.equal(missing.status, 404);
     assert.equal(unknown.status, 404);
+    assert.equal((await unknown.json()).code, "EVENT_NOT_AVAILABLE");
   });
 });
 

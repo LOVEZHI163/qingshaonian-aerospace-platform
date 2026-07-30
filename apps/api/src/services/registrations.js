@@ -132,7 +132,7 @@ export function prepareRegistrationCreate(db, input, userId, clock = () => new D
 }
 
 export function registrationDuplicateCheck(db, input, clock = () => new Date()) {
-  requireEventId(input?.eventId);
+  requireEventId(db, input?.eventId);
   const athlete = input?.athlete || input || {};
   const group = groupForGrade(athlete.grade);
   if (!group) throw businessError(422, "实际年级不合法");
@@ -250,10 +250,12 @@ export function findRegistrationIdentity(db, eventId, projectId, key) {
   )) || null;
 }
 
-function requireEventId(value) {
+export function requireEventId(db, value) {
   const eventId = String(value || "").trim();
-  if (!eventId) throw businessError(422, "缺少赛事上下文", "EVENT_ID_REQUIRED");
-  return eventId;
+  if (!eventId) throw businessError(422, "请选择赛事", "EVENT_ID_REQUIRED");
+  const event = db.events.find((row) => row.id === eventId);
+  if (!event) throw businessError(404, "赛事不存在", "EVENT_NOT_AVAILABLE");
+  return event;
 }
 
 function requireOperationalOrganization(db, organizationId) {
@@ -332,8 +334,7 @@ export function createOrMergeRegistration(db, input, actor, channel, {
   now = () => new Date().toISOString(),
   clock = () => new Date()
 } = {}) {
-  const eventId = requireEventId(input?.eventId);
-  const event = requireOpenRegistrationEvent(db, eventId, clock);
+  const event = requireOpenRegistrationEvent(db, requireEventId(db, input?.eventId).id, clock);
   const prepared = validateCreateForEvent(db, input, event, actor, channel);
   const existing = findRegistrationIdentity(db, event.id, prepared.project.id, prepared.key);
   const personalUserId = channel === "personal" ? actor.id : null;

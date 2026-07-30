@@ -24,6 +24,21 @@ function publicOrganization(organization) {
   return { ...organization };
 }
 
+function participationSummary(db, participation) {
+  const registrations = db.registrations.filter((row) => (
+    row.eventId === participation.eventId && row.organizationId === participation.organizationId
+  ));
+  const registrationIds = new Set(registrations.map((row) => row.id));
+  return {
+    ...participation,
+    registrationCount: registrations.length,
+    resultCount: registrations.filter((row) => (
+      row.awardName || row.rank || row.score || row.resultRecordedAt
+    )).length,
+    certificateCount: db.certificates.filter((certificate) => registrationIds.has(certificate.registrationId)).length
+  };
+}
+
 function organizationWithDocuments(db, organization, membershipRole = null) {
   return {
     ...publicOrganization(organization),
@@ -31,7 +46,11 @@ function organizationWithDocuments(db, organization, membershipRole = null) {
     ...(membershipRole ? { membershipRole } : {}),
     documents: db.organizationDocuments
       .filter((document) => document.organizationId === organization.id && !document.cleanedAt)
-      .map((document) => publicDocument(document, organization.currentDocumentId))
+      .map((document) => publicDocument(document, organization.currentDocumentId)),
+    eventParticipations: db.organizationEventParticipations
+      .filter((participation) => participation.organizationId === organization.id)
+      .map((participation) => participationSummary(db, participation))
+      .sort((left, right) => String(left.joinedAt).localeCompare(String(right.joinedAt)) || left.eventId.localeCompare(right.eventId))
   };
 }
 
@@ -87,6 +106,13 @@ export function createOrganizationsRouter({ store, requireUser, requireAdmin, re
   router.get("/admin/organizations", requireAdmin, requirePasswordReady, asyncRoute(async (_req, res) => {
     const db = await deps.readDb();
     res.json({ rows: db.organizations.map((organization) => organizationWithDocuments(db, organization)) });
+  }));
+
+  router.get("/admin/organizations/:id", requireAdmin, requirePasswordReady, asyncRoute(async (req, res) => {
+    const db = await deps.readDb();
+    const organization = db.organizations.find((row) => row.id === req.params.id);
+    if (!organization) return res.status(404).json({ error: "组织不存在" });
+    res.json({ row: organizationWithDocuments(db, organization) });
   }));
 
   router.patch("/admin/organizations/:id/status", requireAdmin, requirePasswordReady, asyncRoute(async (req, res, next) => {
