@@ -42,6 +42,13 @@ test("certificate import writes require their URL event and reject archived or c
     const oldPreview = await fetch(`${baseUrl}/api/admin/certificate-imports/preview`, withSession(admin.cookie, { method: "POST" }));
     assert.equal(oldPreview.status, 404);
 
+    const mismatchedPreview = await fetch(
+      `${baseUrl}/api/admin/events/wz-aerospace-2026/certificate-imports/preview`,
+      jsonOptions("POST", { eventId: "E2" }, admin.cookie)
+    );
+    assert.equal(mismatchedPreview.status, 422);
+    assert.equal((await mismatchedPreview.json()).code, "EVENT_ID_MISMATCH");
+
     const crossEventCommit = await fetch(
       `${baseUrl}/api/admin/events/E2/certificate-imports/B-E1/commit`,
       withSession(admin.cookie, { method: "POST" })

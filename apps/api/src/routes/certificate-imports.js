@@ -12,6 +12,7 @@ import {
   previewCertificateImport
 } from "../services/certificate-imports.js";
 import { requireWritableEvent } from "../services/access-control.js";
+import { businessError } from "../services/events.js";
 import { requireEventId } from "../services/registrations.js";
 
 export function createCertificateImportsRouter({
@@ -49,7 +50,9 @@ export function createCertificateImportsRouter({
     const db = await store.readDb();
     requireWritableEvent(db, eventForRead(db, req.params.eventId).id);
     const bodyEventId = String(req.body?.eventId || "").trim();
-    if (bodyEventId && bodyEventId !== req.params.eventId) throw new CertificateImportError(422, "Event id does not match URL");
+    if (bodyEventId && bodyEventId !== req.params.eventId) {
+      throw businessError(422, "赛事与 URL 不一致", "EVENT_ID_MISMATCH");
+    }
     const preview = await previewCertificateImport({ ...deps, file: req.file, eventId: req.params.eventId, userId: req.user.id });
     res.status(201).json(preview);
   }));

@@ -43,3 +43,14 @@ npm.cmd test -w apps/api -- --test-concurrency=1 test/admin-event-context.test.j
 - 管理员业务路由保持显式赛事路径；旧 `/api/admin/registrations...`、`/api/admin/certificates...`、导入旧路径没有恢复。
 - 归档赛事的管理员业务写入由现有 `requireWritableEvent` 拒绝；历史读取仍可按明确赛事访问。
 - 组织资质审核、状态和文件清理是全局组织业务，不附加虚假的 `eventId`；赛事参与和业务统计则由 `eventParticipations` 明确呈现。
+
+## Review 1 修复
+
+- 证书 Excel 导入 preview 若请求体 `eventId` 与 URL 赛事不一致，现通过共享 `businessError` 返回 `422 EVENT_ID_MISMATCH`，不再抛出缺少错误码的 `CertificateImportError`。
+- 已先新增 preview body mismatch 的 status/code 精确断言，红测确认旧响应缺少 code；修复后运行：
+
+```powershell
+npm.cmd test -w apps/api -- --test-concurrency=1 test/admin-event-context.test.js test/certificate-import-event-context.test.js
+```
+
+结果：6/6 通过。
