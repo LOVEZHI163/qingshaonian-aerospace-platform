@@ -6,8 +6,8 @@
 
 ## 发布结论
 
-- 发布 release：`94d3ff8a1059fd66eaa63592bd842054e75ee635`。
-- 前一 release：`83740470cafad0b2c5e7b1f3dc6ba2043f97020e`。
+- 最终发布 release：`530b8087eb11ed1420310983757c0ad887ca6db8`。
+- 前一线上 release：`94d3ff8a1059fd66eaa63592bd842054e75ee635`。
 - 发布包只来自 `git archive HEAD`，未包含 `.env`、backups、uploads、`node_modules` 或构建目录。
 - Windows Git 因仓库历史中的 NTFS 不兼容路径首次拒绝归档；只对该次归档关闭 `core.protectNTFS` 后，从同一 Git 对象生成成功。归档包含 363 个条目、6,594,560 字节，SHA-256 为 `aadd2cf0c2fb36c73fdcb66d131779e1c2c33ab4545d2592c4c6eea5e335d5bd`。
 - 服务器接收后复核归档 SHA-256 一致；候选源码与切换后的 `deploy/preflight-admin-upgrade.sh` 均通过。
@@ -17,9 +17,9 @@
 
 | 命令 | 结果 |
 | --- | --- |
-| `git diff --check` | 通过，无输出 |
-| `npm.cmd test -w apps/api -- --test-concurrency=1` | 325/325，通过；0 fail；实际持续约 300 秒并等待进程退出 |
-| `npm.cmd test -w apps/admin` | 35 个文件，337/337，通过 |
+| `git diff --check 6e6d9ae68223748ca3b20c84c5b28cba9e05d26b..HEAD` | 通过，无输出 |
+| `npm.cmd test -w apps/api -- --test-concurrency=1` | 329/329，通过；0 fail |
+| `npm.cmd test -w apps/admin` | 35 个文件，338/338，通过 |
 | `npm.cmd test -w apps/web` | 6 个文件，134/134，通过 |
 | `npm.cmd run build` | Web 与 Admin 生产构建通过 |
 | `powershell -ExecutionPolicy Bypass -File deploy/verify-config.ps1` | `Deployment configuration checks passed.` |
@@ -34,7 +34,7 @@
 
 ## 备份与可回滚证据
 
-统一备份 stamp：`20260730T171651Z`。
+初次内容编辑器发布备份 stamp：`20260730T171651Z`；最终修复发布另行创建并验证 stamp `20260730T192258Z`。
 
 | 对象 | 文件或标签 | 验证 |
 | --- | --- | --- |
@@ -129,3 +129,15 @@ CONFIRM_RESTORE=yes docker compose run --rm \
 ```
 
 uploads 仅在确认损坏时按运维手册恢复：停止 API、额外备份当前卷、再次运行安全归档校验、在空目录检查文件清单后复制。禁止直接覆盖运行中的卷，也禁止 `docker compose down -v`。
+
+## 最终修复发布与真实 PNG 复验
+
+- 独立代码审查发现并已修复两项重要问题：归档赛事的赛事资料、赛项更新和赛项删除现在由服务端统一返回 409，管理端同步进入只读状态；正文附件用途 `content-attachment` 已严格映射到允许 PDF 的附件策略，未知媒体用途返回 422。
+- 同一修复波次还把种子组织 `O1002` 的报名创建者统一为 `U2002`，补充临时密码管理员访问媒体接口返回 428 的回归测试，并修正回滚健康等待、HTTP/smoke 检查及 `.release` 成功后再写入的运维说明。
+- 最终本地门禁为 API 329/329、Admin 338/338、Web 134/134；生产构建、部署配置检查、完整提交范围 `git diff --check` 和敏感信息扫描均通过。
+- 最终发布版本为 `530b8087eb11ed1420310983757c0ad887ca6db8`，统一备份 stamp 为 `20260730T192258Z`。数据库 dump、uploads 归档、部署前源码和 rollback marker 均验证可读，API/Web 回滚镜像均可 inspect。最终 PostgreSQL、API、Web、Backup 四服务全部 `running/healthy`；仅 Web 对外发布 80，API 4300 与 PostgreSQL 5432 仅容器内部可达。
+- 线上契约复核：未知媒体用途返回 422；真实 PDF 以 `content-attachment` 上传返回 201，删除返回 204；`/`、`/admin/`、`/api/public/home`、`/healthz`、管理员登录及认证管理端点均为 200。线上无归档赛事，因此未创建会改变现有赛事数据的一次性归档 fixture，归档写保护由新增 HTTP 回归测试覆盖。
+- 使用真实 PNG 字节文件完成第二轮 Codex 内置浏览器验收。临时内容 ID 为 `POST1785440192275778`，slug 为 `true-png-qa-20260731`，媒体 ID 为 `M1785440129151338`。从“图片”对话框上传、填写替代文本和题注、插入正文、保存草稿并 reload 后，正文图片及题注完整持久化。
+- 临时内容经“进入发布检查—确认发布”正式公开；公开页图片 `complete=true`，原始和实际渲染尺寸均为 375×812。页面 `clientWidth=scrollWidth=1265`，无横向溢出，控制台 warn/error 为 0。公开媒体返回 HTTP 200、`Content-Type: image/png`、`nosniff`、inline disposition 和 immutable cache，证明该轮是实际 PNG 字节而非仅扩展名。
+- 同一媒体的受保护预览已在线独立对照：匿名请求 401、管理员会话请求 200。验收结束后通过 UI 下线并删除临时内容，再通过管理 API 删除媒体，返回 204；公开媒体随后为 404，公开内容页显示“内容不存在”。
+- 清理后数据库终态恢复为用户 2、赛事 6、内容 3、媒体 12、cleanup journal 0、active 管理员 1；没有遗留临时文章、媒体元数据、媒体文件或本地验收 PNG。服务器 `.release` 仍为最终完整 SHA。

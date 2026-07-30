@@ -529,3 +529,12 @@ CONFIRM_RESTORE=yes docker compose run --rm \
 ```
 
 上传卷恢复仍按本手册“恢复与回滚”章节执行：先停止 API、额外备份当前卷、重新验证归档，在空目录检查清单后再复制；禁止直接覆盖运行中的卷。
+
+#### 内容编辑器最终审查修复与真实 PNG 复验（2026-07-31）
+
+- 最终发布版本：`530b8087eb11ed1420310983757c0ad887ca6db8`。该版本补齐归档赛事更新/赛项更新/删除的服务端 409 写保护和管理端只读状态，统一 `content-attachment` PDF 上传契约，拒绝未知媒体用途，并修正种子归属、临时密码 428 回归测试及回滚文档。
+- 最终门禁：API 329/329、Admin 338/338、Web 134/134；根生产构建、`deploy/verify-config.ps1`、`git diff --check 6e6d9ae68223748ca3b20c84c5b28cba9e05d26b..HEAD` 和敏感信息扫描全部通过。
+- 发布前统一备份 stamp 为 `20260730T192258Z`；数据库、uploads、部署前源码、rollback marker 及 API/Web 回滚镜像均已验证。`/opt/aerogp/.release` 为上述 SHA，PostgreSQL、API、Web、Backup 四服务均 `running/healthy`，仅 Web 映射宿主机 80。
+- 线上契约：未知媒体用途 422；真实 PDF 以 `content-attachment` 上传 201、删除 204；最终媒体仍为 12、cleanup journal 为 0。线上现有归档赛事数为 0，因此没有为了写保护验证创建或改变生产赛事数据。
+- 真实 PNG 浏览器验收：临时内容 `POST1785440192275778` / `true-png-qa-20260731` 使用媒体 `M1785440129151338`，完成 UI 上传、插入、替代文本/题注、保存、reload、发布检查及公开发布。公开图片完整加载，natural size 375×812，公开响应为 HTTP 200、`image/png`；公开页 `clientWidth=scrollWidth=1265` 且控制台无 warn/error。
+- 受保护预览线上对照为匿名 401、管理员会话 200。随后经 UI 下线并删除临时内容，再删除媒体返回 204；媒体公开地址为 404，内容页显示“内容不存在”。终态恢复为用户 2、赛事 6、内容 3、媒体 12、cleanup journal 0、active 管理员 1。
