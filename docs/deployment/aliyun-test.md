@@ -504,28 +504,28 @@ test "$(curl -sS -b "$COOKIE_JAR" -o /dev/null -w '%{http_code}' "http://127.0.0
 
 ```bash
 cd /opt/aerogp
-docker image tag aerogp-api:rollback-20260730T171651Z aerogp-api:latest
-docker image tag aerogp-web:rollback-20260730T171651Z aerogp-web:latest
+docker image tag aerogp-api:rollback-20260730T192258Z aerogp-api:latest
+docker image tag aerogp-web:rollback-20260730T192258Z aerogp-web:latest
 docker compose up -d --no-build --force-recreate --wait --wait-timeout 240 api web
 docker compose ps
 curl -fsS http://127.0.0.1/healthz
 curl -fsS http://127.0.0.1/api/public/home >/dev/null
 curl -fsS http://127.0.0.1/admin/ >/dev/null
 BASE_URL=http://127.0.0.1 /bin/sh deploy/remote-smoke-test.sh
-printf '%s\n' '83740470cafad0b2c5e7b1f3dc6ba2043f97020e' > .release.next
+printf '%s\n' '94d3ff8a1059fd66eaa63592bd842054e75ee635' > .release.next
 mv .release.next .release
 ```
 
 最后两行只能在 `docker compose` 健康等待、三个显式 HTTP 检查和完整 smoke 全部成功后执行；任一检查失败时保留当前 `.release`，继续收集故障证据。
 
-如需从源码重建，先额外备份并保留故障日志，再把 `backups/source-before-content-editor-20260730T171651Z.tgz` 解压到 `/opt/aerogp/backups` 下的空目录，保留当前 `.env` 与 `backups` 后替换源码，运行预检并重建 API/Web。只有确认数据库迁移不兼容或数据损坏时才使用已验证 dump：
+如需从直接前版源码重建，先额外备份并保留故障日志，再把 `backups/source-before-final-fix-20260730T192258Z.tgz` 解压到 `/opt/aerogp/backups` 下的空目录，保留当前 `.env` 与 `backups` 后替换源码，运行预检并重建 API/Web。只有确认数据库迁移不兼容或数据损坏时才使用已验证 dump：
 
 ```bash
 cd /opt/aerogp
 CONFIRM_RESTORE=yes docker compose run --rm \
   -e CONFIRM_RESTORE=yes \
   backup /bin/sh /scripts/restore-postgres.sh \
-  /backups/aerogp-20260730T171651Z.dump
+  /backups/aerogp-20260730T192258Z.dump
 ```
 
 上传卷恢复仍按本手册“恢复与回滚”章节执行：先停止 API、额外备份当前卷、重新验证归档，在空目录检查清单后再复制；禁止直接覆盖运行中的卷。
@@ -534,7 +534,7 @@ CONFIRM_RESTORE=yes docker compose run --rm \
 
 - 最终发布版本：`530b8087eb11ed1420310983757c0ad887ca6db8`。该版本补齐归档赛事更新/赛项更新/删除的服务端 409 写保护和管理端只读状态，统一 `content-attachment` PDF 上传契约，拒绝未知媒体用途，并修正种子归属、临时密码 428 回归测试及回滚文档。
 - 最终门禁：API 329/329、Admin 338/338、Web 134/134；根生产构建、`deploy/verify-config.ps1`、`git diff --check 6e6d9ae68223748ca3b20c84c5b28cba9e05d26b..HEAD` 和敏感信息扫描全部通过。
-- 发布前统一备份 stamp 为 `20260730T192258Z`；数据库、uploads、部署前源码、rollback marker 及 API/Web 回滚镜像均已验证。`/opt/aerogp/.release` 为上述 SHA，PostgreSQL、API、Web、Backup 四服务均 `running/healthy`，仅 Web 映射宿主机 80。
+- 发布前统一备份 stamp 为 `20260730T192258Z`；已验证 `backups/aerogp-20260730T192258Z.dump`、`backups/uploads/aerogp-uploads-20260730T192258Z.tar.gz`、`backups/source-before-final-fix-20260730T192258Z.tgz`、`backups/final-fix-rollback-20260730T192258Z.txt` 及 API/Web `rollback-20260730T192258Z` 镜像。marker 记录直接前版为 `94d3ff8a1059fd66eaa63592bd842054e75ee635`。`/opt/aerogp/.release` 为最终 `530b8087eb11ed1420310983757c0ad887ca6db8`，PostgreSQL、API、Web、Backup 四服务均 `running/healthy`，仅 Web 映射宿主机 80。
 - 线上契约：未知媒体用途 422；真实 PDF 以 `content-attachment` 上传 201、删除 204；最终媒体仍为 12、cleanup journal 为 0。线上现有归档赛事数为 0，因此没有为了写保护验证创建或改变生产赛事数据。
 - 真实 PNG 浏览器验收：临时内容 `POST1785440192275778` / `true-png-qa-20260731` 使用媒体 `M1785440129151338`，完成 UI 上传、插入、替代文本/题注、保存、reload、发布检查及公开发布。公开图片完整加载，natural size 375×812，公开响应为 HTTP 200、`image/png`；公开页 `clientWidth=scrollWidth=1265` 且控制台无 warn/error。
 - 受保护预览线上对照为匿名 401、管理员会话 200。随后经 UI 下线并删除临时内容，再删除媒体返回 204；媒体公开地址为 404，内容页显示“内容不存在”。终态恢复为用户 2、赛事 6、内容 3、媒体 12、cleanup journal 0、active 管理员 1。

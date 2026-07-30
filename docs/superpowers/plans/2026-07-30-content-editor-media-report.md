@@ -8,9 +8,9 @@
 
 - 最终发布 release：`530b8087eb11ed1420310983757c0ad887ca6db8`。
 - 前一线上 release：`94d3ff8a1059fd66eaa63592bd842054e75ee635`。
-- 发布包只来自 `git archive HEAD`，未包含 `.env`、backups、uploads、`node_modules` 或构建目录。
-- Windows Git 因仓库历史中的 NTFS 不兼容路径首次拒绝归档；只对该次归档关闭 `core.protectNTFS` 后，从同一 Git 对象生成成功。归档包含 363 个条目、6,594,560 字节，SHA-256 为 `aadd2cf0c2fb36c73fdcb66d131779e1c2c33ab4545d2592c4c6eea5e335d5bd`。
-- 服务器接收后复核归档 SHA-256 一致；候选源码与切换后的 `deploy/preflight-admin-upgrade.sh` 均通过。
+- 两轮发布包均只来自对应 release 的 Git 对象，未包含 `.env`、backups、uploads、`node_modules` 或构建目录。
+- 363 个条目、6,594,560 字节和 SHA-256 `aadd2cf0c2fb36c73fdcb66d131779e1c2c33ab4545d2592c4c6eea5e335d5bd` 仅属于首次发布 `94d3ff8a1059fd66eaa63592bd842054e75ee635`，不作为最终 `530b8087eb11ed1420310983757c0ad887ca6db8` 的归档哈希证据。
+- 最终候选源码与切换后的 `deploy/preflight-admin-upgrade.sh` 均通过，服务器 `.release` 已独立复核为最终完整 SHA。
 - `/opt/aerogp/.release` 最终为上述完整 release；没有重新创建数据库卷或上传卷，也没有执行 `docker compose down -v`。
 
 ## 本地全量门禁
@@ -28,9 +28,8 @@
 
 ## 验证说明与已知非阻塞项
 
-- 上表的 API 325/325 是部署候选代码在部署前、使用正式门禁命令取得的完整成功结果，也是本次是否允许部署的依据。
-- 浏览器验收和线上清理完成后，工作树只新增/修改本文档与运维记录。提交前额外执行一次相同 API 串行命令，结果为 320/325；5 项失败全部在固定 5 秒启动门限报 `API server did not start in time`，均未进入业务断言，其他 320 项通过。
-- 该额外复跑没有发现业务断言回归；线上 release、四服务健康、HTTP、浏览器功能和清理后数据库基线均另行通过。主任务据此将这 5 项记录为提交环境的非阻塞启动超时，不覆盖或改写部署前 325/325 的正式门禁证据，也未再次复跑。
+- 上表的 API 329/329 是最终部署候选代码使用正式串行门禁命令取得的完整成功结果，也是最终发布依据。
+- 首次 `94d3ff8` 发布阶段曾记录 API 325/325，以及一次受固定 5 秒启动门限影响的 320/325 补跑；这些均为历史证据，不覆盖最终 `530b808` 的 329/329 正式门禁。
 
 ## 备份与可回滚证据
 
@@ -102,21 +101,21 @@ API 与 Web 在同一发布窗口执行 `docker compose up -d --build api web`�
 
 ```bash
 cd /opt/aerogp
-docker image tag aerogp-api:rollback-20260730T171651Z aerogp-api:latest
-docker image tag aerogp-web:rollback-20260730T171651Z aerogp-web:latest
+docker image tag aerogp-api:rollback-20260730T192258Z aerogp-api:latest
+docker image tag aerogp-web:rollback-20260730T192258Z aerogp-web:latest
 docker compose up -d --no-build --force-recreate --wait --wait-timeout 240 api web
 docker compose ps
 curl -fsS http://127.0.0.1/healthz
 curl -fsS http://127.0.0.1/api/public/home >/dev/null
 curl -fsS http://127.0.0.1/admin/ >/dev/null
 BASE_URL=http://127.0.0.1 /bin/sh deploy/remote-smoke-test.sh
-printf '%s\n' '83740470cafad0b2c5e7b1f3dc6ba2043f97020e' > .release.next
+printf '%s\n' '94d3ff8a1059fd66eaa63592bd842054e75ee635' > .release.next
 mv .release.next .release
 ```
 
 `.release` 只在健康等待、三个显式 HTTP 检查和完整 smoke 均成功后改写；任一检查失败时保留原标记并继续收集故障证据。
 
-若需要从旧源码重建，把已验证的 `backups/source-before-content-editor-20260730T171651Z.tgz` 解压到 `/opt/aerogp/backups` 下的空目录；保留 `.env` 与 `backups`，替换其余源码，运行升级预检后重建 API/Web。
+若需要从直接前版源码重建，把已验证的 `backups/source-before-final-fix-20260730T192258Z.tgz` 解压到 `/opt/aerogp/backups` 下的空目录；保留 `.env` 与 `backups`，替换其余源码，运行升级预检后重建 API/Web。
 
 只有确认数据库结构不兼容或数据损坏时，才恢复已验证数据库备份：
 
@@ -125,7 +124,7 @@ cd /opt/aerogp
 CONFIRM_RESTORE=yes docker compose run --rm \
   -e CONFIRM_RESTORE=yes \
   backup /bin/sh /scripts/restore-postgres.sh \
-  /backups/aerogp-20260730T171651Z.dump
+  /backups/aerogp-20260730T192258Z.dump
 ```
 
 uploads 仅在确认损坏时按运维手册恢复：停止 API、额外备份当前卷、再次运行安全归档校验、在空目录检查文件清单后复制。禁止直接覆盖运行中的卷，也禁止 `docker compose down -v`。
@@ -135,7 +134,7 @@ uploads 仅在确认损坏时按运维手册恢复：停止 API、额外备份�
 - 独立代码审查发现并已修复两项重要问题：归档赛事的赛事资料、赛项更新和赛项删除现在由服务端统一返回 409，管理端同步进入只读状态；正文附件用途 `content-attachment` 已严格映射到允许 PDF 的附件策略，未知媒体用途返回 422。
 - 同一修复波次还把种子组织 `O1002` 的报名创建者统一为 `U2002`，补充临时密码管理员访问媒体接口返回 428 的回归测试，并修正回滚健康等待、HTTP/smoke 检查及 `.release` 成功后再写入的运维说明。
 - 最终本地门禁为 API 329/329、Admin 338/338、Web 134/134；生产构建、部署配置检查、完整提交范围 `git diff --check` 和敏感信息扫描均通过。
-- 最终发布版本为 `530b8087eb11ed1420310983757c0ad887ca6db8`，统一备份 stamp 为 `20260730T192258Z`。数据库 dump、uploads 归档、部署前源码和 rollback marker 均验证可读，API/Web 回滚镜像均可 inspect。最终 PostgreSQL、API、Web、Backup 四服务全部 `running/healthy`；仅 Web 对外发布 80，API 4300 与 PostgreSQL 5432 仅容器内部可达。
+- 最终发布版本为 `530b8087eb11ed1420310983757c0ad887ca6db8`，统一备份 stamp 为 `20260730T192258Z`。已验证 `backups/aerogp-20260730T192258Z.dump`、`backups/uploads/aerogp-uploads-20260730T192258Z.tar.gz`、`backups/source-before-final-fix-20260730T192258Z.tgz` 和 `backups/final-fix-rollback-20260730T192258Z.txt`；API/Web 回滚镜像 `rollback-20260730T192258Z` 均可 inspect，marker 明确记录直接前版 `94d3ff8a1059fd66eaa63592bd842054e75ee635`。最终 PostgreSQL、API、Web、Backup 四服务全部 `running/healthy`；仅 Web 对外发布 80，API 4300 与 PostgreSQL 5432 仅容器内部可达。
 - 线上契约复核：未知媒体用途返回 422；真实 PDF 以 `content-attachment` 上传返回 201，删除返回 204；`/`、`/admin/`、`/api/public/home`、`/healthz`、管理员登录及认证管理端点均为 200。线上无归档赛事，因此未创建会改变现有赛事数据的一次性归档 fixture，归档写保护由新增 HTTP 回归测试覆盖。
 - 使用真实 PNG 字节文件完成第二轮 Codex 内置浏览器验收。临时内容 ID 为 `POST1785440192275778`，slug 为 `true-png-qa-20260731`，媒体 ID 为 `M1785440129151338`。从“图片”对话框上传、填写替代文本和题注、插入正文、保存草稿并 reload 后，正文图片及题注完整持久化。
 - 临时内容经“进入发布检查—确认发布”正式公开；公开页图片 `complete=true`，原始和实际渲染尺寸均为 375×812。页面 `clientWidth=scrollWidth=1265`，无横向溢出，控制台 warn/error 为 0。公开媒体返回 HTTP 200、`Content-Type: image/png`、`nosniff`、inline disposition 和 immutable cache，证明该轮是实际 PNG 字节而非仅扩展名。

@@ -271,7 +271,7 @@ test("media listing requires a ready administrator and validates limit", async (
   }, { prefix: "site-media-list-auth-" });
 });
 
-test("temporary-password administrators receive 428 from site media uploads", async () => {
+test("temporary-password administrators receive 428 from site media reads and uploads", async () => {
   await withTestServer(async ({ baseUrl }) => {
     const admin = await loginAs(baseUrl, "13900000000", "admin123");
     const reset = await fetch(`${baseUrl}/api/admin/users/U9001/reset-password`, withSession(admin.cookie, {
@@ -281,6 +281,10 @@ test("temporary-password administrators receive 428 from site media uploads", as
     }));
     assert.equal(reset.status, 200);
     const temporaryAdmin = await loginAs(baseUrl, "13900000000", "Temporary9");
+
+    const listResponse = await fetch(`${baseUrl}/api/admin/site-media`, withSession(temporaryAdmin.cookie));
+    assert.equal(listResponse.status, 428);
+    assert.equal((await listResponse.json()).code, "PASSWORD_CHANGE_REQUIRED");
 
     const response = await fetch(`${baseUrl}/api/admin/site-media`, withSession(temporaryAdmin.cookie, {
       method: "POST",
