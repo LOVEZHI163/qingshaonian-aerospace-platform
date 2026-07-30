@@ -108,6 +108,9 @@
 .rich-content h2,
 .rich-content h3 { color: var(--color-brand-ink); line-height: 1.35; }
 .rich-content img { display: block; max-width: 100%; height: auto; margin: var(--space-3) auto; border-radius: var(--radius-sm); }
+.rich-content figure { max-width: 100%; margin: var(--space-4) auto; }
+.rich-content figure img { width: auto; max-width: 100%; height: auto; margin: 0 auto; }
+.rich-content figcaption { margin-top: var(--space-1); color: var(--color-text-muted); text-align: center; font-size: .9rem; }
 .rich-content table { display: block; max-width: 100%; overflow-x: auto; border-collapse: collapse; }
 .rich-content th,
 .rich-content td { padding: 0.6rem; border: 1px solid var(--color-border); }

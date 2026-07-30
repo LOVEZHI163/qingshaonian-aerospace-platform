@@ -24,6 +24,7 @@ const reviewing = ref(false);
 const confirmAction = ref(null);
 const confirmButton = ref(null);
 const editorHeading = ref(null);
+const bodyMediaSection = ref(null);
 const pendingMedia = ref([]);
 const deletingMedia = ref(new Set());
 const baseline = ref(JSON.stringify(blank()));
@@ -113,6 +114,16 @@ function slugSuggestion(value) {
 
 function focusSlug() {
   void nextTick(() => slugInput.value?.focus());
+}
+
+function focusBodyMedia() {
+  void nextTick(() => bodyMediaSection.value?.focus());
+}
+
+function editorNotice(message) {
+  if (!message) return;
+  error.value = "";
+  success.value = message;
 }
 
 function handleSlugInput() {
@@ -272,7 +283,10 @@ async function save({ openReview = false } = {}) {
     if (openReview) reviewing.value = true;
     return payload.row;
   } catch (failure) {
-    if (failure?.code === "SLUG_CONFLICT") {
+    if (failure?.code === "CONTENT_BODY_MEDIA_INVALID") {
+      error.value = failure?.message || "正文图片无效";
+      focusBodyMedia();
+    } else if (failure?.code === "SLUG_CONFLICT") {
       slugServerError.value = `该公开地址已被使用，可尝试 ${slugSuggestion(form.slug)}`;
       error.value = "公开地址冲突，请修改后重试";
       await nextTick();
@@ -318,7 +332,10 @@ async function preview() {
     if (typeof html !== "string") throw new Error("预览数据无效");
     previewHtml.value = html;
     previewOpen.value = true;
-  } catch (failure) { error.value = failure?.message || "预览加载失败"; }
+  } catch (failure) {
+    error.value = failure?.message || "预览加载失败";
+    if (failure?.code === "CONTENT_BODY_MEDIA_INVALID") focusBodyMedia();
+  }
   finally { busy.value = false; }
 }
 
@@ -429,8 +446,8 @@ defineExpose({
       <div class="site-form-grid"><label>归属赛事<select v-model="form.eventId" data-content-field="eventId" :disabled="published"><option :value="null">平台通用</option><option v-for="event in events" :key="event.id" :value="event.id">{{ event.name }}</option></select></label><label>内容类型<select v-model="form.type" data-content-field="type" :disabled="published"><option v-for="type in types" :key="type[0]" :value="type[0]">{{ type[1] }}</option></select></label></div>
       <label>摘要<textarea v-model="form.summary" data-content-field="summary" :disabled="published"></textarea></label>
       </section>
-      <section class="content-editor-section" data-content-section="body-media"><h4>正文与媒体</h4>
-      <label>正文<RichTextEditor :model-value="form.bodyHtml" :revision="`${form.id || 'new'}:${form.version ?? 0}`" :disabled="published" @update:model-value="form.bodyHtml = $event" @normalized="normalizeBody" /></label>
+      <section ref="bodyMediaSection" class="content-editor-section" data-content-section="body-media" tabindex="-1"><h4>正文与媒体</h4>
+      <label>正文<RichTextEditor :model-value="form.bodyHtml" :revision="`${form.id || 'new'}:${form.version ?? 0}`" :disabled="published" @update:model-value="form.bodyHtml = $event" @normalized="normalizeBody" @notice="editorNotice" /></label>
       <section class="content-media-field"><h4>封面图片</h4><p v-if="form.coverMedia"><strong>{{ form.coverMedia.originalName }}</strong> · {{ form.coverMedia.mimeType }} · {{ form.coverMedia.sizeBytes }} 字节<span v-if="form.coverMedia.width"> · {{ form.coverMedia.width }}×{{ form.coverMedia.height }}</span></p><p v-else-if="form.coverMediaId">媒体 ID：{{ form.coverMediaId }}</p><p v-else>未设置</p><div class="form-actions"><MediaPicker purpose="content-cover" accept="image/png,image/jpeg,image/webp" label="上传封面" :disabled="published" @uploaded="uploadedCover" @error="mediaError"/><button v-if="form.coverMediaId" type="button" data-action="detach-cover-media" :disabled="published" @click="detachCover">解除引用</button></div></section>
       <section class="content-media-field"><div class="panel-title"><h4>附件</h4><MediaPicker purpose="content-attachment" accept="application/pdf,image/png,image/jpeg,image/webp" label="上传附件" :disabled="published" @uploaded="uploadedAttachment" @error="mediaError"/></div><p v-if="!form.attachments.length">暂无附件</p><article v-for="(attachment,index) in form.attachments" :key="attachment.mediaId" class="content-attachment" :data-attachment="attachment.mediaId"><div><strong>{{ attachment.media?.originalName || attachment.mediaId }}</strong><span>{{ attachment.media?.mimeType }} · {{ attachment.media?.sizeBytes }} 字节<span v-if="attachment.media?.width"> · {{ attachment.media.width }}×{{ attachment.media.height }}</span></span></div><input v-model="attachment.label" data-attachment-label aria-label="附件标签" :disabled="published"><div class="form-actions"><button type="button" data-action="move-attachment-up" :disabled="published || index === 0" @click="moveAttachment(attachment.mediaId,-1)">上移</button><button type="button" :disabled="published || index === form.attachments.length - 1" @click="moveAttachment(attachment.mediaId,1)">下移</button><button type="button" data-action="detach-attachment-media" :disabled="published" @click="detachAttachment(attachment.mediaId)">解除引用</button></div></article></section>
       <section v-if="pendingMedia.length" class="content-media-field pending-media"><h4>待清理媒体</h4><p>解除引用并保存后，可在这里物理删除文件。</p><article v-for="media in pendingMedia" :key="media.id" :data-pending-media="media.id"><span>{{ media.originalName || media.id }}</span><button type="button" class="reject" data-action="delete-pending-media" :disabled="deletingMedia.has(media.id)" @click="deletePendingMedia(media.id)">{{ deletingMedia.has(media.id) ? '删除中…' : '删除媒体文件' }}</button></article></section>

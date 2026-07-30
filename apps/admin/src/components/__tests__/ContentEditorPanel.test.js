@@ -5,6 +5,7 @@ const { apiMock } = vi.hoisted(() => ({ apiMock: vi.fn() }));
 vi.mock("../../lib/api.js", () => ({ api: apiMock }));
 
 import ContentEditorPanel from "../ContentEditorPanel.vue";
+import RichTextEditor from "../RichTextEditor.vue";
 
 const events = [{ id: "E1", name: "2026赛事", status: "published" }];
 const profiles = [{ eventId: "E1", isVisible: true }];
@@ -259,6 +260,59 @@ describe("ContentEditorPanel", () => {
 
     expect(wrapper.get('[data-content-field="title"]').element.value).toBe("不能丢失的标题");
     expect(wrapper.text()).toContain("内容已被其他管理员更新，请刷新后重试");
+  });
+
+  it("focuses the body media section and preserves the draft when body media is rejected", async () => {
+    const wrapper = mount(ContentEditorPanel, {
+      attachTo: document.body,
+      props: { contentId: "POST-1", events, profiles }
+    });
+    await flushPromises();
+    await wrapper.get('[data-content-field="title"]').setValue("保留的标题");
+    apiMock.mockRejectedValueOnce(Object.assign(new Error("正文图片无效"), {
+      status: 422,
+      code: "CONTENT_BODY_MEDIA_INVALID"
+    }));
+
+    await wrapper.get('[data-action="save-content"]').trigger("click");
+    await flushPromises();
+
+    expect(document.activeElement).toBe(wrapper.get('[data-content-section="body-media"]').element);
+    expect(wrapper.vm.getPreviewDraft().body).toMatchObject({
+      title: "保留的标题",
+      bodyHtml: "<p>正文</p>"
+    });
+    wrapper.unmount();
+  });
+
+  it("focuses the body media section when preview rejects body media", async () => {
+    const wrapper = mount(ContentEditorPanel, {
+      attachTo: document.body,
+      props: { contentId: "POST-1", events, profiles }
+    });
+    await flushPromises();
+    await wrapper.get('[data-content-field="title"]').setValue("预览时保留的标题");
+    apiMock.mockRejectedValueOnce(Object.assign(new Error("正文图片无效"), {
+      status: 422,
+      code: "CONTENT_BODY_MEDIA_INVALID"
+    }));
+
+    await wrapper.get('[data-action="preview-content"]').trigger("click");
+    await flushPromises();
+
+    expect(document.activeElement).toBe(wrapper.get('[data-content-section="body-media"]').element);
+    expect(wrapper.vm.getPreviewDraft().body.title).toBe("预览时保留的标题");
+    wrapper.unmount();
+  });
+
+  it("shows rich editor notices as non-blocking status feedback", async () => {
+    const wrapper = await mountEditor();
+
+    wrapper.getComponent(RichTextEditor).vm.$emit("notice", "图片已插入到正文末尾");
+    await wrapper.vm.$nextTick();
+
+    expect(wrapper.get(".success-message").attributes("role")).toBe("status");
+    expect(wrapper.get(".success-message").text()).toBe("图片已插入到正文末尾");
   });
 
   it("guards content refresh and browser unload while edits are dirty", async () => {

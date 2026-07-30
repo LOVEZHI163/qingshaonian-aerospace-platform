@@ -1,4 +1,5 @@
 import React from "react";
+import { readFileSync } from "node:fs";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -654,6 +655,25 @@ describe("public content detail and failures", () => {
     expect(screen.getByText(/PNG 图片/)).toBeInTheDocument();
     expect(document.body).not.toHaveTextContent("C:/private/never-show.png");
     expect(window.__bodyScriptRan).toBe(false);
+  });
+
+  it("renders responsive figures and captions without horizontal overflow", async () => {
+    const css = readFileSync("src/styles/content.css", "utf8");
+    installApi({
+      "/api/public/content/safe-story": {
+        row: {
+          ...content("SAFE", "news", { slug: "safe-story", title: "正文图片" }),
+          bodyHtml: '<figure><img src="/api/public/media/M1" alt="现场"><figcaption>比赛现场</figcaption></figure>',
+          attachments: []
+        }
+      }
+    });
+
+    render(<App />);
+    expect(await screen.findByAltText("现场")).toHaveAttribute("src", "/api/public/media/M1");
+    expect(screen.getByText("比赛现场")).toBeInTheDocument();
+    expect(css).toMatch(/\.rich-content figure\s*\{[^}]*max-width:\s*100%/s);
+    expect(css).toMatch(/\.rich-content figcaption\s*\{[^}]*text-align:\s*center/s);
   });
 
   it("distinguishes a 404 from a retryable network failure", async () => {
