@@ -268,6 +268,8 @@ export function ensureDbShape(db) {
     certificate.source ||= "manual";
     certificate.importBatchId ||= null;
     certificate.cleanedAt ||= "";
+    delete certificate.userId;
+    delete certificate.organizationId;
     delete certificate[legacyNumberKey];
   }
   return db;

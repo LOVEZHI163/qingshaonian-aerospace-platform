@@ -53,8 +53,6 @@ export function upsertCertificate(db, {
 
   Object.assign(certificate, {
     title,
-    userId: registration.userId || null,
-    organizationId: registration.organizationId || null,
     fileName: storedFile.originalName || storedFile.fileName,
     storedName: storedFile.storedName,
     filePath: storedFile.filePath,
@@ -69,6 +67,20 @@ export function upsertCertificate(db, {
     cleanedAt: ""
   });
   return certificate;
+}
+
+export function canReadCertificate(db, user, certificate) {
+  if (user?.type === "admin") return true;
+  if (certificate?.status !== "published") return false;
+  const registration = db.registrations.find((row) => row.id === certificate.registrationId);
+  if (!registration) return false;
+  if (user?.type === "ordinary") return registration.personalUserId === user.id;
+  if (user?.type !== "organization") return false;
+  const organization = db.organizations.find((row) => row.ownerUserId === user.id);
+  const participation = organization && db.organizationEventParticipations.some((row) =>
+    row.organizationId === organization.id && row.eventId === registration.eventId
+  );
+  return Boolean(organization && participation && registration.organizationId === organization.id);
 }
 
 export function updateCertificateMetadata(db, { certificateId, title, awardName, rank, score, now }) {

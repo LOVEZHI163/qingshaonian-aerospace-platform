@@ -5,6 +5,7 @@ import { CERTIFICATE_POLICY, validateUpload } from "../src/files/policy.js";
 import { ensureDbShape } from "../src/data/seed.js";
 import {
   CertificateError,
+  canReadCertificate,
   removeCertificate,
   setCertificateStatuses,
   updateCertificateMetadata,
@@ -57,6 +58,21 @@ test("certificate JSON normalization removes the legacy camel-case number field"
   });
 
   assert.equal(Object.hasOwn(db.certificates[0], legacyKey), false);
+});
+
+test("certificate reads derive merged ownership from its registration", () => {
+  const db = {
+    registrations: [{ id: "R1", eventId: "E1", personalUserId: "U1", organizationId: "O1" }],
+    certificates: [{ id: "C1", registrationId: "R1", status: "published", filePath: "/safe/c1.png" }],
+    organizations: [{ id: "O1", ownerUserId: "OWNER1" }],
+    organizationEventParticipations: [{ organizationId: "O1", eventId: "E1" }]
+  };
+  const certificate = db.certificates[0];
+
+  assert.equal(canReadCertificate(db, { id: "U1", type: "ordinary" }, certificate), true);
+  assert.equal(canReadCertificate(db, { id: "OWNER1", type: "organization" }, certificate), true);
+  assert.equal(canReadCertificate(db, { id: "U2", type: "ordinary" }, certificate), false);
+  assert.equal(canReadCertificate(db, { id: "MANAGER1", type: "organization" }, certificate), false);
 });
 
 test("certificate service upserts the two slots and resets replacements to draft", () => {

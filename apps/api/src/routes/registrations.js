@@ -16,6 +16,7 @@ import {
   updateRegistrationStatus
 } from "../services/registrations.js";
 import { requireOrganizationEventParticipation, requireOrdinaryUser, requireWritableEvent } from "../services/access-control.js";
+import { recordAudit } from "../services/audit.js";
 
 export function createRegistrationsRouter({ store, requireUser, requireAdmin, requirePasswordReady, asyncRoute, makeId, now, clock = () => new Date() }) {
   const router = express.Router();
@@ -138,6 +139,14 @@ export function createRegistrationsRouter({ store, requireUser, requireAdmin, re
     if (!row) return res.status(404).json({ error: "Registration not found" });
     updateRegistrationStatus(db, row, req.body, req.user);
     row.updatedAt = now();
+    recordAudit(db, {
+      actor: req.user,
+      action: "registration.review",
+      targetType: "registration",
+      targetId: row.id,
+      summary: `Update registration status: ${row.status}`,
+      createdAt: row.updatedAt
+    });
     await store.writeDb(db);
     res.json({ row });
   }));
@@ -163,8 +172,18 @@ export function createRegistrationsRouter({ store, requireUser, requireAdmin, re
     row.score = String(req.body.score || "");
     row.resultRecordedAt = now();
     row.updatedAt = now();
+    const certificates = db.certificates.filter((certificate) => certificate.registrationId === row.id);
+    for (const certificate of certificates) {
+      certificate.awardName = row.awardName;
+      certificate.rank = row.rank;
+      certificate.score = row.score;
+      certificate.updatedAt = row.updatedAt;
+    }
     await store.writeDb(db);
-    res.json({ row });
+    res.json({
+      row,
+      certificates: certificates.map(({ filePath, storedName, ...certificate }) => certificate)
+    });
   }));
 
   router.get("/admin/events/:eventId/registrations", ...admin, asyncRoute(async (req, res) => {

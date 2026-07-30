@@ -28,7 +28,7 @@ function uploadCertificate(baseUrl, cookie, registrationId, slot, {
   mimeType = "image/png",
   title = `证书 ${slot}`
 } = {}) {
-  return fetch(`${baseUrl}/api/admin/registrations/${registrationId}/certificates/${slot}`, withSession(cookie, {
+  return fetch(`${baseUrl}/api/admin/events/wz-aerospace-2026/registrations/${registrationId}/certificates/${slot}`, withSession(cookie, {
     method: "POST",
     body: certificateForm(buffer, fileName, mimeType, { title })
   }));
@@ -52,6 +52,10 @@ async function approveRegistration(dbPath, registrationId = "R20260627001") {
   const db = JSON.parse(await fs.readFile(dbPath, "utf8"));
   const registration = db.registrations.find((row) => row.id === registrationId);
   registration.status = "approved";
+  db.organizationEventParticipations ||= [];
+  if (!db.organizationEventParticipations.some((row) => row.organizationId === "O1001" && row.eventId === registration.eventId)) {
+    db.organizationEventParticipations.push({ organizationId: "O1001", eventId: registration.eventId, joinedAt: "2026-07-17T00:00:00.000Z" });
+  }
   await fs.writeFile(dbPath, JSON.stringify(db, null, 2));
 }
 
@@ -59,8 +63,9 @@ function manualDb() {
   return {
     registrations: [{
       id: "R1",
+      eventId: "wz-aerospace-2026",
       status: "approved",
-      userId: "U1",
+      personalUserId: "U1",
       organizationId: null,
       athlete: { name: "测试运动员" },
       projectName: "测试赛项",
@@ -73,8 +78,6 @@ function manualDb() {
       registrationId: "R1",
       slot: 1,
       title: "旧证书",
-      userId: "U1",
-      organizationId: null,
       fileName: "old.png",
       storedName: "old.png",
       filePath: "/safe/certificates/old.png",
@@ -88,7 +91,9 @@ function manualDb() {
       publishedAt: "",
       cleanedAt: ""
     }],
+    events: [{ id: "wz-aerospace-2026", status: "published", archivedAt: null }],
     organizations: [],
+    organizationEventParticipations: [],
     memberships: [],
     fileCleanupJournal: []
   };
@@ -109,7 +114,12 @@ function paginationDb() {
       { id: "C3", registrationId: "R3", slot: 1, title: "Third", fileName: "third.png", storedName: "third.png", filePath: "/safe/third.png", status: "published", source: "manual", importBatchId: null, uploadedAt: "2026-07-18T00:00:00.000Z", publishedAt: "2026-07-18T00:00:00.000Z", cleanedAt: "" },
       { id: "C4", registrationId: "R4", slot: 1, title: "Fourth", fileName: "fourth.png", storedName: "fourth.png", filePath: "/safe/fourth.png", status: "draft", source: "manual", importBatchId: null, uploadedAt: "2026-07-18T00:00:00.000Z", publishedAt: "", cleanedAt: "" }
     ],
+    events: [
+      { id: "E1", status: "published", archivedAt: null },
+      { id: "E2", status: "published", archivedAt: null }
+    ],
     organizations: [],
+    organizationEventParticipations: [],
     memberships: [],
     fileCleanupJournal: []
   };
@@ -153,17 +163,17 @@ test("admin certificate list filters, sorts stably, and returns bounded paging m
   const storage = { saveFile: async () => ({}), deleteFile: async () => {}, readFile: async () => ONE_PIXEL_PNG };
 
   await withCertificateRouter({ store, storage }, async (baseUrl) => {
-    const first = await fetch(`${baseUrl}/api/admin/certificates?eventId=E1&status=draft&group=G1&projectId=P1&name=Alice&sort=name&direction=asc&page=1&pageSize=1`);
+    const first = await fetch(`${baseUrl}/api/admin/events/E1/certificates?status=draft&group=G1&projectId=P1&name=Alice&sort=name&direction=asc&page=1&pageSize=1`);
     assert.equal(first.status, 200);
     const firstPayload = await responseJson(first);
     assert.deepEqual({ total: firstPayload.total, page: firstPayload.page, pageSize: firstPayload.pageSize }, { total: 2, page: 1, pageSize: 1 });
     assert.deepEqual(firstPayload.rows.map((row) => row.id), ["C1"]);
 
-    const second = await fetch(`${baseUrl}/api/admin/certificates?eventId=E1&status=draft&group=G1&projectId=P1&name=Alice&sort=name&direction=asc&page=2&pageSize=1`);
+    const second = await fetch(`${baseUrl}/api/admin/events/E1/certificates?status=draft&group=G1&projectId=P1&name=Alice&sort=name&direction=asc&page=2&pageSize=1`);
     assert.equal(second.status, 200);
     assert.deepEqual((await responseJson(second)).rows.map((row) => row.id), ["C2"]);
 
-    const tooLarge = await fetch(`${baseUrl}/api/admin/certificates?pageSize=101`);
+    const tooLarge = await fetch(`${baseUrl}/api/admin/events/E1/certificates?pageSize=101`);
     assert.equal(tooLarge.status, 422);
   });
 });
@@ -195,7 +205,7 @@ test("manual certificate management uploads both slots, edits, replaces, deletes
     assert.deepEqual(await fs.readFile(firstFilePath), ONE_PIXEL_PNG);
     assert.deepEqual(await fs.readFile(secondFilePath), PDF);
 
-    const resultUpdate = await fetch(`${baseUrl}/api/admin/registrations/R20260627001/result`, jsonRequest("POST", {
+    const resultUpdate = await fetch(`${baseUrl}/api/admin/events/wz-aerospace-2026/registrations/R20260627001/result`, jsonRequest("POST", {
       awardName: "特等奖",
       rank: "1",
       score: "99.9"
@@ -214,13 +224,13 @@ test("manual certificate management uploads both slots, edits, replaces, deletes
       score: "99.9"
     })));
 
-    const resultCertificates = (await responseJson(await fetch(`${baseUrl}/api/admin/certificates`, withSession(admin.cookie)))).rows
+    const resultCertificates = (await responseJson(await fetch(`${baseUrl}/api/admin/events/wz-aerospace-2026/certificates`, withSession(admin.cookie)))).rows
       .filter((row) => row.registrationId === "R20260627001");
     assert.equal(resultCertificates.length, 2);
     assert.equal(resultCertificates.every((row) => row.awardName === "特等奖" && row.rank === "1" && row.score === "99.9"), true);
 
     async function assertExactResultSync(expected) {
-      const response = await fetch(`${baseUrl}/api/admin/registrations/R20260627001/result`, jsonRequest("POST", expected, admin.cookie));
+      const response = await fetch(`${baseUrl}/api/admin/events/wz-aerospace-2026/registrations/R20260627001/result`, jsonRequest("POST", expected, admin.cookie));
       assert.equal(response.status, 200);
       const payload = await responseJson(response);
       assert.equal(payload.certificates.length, 2);
@@ -228,7 +238,7 @@ test("manual certificate management uploads both slots, edits, replaces, deletes
         row.awardName === expected.awardName && row.rank === expected.rank && row.score === expected.score
       )), true);
       assert.equal(payload.certificates.every((row) => !("filePath" in row) && !("storedName" in row)), true);
-      const persisted = (await responseJson(await fetch(`${baseUrl}/api/admin/certificates`, withSession(admin.cookie)))).rows
+      const persisted = (await responseJson(await fetch(`${baseUrl}/api/admin/events/wz-aerospace-2026/certificates`, withSession(admin.cookie)))).rows
         .filter((row) => row.registrationId === "R20260627001");
       assert.equal(persisted.length, 2);
       assert.equal(persisted.every((row) => (
@@ -240,7 +250,7 @@ test("manual certificate management uploads both slots, edits, replaces, deletes
     await assertExactResultSync({ awardName: "特等奖", rank: "", score: "99.9" });
     await assertExactResultSync({ awardName: "特等奖", rank: "1", score: "" });
 
-    const metadata = await fetch(`${baseUrl}/api/admin/certificates/${first.id}`, jsonRequest("PATCH", {
+    const metadata = await fetch(`${baseUrl}/api/admin/events/wz-aerospace-2026/certificates/${first.id}`, jsonRequest("PATCH", {
       title: "  金奖证书  ",
       awardName: "一等奖",
       rank: "1",
@@ -248,7 +258,7 @@ test("manual certificate management uploads both slots, edits, replaces, deletes
     }, admin.cookie));
     assert.equal(metadata.status, 200);
     assert.deepEqual(((await responseJson(metadata)).row), {
-      ...(await responseJson(await fetch(`${baseUrl}/api/admin/certificates`, withSession(admin.cookie)))).rows.find((row) => row.id === first.id),
+      ...(await responseJson(await fetch(`${baseUrl}/api/admin/events/wz-aerospace-2026/certificates`, withSession(admin.cookie)))).rows.find((row) => row.id === first.id),
       title: "金奖证书",
       awardName: "一等奖",
       rank: "1",
@@ -266,7 +276,7 @@ test("manual certificate management uploads both slots, edits, replaces, deletes
     assert.notEqual(replacedFilePath, firstFilePath);
     await assert.rejects(fs.access(firstFilePath), { code: "ENOENT" });
 
-    const published = await fetch(`${baseUrl}/api/admin/certificates/bulk-status`, jsonRequest("POST", {
+    const published = await fetch(`${baseUrl}/api/admin/events/wz-aerospace-2026/certificates/bulk-status`, jsonRequest("POST", {
       ids: [first.id, second.id],
       status: "published"
     }, admin.cookie));
@@ -274,14 +284,14 @@ test("manual certificate management uploads both slots, edits, replaces, deletes
     const publishedRows = (await responseJson(published)).rows;
     assert.equal(publishedRows.every((row) => row.status === "published" && row.publishedAt), true);
 
-    const withdrawn = await fetch(`${baseUrl}/api/admin/certificates/bulk-status`, jsonRequest("POST", {
+    const withdrawn = await fetch(`${baseUrl}/api/admin/events/wz-aerospace-2026/certificates/bulk-status`, jsonRequest("POST", {
       ids: [first.id, second.id],
       status: "draft"
     }, admin.cookie));
     assert.equal(withdrawn.status, 200);
     assert.equal((await responseJson(withdrawn)).rows.every((row) => row.status === "draft" && !row.publishedAt), true);
 
-    const removed = await fetch(`${baseUrl}/api/admin/certificates/${second.id}`, withSession(admin.cookie, { method: "DELETE" }));
+    const removed = await fetch(`${baseUrl}/api/admin/events/wz-aerospace-2026/certificates/${second.id}`, withSession(admin.cookie, { method: "DELETE" }));
     assert.equal(removed.status, 204);
     await assert.rejects(fs.access(secondFilePath), { code: "ENOENT" });
     persistedDb = JSON.parse(await fs.readFile(dbPath, "utf8"));
@@ -324,7 +334,7 @@ test("manual certificate upload rejects a pending oversized file before parsing 
   };
 
   await withCertificateRouter({ store, storage }, async (baseUrl) => {
-    const response = await fetch(`${baseUrl}/api/admin/registrations/R1/certificates/1`, {
+    const response = await fetch(`${baseUrl}/api/admin/events/wz-aerospace-2026/registrations/R1/certificates/1`, {
       method: "POST",
       body: certificateForm(Buffer.alloc(10 * 1024 * 1024 + 1), "too-large.png", "image/png", { title: "不应保存" })
     });
@@ -376,7 +386,7 @@ test("manual certificate upload rechecks approval inside the mutation lock befor
   };
 
   await withCertificateRouter({ store, storage, mutationAsyncRoute }, async (baseUrl) => {
-    const response = await fetch(`${baseUrl}/api/admin/registrations/R1/certificates/1`, {
+    const response = await fetch(`${baseUrl}/api/admin/events/wz-aerospace-2026/registrations/R1/certificates/1`, {
       method: "POST",
       body: certificateForm(ONE_PIXEL_PNG, "should-not-save.png", "image/png", { title: "不应保存" })
     });
@@ -420,7 +430,7 @@ test("manual certificate management applies the same file authorization to previ
     assert.match(adminPreview.headers.get("content-disposition") || "", /^inline;/);
     assert.deepEqual(Buffer.from(await adminPreview.arrayBuffer()), ONE_PIXEL_PNG);
 
-    const publish = await fetch(`${baseUrl}/api/admin/certificates/bulk-status`, jsonRequest("POST", {
+    const publish = await fetch(`${baseUrl}/api/admin/events/wz-aerospace-2026/certificates/bulk-status`, jsonRequest("POST", {
       ids: [certificate.id], status: "published"
     }, admin.cookie));
     assert.equal(publish.status, 200);
@@ -438,12 +448,12 @@ test("manual certificate management applies the same file authorization to previ
     assert.match(download.headers.get("content-disposition") || "", /\.png/i);
     assert.deepEqual(Buffer.from(await download.arrayBuffer()), ONE_PIXEL_PNG);
 
-    const adminList = await fetch(`${baseUrl}/api/admin/certificates`, withSession(admin.cookie));
+    const adminList = await fetch(`${baseUrl}/api/admin/events/wz-aerospace-2026/certificates`, withSession(admin.cookie));
     assert.equal(adminList.status, 200);
     assert.equal((await responseJson(adminList)).rows.some((row) => row.id === certificate.id), true);
-    const ownList = await fetch(`${baseUrl}/api/me/certificates`, withSession(athleteOwner.cookie));
+    const ownList = await fetch(`${baseUrl}/api/me/events/wz-aerospace-2026/certificates`, withSession(athleteOwner.cookie));
     assert.deepEqual((await responseJson(ownList)).rows.map((row) => row.id), [certificate.id]);
-    const organizationList = await fetch(`${baseUrl}/api/organizations/O1001/certificates`, withSession(organizationOwner.cookie));
+    const organizationList = await fetch(`${baseUrl}/api/organization/events/wz-aerospace-2026/certificates`, withSession(organizationOwner.cookie));
     assert.deepEqual((await responseJson(organizationList)).rows.map((row) => row.id), [certificate.id]);
   }, { prefix: "manual-certificate-management-access-" });
 });
@@ -477,7 +487,7 @@ test("manual certificate management rejects invalid uploads, preserves cleaned h
     const valid = await uploadCertificate(baseUrl, admin.cookie, "R20260627001", 1, { title: "待清理证书" });
     assert.equal(valid.status, 201);
     const certificate = (await responseJson(valid)).row;
-    const publish = await fetch(`${baseUrl}/api/admin/certificates/bulk-status`, jsonRequest("POST", {
+    const publish = await fetch(`${baseUrl}/api/admin/events/wz-aerospace-2026/certificates/bulk-status`, jsonRequest("POST", {
       ids: [certificate.id], status: "published"
     }, admin.cookie));
     assert.equal(publish.status, 200);
@@ -486,18 +496,18 @@ test("manual certificate management rejects invalid uploads, preserves cleaned h
     await fs.writeFile(dbPath, JSON.stringify(db, null, 2), "utf8");
     assert.equal((await fetch(`${baseUrl}/api/certificates/${certificate.id}/file`, withSession(admin.cookie))).status, 404);
 
-    const adminRows = (await responseJson(await fetch(`${baseUrl}/api/admin/certificates`, withSession(admin.cookie)))).rows;
+    const adminRows = (await responseJson(await fetch(`${baseUrl}/api/admin/events/wz-aerospace-2026/certificates`, withSession(admin.cookie)))).rows;
     const cleaned = adminRows.find((row) => row.id === certificate.id);
     assert.ok(cleaned);
     assert.equal(cleaned.cleanedAt, "2026-07-17T12:00:00.000Z");
     assert.equal(Object.hasOwn(cleaned, "previewUrl"), false);
     assert.equal(Object.hasOwn(cleaned, "downloadUrl"), false);
-    const ownRows = (await responseJson(await fetch(`${baseUrl}/api/me/certificates`, withSession(athleteOwner.cookie)))).rows;
+    const ownRows = (await responseJson(await fetch(`${baseUrl}/api/me/events/wz-aerospace-2026/certificates`, withSession(athleteOwner.cookie)))).rows;
     const ownCleaned = ownRows.find((row) => row.id === certificate.id);
     assert.ok(ownCleaned);
     assert.equal(ownCleaned.cleanedAt, "2026-07-17T12:00:00.000Z");
     assert.equal(Object.hasOwn(ownCleaned, "downloadUrl"), false);
-    const organizationRows = (await responseJson(await fetch(`${baseUrl}/api/organizations/O1001/certificates`, withSession(organizationOwner.cookie)))).rows;
+    const organizationRows = (await responseJson(await fetch(`${baseUrl}/api/organization/events/wz-aerospace-2026/certificates`, withSession(organizationOwner.cookie)))).rows;
     const organizationCleaned = organizationRows.find((row) => row.id === certificate.id);
     assert.ok(organizationCleaned);
     assert.equal(organizationCleaned.cleanedAt, "2026-07-17T12:00:00.000Z");
@@ -525,7 +535,7 @@ test("manual certificate management journals old files when committed replacemen
   };
 
   await withCertificateRouter({ store, storage }, async (baseUrl) => {
-    const replacement = await fetch(`${baseUrl}/api/admin/registrations/R1/certificates/1`, {
+    const replacement = await fetch(`${baseUrl}/api/admin/events/wz-aerospace-2026/registrations/R1/certificates/1`, {
       method: "POST",
       body: certificateForm(ONE_PIXEL_PNG, "new.png", "image/png", { title: "新证书" })
     });
@@ -543,7 +553,7 @@ test("manual certificate management journals old files when committed replacemen
       lastError: "disk unavailable"
     }]);
 
-    const removed = await fetch(`${baseUrl}/api/admin/certificates/C1`, { method: "DELETE" });
+    const removed = await fetch(`${baseUrl}/api/admin/events/wz-aerospace-2026/certificates/C1`, { method: "DELETE" });
     assert.equal(removed.status, 204);
     assert.deepEqual(persisted.certificates, []);
     assert.deepEqual(persisted.fileCleanupJournal.map((row) => row.category).sort(), [
@@ -576,7 +586,7 @@ test("manual certificate management rolls back a new file and journals it when d
   };
 
   await withCertificateRouter({ store, storage }, async (baseUrl) => {
-    const response = await fetch(`${baseUrl}/api/admin/registrations/R1/certificates/1`, {
+    const response = await fetch(`${baseUrl}/api/admin/events/wz-aerospace-2026/registrations/R1/certificates/1`, {
       method: "POST",
       body: certificateForm(ONE_PIXEL_PNG, "orphan.png", "image/png", { title: "不应提交" })
     });
@@ -606,7 +616,7 @@ test("manual certificate management whitelists certificate fields in admin, owne
     const upload = await uploadCertificate(baseUrl, admin.cookie, "R20260627001", 1, { title: "白名单证书" });
     assert.equal(upload.status, 201);
     const certificate = (await responseJson(upload)).row;
-    const published = await fetch(`${baseUrl}/api/admin/certificates/bulk-status`, jsonRequest("POST", {
+    const published = await fetch(`${baseUrl}/api/admin/events/wz-aerospace-2026/certificates/bulk-status`, jsonRequest("POST", {
       ids: [certificate.id], status: "published"
     }, admin.cookie));
     assert.equal(published.status, 200);
@@ -620,9 +630,9 @@ test("manual certificate management whitelists certificate fields in admin, owne
     await fs.writeFile(dbPath, JSON.stringify(db, null, 2), "utf8");
 
     const responses = [
-      await fetch(`${baseUrl}/api/admin/certificates`, withSession(admin.cookie)),
-      await fetch(`${baseUrl}/api/me/certificates`, withSession(athleteOwner.cookie)),
-      await fetch(`${baseUrl}/api/organizations/O1001/certificates`, withSession(organizationOwner.cookie))
+      await fetch(`${baseUrl}/api/admin/events/wz-aerospace-2026/certificates`, withSession(admin.cookie)),
+      await fetch(`${baseUrl}/api/me/events/wz-aerospace-2026/certificates`, withSession(athleteOwner.cookie)),
+      await fetch(`${baseUrl}/api/organization/events/wz-aerospace-2026/certificates`, withSession(organizationOwner.cookie))
     ];
     for (const response of responses) {
       assert.equal(response.status, 200);
@@ -634,7 +644,7 @@ test("manual certificate management whitelists certificate fields in admin, owne
       assert.equal(Object.hasOwn(row, "storedName"), false);
     }
 
-    const single = await fetch(`${baseUrl}/api/admin/certificates/${certificate.id}`, jsonRequest("PATCH", {
+    const single = await fetch(`${baseUrl}/api/admin/events/wz-aerospace-2026/certificates/${certificate.id}`, jsonRequest("PATCH", {
       title: "白名单证书（修改）"
     }, admin.cookie));
     assert.equal(single.status, 200);

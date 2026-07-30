@@ -590,8 +590,6 @@ export async function commitCertificateImport({
         }
         Object.assign(row, {
           title: certificate.title,
-          userId: registration.userId || null,
-          organizationId: registration.organizationId || null,
           fileName: stored.fileName,
           storedName: stored.storedName,
           filePath: stored.filePath,

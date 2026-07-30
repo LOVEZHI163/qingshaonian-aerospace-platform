@@ -6,12 +6,14 @@ import multer from "multer";
 import { deletePrivateFile, readPrivateFile, saveCertificateFile } from "../files/storage.js";
 import {
   CertificateError,
+  canReadCertificate,
   removeCertificate,
   setCertificateStatuses,
   updateCertificateMetadata,
   upsertCertificate
 } from "../services/certificates.js";
 import { recordAudit } from "../services/audit.js";
+import { requireOrganizationEventParticipation, requireWritableEvent } from "../services/access-control.js";
 
 export const defaultCertificateStorage = {
   saveFile: saveCertificateFile,
@@ -29,12 +31,33 @@ const MIME_BY_EXTENSION = new Map([
 
 const SAFE_EVENT_FILTER = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 
-function eventFilter(value) {
-  if (value === undefined) return null;
+function eventIdOrError(value) {
+  if (value === undefined) throw new CertificateError(422, "An event is required");
   if (typeof value !== "string" || !SAFE_EVENT_FILTER.test(value)) {
     throw new CertificateError(422, "赛事筛选不合法");
   }
   return value;
+}
+
+function eventOrError(db, value) {
+  const eventId = eventIdOrError(value);
+  const event = db.events.find((row) => row.id === eventId);
+  if (!event) throw new CertificateError(404, "Event not found");
+  return event;
+}
+
+function registrationForEvent(db, eventId, registrationId) {
+  const registration = db.registrations.find((row) => row.id === registrationId && row.eventId === eventId);
+  if (!registration) throw new CertificateError(404, "Registration not found");
+  return registration;
+}
+
+function certificateForEvent(db, eventId, certificateId) {
+  const certificate = db.certificates.find((row) => row.id === certificateId);
+  if (!certificate || !db.registrations.some((row) => row.id === certificate.registrationId && row.eventId === eventId)) {
+    throw new CertificateError(404, "Certificate not found");
+  }
+  return certificate;
 }
 
 function cleanupMarker({ makeId, filePath, category, now, attempts = 0, error = "pending cleanup" }) {
@@ -97,8 +120,6 @@ function certificatePayload(certificate, registration) {
     registrationId: certificate.registrationId,
     slot: certificate.slot,
     title: certificate.title,
-    userId: certificate.userId,
-    organizationId: certificate.organizationId,
     fileName: certificate.fileName,
     awardName: certificate.awardName,
     rank: certificate.rank,
@@ -120,37 +141,6 @@ function certificatePayload(certificate, registration) {
     payload.downloadUrl = `/api/certificates/${certificate.id}/file?download=1`;
   }
   return payload;
-}
-
-function isOperationalOrganization(db, organizationId) {
-  const organization = db.organizations.find((row) => row.id === organizationId);
-  return organization?.status === "active" && organization.reviewStatus === "approved";
-}
-
-function canManageOrganization(db, userId, organizationId) {
-  if (!isOperationalOrganization(db, organizationId)) return false;
-  const membership = db.memberships.find((row) =>
-    row.userId === userId
-    && row.organizationId === organizationId
-    && row.status === "active"
-  );
-  return ["owner", "manager"].includes(membership?.role);
-}
-
-function activeMemberIds(db, organizationId) {
-  return new Set(db.memberships
-    .filter((row) => row.organizationId === organizationId && row.status === "active" && row.userId)
-    .map((row) => row.userId));
-}
-
-function canReadCertificate(db, user, certificate) {
-  if (user.type === "admin") return true;
-  if (certificate.status !== "published") return false;
-  const registration = db.registrations.find((row) => row.id === certificate.registrationId);
-  if (!registration) return false;
-  if (registration.userId === user.id) return true;
-  if (!registration.organizationId || !canManageOrganization(db, user.id, registration.organizationId)) return false;
-  return activeMemberIds(db, registration.organizationId).has(registration.userId);
 }
 
 function extensionFor(certificate) {
@@ -201,10 +191,9 @@ function certificateSortValue(certificate, registration, sort) {
   return queryText(certificate.uploadedAt);
 }
 
-function listAdminCertificateRows(db, query) {
+function listAdminCertificateRows(db, eventId, query) {
   const pageSize = queryPositiveInteger(query.pageSize, 50, "pageSize", 100);
   const requestedPage = queryPositiveInteger(query.page, 1, "page");
-  const eventId = queryText(query.eventId);
   const registrationId = queryText(query.registrationId);
   const status = queryText(query.status);
   const group = queryText(query.group);
@@ -218,7 +207,7 @@ function listAdminCertificateRows(db, query) {
   const entries = db.certificates
     .map((certificate) => ({ certificate, registration: db.registrations.find((row) => row.id === certificate.registrationId) }))
     .filter(({ certificate, registration }) => {
-      if (eventId && registration?.eventId !== eventId) return false;
+      if (registration?.eventId !== eventId) return false;
       if (registrationId && certificate.registrationId !== registrationId) return false;
       if (status && certificate.status !== status) return false;
       if (group && registration?.group !== group) return false;
@@ -250,8 +239,8 @@ function listAdminCertificateRows(db, query) {
   };
 }
 
-function approvedManualCertificateRegistration(db, registrationId) {
-  const registration = db.registrations.find((row) => row.id === registrationId);
+function approvedManualCertificateRegistration(db, eventId, registrationId) {
+  const registration = registrationForEvent(db, eventId, registrationId);
   if (!registration) throw new CertificateError(404, "报名记录不存在");
   if (registration.status !== "approved") {
     throw new CertificateError(409, "报名审核通过后才能录入证书");
@@ -282,14 +271,17 @@ export function createCertificatesRouter({
     });
   });
   const approvedManualUpload = asyncRoute(async (req, _res, next) => {
-    approvedManualCertificateRegistration(await store.readDb(), req.params.id);
+    const db = await store.readDb();
+    requireWritableEvent(db, eventIdOrError(req.params.eventId));
+    approvedManualCertificateRegistration(db, req.params.eventId, req.params.id);
     next();
   });
 
-  router.post("/admin/registrations/:id/certificates/:slot", ...admin, approvedManualUpload, uploadOne, mutationAsyncRoute(async (req, res) => {
+  router.post("/admin/events/:eventId/registrations/:id/certificates/:slot", ...admin, approvedManualUpload, uploadOne, mutationAsyncRoute(async (req, res) => {
     const originalDb = await store.readDb();
     const db = structuredClone(originalDb);
-    const registration = approvedManualCertificateRegistration(db, req.params.id);
+    requireWritableEvent(db, eventIdOrError(req.params.eventId));
+    const registration = approvedManualCertificateRegistration(db, req.params.eventId, req.params.id);
     if (!req.file) throw new CertificateError(422, "证书文件不能为空");
 
     const slot = Number(req.params.slot);
@@ -333,8 +325,10 @@ export function createCertificatesRouter({
     }
   }));
 
-  router.patch("/admin/certificates/:id", ...admin, mutationAsyncRoute(async (req, res) => {
+  router.patch("/admin/events/:eventId/certificates/:id", ...admin, mutationAsyncRoute(async (req, res) => {
     const db = await store.readDb();
+    requireWritableEvent(db, eventIdOrError(req.params.eventId));
+    certificateForEvent(db, req.params.eventId, req.params.id);
     const certificate = updateCertificateMetadata(db, {
       certificateId: req.params.id,
       title: req.body.title,
@@ -348,8 +342,10 @@ export function createCertificatesRouter({
     res.json({ row: certificatePayload(certificate, registration) });
   }));
 
-  router.delete("/admin/certificates/:id", ...admin, mutationAsyncRoute(async (req, res) => {
+  router.delete("/admin/events/:eventId/certificates/:id", ...admin, mutationAsyncRoute(async (req, res) => {
     const db = await store.readDb();
+    requireWritableEvent(db, eventIdOrError(req.params.eventId));
+    certificateForEvent(db, req.params.eventId, req.params.id);
     const certificate = removeCertificate(db, req.params.id);
     const marker = cleanupMarker({ makeId, filePath: certificate.filePath, category: "certificate-manual-deleted", now });
     db.fileCleanupJournal.push(marker);
@@ -366,8 +362,10 @@ export function createCertificatesRouter({
     res.status(204).end();
   }));
 
-  router.post("/admin/certificates/bulk-status", ...admin, mutationAsyncRoute(async (req, res) => {
+  router.post("/admin/events/:eventId/certificates/bulk-status", ...admin, mutationAsyncRoute(async (req, res) => {
     const db = await store.readDb();
+    requireWritableEvent(db, eventIdOrError(req.params.eventId));
+    for (const id of req.body.ids || []) certificateForEvent(db, req.params.eventId, id);
     const rows = setCertificateStatuses(db, req.body.ids, req.body.status, now());
     recordAudit(db, {
       actor: req.user,
@@ -386,36 +384,35 @@ export function createCertificatesRouter({
     });
   }));
 
-  router.get("/admin/certificates", ...admin, asyncRoute(async (req, res) => {
+  router.get("/admin/events/:eventId/certificates", ...admin, asyncRoute(async (req, res) => {
     const db = await store.readDb();
-    const page = listAdminCertificateRows(db, req.query);
+    eventOrError(db, req.params.eventId);
+    const page = listAdminCertificateRows(db, req.params.eventId, req.query);
     const rows = page.rows
       .map(({ certificate, registration }) => certificatePayload(certificate, registration));
     res.json({ ...page, rows });
   }));
 
-  router.get("/me/certificates", ...user, asyncRoute(async (req, res) => {
+  router.get("/me/events/:eventId/certificates", ...user, asyncRoute(async (req, res) => {
     const db = await store.readDb();
-    const eventId = eventFilter(req.query.eventId);
+    if (req.user.type !== "ordinary") throw new CertificateError(403, "Ordinary user required");
+    const eventId = eventOrError(db, req.params.eventId).id;
     const rows = db.certificates
       .filter((certificate) => {
         if (certificate.status !== "published") return false;
         const registration = db.registrations.find((row) => row.id === certificate.registrationId);
-        return registration?.userId === req.user.id && (!eventId || registration.eventId === eventId);
+        return registration?.personalUserId === req.user.id && registration.eventId === eventId;
       })
       .map((certificate) => certificatePayload(certificate, db.registrations.find((row) => row.id === certificate.registrationId)));
     res.json({ rows });
   }));
 
-  router.get("/organizations/:id/certificates", ...user, asyncRoute(async (req, res) => {
+  router.get("/organization/events/:eventId/certificates", ...user, asyncRoute(async (req, res) => {
     const db = await store.readDb();
-    if (!canManageOrganization(db, req.user.id, req.params.id)) throw new CertificateError(403, "无权查看该组织证书");
-    const eventId = eventFilter(req.query.eventId);
-    const memberIds = activeMemberIds(db, req.params.id);
+    const eventId = eventOrError(db, req.params.eventId).id;
+    const { organization } = requireOrganizationEventParticipation(db, req.user, eventId);
     const registrationIds = new Set(db.registrations
-      .filter((row) => row.organizationId === req.params.id
-        && memberIds.has(row.userId)
-        && (!eventId || row.eventId === eventId))
+      .filter((row) => row.organizationId === organization.id && row.eventId === eventId)
       .map((row) => row.id));
     const rows = db.certificates
       .filter((certificate) => certificate.status === "published" && registrationIds.has(certificate.registrationId))

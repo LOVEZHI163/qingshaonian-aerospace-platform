@@ -128,7 +128,7 @@ test("audit dashboard records organization, registration, event and certificate 
     assert.equal(disableOrganization.status, 200);
     assert.equal((await disableOrganization.json()).organization.status, "disabled");
 
-    const reviewRegistration = await fetch(`${baseUrl}/api/registrations/R20260627001/status`, jsonRequest("PATCH", {
+    const reviewRegistration = await fetch(`${baseUrl}/api/admin/events/wz-aerospace-2026/registrations/R20260627001/status`, jsonRequest("PATCH", {
       status: "approved"
     }, admin.cookie));
     assert.equal(reviewRegistration.status, 200);
@@ -148,8 +148,6 @@ test("audit dashboard records organization, registration, event and certificate 
       registrationId: "R20260627002",
       slot: 1,
       title: "一等奖",
-      userId: "U2001",
-      organizationId: "O1002",
       fileName: "award.png",
       storedName: "award.png",
       filePath: "C:/private/uploads/certificates/award.png",
@@ -165,20 +163,20 @@ test("audit dashboard records organization, registration, event and certificate 
     });
     await fs.writeFile(dbPath, JSON.stringify(db, null, 2), "utf8");
 
-    const publish = await fetch(`${baseUrl}/api/admin/certificates/bulk-status`, jsonRequest("POST", {
+    const publish = await fetch(`${baseUrl}/api/admin/events/wz-aerospace-2026/certificates/bulk-status`, jsonRequest("POST", {
       ids: ["C-AUDIT"],
       status: "published"
     }, admin.cookie));
     assert.equal(publish.status, 200);
 
-    const withdraw = await fetch(`${baseUrl}/api/admin/certificates/bulk-status`, jsonRequest("POST", {
+    const withdraw = await fetch(`${baseUrl}/api/admin/events/wz-aerospace-2026/certificates/bulk-status`, jsonRequest("POST", {
       ids: ["C-AUDIT"],
       status: "draft"
     }, admin.cookie));
     assert.equal(withdraw.status, 200);
     assert.equal((await withdraw.json()).rows[0].status, "draft");
 
-    const remove = await fetch(`${baseUrl}/api/admin/certificates/C-AUDIT`, withSession(admin.cookie, { method: "DELETE" }));
+    const remove = await fetch(`${baseUrl}/api/admin/events/wz-aerospace-2026/certificates/C-AUDIT`, withSession(admin.cookie, { method: "DELETE" }));
     assert.equal(remove.status, 204);
 
     const archiveEvent = await fetch(`${baseUrl}/api/admin/events/wz-aerospace-2026/archive`, jsonRequest("POST", {}, admin.cookie));

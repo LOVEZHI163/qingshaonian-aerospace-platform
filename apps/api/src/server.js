@@ -476,7 +476,6 @@ app.delete("/api/admin/users/:id", requireAdmin, requirePasswordReady, mutationA
   db.users = db.users.filter((item) => item.id !== user.id);
   db.organizations = db.organizations.filter((org) => org.ownerUserId !== user.id);
   db.memberships = db.memberships.filter((membership) => membership.userId !== user.id && !ownedOrganizationIds.includes(membership.organizationId));
-  db.certificates = db.certificates.map((certificate) => certificate.userId === user.id ? { ...certificate, userId: null } : certificate);
   await writeDb(db);
   res.json({ ok: true });
 }));
