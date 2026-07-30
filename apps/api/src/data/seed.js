@@ -76,11 +76,12 @@ export const seedDb = {
   users: [
     { id: "U1001", name: "陈宇航家长", phone: "13800000001", password: "123456", type: "ordinary", status: "active", sessionVersion: 0, mustChangePassword: false, createdAt: "2026-06-27T06:30:00.000Z" },
     { id: "U2001", name: "林老师", phone: "13800000011", password: "123456", type: "organization", status: "active", sessionVersion: 0, mustChangePassword: false, createdAt: "2026-06-27T06:31:00.000Z" },
+    { id: "U2002", name: "王老师", phone: "13800000012", password: "123456", type: "organization", status: "active", sessionVersion: 0, mustChangePassword: false, createdAt: "2026-06-27T06:31:30.000Z" },
     { id: "U9001", name: "赛事管理员", phone: "13900000000", password: "admin123", type: "admin", status: "active", sessionVersion: 0, mustChangePassword: false, createdAt: "2026-06-27T06:32:00.000Z" }
   ],
   organizations: [
     { id: "O1001", name: "温州市实验小学", code: "WZ-SYXX", ownerUserId: "U2001", contactName: "林老师", contactPhone: "13800000011", status: "active", createdAt: "2026-06-27T06:31:00.000Z" },
-    { id: "O1002", name: "鹿城区青少年活动中心", code: "LC-QSNG", ownerUserId: "U2001", contactName: "王老师", contactPhone: "13800000012", status: "active", createdAt: "2026-06-27T06:31:30.000Z" }
+    { id: "O1002", name: "鹿城区青少年活动中心", code: "LC-QSNG", ownerUserId: "U2002", contactName: "王老师", contactPhone: "13800000012", status: "active", createdAt: "2026-06-27T06:31:30.000Z" }
   ],
   memberships: [
     { id: "M1001", userId: "U2001", organizationId: "O1001", role: "owner", status: "active", direction: "system", note: "组织创建人", createdAt: "2026-06-27T06:31:00.000Z", updatedAt: "2026-06-27T06:31:00.000Z" },
@@ -91,8 +92,10 @@ export const seedDb = {
     {
       id: "R20260627001",
       source: "普通用户",
-      userId: "U1001",
+      createdByUserId: "U1001",
+      personalUserId: "U1001",
       organizationId: "O1001",
+      createdVia: "personal",
       organization: "温州市实验小学",
       athlete: { name: "陈宇航", school: "温州市实验小学", grade: "五年级", phone: "13800000001" },
       athleteKey: "陈宇航|温州市实验小学|五年级|13800000001",
@@ -113,8 +116,10 @@ export const seedDb = {
     {
       id: "R20260627002",
       source: "组织用户",
-      userId: "U2001",
+      createdByUserId: "U2001",
+      personalUserId: null,
       organizationId: "O1002",
+      createdVia: "organization",
       organization: "鹿城区青少年活动中心",
       athlete: { name: "周星言", school: "温州市第二实验中学", grade: "初二", phone: "13900000002" },
       athleteKey: "周星言|温州市第二实验中学|初二|13900000002",
@@ -136,6 +141,7 @@ export const seedDb = {
   certificates: [],
   certificateImportBatches: [],
   certificateImportErrors: [],
+  organizationEventParticipations: [],
   auditLogs: []
 };
 
@@ -208,6 +214,7 @@ export function ensureDbShape(db) {
     (project.allowedGroups || APPROVED_GROUP_NAMES).map((groupName) => ({ projectId: project.id, groupName }))
   );
   db.registrations ||= [];
+  db.organizationEventParticipations ||= [];
   db.certificates ||= [];
   db.certificateImportBatches ||= [];
   db.certificateImportErrors ||= [];
@@ -245,6 +252,11 @@ export function ensureDbShape(db) {
   }
   for (const row of db.registrations) {
     row.eventId ||= EVENT.id;
+    row.createdByUserId ||= row.userId;
+    const creator = db.users.find((user) => user.id === row.createdByUserId);
+    row.createdVia ||= creator?.type === "organization" ? "organization" : "personal";
+    row.personalUserId ??= row.createdVia === "personal" ? row.createdByUserId : null;
+    delete row.userId;
     row.group = groupForGrade(row.athlete?.grade) || row.group;
     row.awardName ||= "";
     row.rank ||= "";

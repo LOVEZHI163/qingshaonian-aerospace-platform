@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS organizations (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
   code TEXT NOT NULL UNIQUE,
-  owner_user_id TEXT NOT NULL REFERENCES users(id),
+  owner_user_id TEXT NOT NULL UNIQUE REFERENCES users(id),
   contact_name TEXT NOT NULL DEFAULT '',
   contact_phone TEXT NOT NULL DEFAULT '',
   status TEXT NOT NULL,
@@ -95,6 +95,14 @@ CREATE TABLE IF NOT EXISTS events (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS organization_event_participations (
+  organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  event_id TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+  joined_by_user_id TEXT NOT NULL REFERENCES users(id),
+  joined_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (organization_id, event_id)
+);
+
 CREATE TABLE IF NOT EXISTS projects (
   id TEXT PRIMARY KEY,
   event_id TEXT NOT NULL REFERENCES events(id),
@@ -116,8 +124,10 @@ CREATE TABLE IF NOT EXISTS registrations (
   id TEXT PRIMARY KEY,
   event_id TEXT NOT NULL REFERENCES events(id),
   source TEXT NOT NULL,
-  user_id TEXT REFERENCES users(id),
+  created_by_user_id TEXT NOT NULL REFERENCES users(id),
+  personal_user_id TEXT REFERENCES users(id),
   organization_id TEXT REFERENCES organizations(id),
+  created_via TEXT NOT NULL CHECK (created_via IN ('personal', 'organization')),
   organization_name TEXT NOT NULL DEFAULT '',
   athlete JSONB NOT NULL,
   athlete_key TEXT NOT NULL,
@@ -129,7 +139,9 @@ CREATE TABLE IF NOT EXISTS registrations (
   status TEXT NOT NULL,
   reject_reason TEXT NOT NULL DEFAULT '',
   created_at TIMESTAMPTZ NOT NULL,
-  updated_at TIMESTAMPTZ NOT NULL
+  updated_at TIMESTAMPTZ NOT NULL,
+  CHECK (personal_user_id IS NOT NULL OR organization_id IS NOT NULL),
+  UNIQUE (event_id, project_id, athlete_key)
 );
 
 CREATE TABLE IF NOT EXISTS results (
@@ -157,8 +169,6 @@ CREATE TABLE IF NOT EXISTS certificate_import_batches (
 CREATE TABLE IF NOT EXISTS certificates (
   id TEXT PRIMARY KEY,
   registration_id TEXT NOT NULL REFERENCES registrations(id) ON DELETE CASCADE,
-  user_id TEXT REFERENCES users(id),
-  organization_id TEXT REFERENCES organizations(id),
   certificate_no TEXT,
   slot SMALLINT NOT NULL DEFAULT 1 CONSTRAINT certificates_slot_check CHECK (slot IN (1, 2)),
   title TEXT NOT NULL DEFAULT '获奖证书',
@@ -205,10 +215,10 @@ CREATE INDEX IF NOT EXISTS password_reset_challenges_expires_at_idx ON password_
 CREATE INDEX IF NOT EXISTS audit_logs_created_at_idx ON audit_logs(created_at DESC);
 CREATE INDEX IF NOT EXISTS audit_logs_target_idx ON audit_logs(target_type, target_id);
 
-CREATE INDEX IF NOT EXISTS registrations_user_id_idx ON registrations(user_id);
+CREATE INDEX IF NOT EXISTS registrations_personal_user_id_idx ON registrations(personal_user_id);
 CREATE INDEX IF NOT EXISTS registrations_organization_id_idx ON registrations(organization_id);
 CREATE INDEX IF NOT EXISTS memberships_organization_id_idx ON memberships(organization_id);
-CREATE INDEX IF NOT EXISTS certificates_user_id_idx ON certificates(user_id);
+CREATE INDEX IF NOT EXISTS organization_event_participations_event_id_idx ON organization_event_participations(event_id);
 
 CREATE TABLE IF NOT EXISTS site_settings (
   id TEXT PRIMARY KEY CHECK (id = 'default'),

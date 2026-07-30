@@ -28,6 +28,9 @@ test("website data shape fills missing public site collections and default setti
   assert.deepEqual(db.contentPosts, []);
   assert.deepEqual(db.mediaAssets, []);
   assert.deepEqual(db.contentAttachments, []);
+  assert.deepEqual(db.organizationEventParticipations, []);
+  assert.equal(db.registrations.every((row) => "createdByUserId" in row), true);
+  assert.equal(db.registrations.every((row) => !("userId" in row)), true);
 });
 
 test("data store selects file persistence and keeps mutations", async () => {

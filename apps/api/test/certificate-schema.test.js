@@ -43,8 +43,6 @@ test("certificate schema migrates legacy certificates to slot 1 and permits one 
     legacy.certificates.push({
       id: "C-SLOT-1",
       registrationId: "R20260627001",
-      userId: "U1001",
-      organizationId: "O1001",
       fileName: "one.png",
       storedName: "one.png",
       filePath: "/tmp/one.png",
@@ -59,10 +57,10 @@ test("certificate schema migrates legacy certificates to slot 1 and permits one 
 
     await pool.query(`
       INSERT INTO certificates
-        (id, registration_id, slot, title, user_id, organization_id, file_name, stored_name, file_path,
+        (id, registration_id, slot, title, file_name, stored_name, file_path,
          award_name, rank, score, status, source, uploaded_at)
       VALUES
-        ('C-SLOT-2', 'R20260627001', 2, '优秀选手', 'U1001', 'O1001', 'two.png', 'two.png', '/tmp/two.png',
+        ('C-SLOT-2', 'R20260627001', 2, '优秀选手', 'two.png', 'two.png', '/tmp/two.png',
          '优秀选手', '', '', 'draft', 'manual', NOW())
     `);
     await assert.rejects(pool.query(`

@@ -13,7 +13,9 @@ export function createDataStore(env = process.env) {
       connectionString: env.DATABASE_URL,
       max: Number(env.DATABASE_POOL_SIZE || 10)
     });
-    return createPostgresStore(pool);
+    return createPostgresStore(pool, {
+      seedOnEmpty: env.NODE_ENV === "test" || env.SEED_DEMO_DATA === "true"
+    });
   }
   const dbPath = env.DB_PATH ? path.resolve(env.DB_PATH) : path.join(dataDir, "db.json");
   return createFileStore(dbPath);

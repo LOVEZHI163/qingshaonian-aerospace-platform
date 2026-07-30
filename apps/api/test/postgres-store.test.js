@@ -40,13 +40,59 @@ test("PostgreSQL store creates normalized tables and seeds an empty database", a
     }
 
     const data = await store.readDb();
-    assert.equal(data.users.length, 3);
+    assert.equal(data.users.length, 4);
     assert.equal(data.registrations.length, 2);
     assert.equal(data.registrations[0].awardName, "");
     assert.equal(data.events.filter((event) => event.isCurrent).length, 1);
     assert.equal(data.registrations.every((row) => row.eventId), true);
     assert.equal(data.projects.every((project) => project.allowedGroups.length === 4), true);
   });
+});
+
+test("multi-event account schema constrains ownership and registration identity", async () => {
+  await withStore(async (store, pool) => {
+    const tables = new Set((await pool.query(`
+      SELECT table_name FROM information_schema.tables
+      WHERE table_schema = 'public'
+    `)).rows.map((row) => row.table_name));
+    assert.equal(tables.has("organization_event_participations"), true);
+
+    const columns = new Set((await pool.query(`
+      SELECT column_name FROM information_schema.columns
+      WHERE table_name = 'registrations'
+    `)).rows.map((row) => row.column_name));
+    for (const name of ["created_by_user_id", "personal_user_id", "created_via"]) {
+      assert.equal(columns.has(name), true, `missing registrations.${name}`);
+    }
+    assert.equal(columns.has("user_id"), false);
+
+    const certificateColumns = new Set((await pool.query(`
+      SELECT column_name FROM information_schema.columns
+      WHERE table_name = 'certificates'
+    `)).rows.map((row) => row.column_name));
+    assert.equal(certificateColumns.has("user_id"), false);
+    assert.equal(certificateColumns.has("organization_id"), false);
+
+    await assert.rejects(pool.query(
+      "INSERT INTO organizations (id,name,code,owner_user_id,status,created_at) VALUES ('O-X','X','X','U2001','active',NOW())"
+    ));
+  });
+});
+
+test("PostgreSQL store leaves production empty databases unseeded", async () => {
+  const memory = newDb({ autoCreateForeignKeyIndices: true });
+  const { Pool } = memory.adapters.createPg();
+  const store = createPostgresStore(new Pool(), { seedOnEmpty: false });
+
+  try {
+    await store.initialize();
+    const data = await store.readDb();
+    assert.deepEqual(data.users, []);
+    assert.deepEqual(data.organizations, []);
+    assert.deepEqual(data.registrations, []);
+  } finally {
+    await store.close();
+  }
 });
 
 test("public site schema creates constrained tables, indexes, and one default settings row", async () => {
