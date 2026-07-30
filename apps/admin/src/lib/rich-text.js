@@ -1,5 +1,6 @@
 const ALLOWED_TAGS = new Set(["P", "H2", "H3", "H4", "UL", "OL", "LI", "STRONG", "EM", "BLOCKQUOTE", "A", "IMG", "FIGURE", "FIGCAPTION", "BR"]);
 const DROP_TAGS = new Set(["SCRIPT", "STYLE", "IFRAME", "OBJECT", "EMBED", "SVG", "MATH", "TEMPLATE"]);
+const MEDIA_PATH = /^\/api\/public\/media\/[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
 export function sanitizeEditorHtml(raw) {
   const parsed = new DOMParser().parseFromString(String(raw || ""), "text/html");
@@ -26,7 +27,7 @@ export function sanitizeEditorHtml(raw) {
   parsed.body.querySelectorAll("img").forEach((node) => {
     const src = node.getAttribute("src") || "";
     const alt = node.getAttribute("alt") || "";
-    if (!src.startsWith("/api/public/media/")) { node.remove(); return; }
+    if (!MEDIA_PATH.test(src)) { node.remove(); return; }
     node.setAttribute("data-editor-src", src);
     if (alt) node.setAttribute("data-editor-alt", alt);
   });
