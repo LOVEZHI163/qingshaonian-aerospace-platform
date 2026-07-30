@@ -12,9 +12,9 @@ const props = defineProps({
 });
 const emit = defineEmits(["registered", "error"]);
 const form = reactive({
-  athlete: { ...(props.registration?.athlete || { name: "", school: "", grade: "", phone: "" }) },
-  projectId: props.registration?.projectId || "",
-  instructor: props.registration?.instructor || ""
+  athlete: { name: "", school: "", grade: "", phone: "" },
+  projectId: "",
+  instructor: ""
 });
 const submitting = ref(false);
 const message = ref("");
@@ -23,6 +23,14 @@ const editing = computed(() => Boolean(props.registration?.id));
 
 watch(() => props.projects, (projects) => {
   if (!projects.some((project) => project.id === form.projectId)) form.projectId = projects[0]?.id || "";
+}, { immediate: true });
+
+watch(() => props.registration, (registration) => {
+  const athlete = registration?.athlete ? JSON.parse(JSON.stringify(registration.athlete)) : {};
+  Object.assign(form.athlete, { name: "", school: "", grade: "", phone: "" }, athlete);
+  form.projectId = registration?.projectId || props.projects[0]?.id || "";
+  form.instructor = registration?.instructor || "";
+  message.value = "";
 }, { immediate: true });
 
 async function submit() {

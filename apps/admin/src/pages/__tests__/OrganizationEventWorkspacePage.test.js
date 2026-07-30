@@ -98,6 +98,38 @@ describe("OrganizationEventWorkspacePage", () => {
     }));
   });
 
+  it("resets the editor when switching registrations so it saves only the second athlete", async () => {
+    const first = { ...registration, id: "R-A", instructor: "A老师" };
+    const second = {
+      ...registration,
+      id: "R-B",
+      athlete: { name: "李四", school: "第二学校", grade: "六年级", phone: "13900000000" },
+      projectId: "P2",
+      instructor: "B老师"
+    };
+    apiMock.mockResolvedValue({ row: second });
+    const wrapper = mount(OrganizationAthleteRegistrationForm, {
+      props: { eventId: "E2", projects: [{ id: "P1", name: "无人机" }, { id: "P2", name: "火箭" }], registration: first }
+    });
+    await wrapper.get('[data-field="instructor"]').setValue("A的旧编辑值");
+    await wrapper.setProps({ registration: second });
+    await flushPromises();
+
+    expect(wrapper.get('[data-field="athlete-name"]').element.value).toBe("李四");
+    expect(wrapper.get('input[placeholder="输入或选择学校"]').element.value).toBe("第二学校");
+    expect(wrapper.get('[data-field="athlete-grade"]').element.value).toBe("六年级");
+    expect(wrapper.get('[data-field="instructor"]').element.value).toBe("B老师");
+    expect(wrapper.get("select").element.value).toBe("P2");
+
+    await wrapper.get('[data-field="instructor"]').setValue("B的新编辑值");
+    await wrapper.get('[data-testid="organization-registration-editor"]').trigger("submit");
+    await flushPromises();
+    expect(apiMock).toHaveBeenCalledWith("/api/organization/events/E2/registrations/R-B", expect.objectContaining({
+      method: "PATCH",
+      body: JSON.stringify({ athlete: second.athlete, projectId: "P2", instructor: "B的新编辑值" })
+    }));
+  });
+
   it("keeps archived workspaces read-only while retaining results and certificates", async () => {
     apiMock.mockImplementation(async (path) => {
       if (path === "/api/organization/events/E2/workspace") return { event: { ...event, archivedAt: "2026-01-01" }, summary: {}, registrations: [registration] };
