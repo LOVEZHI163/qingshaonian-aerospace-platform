@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import App from "../App.jsx";
+import SiteHeader from "../components/SiteHeader.jsx";
 import HomePage from "../pages/HomePage.jsx";
 
 const jsonResponse = (body, init = {}) => new Response(JSON.stringify(body), {
@@ -68,6 +69,18 @@ describe("public site keyboard and semantics", () => {
     fireEvent.keyDown(document, { key: "Escape" });
     expect(trigger).toHaveFocus();
     expect(trigger).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("keeps the account login available before registration in the mobile menu", () => {
+    render(<SiteHeader routeKey="/" />);
+
+    fireEvent.click(screen.getByRole("button", { name: "打开导航菜单" }));
+
+    const login = screen.getByRole("link", { name: "用户登录" });
+    const registration = screen.getByRole("link", { name: "报名入口" });
+    expect(login).toHaveAttribute("href", "/admin/");
+    expect(login).toHaveAttribute("data-router-ignore", "true");
+    expect(login.compareDocumentPosition(registration) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it("keeps controls named, loading status announced and images meaningful", () => {

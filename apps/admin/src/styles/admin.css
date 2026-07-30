@@ -1490,3 +1490,114 @@ em.invited {
   .registration-picker { grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); max-height: none; }
   .file-preview-dialog { width: 96vw; padding: 14px; }
 }
+
+/* Keep every management and account action usable without horizontal page scrolling. */
+@media (max-width: 900px) {
+  .admin-header {
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: 12px;
+  }
+
+  .admin-header > div {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .admin-header .event-context-switcher {
+    flex: 1 1 100%;
+  }
+
+  .admin-header .event-context-switcher select {
+    flex: 1;
+    min-width: 0;
+    width: auto;
+  }
+
+  .admin-sidebar nav button {
+    min-height: 44px;
+  }
+
+  .user-shell aside {
+    padding: 20px 18px;
+  }
+
+  .user-shell aside button {
+    min-height: 44px;
+  }
+}
+
+@media (max-width: 480px) {
+  .admin-header,
+  .admin-main,
+  .user-shell > main,
+  main {
+    padding-right: 16px;
+    padding-left: 16px;
+  }
+
+  .admin-header {
+    min-height: 0;
+    padding-top: 14px;
+    padding-bottom: 14px;
+  }
+
+  .admin-sidebar {
+    padding: 16px;
+  }
+
+  .admin-sidebar nav,
+  .user-shell aside {
+    grid-template-columns: 1fr;
+  }
+
+  .user-shell aside {
+    padding: 16px;
+  }
+
+  .user-shell aside h1 {
+    margin-bottom: 16px;
+    font-size: 21px;
+  }
+
+  .topbar,
+  .page-title-row,
+  .panel-title,
+  .form-actions,
+  .organization-toolbar,
+  .registration-management .pagination {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .panel,
+  .auth-panel {
+    padding: 16px;
+  }
+
+  .form-actions > button,
+  .panel-title > .form-actions,
+  .organization-toolbar input,
+  .registration-management .pagination > button {
+    width: 100%;
+    min-height: 44px;
+  }
+
+  .auth-shell {
+    padding: 24px 16px 36px;
+  }
+
+  .auth-header {
+    margin-bottom: 18px;
+  }
+
+  .auth-tabs {
+    margin-bottom: 18px;
+  }
+
+  .table-wrap {
+    margin-right: -2px;
+    overscroll-behavior-inline: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+}
