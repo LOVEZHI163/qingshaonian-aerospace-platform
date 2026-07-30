@@ -57,5 +57,24 @@ git diff HEAD^ HEAD --check
 
 ## 关注点
 
-- 归档赛事不会进入赛事中心。普通用户历史已发布证书仍可经带 `eventId` 的赛事上下文访问；若需要在无既有赛事链接时浏览全部历史证书，需要后续提供历史赛事选择入口，不能重新引入隐式证书列表接口。
 - 本任务未新增普通用户报名编辑界面；已有服务端 `PATCH /api/me/events/:eventId/registrations/:registrationId` 继续使用显式赛事上下文。
+
+## Review Fix Round 1：历史证书独立查询
+
+已完成审查反馈修复。
+
+- 修复提交：`c4a9b70 fix: preserve historical certificate lookup`
+- 普通用户 `?view=certificates&eventId=<archived>` 深链不再依赖 `/api/me/events` 的未归档赛事行；页面保留该 `eventId` 并请求 `GET /api/me/events/:eventId/certificates`，由服务端完成归属授权。
+- 证书查询页在没有当前活动赛事时仍可进入，提供赛事 ID 输入框、明确空状态和历史赛事提示；不会显示历史报名列表。
+- 手动查询会同步证书页 URL 的 `eventId`，但不把归档赛事设为活动报名上下文，因此“报名”和“当前报名”仍只接受赛事中心中可见的未归档赛事。
+- 新增红测后转绿：归档证书深链保留并请求其事件端点、无活动赛事输入 ID 后查询、归档报名深链回退赛事中心。
+
+验证：
+
+```powershell
+npm.cmd test -w apps/admin
+# 29 files, 293 passed
+
+npm.cmd run build -w apps/admin
+# vite build passed
+```
