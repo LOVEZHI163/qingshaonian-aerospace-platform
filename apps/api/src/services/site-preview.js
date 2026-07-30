@@ -62,6 +62,13 @@ function protectedMediaUrl(id, variant = "original") {
   return variant === "original" ? base : `${base}?variant=${encodeURIComponent(variant)}`;
 }
 
+function previewContentBodyHtml(html) {
+  return String(html).replace(
+    /(<img\b[^>]*\ssrc=")\/api\/public\/media\/([A-Za-z0-9][A-Za-z0-9._-]*)(")/gi,
+    (_match, before, id, after) => `${before}${protectedMediaUrl(id)}${after}`
+  );
+}
+
 function eventFor(db, eventId, { optional = false } = {}) {
   if (optional && (eventId === null || eventId === undefined || eventId === "")) return null;
   const event = (db.events || []).find((row) => row.id === eventId);
@@ -154,6 +161,7 @@ function buildContentPreview(db, input, now) {
     allowUnpublished: true,
     mediaUrl: protectedMediaUrl
   });
+  payload.row.bodyHtml = previewContentBodyHtml(payload.row.bodyHtml);
   return { kind: "content", payload, context: { eventId, contentId: current?.id || null } };
 }
 

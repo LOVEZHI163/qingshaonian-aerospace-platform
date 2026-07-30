@@ -1,12 +1,12 @@
 import { sanitizeContentHtml } from "../content/sanitize.js";
 
 const IMAGE_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
-const PUBLIC_MEDIA = /\/api\/public\/media\/([A-Za-z0-9][A-Za-z0-9._-]*)/g;
+const PUBLIC_IMAGE_SRC = /<img\b[^>]*\ssrc="\/api\/public\/media\/([A-Za-z0-9][A-Za-z0-9._-]*)"[^>]*>/gi;
 
 export function contentBodyMediaIds(html) {
   const ids = [];
   const seen = new Set();
-  for (const match of sanitizeContentHtml(html).matchAll(PUBLIC_MEDIA)) {
+  for (const match of sanitizeContentHtml(html).matchAll(PUBLIC_IMAGE_SRC)) {
     const id = match[1];
     if (!seen.has(id)) {
       seen.add(id);

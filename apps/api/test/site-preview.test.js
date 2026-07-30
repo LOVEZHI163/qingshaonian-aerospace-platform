@@ -153,6 +153,29 @@ test("content preview rejects a missing body image without changing media visibi
   assert.deepEqual(db, before);
 });
 
+test("content preview rewrites private body images to administrator preview URLs", () => {
+  const db = structuredClone(seedDb);
+  db.mediaAssets.push({ id: "PRIVATE-BODY", mimeType: "image/png", visibility: "draft", cleanedAt: null });
+
+  const preview = buildSitePreview(db, "content", {
+    slug: "preview-private-image",
+    eventId: null,
+    type: "news",
+    title: "预览私有图片",
+    summary: "",
+    bodyHtml: '<figure><img src="/api/public/media/PRIVATE-BODY" alt="现场"></figure>',
+    status: "draft",
+    publishAt: null,
+    pinned: false,
+    sortOrder: 0,
+    coverMediaId: null,
+    attachments: []
+  }, { now: "2026-07-22T00:00:00.000Z" });
+
+  assert.match(preview.payload.row.bodyHtml, /src="\/api\/admin\/site-media\/PRIVATE-BODY\/preview"/);
+  assert.doesNotMatch(preview.payload.row.bodyHtml, /\/api\/public\/media\/PRIVATE-BODY/);
+});
+
 test("content preview reuses create and update lifecycle rules on its clone", () => {
   const now = "2026-07-22T00:00:00.000Z";
   const db = structuredClone(seedDb);

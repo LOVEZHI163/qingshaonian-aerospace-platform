@@ -11,13 +11,22 @@ function routeError(status, message, code) {
 }
 
 function adminMediaDto(row) {
-  const { filePath, variants = {}, ...media } = row;
   return {
-    ...media,
-    variants: Object.fromEntries(Object.entries(variants).map(([name, variant]) => {
-      const { filePath: variantFilePath, ...safeVariant } = variant;
-      return [name, safeVariant];
-    }))
+    id: row.id,
+    eventId: row.eventId ?? null,
+    purpose: row.purpose,
+    visibility: row.visibility,
+    originalName: row.originalName,
+    mimeType: row.mimeType,
+    sizeBytes: row.sizeBytes,
+    width: row.width ?? null,
+    height: row.height ?? null,
+    variants: Object.fromEntries(Object.entries(row.variants || {}).map(([name, variant]) => [name, {
+      mimeType: variant.mimeType,
+      sizeBytes: variant.sizeBytes,
+      width: variant.width ?? null,
+      height: variant.height ?? null
+    }]))
   };
 }
 

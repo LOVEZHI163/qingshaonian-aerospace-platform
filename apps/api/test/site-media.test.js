@@ -157,6 +157,7 @@ test("site media upload is admin-only, draft-private, and serves public derivati
     assert.equal(row.height, 1);
     assert.deepEqual(Object.keys(row.variants).sort(), ["desktop", "mobile"]);
     assert.equal(JSON.stringify(row).includes("filePath"), false);
+    assert.equal(JSON.stringify(row).includes("storedName"), false);
 
     assert.equal((await fetch(`${baseUrl}/api/public/media/${row.id}`)).status, 404);
     await setMediaVisibility(dbPath, row.id, "public");

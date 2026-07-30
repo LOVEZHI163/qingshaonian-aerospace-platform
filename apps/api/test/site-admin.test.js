@@ -467,6 +467,7 @@ test("content publish is atomic, sanitizes previews, promotes media, records aud
     assert.equal(detailRow.previewHtml, published.bodyHtml);
     assert.deepEqual(detailRow.attachments.map((item) => item.mediaId), ["ATTACHMENT"]);
     assert.equal(JSON.stringify(detailRow).includes("filePath"), false);
+    assert.equal(JSON.stringify(detailRow).includes("storedName"), false);
 
     const offlineResponse = await jsonRequest(`${baseUrl}/api/admin/content/${draft.id}/offline`, admin.cookie, "POST", { version: published.version });
     const offline = (await offlineResponse.json()).row;
