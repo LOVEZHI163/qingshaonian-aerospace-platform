@@ -241,7 +241,7 @@ test("registration derives the group from actual grade and rejects a project out
 test("admin registration listing filters and paginates rows with actual grade and result fields", async () => {
   await withServer(async (baseUrl) => {
     const admin = await loginAs(baseUrl, "13900000000", "admin123");
-    const response = await fetch(`${baseUrl}/api/admin/registrations?group=%E4%B8%AD%E5%AD%A6%E7%BB%84&q=%E7%8E%8B%E8%80%81%E5%B8%88&page=1&pageSize=10`, withSession(admin.cookie));
+    const response = await fetch(`${baseUrl}/api/admin/events/wz-aerospace-2026/registrations?group=%E4%B8%AD%E5%AD%A6%E7%BB%84&q=%E7%8E%8B%E8%80%81%E5%B8%88&page=1&pageSize=10`, withSession(admin.cookie));
     assert.equal(response.status, 200);
     const payload = await json(response);
     assert.equal(payload.total, 1);
@@ -254,11 +254,7 @@ test("admin registration listing filters and paginates rows with actual grade an
     assert.equal(payload.rows[0].score, "");
 
     const legacyResponse = await fetch(`${baseUrl}/api/registrations?q=%E7%8E%8B%E8%80%81%E5%B8%88&pageSize=10`, withSession(admin.cookie));
-    assert.equal(legacyResponse.status, 200);
-    const legacyPayload = await json(legacyResponse);
-    assert.equal(legacyPayload.total, 1);
-    assert.equal(legacyPayload.pageSize, 10);
-    assert.match(legacyPayload.refreshedAt, /^\d{4}-\d{2}-\d{2}T/);
+    assert.equal(legacyResponse.status, 404);
   });
 });
 
@@ -266,7 +262,7 @@ test("admin registration listing filters athleteName only against the athlete na
   await withServer(async (baseUrl) => {
     const admin = await loginAs(baseUrl, "13900000000", "admin123");
     const response = await fetch(
-      `${baseUrl}/api/admin/registrations?eventId=wz-aerospace-2026&status=approved&athleteName=${encodeURIComponent("周星言")}&pageSize=10`,
+      `${baseUrl}/api/admin/events/wz-aerospace-2026/registrations?status=approved&athleteName=${encodeURIComponent("周星言")}&pageSize=10`,
       withSession(admin.cookie)
     );
     assert.equal(response.status, 200);
@@ -277,7 +273,7 @@ test("admin registration listing filters athleteName only against the athlete na
     assert.equal(payload.rows.every((row) => row.athlete.name.includes("周星言")), true);
 
     const noFalsePositive = await fetch(
-      `${baseUrl}/api/admin/registrations?athleteName=${encodeURIComponent("王老师")}&pageSize=10`,
+      `${baseUrl}/api/admin/events/wz-aerospace-2026/registrations?athleteName=${encodeURIComponent("王老师")}&pageSize=10`,
       withSession(admin.cookie)
     );
     assert.equal((await json(noFalsePositive)).total, 0);
@@ -322,8 +318,8 @@ test("ordinary registration edits require an active membership while administrat
       method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload)
     }));
 
-    assert.equal((await patch("/api/me/events/wz-aerospace-2026/registrations/R20260627001", { organizationId: "O1002" }, ordinary.cookie)).status, 403);
-    const adminResponse = await patch("/api/admin/registrations/R20260627001", { organizationId: "O1002" }, admin.cookie);
+    assert.equal((await patch("/api/me/events/wz-aerospace-2026/registrations/R20260627001", { organizationId: "O1002" }, ordinary.cookie)).status, 409);
+    const adminResponse = await patch("/api/admin/events/wz-aerospace-2026/registrations/R20260627001", { organizationId: "O1002" }, admin.cookie);
     assert.equal(adminResponse.status, 200);
     assert.equal((await json(adminResponse)).row.organizationId, "O1002");
   });

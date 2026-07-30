@@ -15,7 +15,7 @@ import {
   registrationContextPayload,
   updateRegistrationStatus
 } from "../services/registrations.js";
-import { requireOrganizationEventParticipation, requireOrdinaryUser } from "../services/access-control.js";
+import { requireOrganizationEventParticipation, requireOrdinaryUser, requireWritableEvent } from "../services/access-control.js";
 
 export function createRegistrationsRouter({ store, requireUser, requireAdmin, requirePasswordReady, asyncRoute, makeId, now, clock = () => new Date() }) {
   const router = express.Router();
@@ -91,6 +91,7 @@ export function createRegistrationsRouter({ store, requireUser, requireAdmin, re
   router.patch("/me/events/:eventId/registrations/:registrationId", ...user, asyncRoute(async (req, res) => {
     requireOrdinaryUser(req.user);
     const db = await store.readDb();
+    requireWritableEvent(db, req.params.eventId, clock);
     const row = db.registrations.find((item) => item.id === req.params.registrationId && item.eventId === req.params.eventId);
     if (!row) return res.status(404).json({ error: "Registration not found" });
     const prepared = prepareOrdinaryRegistrationUpdate(db, row, eventScopedInput(req), req.user.id);
@@ -121,6 +122,7 @@ export function createRegistrationsRouter({ store, requireUser, requireAdmin, re
   router.patch("/me/events/:eventId/registrations/:registrationId/status", ...user, asyncRoute(async (req, res) => {
     requireOrdinaryUser(req.user);
     const db = await store.readDb();
+    requireWritableEvent(db, req.params.eventId, clock);
     const row = db.registrations.find((item) => item.id === req.params.registrationId && item.eventId === req.params.eventId && item.personalUserId === req.user.id);
     if (!row) return res.status(404).json({ error: "Registration not found" });
     updateRegistrationStatus(db, row, req.body, req.user);
@@ -139,18 +141,43 @@ export function createRegistrationsRouter({ store, requireUser, requireAdmin, re
     res.json({ row });
   }));
 
-  router.get("/admin/registrations", ...admin, asyncRoute(async (req, res) => {
+  router.patch("/admin/events/:eventId/registrations/:registrationId", ...admin, asyncRoute(async (req, res) => {
     const db = await store.readDb();
-    res.json(listAdminRegistrations(db, req.query, clock));
+    requireWritableEvent(db, req.params.eventId, clock);
+    const row = db.registrations.find((item) => item.id === req.params.registrationId && item.eventId === req.params.eventId);
+    if (!row) return res.status(404).json({ error: "Registration not found" });
+    const prepared = prepareAdminRegistrationUpdate(db, row, { ...eventScopedInput(req), eventId: req.params.eventId });
+    applyRegistrationUpdate(row, prepared, now());
+    await store.writeDb(db);
+    res.json({ row });
   }));
 
-  router.get("/admin/registrations/export.xlsx", ...admin, asyncRoute(async (req, res) => {
+  router.post("/admin/events/:eventId/registrations/:registrationId/result", ...admin, asyncRoute(async (req, res) => {
+    const db = await store.readDb();
+    requireWritableEvent(db, req.params.eventId, clock);
+    const row = db.registrations.find((item) => item.id === req.params.registrationId && item.eventId === req.params.eventId);
+    if (!row) return res.status(404).json({ error: "Registration not found" });
+    row.awardName = String(req.body.awardName || "");
+    row.rank = String(req.body.rank || "");
+    row.score = String(req.body.score || "");
+    row.resultRecordedAt = now();
+    row.updatedAt = now();
+    await store.writeDb(db);
+    res.json({ row });
+  }));
+
+  router.get("/admin/events/:eventId/registrations", ...admin, asyncRoute(async (req, res) => {
+    const db = await store.readDb();
+    if (!db.events.some((event) => event.id === req.params.eventId)) return res.status(404).json({ error: "Event not found" });
+    res.json(listAdminRegistrations(db, { ...req.query, eventId: req.params.eventId }, clock));
+  }));
+
+  router.get("/admin/events/:eventId/registrations/export.xlsx", ...admin, asyncRoute(async (req, res) => {
     const scope = req.query.scope || "filtered";
     if (!new Set(["filtered", "all"]).has(scope)) return res.status(422).json({ error: "导出范围不合法" });
     const db = await store.readDb();
-    if (scope === "all" && !String(req.query.eventId || "").trim()) return res.status(422).json({ error: "导出全部名单必须选择赛事" });
-    if (scope === "all" && !db.events.some((event) => event.id === req.query.eventId)) return res.status(404).json({ error: "赛事不存在" });
-    const query = scope === "all" ? { eventId: req.query.eventId } : req.query;
+    if (!db.events.some((event) => event.id === req.params.eventId)) return res.status(404).json({ error: "赛事不存在" });
+    const query = { ...req.query, eventId: req.params.eventId };
     const workbook = buildBoundRegistrationWorkbook(filterAdminRegistrations(db, query));
     const suffix = scope === "all" ? "全部名单" : "筛选名单";
     const fileName = `报名${suffix}.xlsx`;
@@ -178,28 +205,9 @@ export function createRegistrationsRouter({ store, requireUser, requireAdmin, re
     res.end();
   }));
 
-  router.get("/registrations", ...admin, asyncRoute(async (req, res) => {
-    const db = await store.readDb();
-    res.json(listAdminRegistrations(db, req.query, clock));
-  }));
-
   router.post("/registrations/check", ...user, asyncRoute(async (req, res) => {
     const db = await store.readDb();
     res.json(registrationDuplicateCheck(db, req.body, clock));
-  }));
-
-  router.patch("/admin/registrations/:id", ...admin, asyncRoute(async (req, res) => {
-    const db = await store.readDb();
-    const row = db.registrations.find((item) => item.id === req.params.id);
-    if (!row) return res.status(404).json({ error: "报名记录不存在" });
-    const prepared = prepareAdminRegistrationUpdate(db, row, req.body);
-    Object.assign(row, {
-      organizationId: prepared.organizationId, organization: prepared.organization?.name || "", athlete: prepared.athlete,
-      athleteKey: prepared.validation.athleteKey, group: prepared.group, projectId: prepared.project.id,
-      projectName: prepared.project.name, projectType: prepared.validation.projectType, instructor: prepared.instructor, updatedAt: now()
-    });
-    await store.writeDb(db);
-    res.json({ row });
   }));
 
   return router;

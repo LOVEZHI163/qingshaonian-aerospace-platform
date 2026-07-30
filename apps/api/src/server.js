@@ -18,7 +18,7 @@ import { createSiteMediaRouter } from "./routes/site-media.js";
 import { createSiteAdminRouter } from "./routes/site-admin.js";
 import { createPublicSiteRouter } from "./routes/public-site.js";
 import { createAccountEventsRouter } from "./routes/account-events.js";
-import { projectForHistoricalRegistration, registrationContext } from "./services/events.js";
+import { registrationContext } from "./services/events.js";
 import { replayFileCleanupJournal } from "./services/organizations.js";
 import { organizationForOwner, requireOrdinaryUser, requireOrganizationOwner } from "./services/access-control.js";
 import { publishDueScheduledContent, startScheduledContentPublisher } from "./services/scheduled-content-publisher.js";
@@ -79,12 +79,6 @@ function publicUser(user) {
   return safe;
 }
 
-function publicCertificate(certificate) {
-  if (!certificate) return null;
-  const { filePath, storedName, ...safe } = certificate;
-  return safe;
-}
-
 function isOrganizationOperational(db, organizationId) {
   const organization = db.organizations.find((item) => item.id === organizationId);
   return organization?.status === "active" && organization.reviewStatus === "approved";
@@ -105,18 +99,6 @@ function activeMemberIdsForManagedOrganizations(db, userId, organizationId = nul
     .filter((membership) => orgIds.includes(membership.organizationId) && membership.status === "active" && membership.userId)
     .map((membership) => membership.userId);
   return [...new Set(memberIds)];
-}
-
-function updateCertificateFromRegistration(certificate, registration) {
-  certificate.userId = registration.userId || null;
-  certificate.organizationId = registration.organizationId || null;
-  certificate.awardName = registration.awardName ?? "";
-  certificate.rank = registration.rank ?? "";
-  certificate.score = registration.score ?? "";
-}
-
-function findCertificateByRegistration(db, registrationId, slot) {
-  return db.certificates.find((item) => item.registrationId === registrationId && (slot === undefined || item.slot === slot));
 }
 
 function userOrganizations(db, userId) {
@@ -515,8 +497,7 @@ app.get("/api/me/:userId", requireUser, requirePasswordReady, asyncRoute(async (
   res.json({
     user: publicUser(user),
     organizations: userOrganizations(db, user.id),
-    memberships: db.memberships.filter((item) => item.userId === user.id || item.invitedPhone === user.phone),
-    registrations: db.registrations.filter((item) => item.personalUserId === user.id)
+    memberships: db.memberships.filter((item) => item.userId === user.id || item.invitedPhone === user.phone)
   });
 }));
 
@@ -576,77 +557,6 @@ app.get("/api/organizations/:id/members", requireUser, requirePasswordReady, asy
   const db = await readDb();
   if (!canManageOrganization(db, req.user.id, req.params.id)) return res.status(403).json({ error: "无权查看该组织成员" });
   res.json({ rows: db.memberships.filter((membership) => membership.organizationId === req.params.id) });
-}));
-
-app.post("/api/registrations/check", requireUser, requirePasswordReady, asyncRoute(async (req, res) => {
-  const db = await readDb();
-  const { event } = registrationContext(db, req.body);
-  const athlete = req.body.athlete || req.body;
-  const key = athleteKey(athlete);
-  const matches = db.registrations.filter((row) => row.eventId === event.id && row.athleteKey === key && row.status !== "cancelled");
-  res.json({
-    duplicate: matches.length > 0,
-    duplicateCount: matches.length,
-    individualUsed: matches.some((row) => row.projectType === "individual"),
-    teamUsed: matches.some((row) => row.projectType === "team")
-  });
-}));
-
-app.post("/api/admin/registrations/:id/result", requireAdmin, requirePasswordReady, mutationAsyncRoute(async (req, res) => {
-  const db = await readDb();
-  const row = db.registrations.find((item) => item.id === req.params.id);
-  if (!row) return res.status(404).json({ error: "报名记录不存在" });
-  row.awardName = String(req.body.awardName || "");
-  row.rank = String(req.body.rank || "");
-  row.score = String(req.body.score || "");
-  row.resultRecordedAt = now();
-  row.updatedAt = now();
-  const certificates = db.certificates.filter((certificate) => certificate.registrationId === row.id);
-  for (const certificate of certificates) updateCertificateFromRegistration(certificate, row);
-  await writeDb(db);
-  const publicCertificates = certificates.map(publicCertificate);
-  res.json({ row, certificate: publicCertificates[0] || null, certificates: publicCertificates });
-}));
-
-app.patch("/api/admin/registrations/:id", requireAdmin, requirePasswordReady, mutationAsyncRoute(async (req, res) => {
-  const db = await readDb();
-  const row = db.registrations.find((item) => item.id === req.params.id);
-  if (!row) return res.status(404).json({ error: "报名记录不存在" });
-
-  const next = {
-    ...row,
-    organizationId: req.body.organizationId || null,
-    athlete: req.body.athlete || row.athlete,
-    group: req.body.group || row.group,
-    projectId: req.body.projectId || row.projectId,
-    instructor: req.body.instructor ?? row.instructor
-  };
-  const project = (Object.hasOwn(req.body, "projectId") || Object.hasOwn(req.body, "group"))
-    ? projectForHistoricalRegistration(db, row, next.projectId, next.group)
-    : db.projects.find((item) => item.id === next.projectId);
-  if (!project) return res.status(422).json({ error: "赛项不存在" });
-  const validation = validateRegistration(next, db.registrations, project, row.eventId, row.id);
-  if (!validation.ok) return res.status(422).json(validation);
-
-  const organization = db.organizations.find((item) => item.id === next.organizationId);
-  row.organizationId = next.organizationId;
-  row.organization = organization?.name || "";
-  row.athlete = next.athlete;
-  row.athleteKey = validation.athleteKey;
-  row.group = next.group;
-  row.projectId = project.id;
-  row.projectName = project.name;
-  row.projectType = validation.projectType;
-  row.instructor = next.instructor || "";
-  row.updatedAt = now();
-
-  const certificate = findCertificateByRegistration(db, row.id);
-  if (certificate) {
-    certificate.userId = row.userId || null;
-    certificate.organizationId = row.organizationId || null;
-  }
-  await writeDb(db);
-  res.json({ row });
 }));
 
 app.use((error, _req, res, next) => {

@@ -139,7 +139,7 @@ export function registrationDuplicateCheck(db, input, clock = () => new Date()) 
   const projectId = requireText(input?.projectId, "赛项");
   const { event } = registrationContext(db, { ...input, projectId, group }, clock);
   const key = athleteKey(athlete);
-  const matches = db.registrations.filter((row) => row.eventId === event.id && row.athleteKey === key && row.status !== "cancelled");
+  const matches = db.registrations.filter((row) => row.eventId === event.id && row.athleteKey === key);
   return {
     duplicate: matches.length > 0,
     duplicateCount: matches.length,
@@ -176,6 +176,9 @@ export function prepareAdminRegistrationUpdate(db, row, input) {
 
 export function prepareOrdinaryRegistrationUpdate(db, row, input, userId) {
   if (row.personalUserId !== userId) throw businessError(403, "无权修改该报名");
+  if (Object.hasOwn(input, "organizationId") && (input.organizationId || null) !== (row.organizationId || null) && row.organizationId) {
+    throw businessError(409, "该报名已关联其他组织", "REGISTRATION_OWNED_BY_OTHER_ORGANIZATION");
+  }
   assertRegistrationWindowOpen(db, row.eventId);
   const athlete = input.athlete || row.athlete;
   requireText(athlete.name, "姓名");

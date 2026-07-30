@@ -35,8 +35,8 @@ test("every business API requires a session and every administrator API rejects 
   await withServer(async (baseUrl) => {
     const protectedGets = [
       "/api/users",
-      "/api/registrations",
-      "/api/admin/registrations/export.xlsx?eventId=wz-aerospace-2026&scope=all",
+      "/api/admin/events/wz-aerospace-2026/registrations",
+      "/api/admin/events/wz-aerospace-2026/registrations/export.xlsx?scope=all",
       "/api/organizations",
       "/api/me/events",
       "/api/me/events/wz-aerospace-2026/registrations",
@@ -61,15 +61,15 @@ test("every business API requires a session and every administrator API rejects 
     const ordinary = await loginAs(baseUrl, "13800000001", "123456");
     const adminRequests = [
       ["GET", "/api/users"],
-      ["GET", "/api/registrations"],
-      ["GET", "/api/admin/registrations/export.xlsx?eventId=wz-aerospace-2026&scope=all"],
+      ["GET", "/api/admin/events/wz-aerospace-2026/registrations"],
+      ["GET", "/api/admin/events/wz-aerospace-2026/registrations/export.xlsx?scope=all"],
       ["GET", "/api/admin/certificates"],
       ["POST", "/api/admin/users", {}],
       ["POST", "/api/admin/users/U1001/reset-password", { password: "TempPass9" }],
       ["PATCH", "/api/admin/users/U2001", {}],
       ["DELETE", "/api/admin/users/U2001"],
-      ["POST", "/api/admin/registrations/R20260627001/result", {}],
-      ["PATCH", "/api/admin/registrations/R20260627001", {}],
+      ["POST", "/api/admin/events/wz-aerospace-2026/registrations/R20260627001/result", {}],
+      ["PATCH", "/api/admin/events/wz-aerospace-2026/registrations/R20260627001", {}],
       ["POST", "/api/admin/registrations/R20260627001/certificates/1", {}],
       ["POST", "/api/admin/certificates/bulk-status", {}],
       ["PATCH", "/api/admin/certificates/not-found", {}],

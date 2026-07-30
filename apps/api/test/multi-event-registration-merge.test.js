@@ -124,3 +124,79 @@ test("event-scoped personal and organization endpoints merge only after the orga
     assert.equal((await merged.json()).row.personalUserId, personal.user.id);
   });
 });
+
+test("personal edits cannot transfer or clear an already merged organization owner", async () => {
+  await withTestServer(async ({ baseUrl, dbPath }) => {
+    const personal = await loginAs(baseUrl, "13800000001", "123456");
+    const ownerOne = await loginAs(baseUrl, "13800000011", "123456");
+    const ownerTwo = await loginAs(baseUrl, "13800000012", "123456");
+    const admin = await loginAs(baseUrl, "13900000000", "admin123");
+    await fetch(`${baseUrl}/api/admin/events/wz-aerospace-2026`, withSession(admin.cookie, {
+      method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ registrationMode: "force_open" })
+    }));
+    await fetch(`${baseUrl}/api/organization/events/wz-aerospace-2026/join`, withSession(ownerOne.cookie, { method: "POST" }));
+    await fetch(`${baseUrl}/api/organization/events/wz-aerospace-2026/join`, withSession(ownerTwo.cookie, { method: "POST" }));
+    const db = JSON.parse(await (await import("node:fs/promises")).readFile(dbPath, "utf8"));
+    db.memberships.push({ id: "M-O2", userId: personal.user.id, organizationId: "O1002", role: "member", status: "active" });
+    await (await import("node:fs/promises")).writeFile(dbPath, JSON.stringify(db), "utf8");
+    const create = await fetch(`${baseUrl}/api/me/events/wz-aerospace-2026/registrations`, withSession(personal.cookie, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input({ eventId: "wz-aerospace-2026", projectId: "paper-plane-gate", organizationId: "O1001" }))
+    }));
+    const row = (await create.json()).row;
+    for (const organizationId of ["O1002", null]) {
+      const response = await fetch(`${baseUrl}/api/me/events/wz-aerospace-2026/registrations/${row.id}`, withSession(personal.cookie, {
+        method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ organizationId })
+      }));
+      assert.equal(response.status, 409);
+      assert.equal((await response.json()).code, "REGISTRATION_OWNED_BY_OTHER_ORGANIZATION");
+    }
+  });
+});
+
+test("profile and legacy admin endpoints cannot bypass event-scoped registration access", async () => {
+  await withTestServer(async ({ baseUrl }) => {
+    const ordinary = await loginAs(baseUrl, "13800000001", "123456");
+    const admin = await loginAs(baseUrl, "13900000000", "admin123");
+    for (const cookie of [ordinary.cookie, admin.cookie]) {
+      const profile = await fetch(`${baseUrl}/api/me/U1001`, withSession(cookie));
+      assert.equal(profile.status, cookie === ordinary.cookie ? 200 : 200);
+      assert.equal("registrations" in await profile.json(), false);
+    }
+    assert.equal((await fetch(`${baseUrl}/api/admin/registrations`, withSession(admin.cookie))).status, 404);
+    assert.equal((await fetch(`${baseUrl}/api/admin/registrations/R20260627001`, withSession(admin.cookie, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: "{}" }))).status, 404);
+  });
+});
+
+test("archived force-open events reject personal edits and legacy administrator result writes", async () => {
+  await withTestServer(async ({ baseUrl }) => {
+    const ordinary = await loginAs(baseUrl, "13800000001", "123456");
+    const admin = await loginAs(baseUrl, "13900000000", "admin123");
+    await fetch(`${baseUrl}/api/admin/events/wz-aerospace-2026`, withSession(admin.cookie, {
+      method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ registrationMode: "force_open" })
+    }));
+    await fetch(`${baseUrl}/api/admin/events/wz-aerospace-2026/archive`, withSession(admin.cookie, { method: "POST" }));
+    assert.equal((await fetch(`${baseUrl}/api/me/events/wz-aerospace-2026/registrations/R20260627001`, withSession(ordinary.cookie, {
+      method: "PATCH", headers: { "Content-Type": "application/json" }, body: "{}"
+    }))).status, 409);
+    assert.equal((await fetch(`${baseUrl}/api/admin/registrations/R20260627001/result`, withSession(admin.cookie, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: "{}"
+    }))).status, 404);
+  });
+});
+
+test("concurrent personal submissions persist one identity and return create plus idempotent merge", async () => {
+  await withTestServer(async ({ baseUrl }) => {
+    const personal = await loginAs(baseUrl, "13800000001", "123456");
+    const admin = await loginAs(baseUrl, "13900000000", "admin123");
+    await fetch(`${baseUrl}/api/admin/events/wz-aerospace-2026`, withSession(admin.cookie, {
+      method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ registrationMode: "force_open" })
+    }));
+    const request = () => fetch(`${baseUrl}/api/me/events/wz-aerospace-2026/registrations`, withSession(personal.cookie, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input({ eventId: "wz-aerospace-2026", projectId: "paper-plane-gate" }))
+    }));
+    const responses = await Promise.all([request(), request()]);
+    assert.deepEqual(responses.map((response) => response.status).sort(), [200, 201]);
+    const rows = await (await fetch(`${baseUrl}/api/me/events/wz-aerospace-2026/registrations`, withSession(personal.cookie))).json();
+    assert.equal(rows.rows.filter((row) => row.projectId === "paper-plane-gate" && row.athlete.name === "张三").length, 1);
+  });
+});

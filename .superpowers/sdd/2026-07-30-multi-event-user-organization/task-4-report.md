@@ -33,3 +33,12 @@ npm.cmd test -w apps/api -- --test-concurrency=1 --test-name-pattern="session id
 
 - 证书所有权推导、证书读写接口和证书冗余字段清理严格留给 Task 5；本任务未实现该部分。
 - `authorization.test.js` 中 Task4 的个人/组织报名读取、创建和状态变更断言已迁移；仅证书场景仍保留给 Task 5。
+
+## Fix round 1（审查修复）
+
+- 个人端编辑若尝试替换或清空既有 `organizationId`，统一返回 `REGISTRATION_OWNED_BY_OTHER_ORGANIZATION`；不得绕过合并规则。
+- 旧 `/api/me/:userId` 不再附带报名聚合，个人报名只能经 `/api/me/events/:eventId/registrations` 查询。
+- 个人编辑、个人状态变更和新增的管理员编辑/成绩路由都会校验可写赛事；归档赛事即使 `force_open` 也会返回 `EVENT_ARCHIVED`。
+- 管理端列表、导出、编辑和成绩写入改为包含 `eventId` 的路由；旧不带赛事上下文的管理别名已移除。
+- 增加并发双提交、跨组织/置空编辑冲突、归档强制开启、资料聚合绕过和旧管理入口阻断测试。
+- 重复检查改为包含已取消报名，保持与精确身份唯一键一致。
