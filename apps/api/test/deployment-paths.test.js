@@ -72,3 +72,18 @@ test("deployment publishes the canonical public origin without treating it as a 
   assert.match(webDockerfile, /^ARG VITE_PUBLIC_SITE_URL$/m);
   assert.match(webDockerfile, /^ENV VITE_PUBLIC_SITE_URL=\$VITE_PUBLIC_SITE_URL$/m);
 });
+
+test("deployment preflight requires cleanup and one-time administrator bootstrap tooling", async () => {
+  const [preflight, guide] = await Promise.all([
+    fs.readFile(path.join(root, "deploy/preflight-admin-upgrade.sh"), "utf8"),
+    fs.readFile(path.join(root, "docs/deployment/aliyun-test.md"), "utf8")
+  ]);
+
+  assert.match(preflight, /test -f apps\/api\/src\/cli\/cleanup-test-business-data\.js/);
+  assert.match(preflight, /test -f apps\/api\/src\/cli\/bootstrap-admin\.js/);
+  assert.match(preflight, /test -f apps\/api\/src\/data\/migrations\/007-multi-event-accounts\.sql/);
+  assert.equal(preflight.includes("< <("), false);
+  assert.match(guide, /cleanup-test-business-data\.js\s*\n/);
+  assert.match(guide, /--confirm=DELETE-TEST-BUSINESS-DATA/);
+  assert.match(guide, /bootstrap-admin\.js/);
+});

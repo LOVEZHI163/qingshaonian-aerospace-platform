@@ -19,6 +19,12 @@ test -w "$backups_dir" || fail "backup directory is not writable"
 cd "$deploy_dir"
 
 docker compose config --quiet || fail "Compose configuration is invalid"
+test -f apps/api/src/cli/cleanup-test-business-data.js \
+  || fail "test-business-data cleanup command is missing"
+test -f apps/api/src/cli/bootstrap-admin.js \
+  || fail "administrator bootstrap command is missing"
+test -f apps/api/src/data/migrations/007-multi-event-accounts.sql \
+  || fail "multi-event migration is missing"
 test -s apps/web/public/brand/mark.svg || fail "public brand mark is missing"
 test -s apps/web/public/brand/wordmark.svg || fail "public brand wordmark is missing"
 grep -Eq '^ARG VITE_PUBLIC_SITE_URL$' Dockerfile.web \

@@ -122,6 +122,37 @@ docker compose up -d
 docker compose ps
 ```
 
+### Multi-event test-data cleanup and administrator bootstrap
+
+After the database and uploads backups have been verified and the application is in maintenance mode, first inspect the cleanup preview. The preview is read-only. Only the exact confirmation token performs the cleanup; it preserves events, projects, groups, site settings, public profiles, content, and site media.
+
+```sh
+cd /opt/aerogp
+docker compose build api
+docker compose run --rm --no-deps api \
+  node apps/api/src/cli/cleanup-test-business-data.js
+docker compose run --rm --no-deps api \
+  node apps/api/src/cli/cleanup-test-business-data.js \
+  --confirm=DELETE-TEST-BUSINESS-DATA
+```
+
+The cleanup command deletes only test business records and their certificate/organization-document uploads. It never removes `site-media`; failed file removals are recorded in the cleanup journal after the database transaction commits. Do not run the confirmation command until the backup and maintenance checks are complete.
+
+Production databases do not seed demonstration accounts. Create the one administrator only after cleanup, and provide its password through standard input so it is not part of command history, arguments, logs, or Git:
+
+```sh
+cd /opt/aerogp
+umask 077
+read -r -s -p 'Administrator password: ' admin_password
+printf '\n'
+printf '%s\n' "$admin_password" | docker compose run --rm --no-deps -T api \
+  node apps/api/src/cli/bootstrap-admin.js \
+  --name='赛事管理员' --phone=13900000000 --password-stdin
+unset admin_password
+```
+
+The bootstrap command refuses to run if an administrator already exists and never echoes the password.
+
 手工生成并验证数据库与上传文件备份：
 
 ```bash
