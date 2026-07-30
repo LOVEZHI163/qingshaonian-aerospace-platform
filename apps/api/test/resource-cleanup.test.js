@@ -196,6 +196,12 @@ test("resource cleanup thoroughly deletes only a confirmed non-current archived 
   await withTestServer(async ({ baseUrl, dbPath, tempDir }) => {
     const admin = await loginAs(baseUrl, "13900000000", "admin123");
     const fixture = await writeFixture(dbPath, tempDir);
+    const db = JSON.parse(await fs.readFile(dbPath, "utf8"));
+    db.eventPublicProfiles.push({
+      eventId: "E-OLD", slug: "old-event", slogan: "旧赛事", summary: "归档赛事资料",
+      isVisible: true, displayOrder: 0, heroMediaId: null, version: 1, updatedAt: "2026-01-01T00:00:00.000Z"
+    });
+    await fs.writeFile(dbPath, JSON.stringify(db, null, 2), "utf8");
 
     const wrongName = await fetch(`${baseUrl}/api/admin/events/E-OLD`, jsonRequest("DELETE", { confirmName: "错误名称" }, admin.cookie));
     assert.equal(wrongName.status, 422);
@@ -212,6 +218,7 @@ test("resource cleanup thoroughly deletes only a confirmed non-current archived 
 
     const persisted = JSON.parse(await fs.readFile(dbPath, "utf8"));
     assert.equal(persisted.events.some((row) => row.id === "E-OLD"), false);
+    assert.equal(persisted.eventPublicProfiles.some((row) => row.eventId === "E-OLD"), false);
     assert.equal(persisted.projects.some((row) => row.eventId === "E-OLD"), false);
     assert.equal(persisted.projectGroups.some((row) => row.projectId === "P-OLD"), false);
     assert.equal(persisted.registrations.some((row) => row.eventId === "E-OLD"), false);

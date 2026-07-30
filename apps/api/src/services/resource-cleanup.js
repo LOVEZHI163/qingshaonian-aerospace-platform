@@ -220,6 +220,7 @@ export async function deleteArchivedEvent({ store, eventId, confirmName, actor, 
   db.projectGroups = db.projectGroups.filter((row) => !projectIds.has(row.projectId));
   db.projects = db.projects.filter((row) => row.eventId !== eventId);
   db.certificateImportBatches = db.certificateImportBatches.filter((row) => row.eventId !== eventId);
+  db.eventPublicProfiles = db.eventPublicProfiles.filter((row) => row.eventId !== eventId);
   db.events = db.events.filter((row) => row.id !== eventId);
   const deletedAt = timestamp(now);
   recordAudit(db, { actor, action: "event.delete", targetType: "event", targetId: event.id, summary: `${event.name} 已彻底删除，附件 ${resources.files.length} 个`, createdAt: deletedAt });
