@@ -44,4 +44,12 @@ describe("session state", () => {
 
     expect(useSession().user.value).toEqual(expect.objectContaining({ id: "U1", mustChangePassword: true }));
   });
+
+  it("loads the account-visible event rows for URL authorization", async () => {
+    apiMock.mockResolvedValue({ rows: [{ event: { id: "E2", slug: "spring-cup" } }] });
+
+    await useSession().loadAccountEvents();
+
+    expect(useSession().accountEvents.value).toEqual([{ event: { id: "E2", slug: "spring-cup" } }]);
+  });
 });

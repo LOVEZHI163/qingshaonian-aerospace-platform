@@ -8,12 +8,18 @@ vi.mock("../state/session.js", async () => {
   const session = {
     user: sessionUser,
     organizations: ref([]),
+    accountEvents: ref([]),
     restoring: ref(false),
     restore: vi.fn(async () => {}),
     login: vi.fn(),
     logout: vi.fn(),
     setUser: vi.fn((user) => { sessionUser.value = user; }),
-    clear: vi.fn(() => { sessionUser.value = null; })
+    clear: vi.fn(() => { sessionUser.value = null; }),
+    loadAccountEvents: vi.fn(async () => {
+      const payload = await apiMock("/api/me/events");
+      session.accountEvents.value = payload.rows || [];
+      return session.accountEvents.value;
+    })
   };
   return { useSession: () => session, testSession: session };
 });
@@ -35,6 +41,8 @@ describe("App session integration", () => {
     sessionUser.value = null;
     restoring.value = false;
     session.restore.mockClear();
+    session.loadAccountEvents.mockClear();
+    session.accountEvents.value = [];
     session.login.mockReset();
     session.logout.mockReset();
     session.setUser.mockClear();
@@ -68,6 +76,53 @@ describe("App session integration", () => {
     const ordinary = mount(App);
     await flushPromises();
     expect(ordinary.find('[data-testid="admin-shell"]').exists()).toBe(false);
+  });
+
+  it.each(["ordinary", "organization"])("opens the event center by default for %s accounts", async (type) => {
+    sessionUser.value = { id: `${type}-1`, type, name: "账户", mustChangePassword: false };
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/public/event") return publicData();
+      if (path === "/api/me/events") return { rows: [] };
+      return { rows: [] };
+    });
+    const wrapper = mount(App);
+    await flushPromises();
+
+    expect(wrapper.find('[data-testid="event-center-page"]').exists()).toBe(true);
+  });
+
+  it("restores an authorized event slug as its canonical event id", async () => {
+    window.history.replaceState({}, "", "/admin/?view=registration&eventSlug=spring-cup");
+    sessionUser.value = { id: "U1", type: "ordinary", name: "用户", mustChangePassword: false };
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/public/event") return publicData();
+      if (path === "/api/me/events") return { rows: [{ event: { id: "E2", slug: "spring-cup", name: "春季赛" } }] };
+      if (path === "/api/me/registration-context?eventId=E2") return { event: { id: "E2", name: "春季赛" }, organizations: [], projects: [], grades: [] };
+      return { rows: [] };
+    });
+    const wrapper = mount(App);
+    await flushPromises();
+
+    expect(wrapper.find(".registration-page").exists()).toBe(true);
+    expect(apiMock).toHaveBeenCalledWith("/api/me/registration-context?eventId=E2");
+    expect(new URLSearchParams(window.location.search).get("eventId")).toBe("E2");
+    expect(new URLSearchParams(window.location.search).has("eventSlug")).toBe(false);
+  });
+
+  it("does not open a business page for an event outside the account context", async () => {
+    window.history.replaceState({}, "", "/admin/?view=registration&eventId=E2");
+    sessionUser.value = { id: "U1", type: "ordinary", name: "用户", mustChangePassword: false };
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/public/event") return publicData();
+      if (path === "/api/me/events") return { rows: [{ event: { id: "E1", name: "赛事一" } }] };
+      return { rows: [] };
+    });
+    const wrapper = mount(App);
+    await flushPromises();
+
+    expect(wrapper.find('[data-testid="event-center-page"]').exists()).toBe(true);
+    expect(wrapper.find(".registration-page").exists()).toBe(false);
+    expect(apiMock.mock.calls.some(([path]) => path.includes("registration-context"))).toBe(false);
   });
 
   it("shows overview by default and exposes the event settings workflow", async () => {
@@ -260,6 +315,8 @@ describe("App session integration", () => {
       return { rows: [] };
     });
     const wrapper = mount(App);
+    await flushPromises();
+    await wrapper.get('[data-user-nav="registration"]').trigger("click");
     await flushPromises();
     const inputs = wrapper.findAll("form.form-panel input");
     await inputs[0].setValue("张三");

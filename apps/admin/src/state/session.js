@@ -4,6 +4,7 @@ import { api, setPasswordChangeRequiredHandler, setUnauthorizedHandler } from ".
 
 const user = ref(null);
 const organizations = ref([]);
+const accountEvents = ref([]);
 const restoring = ref(true);
 
 function setUser(nextUser, nextOrganizations = organizations.value) {
@@ -14,6 +15,13 @@ function setUser(nextUser, nextOrganizations = organizations.value) {
 function clear() {
   user.value = null;
   organizations.value = [];
+  accountEvents.value = [];
+}
+
+async function loadAccountEvents() {
+  const payload = await api("/api/me/events");
+  accountEvents.value = Array.isArray(payload?.rows) ? payload.rows : [];
+  return accountEvents.value;
 }
 
 function requirePasswordChange() {
@@ -57,5 +65,5 @@ async function logout() {
 }
 
 export function useSession() {
-  return { user, organizations, restoring, restore, login, logout, setUser, clear };
+  return { user, organizations, accountEvents, restoring, restore, login, logout, setUser, clear, loadAccountEvents };
 }

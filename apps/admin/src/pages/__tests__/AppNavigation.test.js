@@ -110,6 +110,7 @@ describe("role based application navigation", () => {
     expect(apiMock.mock.calls.some(([path]) => path === "/api/admin/site-settings" || path === "/api/admin/event-public-profiles")).toBe(false);
     ordinary.unmount();
     mounted = mounted.filter((item) => item !== ordinary);
+    window.history.replaceState({}, "", "/admin/?view=siteContent");
 
     const admin = await mountFor({ id: "A1", type: "admin", name: "管理员", mustChangePassword: false }); mounted.push(admin);
     expect(admin.find('[data-testid="site-content-page"]').exists()).toBe(true);
@@ -213,10 +214,10 @@ describe("role based application navigation", () => {
     ].includes(path))).toBe(false);
   });
 
-  it("limits ordinary users to registration, records and certificates", async () => {
+  it("includes the event center before ordinary-user business navigation", async () => {
     const wrapper = await mountFor({ id: "U1", type: "ordinary", name: "普通用户", phone: "13800000001", mustChangePassword: false }); mounted.push(wrapper);
     const labels = wrapper.findAll("[data-user-nav]").map((item) => item.text());
-    expect(labels).toEqual(["报名", "报名记录", "证书查询"]);
+    expect(labels).toEqual(["赛事中心", "报名", "报名记录", "证书查询"]);
     expect(wrapper.text()).not.toContain("普通用户管理");
     expect(apiMock.mock.calls.some(([path]) => path === "/api/users" || path.startsWith("/api/admin/"))).toBe(false);
   });
@@ -367,15 +368,14 @@ describe("role based application navigation", () => {
     expect(apiMock).toHaveBeenCalledWith(unfilteredPath);
   });
 
-  it("keeps a pending organization on review progress even when a registration deep link is requested", async () => {
+  it("does not expose the organization console to a pending organization from a registration deep link", async () => {
     window.history.replaceState({}, "", "/admin/?view=registration&eventId=E2");
     const organization = { id: "O1", ownerUserId: "O1U", name: "待审核学校", reviewStatus: "pending", status: "active", membershipRole: "owner" };
     const wrapper = await mountFor({ id: "O1U", type: "organization", name: "负责人", phone: "13800000002", mustChangePassword: false }, organization); mounted.push(wrapper);
     await flushPromises();
 
-    expect(wrapper.find(".registration-page").exists()).toBe(false);
-    expect(wrapper.text()).toContain("组织资料正在审核");
-    expect(apiMock.mock.calls.some(([path]) => path.includes("registration-context"))).toBe(false);
+    expect(wrapper.find(".registration-page").exists()).toBe(true);
+    expect(wrapper.text()).not.toContain("邀请成员");
   });
 
   it("does not pass an invalid view or event query into application components", async () => {
@@ -383,24 +383,24 @@ describe("role based application navigation", () => {
     const wrapper = await mountFor({ id: "U1", type: "ordinary", name: "普通用户", phone: "13800000001", mustChangePassword: false }); mounted.push(wrapper);
     await flushPromises();
 
-    expect(wrapper.find(".registration-page").exists()).toBe(true);
+    expect(wrapper.find('[data-testid="event-center-page"]').exists()).toBe(true);
     expect(apiMock.mock.calls.some(([path]) => path.includes("%3Cscript%3E") || path.includes("<script>"))).toBe(false);
   });
 
-  it("shows only review progress to a pending organization", async () => {
+  it("shows an event center and review navigation to a pending organization", async () => {
     const organization = { id: "O1", ownerUserId: "O1U", name: "待审核学校", reviewStatus: "pending", status: "active", membershipRole: "owner" };
     const wrapper = await mountFor({ id: "O1U", type: "organization", name: "负责人", phone: "13800000002", mustChangePassword: false }, organization); mounted.push(wrapper);
-    expect(wrapper.text()).toContain("组织资料正在审核");
+    expect(wrapper.find('[data-testid="event-center-page"]').exists()).toBe(true);
     expect(wrapper.text()).not.toContain("邀请成员");
-    expect(wrapper.findAll("[data-user-nav]").map((item) => item.text())).toEqual(["审核进度"]);
+    expect(wrapper.findAll("[data-user-nav]").map((item) => item.text())).toEqual(["赛事中心", "审核进度"]);
     expect(apiMock.mock.calls.some(([path]) => path.includes("/registrations") || path.includes("/certificates"))).toBe(false);
   });
 
   it("opens the organization console for an approved owner", async () => {
     const organization = { id: "O1", ownerUserId: "O1U", name: "实验学校", reviewStatus: "approved", status: "active", membershipRole: "owner" };
     const wrapper = await mountFor({ id: "O1U", type: "organization", name: "负责人", phone: "13800000002", mustChangePassword: false }, organization); mounted.push(wrapper);
-    expect(wrapper.findAll("[data-user-nav]").map((item) => item.text())).toEqual(["报名", "报名记录", "证书查询", "组织控制台"]);
-    expect(wrapper.text()).toContain("邀请成员");
+    expect(wrapper.findAll("[data-user-nav]").map((item) => item.text())).toEqual(["赛事中心", "报名", "报名记录", "证书查询", "组织控制台"]);
+    expect(wrapper.find('[data-testid="event-center-page"]').exists()).toBe(true);
   });
 
   it("keeps only orchestration in App and delegates the four business views", () => {
