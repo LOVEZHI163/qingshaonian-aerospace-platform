@@ -52,3 +52,10 @@ npm.cmd test -w apps/admin -- src/pages/__tests__/OrganizationWorkspaceDeepLink.
 npm.cmd run build -w apps/admin
 # vite build passed
 ```
+
+## Review Fix Round 2
+
+- 编辑器监听 `registration` 属性变更，并将运动员资料深拷贝后重置全部表单字段。
+- 回归用例覆盖从报名 A 切换到报名 B：界面立即显示 B，提交只向 B 的 event-scoped PATCH 端点发送 B 的新字段，不会保留 A 的编辑内容。
+
+验证：前端聚焦 4 files、33 passed；admin Vite build passed。
