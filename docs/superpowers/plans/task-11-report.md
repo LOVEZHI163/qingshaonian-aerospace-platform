@@ -36,6 +36,24 @@ git diff --check
 # clean
 ```
 
+## Review Fix Round 2
+
+- 补齐内容列表真实的“官网预览”链接：`.content-list-row-actions a` 在 `@media (max-width: 480px)` 下使用 `inline-flex`、`align-items: center` 和 `min-height: 44px`，使链接的完整触控区域生效。
+- 扩展 `ResponsiveStyles.test.js`，精确锁定该 selector 的 display、垂直居中和触控高度规则。
+
+### Round 2 验证
+
+```powershell
+npm.cmd test -w apps/admin -- src/__tests__/ResponsiveStyles.test.js
+# 1 file, 1 passed
+
+npm.cmd run build -w apps/admin
+# Vite production build passed
+
+git diff --check
+# clean
+```
+
 新增的官网回归用例验证：菜单打开后，“用户登录”具有 `/admin/` 和 `data-router-ignore="true"`，且 DOM 顺序在“报名入口”之前。
 
 ## 自审

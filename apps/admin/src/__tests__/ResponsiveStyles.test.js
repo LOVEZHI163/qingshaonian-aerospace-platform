@@ -8,5 +8,6 @@ describe("small-screen touch targets", () => {
 
     expect(compactRules).toMatch(/(?:^|\n)\s*button\s*\{[^}]*min-height:\s*44px;/);
     expect(compactRules).toMatch(/\.credential-link,[\s\S]*?\.site-preview-fallback,[\s\S]*?\.file-action\s*\{[^}]*min-height:\s*44px;/);
+    expect(compactRules).toMatch(/\.content-list-row-actions a\s*\{[^}]*display:\s*inline-flex;[^}]*min-height:\s*44px;[^}]*align-items:\s*center;/);
   });
 });
