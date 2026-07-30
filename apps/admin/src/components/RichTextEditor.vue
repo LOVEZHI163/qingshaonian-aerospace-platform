@@ -26,7 +26,7 @@ const imageDialogOpen = ref(false);
 const imageDialogInitial = ref(null);
 const imageButton = ref(null);
 const savedImageSelection = shallowRef(null);
-const editingImagePosition = ref(null);
+const editingImageTarget = shallowRef(null);
 const toolbarState = ref({
   paragraph: false,
   "heading-2": false,
@@ -89,7 +89,12 @@ function applyExternalValue(safe) {
 
 function editContentImage({ node, position }) {
   if (props.disabled || typeof position !== "number") return;
-  editingImagePosition.value = position;
+  editingImageTarget.value = {
+    doc: editor.value.state.doc,
+    revision: props.revision,
+    position,
+    mediaId: node.attrs.mediaId
+  };
   savedImageSelection.value = null;
   imageDialogInitial.value = {
     mediaId: node.attrs.mediaId,
@@ -180,8 +185,8 @@ watch([() => props.modelValue, () => props.revision], ([next, revision], [, prev
   if (revisionChanged) {
     pendingExternal.value = null;
     savedImageSelection.value = null;
-    editingImagePosition.value = null;
-    imageDialogOpen.value = false;
+    if (imageDialogOpen.value) closeImageDialog();
+    else editingImageTarget.value = null;
   }
   if (!revisionChanged && mode.value === "visual" && editor.value?.isFocused) {
     pendingExternal.value = safe;
@@ -284,7 +289,7 @@ function openImageDialog() {
     doc: editor.value.state.doc,
     revision: props.revision
   };
-  editingImagePosition.value = null;
+  editingImageTarget.value = null;
   imageDialogInitial.value = null;
   imageDialogOpen.value = true;
 }
@@ -355,7 +360,7 @@ function removeSelectedContentImage() {
 async function closeImageDialog() {
   imageDialogOpen.value = false;
   imageDialogInitial.value = null;
-  editingImagePosition.value = null;
+  editingImageTarget.value = null;
   savedImageSelection.value = null;
   await nextTick();
   imageButton.value?.focus();
@@ -365,14 +370,18 @@ async function selectContentImage(payload) {
   const current = editor.value;
   if (!current) return;
   let changed;
-  if (editingImagePosition.value !== null) {
-    const position = editingImagePosition.value;
-    const node = current.state.doc.nodeAt(position);
-    if (node?.type.name !== "contentImage") {
+  if (editingImageTarget.value !== null) {
+    const target = editingImageTarget.value;
+    const node = current.state.doc.nodeAt(target.position);
+    const targetIsCurrent = target.doc === current.state.doc
+      && target.revision === props.revision
+      && node?.type.name === "contentImage"
+      && node.attrs.mediaId === target.mediaId;
+    if (!targetIsCurrent) {
       emit("notice", "所选图片已发生变化，请重新选择");
       return;
     }
-    current.commands.setNodeSelection(position);
+    current.commands.setNodeSelection(target.position);
     changed = updateSelectedContentImage(payload);
   } else {
     changed = await insertContentImage(payload);

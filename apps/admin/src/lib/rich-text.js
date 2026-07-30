@@ -2,6 +2,63 @@ const ALLOWED_TAGS = new Set(["P", "H2", "H3", "H4", "UL", "OL", "LI", "STRONG",
 const DROP_TAGS = new Set(["SCRIPT", "STYLE", "IFRAME", "OBJECT", "EMBED", "SVG", "MATH", "TEMPLATE"]);
 const MEDIA_PATH = /^\/api\/public\/media\/[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
+function meaningfulFigureNodes(figure) {
+  return [...figure.childNodes].filter((node) => (
+    node.nodeType !== Node.TEXT_NODE || String(node.nodeValue || "").trim()
+  ));
+}
+
+function canonicalizeManagedFigures(body) {
+  const document = body.ownerDocument;
+  const figures = [...body.querySelectorAll("figure")].reverse();
+  figures.forEach((figure) => {
+    const nodes = meaningfulFigureNodes(figure);
+    const image = nodes[0];
+    const caption = nodes[1];
+    const canonical = (nodes.length === 1 || nodes.length === 2)
+      && image?.nodeType === Node.ELEMENT_NODE
+      && image.tagName === "IMG"
+      && (nodes.length === 1 || (
+        caption?.nodeType === Node.ELEMENT_NODE
+        && caption.tagName === "FIGCAPTION"
+      ));
+
+    if (canonical) {
+      const rebuilt = document.createElement("figure");
+      const rebuiltImage = document.createElement("img");
+      rebuiltImage.setAttribute("src", image.getAttribute("src"));
+      rebuiltImage.setAttribute("alt", image.getAttribute("alt") || "");
+      rebuilt.append(rebuiltImage);
+      const captionText = caption?.textContent || "";
+      if (captionText) {
+        const rebuiltCaption = document.createElement("figcaption");
+        rebuiltCaption.textContent = captionText;
+        rebuilt.append(rebuiltCaption);
+      }
+      figure.replaceWith(rebuilt);
+      return;
+    }
+
+    const preserved = document.createDocumentFragment();
+    [...figure.childNodes].forEach((node) => {
+      if (node.nodeType === Node.ELEMENT_NODE && node.tagName === "IMG") return;
+      if (node.nodeType === Node.ELEMENT_NODE && node.tagName === "FIGCAPTION") {
+        preserved.append(...node.childNodes);
+        return;
+      }
+      preserved.append(node);
+    });
+    figure.replaceWith(preserved);
+  });
+
+  body.querySelectorAll("img").forEach((image) => {
+    if (image.parentElement?.tagName !== "FIGURE") image.remove();
+  });
+  body.querySelectorAll("figcaption").forEach((caption) => {
+    if (caption.parentElement?.tagName !== "FIGURE") caption.replaceWith(...caption.childNodes);
+  });
+}
+
 export function sanitizeEditorHtml(raw) {
   const parsed = new DOMParser().parseFromString(String(raw || ""), "text/html");
   function visit(parent) {
@@ -39,6 +96,7 @@ export function sanitizeEditorHtml(raw) {
     node.setAttribute("src", node.getAttribute("data-editor-src")); node.removeAttribute("data-editor-src");
     if (node.hasAttribute("data-editor-alt")) { node.setAttribute("alt", node.getAttribute("data-editor-alt")); node.removeAttribute("data-editor-alt"); }
   });
+  canonicalizeManagedFigures(parsed.body);
   return parsed.body.innerHTML;
 }
 

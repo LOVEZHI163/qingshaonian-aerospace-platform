@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref, watch } from "vue";
+import { computed, nextTick, ref, shallowRef, watch } from "vue";
 
 import { api } from "../lib/api.js";
 import MediaPicker from "./MediaPicker.vue";
@@ -21,7 +21,11 @@ const alt = ref("");
 const caption = ref("");
 const loading = ref(false);
 const failure = ref("");
+const dialog = ref(null);
+const searchInput = ref(null);
+const uploadHandlers = shallowRef({ uploaded: () => {}, error: () => {} });
 let requestVersion = 0;
+let sessionVersion = 0;
 
 const allowedTypes = new Set(["image/png", "image/jpeg", "image/webp"]);
 const visibleRows = computed(() => rows.value.filter((row) => !row.mimeType || allowedTypes.has(row.mimeType)));
@@ -92,14 +96,63 @@ function confirm() {
 
 function close() {
   requestVersion += 1;
+  sessionVersion += 1;
   emit("close");
+}
+
+function beginUploadSession() {
+  const session = ++sessionVersion;
+  uploadHandlers.value = {
+    uploaded: (row) => {
+      if (props.open && session === sessionVersion) uploaded(row);
+    },
+    error: (error) => {
+      if (props.open && session === sessionVersion) reportError(error);
+    }
+  };
+}
+
+function focusableElements() {
+  return [...(dialog.value?.querySelectorAll(
+    'button:not([disabled]), input:not([disabled]), [href], [tabindex]:not([tabindex="-1"])'
+  ) || [])];
+}
+
+function handleKeydown(event) {
+  if (event.key === "Escape") {
+    event.preventDefault();
+    event.stopPropagation();
+    close();
+    return;
+  }
+  if (event.key !== "Tab") return;
+  const focusable = focusableElements();
+  if (!focusable.length) {
+    event.preventDefault();
+    dialog.value?.focus();
+    return;
+  }
+  const first = focusable[0];
+  const last = focusable.at(-1);
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  } else if (!dialog.value?.contains(document.activeElement)) {
+    event.preventDefault();
+    first.focus();
+  }
 }
 
 watch(() => props.open, (open) => {
   if (!open) {
     requestVersion += 1;
+    sessionVersion += 1;
     return;
   }
+  beginUploadSession();
   const initial = props.initial || {};
   query.value = "";
   rows.value = [];
@@ -108,27 +161,28 @@ watch(() => props.open, (open) => {
   selectedMedia.value = initial.mediaId ? safeMedia({ id: initial.mediaId }) : null;
   failure.value = "";
   loadMedia();
+  nextTick(() => searchInput.value?.focus());
 }, { immediate: true });
 </script>
 
 <template>
   <div v-if="open" class="dialog-backdrop" @click.self="close">
-    <section role="dialog" aria-modal="true" aria-labelledby="content-image-title" class="panel content-image-dialog">
+    <section ref="dialog" role="dialog" aria-modal="true" aria-labelledby="content-image-title" class="panel content-image-dialog" tabindex="-1" @keydown="handleKeydown">
       <div class="panel-title">
         <h3 id="content-image-title">{{ initial?.mediaId ? "编辑正文图片" : "插入正文图片" }}</h3>
         <button type="button" data-action="close-content-image" @click="close">关闭</button>
       </div>
 
       <form class="form-actions" data-action="search-media" @submit.prevent="loadMedia">
-        <input v-model="query" data-field="media-search" type="search" aria-label="搜索媒体" placeholder="按文件名或媒体 ID 搜索">
+        <input ref="searchInput" v-model="query" data-field="media-search" type="search" aria-label="搜索媒体" placeholder="按文件名或媒体 ID 搜索">
         <button type="submit" :disabled="loading">搜索</button>
         <MediaPicker
           purpose="content-body"
           accept="image/png,image/jpeg,image/webp"
           label="上传图片"
           :disabled="disabled"
-          @uploaded="uploaded"
-          @error="reportError"
+          @uploaded="uploadHandlers.uploaded"
+          @error="uploadHandlers.error"
         />
       </form>
 

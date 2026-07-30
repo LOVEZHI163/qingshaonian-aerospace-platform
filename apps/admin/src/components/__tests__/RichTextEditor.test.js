@@ -6,6 +6,7 @@ vi.mock("../../lib/api.js", () => ({
 }));
 
 import RichTextEditor from "../RichTextEditor.vue";
+import { parsePublicMediaFigure } from "../../lib/content-image-extension.js";
 import { sanitizeEditorHtml } from "../../lib/rich-text.js";
 
 async function mountEditor(options = {}) {
@@ -264,6 +265,109 @@ describe("RichTextEditor", () => {
     expect(html).toContain("/api/public/media/M_OK-1");
     expect(html).not.toContain("/api/admin/");
     expect(html).not.toContain("secret");
+  });
+
+  it("normalizes HTML repair images to canonical figures without losing ordinary text", async () => {
+    const wrapper = await mountEditor({ props: { modelValue: "<p>原文</p>" } });
+    await wrapper.get('[data-editor-mode="html"]').trigger("click");
+    await wrapper.get('[data-rich-editor="html"]').setValue(
+      '<p>前文</p>'
+      + '<figure><img src="/api/public/media/M1" alt="合法"><figcaption>合法题注</figcaption></figure>'
+      + '<img src="/api/public/media/M2" alt="裸图">'
+      + '<figcaption>孤立题注文本</figcaption>'
+      + '<figure><img src="/api/public/media/M3" alt=""><p>额外段落文本</p></figure>'
+      + '<figure><img src="/api/public/media/M4" alt=""><img src="/api/public/media/M5" alt=""><figcaption>多图题注文本</figcaption></figure>'
+      + '<figure><img src="/api/public/media/M6" alt=""><figcaption>题注一</figcaption><figcaption>题注二</figcaption></figure>'
+    );
+
+    const safe = wrapper.emitted("update:modelValue").at(-1)[0];
+    expect(safe).toContain(
+      '<figure><img src="/api/public/media/M1" alt="合法"><figcaption>合法题注</figcaption></figure>'
+    );
+    expect((safe.match(/<img/g) || [])).toHaveLength(1);
+    expect((safe.match(/<figure/g) || [])).toHaveLength(1);
+    expect((safe.match(/<figcaption/g) || [])).toHaveLength(1);
+    expect(safe).not.toMatch(/M2|M3|M4|M5|M6/);
+    expect(safe).toContain("孤立题注文本");
+    expect(safe).toContain("额外段落文本");
+    expect(safe).toContain("多图题注文本");
+    expect(safe).toContain("题注一");
+    expect(safe).toContain("题注二");
+
+    await wrapper.get('[data-editor-mode="visual"]').trigger("click");
+    const visualText = wrapper.get('[data-rich-editor="visual"]').text();
+    expect(visualText).toContain("孤立题注文本");
+    expect(visualText).toContain("额外段落文本");
+    expect(visualText).toContain("多图题注文本");
+    expect(visualText).toContain("题注一");
+    expect(visualText).toContain("题注二");
+  });
+
+  it("round-trips only the exact canonical content image structure", async () => {
+    const canonical = '<p>前文</p><figure><img src="/api/public/media/M1" alt="说明"><figcaption>题注</figcaption></figure><p>后文</p>';
+    const wrapper = await mountEditor({ props: { modelValue: canonical } });
+    expect(wrapper.vm.editor.getHTML()).toBe(canonical);
+
+    await wrapper.get('[data-editor-mode="html"]').trigger("click");
+    await wrapper.get('[data-rich-editor="html"]').setValue(
+      '<figure><img src="/api/public/media/M2" alt="说明"><span>不能被 atom 吞掉的文本</span></figure>'
+    );
+    const safe = wrapper.emitted("update:modelValue").at(-1)[0];
+    expect(safe).not.toContain("<img");
+    expect(safe).not.toContain("<figure");
+    expect(safe).toContain("不能被 atom 吞掉的文本");
+    await wrapper.get('[data-editor-mode="visual"]').trigger("click");
+    expect(wrapper.get('[data-rich-editor="visual"]').text()).toContain("不能被 atom 吞掉的文本");
+  });
+
+  it("only parses the exact canonical figure DOM shape", () => {
+    const container = document.createElement("div");
+    container.innerHTML = '<figure><img src="/api/public/media/M1" alt="说明"><figcaption>题注</figcaption></figure>';
+    expect(parsePublicMediaFigure(container.firstElementChild)).toEqual({
+      mediaId: "M1",
+      alt: "说明",
+      caption: "题注"
+    });
+
+    container.innerHTML = '<figure><img src="/api/public/media/M1" alt=""><img src="/api/public/media/M2" alt=""></figure>';
+    expect(parsePublicMediaFigure(container.firstElementChild)).toBe(false);
+    container.innerHTML = '<figure><img src="/api/public/media/M1" alt=""><figcaption>题注<!--非 canonical 子节点--></figcaption></figure>';
+    expect(parsePublicMediaFigure(container.firstElementChild)).toBe(false);
+  });
+
+  it("does not update a different image when the edited target document changes", async () => {
+    const wrapper = await mountEditor({
+      props: {
+        revision: "P1:1",
+        modelValue: '<figure><img src="/api/public/media/M1" alt="一"></figure><figure><img src="/api/public/media/M2" alt="二"></figure>'
+      }
+    });
+    await wrapper.findAll('[data-action="edit-content-image"]')[0].trigger("click");
+    await wrapper.get('[data-field="image-alt"]').setValue("错误覆盖");
+
+    const replacement = '<figure><img src="/api/public/media/M3" alt="三"></figure><figure><img src="/api/public/media/M2" alt="二"></figure>';
+    await wrapper.setProps({ modelValue: replacement, revision: "P1:1" });
+    await wrapper.get('[data-action="confirm-image"]').trigger("click");
+
+    expect(wrapper.vm.editor.getHTML()).toBe(replacement);
+    expect(wrapper.vm.editor.getHTML()).not.toContain("错误覆盖");
+    expect(wrapper.find('[role="dialog"]').exists()).toBe(true);
+    expect(wrapper.emitted("notice").at(-1)[0]).toContain("重新选择");
+  });
+
+  it("closes an image modal on revision change and restores the toolbar focus", async () => {
+    const wrapper = await mountEditor({
+      attachTo: document.body,
+      props: { modelValue: "<p>第一篇</p>", revision: "P1:1" }
+    });
+    await wrapper.get('[data-command="image"]').trigger("click");
+    expect(document.activeElement).toBe(wrapper.get('[data-field="media-search"]').element);
+
+    await wrapper.setProps({ modelValue: "<p>第二篇</p>", revision: "P2:1" });
+    await wrapper.vm.$nextTick();
+    expect(wrapper.find('[role="dialog"]').exists()).toBe(false);
+    expect(document.activeElement).toBe(wrapper.get('[data-command="image"]').element);
+    wrapper.unmount();
   });
 
   it("cleans dangerous pasted markup while retaining semantic content", async () => {

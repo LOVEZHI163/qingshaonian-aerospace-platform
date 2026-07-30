@@ -5,6 +5,7 @@ const { apiMock } = vi.hoisted(() => ({ apiMock: vi.fn() }));
 vi.mock("../../lib/api.js", () => ({ api: apiMock }));
 
 import ContentImageDialog from "../ContentImageDialog.vue";
+import MediaPicker from "../MediaPicker.vue";
 
 describe("ContentImageDialog", () => {
   beforeEach(() => {
@@ -124,5 +125,90 @@ describe("ContentImageDialog", () => {
     await wrapper.get('[data-media-id="M1"]').trigger("click");
     expect(wrapper.get('[data-action="confirm-image"]').attributes("disabled")).toBeUndefined();
     expect(wrapper.get('[data-media-id="M1"] img').attributes("src")).toBe("/safe/preview");
+  });
+
+  it("ignores an upload success from a closed session after the dialog reopens", async () => {
+    let listCount = 0;
+    apiMock.mockImplementation(() => {
+      listCount += 1;
+      return Promise.resolve({
+        rows: listCount === 1
+          ? []
+          : [{ id: "M-NEW", originalName: "新会话.png", mimeType: "image/png", previewUrl: "/new-preview" }]
+      });
+    });
+    const wrapper = mount(ContentImageDialog, { props: { open: true } });
+    await flushPromises();
+
+    const oldUploaded = wrapper.findComponent(MediaPicker).vm.$.vnode.props.onUploaded;
+    await wrapper.setProps({ open: false });
+    await wrapper.setProps({ open: true });
+    await flushPromises();
+    await wrapper.get('[data-media-id="M-NEW"]').trigger("click");
+
+    oldUploaded({ id: "M-OLD", originalName: "旧会话.png", mimeType: "image/png" });
+    await wrapper.vm.$nextTick();
+    expect(wrapper.find('[data-media-id="M-OLD"]').exists()).toBe(false);
+    await wrapper.get('[data-action="confirm-image"]').trigger("click");
+    expect(wrapper.emitted("select").at(-1)[0].media.id).toBe("M-NEW");
+  });
+
+  it("ignores an upload error from a closed session after the dialog reopens", async () => {
+    let listCount = 0;
+    apiMock.mockImplementation(() => {
+      listCount += 1;
+      return Promise.resolve({
+        rows: listCount === 1
+          ? []
+          : [{ id: "M-NEW", originalName: "新会话.webp", mimeType: "image/webp", previewUrl: "/new-preview" }]
+      });
+    });
+    const wrapper = mount(ContentImageDialog, { props: { open: true } });
+    await flushPromises();
+
+    const oldError = wrapper.findComponent(MediaPicker).vm.$.vnode.props.onError;
+    await wrapper.setProps({ open: false });
+    await wrapper.setProps({ open: true });
+    await flushPromises();
+    await wrapper.get('[data-media-id="M-NEW"]').trigger("click");
+
+    oldError(new Error("旧会话上传失败"));
+    await wrapper.vm.$nextTick();
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false);
+    expect(wrapper.emitted("error")).toBeUndefined();
+    await wrapper.get('[data-action="confirm-image"]').trigger("click");
+    expect(wrapper.emitted("select").at(-1)[0].media.id).toBe("M-NEW");
+  });
+
+  it("focuses the modal, traps Tab in both directions, and closes on Escape", async () => {
+    apiMock.mockResolvedValueOnce({
+      rows: [{ id: "M1", originalName: "图片.png", mimeType: "image/png", previewUrl: "/preview" }]
+    });
+    const wrapper = mount(ContentImageDialog, {
+      attachTo: document.body,
+      props: {
+        open: true,
+        initial: { mediaId: "M1", alt: "", caption: "" }
+      }
+    });
+    await flushPromises();
+
+    const dialog = wrapper.get('[role="dialog"]');
+    const search = wrapper.get('[data-field="media-search"]');
+    const close = wrapper.get('[data-action="close-content-image"]');
+    const confirm = wrapper.get('[data-action="confirm-image"]');
+    expect(document.activeElement).toBe(search.element);
+
+    confirm.element.focus();
+    await dialog.trigger("keydown", { key: "Tab" });
+    expect(document.activeElement).toBe(close.element);
+
+    close.element.focus();
+    await dialog.trigger("keydown", { key: "Tab", shiftKey: true });
+    expect(document.activeElement).toBe(confirm.element);
+
+    await dialog.trigger("keydown", { key: "Escape" });
+    expect(wrapper.emitted("close")).toHaveLength(1);
+    wrapper.unmount();
   });
 });

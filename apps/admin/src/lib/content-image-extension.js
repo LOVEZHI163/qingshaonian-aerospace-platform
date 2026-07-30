@@ -10,8 +10,27 @@ export function validContentMediaId(value) {
 }
 
 export function parsePublicMediaFigure(element) {
-  const image = [...element.children].find((child) => child.tagName === "IMG");
-  if (!image) return false;
+  const nodes = [...element.childNodes];
+  if (element.attributes.length || (nodes.length !== 1 && nodes.length !== 2)) return false;
+  const image = nodes[0];
+  const figcaption = nodes[1];
+  if (
+    image?.nodeType !== 1
+    || image.tagName !== "IMG"
+    || !image.hasAttribute("alt")
+    || [...image.attributes].some((attribute) => !["src", "alt"].includes(attribute.name))
+  ) return false;
+  if (
+    nodes.length === 2
+    && (
+      figcaption?.nodeType !== 1
+      || figcaption.tagName !== "FIGCAPTION"
+      || figcaption.attributes.length
+      || figcaption.childNodes.length !== 1
+      || figcaption.firstChild?.nodeType !== 3
+      || !figcaption.textContent
+    )
+  ) return false;
   const match = String(image.getAttribute("src") || "").match(/^\/api\/public\/media\/([^/?#]+)$/);
   if (!match) return false;
   let mediaId;
@@ -21,7 +40,6 @@ export function parsePublicMediaFigure(element) {
     return false;
   }
   if (!validContentMediaId(mediaId)) return false;
-  const figcaption = [...element.children].find((child) => child.tagName === "FIGCAPTION");
   return {
     mediaId,
     alt: image.getAttribute("alt") || "",
