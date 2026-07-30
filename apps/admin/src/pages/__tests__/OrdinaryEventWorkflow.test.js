@@ -81,4 +81,21 @@ describe("ordinary user event workflow", () => {
     records.unmount();
     certificates.unmount();
   });
+
+  it("queries published historical certificates by an explicit event id without an active event", async () => {
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/me/events/E-ARCHIVED/certificates") return { rows: [{ id: "C1", title: "历史证书" }] };
+      throw new Error(`unexpected API path ${path}`);
+    });
+    const wrapper = mount(MyCertificatesPage);
+    await flushPromises();
+
+    await wrapper.get('[data-field="certificate-event-id"]').setValue("E-ARCHIVED");
+    await wrapper.get('[data-action="query-certificates"]').trigger("submit");
+    await flushPromises();
+
+    expect(apiMock).toHaveBeenCalledWith("/api/me/events/E-ARCHIVED/certificates");
+    expect(wrapper.text()).toContain("历史证书");
+    expect(wrapper.emitted("event-id")?.[0]).toEqual(["E-ARCHIVED"]);
+  });
 });

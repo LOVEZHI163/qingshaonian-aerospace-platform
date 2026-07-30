@@ -69,6 +69,9 @@ const userNavigation = computed(() => {
 });
 const userHeaderEvent = computed(() => {
   if (currentView.value === "eventCenter") return { name: "赛事中心", date: "", venue: "", registrationDeadline: "" };
+  if (currentUser.value?.type === "ordinary" && currentView.value === "certificates" && certificateEventId.value && !selectedAccountEvent.value) {
+    return { name: "历史赛事证书查询", date: "", venue: "", registrationDeadline: "" };
+  }
   if (currentUser.value?.type === "ordinary" && selectedAccountEvent.value?.event) {
     const event = selectedAccountEvent.value.event;
     return {
@@ -122,6 +125,18 @@ function restoreAccountEventContext() {
   return true;
 }
 
+function restoreCertificateEventContext() {
+  const resolvedEventId = resolveAccountEventId(initialEventContext);
+  if (resolvedEventId) {
+    selectEventContext(resolvedEventId);
+    return;
+  }
+  selectedEventId.value = "";
+  registrationEventId.value = "";
+  recordsEventId.value = "";
+  certificateEventId.value = initialEventId;
+}
+
 async function loadAccountEvents() {
   try {
     await session.loadAccountEvents?.();
@@ -134,7 +149,11 @@ async function loadAccountEvents() {
 
 function targetView(user = currentUser.value) {
   if (!user || !initialView) return defaultView(user);
-  if (user.type !== "admin" && ["registration", "registrationRecords", "certificates", "organizationWorkspace"].includes(initialView) && !restoreAccountEventContext()) {
+  if (user.type === "ordinary" && initialView === "certificates") {
+    restoreCertificateEventContext();
+    return "certificates";
+  }
+  if (user.type !== "admin" && ["registration", "registrationRecords", "organizationWorkspace"].includes(initialView) && !restoreAccountEventContext()) {
     message.value = "赛事链接无效或暂无访问权限";
     return "eventCenter";
   }
@@ -224,6 +243,11 @@ function navigateUser(key) {
   currentView.value = key;
 }
 
+function setCertificateEventId(eventId) {
+  if (!SAFE_EVENT_ID.test(eventId || "")) return;
+  certificateEventId.value = eventId;
+}
+
 function openAccountEvent({ eventId, mode }) {
   selectEventContext(eventId);
   currentView.value = mode;
@@ -256,7 +280,7 @@ watch(currentView, (view) => {
   if (view !== "registration") selectedRegistrationEvent.value = null;
 });
 
-watch([currentView, selectedEventId, siteContentId, () => currentUser.value?.type], ([view, eventId, contentId, userType]) => {
+watch([currentView, selectedEventId, certificateEventId, siteContentId, () => currentUser.value?.type], ([view, eventId, certificateId, contentId, userType]) => {
   if (!userType || !DEEP_LINK_VIEWS.has(view)) return;
   const url = new URL(window.location.href);
   url.searchParams.set("view", view);
@@ -266,7 +290,8 @@ watch([currentView, selectedEventId, siteContentId, () => currentUser.value?.typ
   } else {
     url.searchParams.delete("contentId");
     url.searchParams.delete("eventSlug");
-    if (eventId) url.searchParams.set("eventId", eventId);
+    const visibleEventId = view === "certificates" ? certificateId : eventId;
+    if (visibleEventId) url.searchParams.set("eventId", visibleEventId);
     else url.searchParams.delete("eventId");
   }
   window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
@@ -327,7 +352,7 @@ onMounted(async () => {
       <EventCenterPage v-if="currentView === 'eventCenter'" :account-type="currentUser.type" @open-event="openAccountEvent" />
       <RegistrationPage v-if="currentView === 'registration'" :event-id="registrationEventId" :account-type="currentUser.type" :event-organizations="selectedAccountEvent?.organizations || []" :registration-state="selectedAccountEvent?.registrationState || ''" :fallback-context="{ projects: eventData.projects }" @context="useRegistrationEvent" @registered="message = '报名已提交，等待审核'" @error="handleError" />
       <RegistrationRecordsPage :key="`records:${recordsEventId}`" v-else-if="currentView === 'registrationRecords'" :event-id="recordsEventId" @error="handleError" />
-      <MyCertificatesPage :key="`certificates:${certificateEventId}`" v-else-if="currentView === 'certificates'" :event-id="certificateEventId" @error="handleError" />
+      <MyCertificatesPage :key="`certificates:${certificateEventId}`" v-else-if="currentView === 'certificates'" :event-id="certificateEventId" @event-id="setCertificateEventId" @error="handleError" />
       <OrganizationConsolePage v-else-if="currentView === 'organization'" @error="handleError" />
     </main>
   </div>

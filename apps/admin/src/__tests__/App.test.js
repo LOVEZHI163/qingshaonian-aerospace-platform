@@ -151,6 +151,39 @@ describe("App session integration", () => {
     expect(apiMock.mock.calls.some(([path]) => path.includes("registration-context"))).toBe(false);
   });
 
+  it("keeps an archived certificate deep link outside active event rows", async () => {
+    window.history.replaceState({}, "", "/admin/?view=certificates&eventId=E-ARCHIVED");
+    sessionUser.value = { id: "U1", type: "ordinary", name: "用户", mustChangePassword: false };
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/public/event") return publicData();
+      if (path === "/api/me/events") return { rows: [{ event: { id: "E1", name: "当前赛事" }, registrationState: "open" }] };
+      if (path === "/api/me/events/E-ARCHIVED/certificates") return { rows: [{ id: "C1", title: "历史证书" }] };
+      return { rows: [] };
+    });
+    const wrapper = mount(App);
+    await flushPromises();
+
+    expect(wrapper.find('[data-testid="my-certificates-page"]').exists()).toBe(true);
+    expect(apiMock).toHaveBeenCalledWith("/api/me/events/E-ARCHIVED/certificates");
+    expect(new URLSearchParams(window.location.search).get("eventId")).toBe("E-ARCHIVED");
+  });
+
+  it("continues to reject an archived registration deep link outside active event rows", async () => {
+    window.history.replaceState({}, "", "/admin/?view=registration&eventId=E-ARCHIVED");
+    sessionUser.value = { id: "U1", type: "ordinary", name: "用户", mustChangePassword: false };
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/public/event") return publicData();
+      if (path === "/api/me/events") return { rows: [{ event: { id: "E1", name: "当前赛事" }, registrationState: "open" }] };
+      return { rows: [] };
+    });
+    const wrapper = mount(App);
+    await flushPromises();
+
+    expect(wrapper.find('[data-testid="event-center-page"]').exists()).toBe(true);
+    expect(wrapper.find('.registration-page').exists()).toBe(false);
+    expect(new URLSearchParams(window.location.search).has("eventId")).toBe(false);
+  });
+
   it("keeps a logged-in account in the event center when account events cannot load", async () => {
     sessionUser.value = { id: "U1", type: "ordinary", name: "用户", mustChangePassword: false };
     session.loadAccountEvents.mockRejectedValueOnce(new Error("赛事列表暂不可用"));
