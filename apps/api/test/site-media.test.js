@@ -254,6 +254,12 @@ test("admin lists recent image media without storage fields", async () => {
       "createdAt", "eventId", "height", "id", "mimeType", "originalName", "previewUrl", "purpose", "sizeBytes", "visibility", "width"
     ]);
     assert.equal(payload.rows[0].previewUrl, "/api/admin/site-media/M-NEW/preview");
+
+    const defaultKindResponse = await fetch(`${baseUrl}/api/admin/site-media`, withSession(admin.cookie));
+    assert.equal(defaultKindResponse.status, 200);
+    const defaultKindPayload = await defaultKindResponse.json();
+    assert.deepEqual(defaultKindPayload.rows.map((row) => row.id), ["M-NEW", "M-OLD"]);
+    assert.equal(defaultKindPayload.rows.every((row) => ["image/png", "image/jpeg", "image/webp"].includes(row.mimeType)), true);
   }, { prefix: "site-media-list-" });
 });
 

@@ -144,7 +144,7 @@ export function createSiteMediaRouter({
     const db = await store.readDb();
     const rows = (db.mediaAssets || [])
       .filter((row) => !row.cleanedAt)
-      .filter((row) => kind !== "image" || ["image/png", "image/jpeg", "image/webp"].includes(row.mimeType))
+      .filter((row) => ["image/png", "image/jpeg", "image/webp"].includes(row.mimeType))
       .filter((row) => !query || [row.id, row.originalName].some((value) => String(value || "").toLowerCase().includes(query)))
       .sort((left, right) => String(right.createdAt).localeCompare(String(left.createdAt)) || String(right.id).localeCompare(String(left.id)))
       .slice(0, limit)
