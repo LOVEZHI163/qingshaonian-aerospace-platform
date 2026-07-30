@@ -150,10 +150,14 @@ watch([() => props.modelValue, () => props.revision], ([next, revision], [, prev
   pendingWriteback.value = null;
 
   if (isSelfWriteback) {
+    pendingExternal.value = null;
     value.value = safe;
     return;
   }
-  if (!revisionChanged && safe === value.value) return;
+  if (!revisionChanged && safe === value.value) {
+    pendingExternal.value = null;
+    return;
+  }
 
   if (revisionChanged) pendingExternal.value = null;
   if (!revisionChanged && mode.value === "visual" && editor.value?.isFocused) {

@@ -121,6 +121,29 @@ describe("RichTextEditor", () => {
     expect(wrapper.vm.editor.getHTML()).toBe(localA);
   });
 
+  it("discards a deferred external value when focused props return to the current value", async () => {
+    const wrapper = await mountEditor({
+      attachTo: document.body,
+      props: { modelValue: "<p>外部 A</p>", revision: 1 }
+    });
+    const editor = wrapper.vm.editor;
+    editor.view.dom.focus();
+    editor.commands.setTextSelection(2);
+    const selectionFrom = editor.state.selection.from;
+
+    await wrapper.setProps({ modelValue: "<p>外部 B</p>", revision: 1 });
+    expect(editor.getHTML()).toBe("<p>外部 A</p>");
+    expect(editor.state.selection.from).toBe(selectionFrom);
+    await wrapper.setProps({ modelValue: "<p>外部 A</p>", revision: 1 });
+
+    editor.view.dom.blur();
+    await wrapper.vm.$nextTick();
+    expect(editor.getHTML()).toBe("<p>外部 A</p>");
+    await wrapper.get('[data-editor-mode="html"]').trigger("click");
+    expect(wrapper.get('[data-rich-editor="html"]').element.value).toBe("<p>外部 A</p>");
+    wrapper.unmount();
+  });
+
   it("does not carry a same-revision writeback marker across revisions", async () => {
     const wrapper = await mountEditor({
       props: { modelValue: "<p>初始</p>", revision: 1 }
