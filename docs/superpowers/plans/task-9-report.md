@@ -36,3 +36,19 @@ git diff --check
 ```
 
 普通用户与管理员流程未作业务改动；Task 10 的管理员统一赛事上下文保持后续任务边界。
+
+## Review Fix Round 1
+
+- 组织工作台报名记录新增编辑入口，保存时严格调用 `PATCH /api/organization/events/:eventId/registrations/:registrationId`；归档赛事不渲染编辑入口。
+- 组织账号的 `view=organizationWorkspace&eventId=<archived>` 深链不再依赖活动赛事中心列表。页面通过 workspace API 完成授权，成功后保持 URL 并显示历史赛事标题；无权组织自动清空赛事上下文并回到赛事中心。
+- 普通账号无法请求组织工作台接口，直接回到赛事中心。
+
+验证：
+
+```powershell
+npm.cmd test -w apps/admin -- src/pages/__tests__/OrganizationWorkspaceDeepLink.test.js src/pages/__tests__/OrganizationEventWorkspacePage.test.js src/pages/__tests__/OrganizationConsolePage.test.js src/pages/__tests__/AppNavigation.test.js
+# 4 files, 32 passed
+
+npm.cmd run build -w apps/admin
+# vite build passed
+```
