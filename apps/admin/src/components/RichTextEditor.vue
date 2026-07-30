@@ -3,9 +3,11 @@ import { isActive as isStateActive } from "@tiptap/core";
 import Link from "@tiptap/extension-link";
 import StarterKit from "@tiptap/starter-kit";
 import { EditorContent, useEditor } from "@tiptap/vue-3";
-import { computed, nextTick, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onMounted, ref, shallowRef, watch } from "vue";
 
+import { ContentImage, validContentMediaId } from "../lib/content-image-extension.js";
 import { sanitizeEditorHtml } from "../lib/rich-text.js";
+import ContentImageDialog from "./ContentImageDialog.vue";
 
 const props = defineProps({
   modelValue: { type: String, default: "" },
@@ -20,6 +22,11 @@ const repairValue = ref("");
 const textRepair = ref("");
 const pendingWriteback = ref(null);
 const pendingExternal = ref(null);
+const imageDialogOpen = ref(false);
+const imageDialogInitial = ref(null);
+const imageButton = ref(null);
+const savedImageSelection = shallowRef(null);
+const editingImagePosition = ref(null);
 const toolbarState = ref({
   paragraph: false,
   "heading-2": false,
@@ -80,6 +87,18 @@ function applyExternalValue(safe) {
   replaceEditorContent(safe, false);
 }
 
+function editContentImage({ node, position }) {
+  if (props.disabled || typeof position !== "number") return;
+  editingImagePosition.value = position;
+  savedImageSelection.value = null;
+  imageDialogInitial.value = {
+    mediaId: node.attrs.mediaId,
+    alt: node.attrs.alt,
+    caption: node.attrs.caption
+  };
+  imageDialogOpen.value = true;
+}
+
 const editor = useEditor({
   content: value.value,
   editable: !props.disabled,
@@ -97,7 +116,8 @@ const editor = useEditor({
       autolink: false,
       protocols: ["http", "https", "mailto"],
       HTMLAttributes: { target: null, rel: null }
-    })
+    }),
+    ContentImage.configure({ onEdit: editContentImage })
   ],
   editorProps: {
     attributes: {
@@ -138,8 +158,6 @@ const editor = useEditor({
   }
 });
 
-defineExpose({ editor });
-
 watch([() => props.modelValue, () => props.revision], ([next, revision], [, previousRevision]) => {
   const safe = sanitizeEditorHtml(next);
   const revisionChanged = revision !== previousRevision;
@@ -159,7 +177,12 @@ watch([() => props.modelValue, () => props.revision], ([next, revision], [, prev
     return;
   }
 
-  if (revisionChanged) pendingExternal.value = null;
+  if (revisionChanged) {
+    pendingExternal.value = null;
+    savedImageSelection.value = null;
+    editingImagePosition.value = null;
+    imageDialogOpen.value = false;
+  }
   if (!revisionChanged && mode.value === "visual" && editor.value?.isFocused) {
     pendingExternal.value = safe;
     if (safe !== next) emit("normalized", safe);
@@ -253,8 +276,120 @@ function promptLink() {
 }
 
 function openImageDialog() {
-  if (props.disabled) return;
+  if (props.disabled || !editor.value) return;
+  const { from, to } = editor.value.state.selection;
+  savedImageSelection.value = {
+    from,
+    to,
+    doc: editor.value.state.doc,
+    revision: props.revision
+  };
+  editingImagePosition.value = null;
+  imageDialogInitial.value = null;
+  imageDialogOpen.value = true;
 }
+
+function contentImageAttrs(payload) {
+  return {
+    mediaId: String(payload?.media?.id || ""),
+    alt: String(payload?.alt || ""),
+    caption: String(payload?.caption || "")
+  };
+}
+
+function emptyEditorDocument(current) {
+  const doc = current.state.doc;
+  return doc.childCount === 1
+    && doc.firstChild?.type.name === "paragraph"
+    && doc.firstChild.content.size === 0;
+}
+
+async function insertContentImage(payload) {
+  const current = editor.value;
+  const attrs = contentImageAttrs(payload);
+  if (props.disabled || !current || !validContentMediaId(attrs.mediaId)) return false;
+
+  const saved = savedImageSelection.value;
+  savedImageSelection.value = null;
+  const selectionIsCurrent = saved
+    && saved.revision === props.revision
+    && saved.doc === current.state.doc
+    && saved.from >= 0
+    && saved.to >= saved.from
+    && saved.to <= current.state.doc.content.size;
+
+  let inserted;
+  if (selectionIsCurrent) {
+    inserted = current.chain()
+      .focus(null, { scrollIntoView: false })
+      .setTextSelection({ from: saved.from, to: saved.to })
+      .insertContentImage(attrs)
+      .run();
+  } else if (!saved && !emptyEditorDocument(current)) {
+    inserted = current.chain()
+      .focus(null, { scrollIntoView: false })
+      .insertContentImage(attrs)
+      .run();
+  } else {
+    inserted = current.chain()
+      .focus(null, { scrollIntoView: false })
+      .insertContentAt(current.state.doc.content.size, { type: "contentImage", attrs })
+      .run();
+    if (inserted) emit("notice", "原插入位置已失效，图片已插入到正文末尾");
+  }
+  await nextTick();
+  return inserted;
+}
+
+function updateSelectedContentImage(payload) {
+  const attrs = contentImageAttrs(payload);
+  if (props.disabled || !editor.value || !validContentMediaId(attrs.mediaId)) return false;
+  return editor.value.commands.updateContentImage(attrs);
+}
+
+function removeSelectedContentImage() {
+  if (props.disabled || !editor.value) return false;
+  return editor.value.commands.removeContentImage();
+}
+
+async function closeImageDialog() {
+  imageDialogOpen.value = false;
+  imageDialogInitial.value = null;
+  editingImagePosition.value = null;
+  savedImageSelection.value = null;
+  await nextTick();
+  imageButton.value?.focus();
+}
+
+async function selectContentImage(payload) {
+  const current = editor.value;
+  if (!current) return;
+  let changed;
+  if (editingImagePosition.value !== null) {
+    const position = editingImagePosition.value;
+    const node = current.state.doc.nodeAt(position);
+    if (node?.type.name !== "contentImage") {
+      emit("notice", "所选图片已发生变化，请重新选择");
+      return;
+    }
+    current.commands.setNodeSelection(position);
+    changed = updateSelectedContentImage(payload);
+  } else {
+    changed = await insertContentImage(payload);
+  }
+  if (changed) await closeImageDialog();
+}
+
+function contentImageError(error) {
+  emit("notice", error?.message || "图片媒体请求失败");
+}
+
+defineExpose({
+  editor,
+  insertContentImage,
+  updateSelectedContentImage,
+  removeSelectedContentImage
+});
 
 function isActive(command) {
   return Boolean(toolbarState.value[command]);
@@ -286,10 +421,18 @@ function isDisabled(command) {
       <button type="button" data-command="undo" aria-label="撤销" :disabled="isDisabled('undo')" @click="run('undo')">撤销</button>
       <button type="button" data-command="redo" aria-label="重做" :disabled="isDisabled('redo')" @click="run('redo')">重做</button>
       <button type="button" data-command="clear-formatting" aria-label="清除格式" :disabled="isDisabled('clear-formatting')" @click="run('clear-formatting')">清除格式</button>
-      <button type="button" data-command="image" aria-label="图片" :disabled="isDisabled('image')" @click="openImageDialog">图片</button>
+      <button ref="imageButton" type="button" data-command="image" aria-label="图片" :disabled="isDisabled('image')" @click="openImageDialog">图片</button>
     </div>
     <EditorContent v-show="mode === 'visual'" :editor="editor" />
     <textarea v-if="mode === 'html'" :value="repairValue" data-rich-editor="html" :disabled="disabled" @input="updateHtmlRepair"></textarea>
     <textarea v-if="mode === 'text'" :value="textRepair" data-rich-editor="text" :disabled="disabled" @input="updateTextRepair"></textarea>
+    <ContentImageDialog
+      :open="imageDialogOpen"
+      :initial="imageDialogInitial"
+      :disabled="disabled"
+      @close="closeImageDialog"
+      @select="selectContentImage"
+      @error="contentImageError"
+    />
   </section>
 </template>

@@ -29,7 +29,7 @@ export function sanitizeEditorHtml(raw) {
     const alt = node.getAttribute("alt") || "";
     if (!MEDIA_PATH.test(src)) { node.remove(); return; }
     node.setAttribute("data-editor-src", src);
-    if (alt) node.setAttribute("data-editor-alt", alt);
+    node.setAttribute("data-editor-alt", alt);
   });
   visit(parsed.body);
   parsed.body.querySelectorAll("a[data-editor-href]").forEach((node) => {

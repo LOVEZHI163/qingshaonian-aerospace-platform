@@ -1,6 +1,10 @@
 import { mount } from "@vue/test-utils";
 import { describe, expect, it, vi } from "vitest";
 
+vi.mock("../../lib/api.js", () => ({
+  api: vi.fn().mockResolvedValue({ rows: [] })
+}));
+
 import RichTextEditor from "../RichTextEditor.vue";
 import { sanitizeEditorHtml } from "../../lib/rich-text.js";
 
@@ -166,7 +170,100 @@ describe("RichTextEditor", () => {
     await button.trigger("click");
     expect(prompt).not.toHaveBeenCalled();
     expect(wrapper.emitted("open-image-dialog")).toBeUndefined();
+    expect(wrapper.get('[role="dialog"]').exists()).toBe(true);
     prompt.mockRestore();
+  });
+
+  it("serializes a selected media item as canonical public figure html", async () => {
+    const wrapper = await mountEditor({ props: { modelValue: "<p>正文</p>" } });
+    wrapper.vm.editor.commands.setTextSelection(3);
+    await wrapper.vm.insertContentImage({
+      media: { id: "M1", previewUrl: "/api/admin/site-media/M1/preview" },
+      alt: "飞行器",
+      caption: "比赛现场"
+    });
+
+    expect(wrapper.emitted("update:modelValue").at(-1)[0]).toContain(
+      '<figure><img src="/api/public/media/M1" alt="飞行器"><figcaption>比赛现场</figcaption></figure>'
+    );
+    expect(wrapper.emitted("update:modelValue").at(-1)[0]).not.toContain("/api/admin/");
+    expect(wrapper.get('[data-content-image="M1"] img').attributes("src")).toBe("/api/admin/site-media/M1/preview");
+  });
+
+  it("serializes empty image metadata canonically and refuses unsafe media ids", async () => {
+    const wrapper = await mountEditor({ props: { modelValue: "<p>正文</p>" } });
+    wrapper.vm.editor.commands.setTextSelection(3);
+    await wrapper.vm.insertContentImage({ media: { id: "M_SAFE-1" }, alt: "", caption: "" });
+    expect(wrapper.vm.editor.getHTML()).toContain(
+      '<figure><img src="/api/public/media/M_SAFE-1" alt=""></figure>'
+    );
+
+    const previous = wrapper.vm.editor.getHTML();
+    await wrapper.vm.insertContentImage({ media: { id: "../private" }, alt: "", caption: "" });
+    expect(wrapper.vm.editor.getHTML()).toBe(previous);
+  });
+
+  it("edits replaces and removes the selected content image", async () => {
+    const wrapper = await mountEditor({
+      props: {
+        modelValue: '<figure><img src="/api/public/media/M1" alt="旧"><figcaption>旧题注</figcaption></figure>'
+      }
+    });
+    wrapper.vm.editor.commands.setNodeSelection(0);
+    wrapper.vm.updateSelectedContentImage({ media: { id: "M2" }, alt: "新", caption: "新题注" });
+
+    expect(wrapper.vm.editor.getHTML()).toContain("/api/public/media/M2");
+    expect(wrapper.vm.editor.getHTML()).toContain("新题注");
+    wrapper.vm.removeSelectedContentImage();
+    expect(wrapper.vm.editor.getHTML()).not.toContain("<figure");
+  });
+
+  it("inserts at the saved selection or appends with a notice when the selection is invalid", async () => {
+    const wrapper = await mountEditor({ props: { modelValue: "<p>甲乙</p>" } });
+    wrapper.vm.editor.commands.setTextSelection(2);
+    await wrapper.get('[data-command="image"]').trigger("click");
+    expect(wrapper.vm.editor.state.selection.from).toBe(2);
+    wrapper.vm.insertContentImage({ media: { id: "M1" }, alt: "", caption: "" });
+    const insertedHtml = wrapper.vm.editor.getHTML();
+    expect(insertedHtml.indexOf("M1"), insertedHtml).toBeLessThan(insertedHtml.indexOf("乙"));
+
+    wrapper.vm.editor.commands.clearContent();
+    wrapper.vm.insertContentImage({ media: { id: "M2" }, alt: "", caption: "" });
+    expect(wrapper.vm.editor.getHTML()).toContain("/api/public/media/M2");
+    expect(wrapper.emitted("notice").at(-1)[0]).toContain("已插入到正文末尾");
+  });
+
+  it("opens the selected image for editing and supports deleting it from its node view", async () => {
+    const wrapper = await mountEditor({
+      attachTo: document.body,
+      props: {
+        modelValue: '<figure><img src="/api/public/media/M1" alt="说明"><figcaption>题注</figcaption></figure>'
+      }
+    });
+
+    await wrapper.get('[data-action="edit-content-image"]').trigger("click");
+    expect(wrapper.get('[data-field="image-alt"]').element.value).toBe("说明");
+    expect(wrapper.get('[data-field="image-caption"]').element.value).toBe("题注");
+    await wrapper.get('[data-action="close-content-image"]').trigger("click");
+    expect(wrapper.find('[role="dialog"]').exists()).toBe(false);
+    expect(document.activeElement).toBe(wrapper.get('[data-command="image"]').element);
+
+    await wrapper.get('[data-action="remove-content-image"]').trigger("click");
+    expect(wrapper.vm.editor.getHTML()).not.toContain("<figure");
+    wrapper.unmount();
+  });
+
+  it("rejects non-public and malformed figure sources when parsing content", async () => {
+    const wrapper = await mountEditor({
+      props: {
+        modelValue: '<figure><img src="/api/admin/site-media/M1/preview" alt="bad"><figcaption>bad</figcaption></figure><figure><img src="/api/public/media/../secret" alt="bad"></figure><figure><img src="/api/public/media/M_OK-1" alt="safe"></figure>'
+      }
+    });
+
+    const html = wrapper.vm.editor.getHTML();
+    expect(html).toContain("/api/public/media/M_OK-1");
+    expect(html).not.toContain("/api/admin/");
+    expect(html).not.toContain("secret");
   });
 
   it("cleans dangerous pasted markup while retaining semantic content", async () => {
