@@ -78,3 +78,23 @@ npm.cmd test -w apps/admin
 npm.cmd run build -w apps/admin
 # vite build passed
 ```
+
+## Review Fix Round 2：历史查询上下文一致性
+
+- 修复提交：`03de2a5 fix: keep historical certificate context aligned`
+- 已在活动赛事 E1 的证书页手工查询 `E-ARCHIVED` 时，清除活动报名上下文；URL 更新为历史 `eventId`，顶部改为“历史赛事证书查询”，证书结果来自同一历史赛事。
+- 手工查询请求由当前证书页实例单一负责；父级只同步上下文，避免父级重建或重复加载。交互用例在进入证书页完成初始加载后清空请求记录，断言一次手工查询只请求一次 `/api/me/events/E-ARCHIVED/certificates`。
+- 返回赛事中心会清除历史 `eventId`，且不会重新显示活动报名操作，直到用户再次从赛事中心选择活动赛事。
+
+验证：
+
+```powershell
+npm.cmd test -w apps/admin -- src/__tests__/App.test.js src/pages/__tests__/OrdinaryEventWorkflow.test.js
+# 26 passed
+
+npm.cmd test -w apps/admin
+# 29 files, 294 passed
+
+npm.cmd run build -w apps/admin
+# vite build passed
+```
