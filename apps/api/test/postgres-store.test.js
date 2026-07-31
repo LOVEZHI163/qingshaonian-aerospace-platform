@@ -85,7 +85,8 @@ test("PostgreSQL store round-trips submission modes and private upload assets", 
       uploadedByUserId: db.users[0].id,
       uploadedAt: now,
       cleanedAt: null,
-      cleanupReason: ""
+      cleanupReason: "",
+      warnings: [" 建议提高视频清晰度 ", "", 42, "建议提高视频清晰度"]
     });
 
     await store.writeDb(db);
@@ -120,8 +121,40 @@ test("PostgreSQL store round-trips submission modes and private upload assets", 
       uploadedByUserId: db.users[0].id,
       uploadedAt: now,
       cleanedAt: null,
-      cleanupReason: ""
+      cleanupReason: "",
+      warnings: ["建议提高视频清晰度"]
     }]);
+  });
+});
+
+test("PostgreSQL store upgrades an existing submission-assets table and persists sanitized warning arrays", async () => {
+  await withStore(async (store, pool) => {
+    await pool.query("ALTER TABLE registration_submission_assets DROP COLUMN IF EXISTS warnings");
+    await pool.query("DELETE FROM schema_migrations WHERE name = '010-submission-asset-warnings.sql'");
+
+    await store.initialize();
+    const db = await store.readDb();
+    const now = "2026-08-01T00:00:00.000Z";
+    db.registrationUploadSessions.push({
+      id: "US-warning-upgrade", eventId: db.events[0].id, projectId: db.projects[0].id,
+      ownerUserId: db.users[0].id, organizationId: null, channel: "personal", state: "active",
+      createdAt: now, expiresAt: "2026-08-02T00:00:00.000Z", committedAt: null
+    });
+    db.registrationSubmissionAssets.push({
+      id: "SA-warning-upgrade", registrationId: null, uploadSessionId: "US-warning-upgrade", kind: "artwork_image",
+      originalName: "warning.png", storedName: "warning.png", filePath: "/data/uploads/submission-assets/SA-warning-upgrade/warning.png",
+      mimeType: "image/png", sizeBytes: 100, width: 800, height: 600, durationMs: null,
+      uploadedByUserId: db.users[0].id, uploadedAt: now, cleanedAt: null, cleanupReason: "",
+      warnings: ["低清晰度", null, "低清晰度", "  请补拍  "]
+    });
+    await store.writeDb(db);
+
+    const persisted = await store.readDb();
+    assert.deepEqual(persisted.registrationSubmissionAssets.find((row) => row.id === "SA-warning-upgrade").warnings, ["低清晰度", "请补拍"]);
+    const stored = await pool.query("SELECT warnings FROM registration_submission_assets WHERE id = 'SA-warning-upgrade'");
+    assert.deepEqual(stored.rows[0].warnings, ["低清晰度", "请补拍"]);
+    const migration = await pool.query("SELECT 1 FROM schema_migrations WHERE name = '010-submission-asset-warnings.sql'");
+    assert.equal(migration.rowCount, 1);
   });
 });
 

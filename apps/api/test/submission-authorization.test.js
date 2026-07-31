@@ -253,7 +253,7 @@ test("administrator replacement switches the registration asset, resets approval
     await assert.rejects(fs.access(oldAsset.filePath), { code: "ENOENT" });
     assert.deepEqual(await fs.readFile(replacement.filePath), Buffer.from("submission-file"));
     const db = JSON.parse(await fs.readFile(dbPath, "utf8"));
-    const audit = db.auditLogs.find((row) => row.action === "registration.asset.replace" && row.targetId === "R20260627001");
+    const audit = db.auditLogs.find((row) => row.action === "registration_asset_replace" && row.targetId === "R20260627001");
     assert.ok(audit);
     assert.match(audit.summary, /approved-old\.jpeg/);
     assert.match(audit.summary, /image\/jpeg/);

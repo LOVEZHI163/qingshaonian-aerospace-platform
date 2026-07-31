@@ -87,6 +87,21 @@ export async function cleanupExpiredSubmissionSessions({
     }
     db.registrationSubmissionAssets = (db.registrationSubmissionAssets || []).filter((asset) => !removableAssetIds.has(asset.id));
     db.fileCleanupJournal ||= [];
+    const sessionById = new Map(db.registrationUploadSessions.map((session) => [session.id, session]));
+    for (const asset of removableAssets) {
+      const session = sessionById.get(asset.uploadSessionId);
+      recordSubmissionAssetAudit(db, {
+        actor: null,
+        action: "registration_asset_cleanup",
+        eventId: session?.eventId || null,
+        registrationId: null,
+        sessionId: asset.uploadSessionId,
+        asset,
+        assetKind: asset.kind,
+        cleanupCategory: "submission-session-expired",
+        createdAt: timestamp(now)
+      });
+    }
     const removablePaths = new Set(removableAssets.map((asset) => asset.filePath));
     const pendingMarkersByPath = new Map();
     db.fileCleanupJournal = db.fileCleanupJournal.filter((marker) => {
@@ -195,15 +210,52 @@ function registrationAssetSummary(asset) {
   return summary;
 }
 
-function replacementAuditMetadata(asset) {
-  return JSON.stringify({
+function safeAuditAsset(asset) {
+  if (!asset) return null;
+  return {
+    assetId: asset.id,
+    assetKind: asset.kind,
     originalName: asset.originalName,
     mimeType: asset.mimeType,
-    sizeBytes: asset.sizeBytes,
-    width: asset.width ?? null,
-    height: asset.height ?? null,
-    durationMs: asset.durationMs ?? null,
-    uploadedAt: asset.uploadedAt
+    sizeBytes: asset.sizeBytes
+  };
+}
+
+export function recordSubmissionAssetAudit(db, {
+  actor,
+  action,
+  eventId,
+  registrationId = null,
+  sessionId = null,
+  asset = null,
+  assetKind = asset?.kind || null,
+  channel = null,
+  access = null,
+  rangeStart = null,
+  cleanupCategory = null,
+  previousAsset = null,
+  createdAt
+}) {
+  const targetId = registrationId || asset?.id || sessionId;
+  const summary = {
+    eventId,
+    registrationId,
+    uploadBatchId: sessionId,
+    asset: safeAuditAsset(asset),
+    channel,
+    access,
+    rangeStart,
+    cleanupCategory,
+    previousAsset: safeAuditAsset(previousAsset)
+  };
+  for (const [key, value] of Object.entries(summary)) if (value === null || value === undefined) delete summary[key];
+  return recordAudit(db, {
+    actor,
+    action,
+    targetType: registrationId ? "registration" : asset ? "registration_submission_asset" : "registration_upload_session",
+    targetId,
+    summary: JSON.stringify(summary),
+    createdAt
   });
 }
 
@@ -442,14 +494,18 @@ export function replaceRegistrationAsset({ db, registration, kind, uploadedAsset
     registration.rejectReason = "";
     registration.updatedAt = timestampValue;
   }
-  recordAudit(db, {
-    actor,
-    action: "registration.asset.replace",
-    targetType: "registration",
-    targetId: registration.id,
-    summary: `替换报名 ${registration.id} 的 ${kind} 作品材料；旧素材元数据：${replacementAuditMetadata(previous)}`,
-    createdAt: timestampValue
-  });
+  const auditRows = [
+    recordSubmissionAssetAudit(db, {
+      actor, action: "registration_asset_replace", eventId: registration.eventId, registrationId: registration.id,
+      sessionId: uploadedAsset.uploadSessionId, asset: current, assetKind: kind, channel,
+      previousAsset: previous, createdAt: timestampValue
+    }),
+    recordSubmissionAssetAudit(db, {
+      actor, action: "registration_asset_cleanup", eventId: registration.eventId, registrationId: registration.id,
+      sessionId: previous.uploadSessionId, asset: previous, assetKind: kind, channel,
+      cleanupCategory: "registration-asset-replaced", createdAt: timestampValue
+    })
+  ];
   return {
     asset: current,
     previous,
@@ -457,10 +513,10 @@ export function replaceRegistrationAsset({ db, registration, kind, uploadedAsset
       Object.assign(current, previous);
       db.registrationSubmissionAssets.splice(sourceIndex, 0, uploadedAsset);
       Object.assign(registration, registrationBefore);
-      const audit = db.auditLogs.find((row) => (
-        row.targetId === registration.id && row.action === "registration.asset.replace" && row.createdAt === timestampValue
-      ));
-      if (audit) db.auditLogs.splice(db.auditLogs.indexOf(audit), 1);
+      for (const audit of auditRows) {
+        const index = db.auditLogs.indexOf(audit);
+        if (index >= 0) db.auditLogs.splice(index, 1);
+      }
     }
   };
 }

@@ -12,7 +12,7 @@ vi.mock("../../components/SubmissionAssetReview.vue", () => ({
         this.$emit("refresh", { ...this.registration, status: "rejected", submission: { ...this.registration.submission, warnings: ["已刷新素材元数据"] } });
       }
     },
-    template: '<section data-testid="submission-review">{{ registration.id }} {{ registration.status }} {{ registration.submission?.warnings?.join(\' \') }}<button type="button" data-action="refresh-review" @click="refreshRegistration">刷新</button></section>'
+    template: '<section data-testid="submission-review">{{ registration.id }} {{ registration.status }} {{ registration.submission?.warnings?.join(\' \') }}<button type="button" data-action="refresh-review" @click="refreshRegistration">刷新</button><button type="button" data-action="close-review" @click="$emit(\'close\')">关闭</button></section>'
   }
 }));
 
@@ -118,6 +118,34 @@ describe("RegistrationManagementPage", () => {
 
     expect(wrapper.get('[data-testid="submission-review"]').text()).toContain("rejected");
     expect(wrapper.get('[data-testid="submission-review"]').text()).toContain("已刷新素材元数据");
+  });
+
+  it("makes the project immutable in the edit dialog and restores focus after closing material review", async () => {
+    const withSubmission = {
+      ...registration,
+      submission: { required: true, complete: true, warnings: [], assets: { artwork_image: { kind: "artwork_image" }, creation_video: { kind: "creation_video" } } }
+    };
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/admin/events") return { rows: [event], projects: [project] };
+      if (path === "/api/admin/organizations") return { rows: [{ id: "O1", name: "实验小学" }] };
+      if (path.startsWith("/api/admin/events/E1/registrations?")) return { rows: [withSubmission], total: 1, page: 1, pageSize: 25, refreshedAt: "2026-07-17T08:00:00.000Z" };
+      throw new Error(`unexpected ${path}`);
+    });
+    const wrapper = mount(RegistrationManagementPage, { attachTo: document.body });
+    await flushPromises();
+    const editButton = wrapper.findAll("button").find((button) => button.text() === "编辑");
+    await editButton.trigger("click");
+    const projectSelect = wrapper.get('[data-field="registration-project"]');
+    expect(projectSelect.attributes("disabled")).toBeDefined();
+    expect(wrapper.text()).toContain("赛项在报名创建后不可修改");
+
+    const reviewButton = wrapper.get('[data-action="review-materials-R1"]');
+    reviewButton.element.focus();
+    await reviewButton.trigger("click");
+    await wrapper.get('[data-action="close-review"]').trigger("click");
+    await flushPromises();
+    expect(document.activeElement).toBe(reviewButton.element);
+    wrapper.unmount();
   });
 
   it("releases successful Blob downloads on unmount and does not create a URL for failures", async () => {

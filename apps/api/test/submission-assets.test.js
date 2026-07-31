@@ -58,7 +58,8 @@ function routeFixture({ asset = null } = {}) {
       state: "active", createdAt: "2026-07-31T00:00:00.000Z", expiresAt: "2030-01-01T00:00:00.000Z", committedAt: null
     }],
     registrationSubmissionAssets: asset ? [asset] : [],
-    fileCleanupJournal: []
+    fileCleanupJournal: [],
+    auditLogs: []
   };
 }
 
@@ -108,6 +109,10 @@ test("ordinary users create sessions only for published writable image-video pro
       .find((asset) => asset.id === uploadedPayload.row.id);
     assert.equal(persisted.filePath, path.join(path.dirname(path.dirname(persisted.filePath)), persisted.id, persisted.storedName));
 
+    const auditRows = JSON.parse(await fs.readFile(dbPath, "utf8")).auditLogs;
+    assert.deepEqual(auditRows.slice(0, 2).map((row) => row.action).sort(), ["registration_asset_upload", "registration_asset_upload_session_create"]);
+    assert.equal(auditRows.slice(0, 2).every((row) => row.actorUserId === "U1001" && row.summary.includes(EVENT_ID) && !/filePath|storedName|submission-assets|cookie|token/i.test(row.summary)), true);
+
     const unsupported = await fetch(`${baseUrl}/api/me/events/${EVENT_ID}/projects/paper-plane-gate/upload-sessions`, withSession(ordinary.cookie, { method: "POST" }));
     assert.equal(unsupported.status, 422);
   });
@@ -128,6 +133,8 @@ test("upload session authorization happens before disk upload and rejects expire
 
     const forbidden = await fetch(`${baseUrl}/api/upload-sessions/${created.row.id}/artwork-image`, withSession(other.cookie, { method: "PUT", body: imageForm() }));
     assert.equal(forbidden.status, 403);
+    const afterForbidden = JSON.parse(await fs.readFile(dbPath, "utf8")).auditLogs;
+    assert.equal(afterForbidden.some((row) => row.action === "registration_asset_upload"), false);
 
     const db = JSON.parse(await fs.readFile(dbPath, "utf8"));
     const session = db.registrationUploadSessions.find((row) => row.id === created.row.id);
@@ -232,21 +239,46 @@ test("private asset reads resolve registration identifiers and enforce user orga
     assert.equal(userRead.status, 200);
     assert.equal(userRead.headers.get("content-type"), "image/png");
     assert.equal(await userRead.arrayBuffer().then((value) => value.byteLength), PNG.length);
+    const downloaded = await fetch(`${baseUrl}/api/me${target}?download=1`, withSession(ordinary.cookie));
+    assert.equal(downloaded.status, 200);
+    assert.match(downloaded.headers.get("content-disposition"), /^attachment/);
     const orgRead = await fetch(`${baseUrl}/api/organization${target}`, withSession(orgOwner.cookie));
     assert.equal(orgRead.status, 200);
     const adminRead = await fetch(`${baseUrl}/api/admin${target}`, withSession(admin.cookie));
     assert.equal(adminRead.status, 200);
     const range = await fetch(`${baseUrl}/api/me/events/${EVENT_ID}/registrations/R20260627001/assets/creation_video`, withSession(ordinary.cookie, {
-      headers: { Range: "bytes=2-5" }
+      headers: { Range: "bytes=0-3" }
     }));
     assert.equal(range.status, 206);
-    assert.equal(range.headers.get("content-range"), "bytes 2-5/10");
-    assert.equal(await range.text(), "2345");
+    assert.equal(range.headers.get("content-range"), "bytes 0-3/10");
+    assert.equal(await range.text(), "0123");
+    const followupRange = await fetch(`${baseUrl}/api/me/events/${EVENT_ID}/registrations/R20260627001/assets/creation_video`, withSession(ordinary.cookie, {
+      headers: { Range: "bytes=4-7" }
+    }));
+    assert.equal(followupRange.status, 206);
     const invalidRange = await fetch(`${baseUrl}/api/me/events/${EVENT_ID}/registrations/R20260627001/assets/creation_video`, withSession(ordinary.cookie, {
       headers: { Range: "bytes=10-" }
     }));
     assert.equal(invalidRange.status, 416);
     assert.equal(invalidRange.headers.get("content-range"), "bytes */10");
+
+    const auditRows = JSON.parse(await fs.readFile(dbPath, "utf8")).auditLogs;
+    const actions = auditRows.map((row) => row.action);
+    assert.equal(actions.filter((action) => action === "registration_asset_preview").length, 4);
+    assert.equal(actions.filter((action) => action === "registration_asset_download").length, 1);
+    const accessAudits = auditRows.filter((row) => ["registration_asset_preview", "registration_asset_download"].includes(row.action));
+    assert.equal(accessAudits.every((row) => {
+      const summary = JSON.parse(row.summary);
+      return row.actorUserId
+        && row.targetId === "R20260627001"
+        && Number.isFinite(Date.parse(row.createdAt))
+        && summary.eventId === EVENT_ID
+        && summary.registrationId === "R20260627001"
+        && summary.uploadBatchId
+        && summary.asset?.assetId
+        && summary.asset?.assetKind;
+    }), true);
+    assert.equal(auditRows.every((row) => !/filePath|storedName|submission-assets|cookie|token/i.test(row.summary)), true);
   });
 });
 
@@ -292,6 +324,7 @@ test("journals a failed post-commit session-asset deletion", async (t) => {
   assert.equal(db.fileCleanupJournal.length, 1);
   assert.equal(db.fileCleanupJournal[0].filePath, asset.filePath);
   assert.equal(db.fileCleanupJournal[0].category, "submission-session-asset-deleted");
+  assert.equal(db.auditLogs.some((row) => row.action === "registration_asset_cleanup" && row.summary.includes("SA-old")), true);
 });
 
 test("keeps a committed replacement when cleanup journaling cannot be persisted", async (t) => {
@@ -433,6 +466,7 @@ test("expires only active sessions and removes only their unbound submission fil
   assert.equal(db.registrationUploadSessions.find((session) => session.id === "US-current").state, "active");
   assert.equal(db.registrationUploadSessions.find((session) => session.id === "US-committed").state, "committed");
   assert.deepEqual(db.registrationSubmissionAssets.map((asset) => asset.id).sort(), ["SA-bound", "SA-committed", "SA-current"]);
+  assert.equal(db.auditLogs.some((row) => row.action === "registration_asset_cleanup" && row.summary.includes("US-expired")), true);
   await assert.rejects(fs.access(expired.filePath), { code: "ENOENT" });
   await fs.access(bound.filePath);
   await fs.access(current.filePath);
@@ -575,4 +609,27 @@ test("production expiry cleanup runs once, schedules an unref timer, and can be 
   assert.equal(runs, 2);
   stop();
   assert.equal(stopped, scheduled);
+});
+
+test("fails closed before private streaming when the sensitive access audit cannot be persisted", async (t) => {
+  const uploadRoot = await fs.mkdtemp(path.join(process.env.TEMP || process.env.TMP || "C:\\Temp", "submission-assets-audit-fail-"));
+  t.after(() => fs.rm(uploadRoot, { recursive: true, force: true }));
+  const asset = assetRecord(uploadRoot, "SA-audit-fail");
+  asset.registrationId = "R-audit-fail";
+  await fs.mkdir(path.dirname(asset.filePath), { recursive: true });
+  await fs.writeFile(asset.filePath, PNG);
+  const db = routeFixture({ asset });
+  db.registrations = [{ id: "R-audit-fail", eventId: "E-upload", personalUserId: "U-owner", projectId: "P-upload" }];
+  const store = { readDb: async () => structuredClone(db), writeDb: async () => { throw new Error("audit storage unavailable"); } };
+  const pass = (req, _res, next) => { req.user = { id: "U-owner", type: "ordinary", status: "active" }; next(); };
+  const asyncRoute = (handler) => (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
+  const router = createSubmissionAssetsRouter({
+    store, requireUser: pass, requireAdmin: pass, requirePasswordReady: pass, asyncRoute,
+    makeId: (prefix) => `${prefix}-audit`, now: () => "2026-08-01T00:00:00.000Z", uploadRoot
+  });
+  await withRouter(router, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/me/events/E-upload/registrations/R-audit-fail/assets/artwork_image`);
+    assert.equal(response.status, 500);
+    assert.equal(await response.text(), JSON.stringify({ error: "audit storage unavailable" }));
+  });
 });

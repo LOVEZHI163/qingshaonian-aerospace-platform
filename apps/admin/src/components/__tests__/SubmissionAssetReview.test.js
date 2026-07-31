@@ -105,6 +105,25 @@ describe("SubmissionAssetReview", () => {
     expect(videoCard.find('[data-action="download-creation_video"]').exists()).toBe(false);
   });
 
+  it("restores a recovered asset after refreshed registration data clears a local missing marker", async () => {
+    const wrapper = mountReview();
+    await wrapper.get('[data-asset-kind="creation_video"] video').trigger("error");
+    expect(wrapper.find('[data-asset-kind="creation_video"] video').exists()).toBe(false);
+
+    await wrapper.setProps({ registration: structuredClone(registration) });
+    expect(wrapper.find('[data-asset-kind="creation_video"] video').exists()).toBe(true);
+  });
+
+  it("acts as a modal dialog and moves focus to its close control", async () => {
+    const wrapper = mount(SubmissionAssetReview, { attachTo: document.body, props: { eventId: "E1", registration } });
+    await flushPromises();
+
+    expect(wrapper.get("aside").attributes("role")).toBe("dialog");
+    expect(wrapper.get("aside").attributes("aria-modal")).toBe("true");
+    expect(document.activeElement).toBe(wrapper.get('[aria-label="关闭作品材料审核"]').element);
+    wrapper.unmount();
+  });
+
   it("downloads an available original through apiBlob", async () => {
     apiBlobMock.mockResolvedValue(new Blob(["image"]));
     const wrapper = mountReview();

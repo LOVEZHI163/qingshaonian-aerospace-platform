@@ -92,6 +92,12 @@ function validateProjectForRegistration(db, eventId, projectId, group) {
   return project;
 }
 
+function assertRegistrationProjectImmutable(row, input) {
+  if (Object.hasOwn(input || {}, "projectId") && input.projectId && input.projectId !== row.projectId) {
+    throw businessError(409, "报名创建后不能修改赛项；如需更换赛项，请取消后重新报名", "REGISTRATION_PROJECT_IMMUTABLE");
+  }
+}
+
 function assertRegistrationWindowOpen(db, eventId) {
   const event = db.events.find((row) => row.id === eventId);
   if (!event) throw businessError(422, "赛事不存在");
@@ -155,6 +161,7 @@ export function prepareAdminRegistrationUpdate(db, row, input) {
   if (Object.hasOwn(input, "eventId") && input.eventId !== row.eventId) {
     throw businessError(422, "不能把历史报名移动到其他赛事");
   }
+  assertRegistrationProjectImmutable(row, input);
   if (!db.events.some((event) => event.id === row.eventId)) throw businessError(422, "赛事不存在");
   const athlete = input.athlete || row.athlete;
   requireText(athlete.name, "姓名");
@@ -179,6 +186,7 @@ export function prepareAdminRegistrationUpdate(db, row, input) {
 
 export function prepareOrdinaryRegistrationUpdate(db, row, input, userId) {
   if (row.personalUserId !== userId) throw businessError(403, "无权修改该报名");
+  assertRegistrationProjectImmutable(row, input);
   if (Object.hasOwn(input, "organizationId") && (input.organizationId || null) !== (row.organizationId || null) && row.organizationId) {
     throw businessError(409, "该报名已关联其他组织", "REGISTRATION_OWNED_BY_OTHER_ORGANIZATION");
   }

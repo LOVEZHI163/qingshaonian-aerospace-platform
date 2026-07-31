@@ -324,3 +324,45 @@ test("ordinary registration edits require an active membership while administrat
     assert.equal((await json(adminResponse)).row.organizationId, "O1002");
   });
 });
+
+test("administrator and organization edits keep a registration's project immutable once submission materials exist", async () => {
+  await withServer(async (baseUrl, dbPath) => {
+    const admin = await loginAs(baseUrl, "13900000000", "admin123");
+    const organizationOwner = await loginAs(baseUrl, "13800000012", "123456");
+    await openRegistration(baseUrl, admin.cookie);
+    await mutateDb(dbPath, (db) => {
+      for (const registrationId of ["R20260627001", "R20260627002"]) {
+        const registration = db.registrations.find((row) => row.id === registrationId);
+        const project = db.projects.find((row) => row.id === registration.projectId);
+        project.submissionMode = "image_video";
+        const alternate = db.projects.find((row) => row.id !== project.id && row.eventId === registration.eventId);
+        alternate.allowedGroups = [...new Set([...(alternate.allowedGroups || []), registration.group])];
+        db.registrationSubmissionAssets.push(
+          { id: `SA-${registrationId}-image`, registrationId, uploadSessionId: `US-${registrationId}`, kind: "artwork_image", originalName: "work.png", storedName: "work.png", filePath: `/tmp/${registrationId}-image`, mimeType: "image/png", sizeBytes: 1, width: 800, height: 600, durationMs: null, uploadedByUserId: registration.createdByUserId, uploadedAt: "2026-08-01T00:00:00.000Z", cleanedAt: null, cleanupReason: "", warnings: [] },
+          { id: `SA-${registrationId}-video`, registrationId, uploadSessionId: `US-${registrationId}`, kind: "creation_video", originalName: "work.mp4", storedName: "work.mp4", filePath: `/tmp/${registrationId}-video`, mimeType: "video/mp4", sizeBytes: 1, width: 1280, height: 720, durationMs: 1, uploadedByUserId: registration.createdByUserId, uploadedAt: "2026-08-01T00:00:00.000Z", cleanedAt: null, cleanupReason: "", warnings: [] }
+        );
+      }
+    });
+    assert.equal((await fetch(`${baseUrl}/api/organization/events/wz-aerospace-2026/join`, withSession(organizationOwner.cookie, { method: "POST" }))).status, 201);
+    const initial = JSON.parse(await fs.readFile(dbPath, "utf8"));
+    const adminRegistration = initial.registrations.find((row) => row.id === "R20260627001");
+    const organizationRegistration = initial.registrations.find((row) => row.id === "R20260627002");
+    const alternativeFor = (registration) => initial.projects.find((project) => project.id !== registration.projectId && project.eventId === registration.eventId).id;
+
+    const adminResponse = await fetch(`${baseUrl}/api/admin/events/wz-aerospace-2026/registrations/${adminRegistration.id}`, withSession(admin.cookie, {
+      method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ projectId: alternativeFor(adminRegistration) })
+    }));
+    assert.equal(adminResponse.status, 409);
+    assert.equal((await json(adminResponse)).code, "REGISTRATION_PROJECT_IMMUTABLE");
+
+    const organizationResponse = await fetch(`${baseUrl}/api/organization/events/wz-aerospace-2026/registrations/${organizationRegistration.id}`, withSession(organizationOwner.cookie, {
+      method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ projectId: alternativeFor(organizationRegistration) })
+    }));
+    assert.equal(organizationResponse.status, 409);
+    assert.equal((await json(organizationResponse)).code, "REGISTRATION_PROJECT_IMMUTABLE");
+
+    const after = JSON.parse(await fs.readFile(dbPath, "utf8"));
+    assert.equal(after.registrations.find((row) => row.id === adminRegistration.id).projectId, adminRegistration.projectId);
+    assert.equal(after.registrations.find((row) => row.id === organizationRegistration.id).projectId, organizationRegistration.projectId);
+  });
+});

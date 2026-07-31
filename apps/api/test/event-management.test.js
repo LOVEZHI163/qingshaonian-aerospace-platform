@@ -457,7 +457,8 @@ test("public event and registration APIs use the current database event in real 
     const unknownAdminProject = await fetch(`${baseUrl}/api/admin/events/${current.id}/registrations/${validRow.id}`, jsonOptions("PATCH", {
       projectId: "missing-project"
     }, admin.cookie));
-    assert.equal(unknownAdminProject.status, 422);
+    assert.equal(unknownAdminProject.status, 409);
+    assert.equal((await json(unknownAdminProject)).code, "REGISTRATION_PROJECT_IMMUTABLE");
 
     await fetch(`${baseUrl}/api/admin/events/${current.id}/archive`, jsonOptions("POST", {}, admin.cookie));
     const unavailable = await fetch(`${baseUrl}/api/public/event`);

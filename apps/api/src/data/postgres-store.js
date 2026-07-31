@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import { AsyncLocalStorage } from "node:async_hooks";
 
-import { APPROVED_GROUP_NAMES, ensureDbShape, EVENT, PROJECTS, seedDb } from "./seed.js";
+import { APPROVED_GROUP_NAMES, ensureDbShape, EVENT, normalizeSubmissionWarnings, PROJECTS, seedDb } from "./seed.js";
 import { createPostgresAuthState } from "./auth-state.js";
 
 const schemaUrl = new URL("./schema.sql", import.meta.url);
@@ -127,6 +127,13 @@ async function runMigrations(pool) {
           WHERE table_name = 'registration_upload_sessions' AND column_name = 'channel'
         `);
         if (sessionChannel.rowCount > 0) migration = "";
+      }
+      if (name === "010-submission-asset-warnings.sql") {
+        const assetWarnings = await client.query(`
+          SELECT 1 FROM information_schema.columns
+          WHERE table_name = 'registration_submission_assets' AND column_name = 'warnings'
+        `);
+        if (assetWarnings.rowCount > 0) migration = "";
       }
       for (const tableName of ["site_settings", "event_public_profiles", "content_posts", "media_assets", "content_attachments"]) {
         const existing = await client.query(`
@@ -687,6 +694,7 @@ export function createPostgresStore(pool, { seedOnEmpty = true } = {}) {
           width: row.width,
           height: row.height,
           durationMs: row.duration_ms,
+          warnings: normalizeSubmissionWarnings(row.warnings),
           uploadedByUserId: row.uploaded_by_user_id,
           uploadedAt: iso(row.uploaded_at),
           cleanedAt: row.cleaned_at ? iso(row.cleaned_at) : null,
@@ -956,8 +964,8 @@ export function createPostgresStore(pool, { seedOnEmpty = true } = {}) {
           await client.query(
             `INSERT INTO registration_submission_assets
               (id, registration_id, upload_session_id, kind, original_name, stored_name, file_path, mime_type,
-               size_bytes, width, height, duration_ms, uploaded_by_user_id, uploaded_at, cleaned_at, cleanup_reason)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+               size_bytes, width, height, duration_ms, warnings, uploaded_by_user_id, uploaded_at, cleaned_at, cleanup_reason)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14, $15, $16, $17)
              ON CONFLICT (id) DO UPDATE SET
                registration_id = EXCLUDED.registration_id,
                upload_session_id = EXCLUDED.upload_session_id,
@@ -970,6 +978,7 @@ export function createPostgresStore(pool, { seedOnEmpty = true } = {}) {
                width = EXCLUDED.width,
                height = EXCLUDED.height,
                duration_ms = EXCLUDED.duration_ms,
+               warnings = EXCLUDED.warnings,
                uploaded_by_user_id = EXCLUDED.uploaded_by_user_id,
                uploaded_at = EXCLUDED.uploaded_at,
                cleaned_at = EXCLUDED.cleaned_at,
@@ -977,7 +986,8 @@ export function createPostgresStore(pool, { seedOnEmpty = true } = {}) {
             [
               row.id, row.registrationId || null, row.uploadSessionId, row.kind, row.originalName, row.storedName,
               row.filePath, row.mimeType, row.sizeBytes, row.width ?? null, row.height ?? null, row.durationMs ?? null,
-              row.uploadedByUserId, row.uploadedAt, row.cleanedAt || null, row.cleanupReason || ""
+              JSON.stringify(normalizeSubmissionWarnings(row.warnings)), row.uploadedByUserId, row.uploadedAt,
+              row.cleanedAt || null, row.cleanupReason || ""
             ]
           );
         }

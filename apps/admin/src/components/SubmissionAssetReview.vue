@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onBeforeUnmount, ref } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 
 import { api, apiBlob, apiUrl } from "../lib/api.js";
 import { createBlobDownloadManager } from "../lib/download.js";
@@ -23,6 +23,7 @@ const replacementCompletedKinds = ref(new Set());
 const replacementError = ref("");
 const replacementResult = ref("");
 const missingFiles = ref(new Set());
+const closeButton = ref(null);
 let replacementRequest = 0;
 
 const submission = computed(() => props.registration?.submission || null);
@@ -80,6 +81,10 @@ function submissionStatus() {
 
 function noteMissing(kind) {
   missingFiles.value = new Set([...missingFiles.value, kind]);
+}
+
+function closeReview() {
+  emit("close");
 }
 
 async function downloadAsset(kind, asset) {
@@ -168,11 +173,23 @@ onBeforeUnmount(() => {
   replacementRequest += 1;
   downloads.dispose();
 });
+
+onMounted(() => {
+  void nextTick(() => closeButton.value?.focus());
+});
+
+watch(() => props.registration, (registration) => {
+  const serverMissing = new Set(registration?.submission?.missingKinds || []);
+  missingFiles.value = new Set([...missingFiles.value].filter((kind) => {
+    const asset = registration?.submission?.assets?.[kind];
+    return !asset || Boolean(asset.cleanedAt) || serverMissing.has(kind);
+  }));
+});
 </script>
 
 <template>
-  <aside class="submission-asset-review" aria-label="作品材料审核">
-    <div class="panel-title"><div><h3>作品材料审核</h3><p class="hint">状态：{{ submissionStatus() }}</p></div><button type="button" class="mini" aria-label="关闭作品材料审核" @click="emit('close')">关闭</button></div>
+  <aside class="submission-asset-review" role="dialog" aria-modal="true" aria-label="作品材料审核">
+    <div class="panel-title"><div><h3>作品材料审核</h3><p class="hint">状态：{{ submissionStatus() }}</p></div><button ref="closeButton" type="button" class="mini" aria-label="关闭作品材料审核" @click="closeReview">关闭</button></div>
     <p v-if="!submission?.required" class="hint">无需作品材料。</p>
     <template v-else>
       <article v-for="kind in kinds" :key="kind" class="submission-asset-card submission-review-card" :data-asset-kind="kind">

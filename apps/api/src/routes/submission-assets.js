@@ -11,6 +11,7 @@ import {
   authorizeRegistrationAssetRead,
   createUploadSession,
   removeSessionAsset,
+  recordSubmissionAssetAudit,
   replaceSessionAsset,
   requireUploadSessionAccess,
   submissionAssetSummary,
@@ -128,6 +129,14 @@ export function createSubmissionAssetsRouter({
         db, eventId: req.params.eventId, projectId: req.params.projectId,
         actor: req.user, channel, now, makeId
       });
+      recordSubmissionAssetAudit(db, {
+        actor: req.user,
+        action: "registration_asset_upload_session_create",
+        eventId: session.eventId,
+        sessionId: session.id,
+        channel,
+        createdAt: session.createdAt
+      });
       await store.writeDb(db);
       res.status(201).json({ row: uploadSessionSummary(db, session) });
     });
@@ -177,6 +186,29 @@ export function createSubmissionAssetsRouter({
               storedName: path.basename(req.file.path), filePath: req.file.path
             }
           });
+          recordSubmissionAssetAudit(db, {
+            actor: req.user,
+            action: "registration_asset_upload",
+            eventId: session.eventId,
+            sessionId: session.id,
+            asset: replacement.asset,
+            assetKind: kind,
+            channel,
+            createdAt: replacement.asset.uploadedAt
+          });
+          if (replacement.previous) {
+            recordSubmissionAssetAudit(db, {
+              actor: req.user,
+              action: "registration_asset_cleanup",
+              eventId: session.eventId,
+              sessionId: session.id,
+              asset: replacement.previous,
+              assetKind: kind,
+              channel,
+              cleanupCategory: "submission-session-asset-replaced",
+              createdAt: replacement.asset.uploadedAt
+            });
+          }
           await store.writeDb(db);
           committed = true;
           const result = { db, session, ...replacement };
@@ -206,6 +238,17 @@ export function createSubmissionAssetsRouter({
     const channel = sessionChannel(storedSession, req.user);
     const session = requireUploadSessionAccess({ db, sessionId: req.params.sessionId, actor: req.user, channel, now, kind: req.params.kind });
     const result = removeSessionAsset({ db, session, kind: req.params.kind });
+    recordSubmissionAssetAudit(db, {
+      actor: req.user,
+      action: "registration_asset_cleanup",
+      eventId: session.eventId,
+      sessionId: session.id,
+      asset: result,
+      assetKind: result.kind,
+      channel,
+      cleanupCategory: "submission-session-asset-deleted",
+      createdAt: now()
+    });
     await store.writeDb(db);
     await finishCommittedAssetCleanup({
       store, db, asset: result, category: "submission-session-asset-deleted", deleteFile, uploadRoot, makeId, now, logger
@@ -215,19 +258,45 @@ export function createSubmissionAssetsRouter({
 
   function streamAsset(channel) {
     return asyncRoute(async (req, res, next) => {
-      const db = await store.readDb();
-      const { asset } = authorizeRegistrationAssetRead({
-        db, eventId: req.params.eventId, registrationId: req.params.registrationId,
-        kind: req.params.kind, actor: req.user, channel
-      });
+      const disposition = req.query.download === "1" ? "attachment" : "inline";
+      const range = req.get("range");
+      const isVideo = req.params.kind === "creation_video";
+      const recordAccess = !isVideo || !range || /^bytes=0-(?:\d+)?$/i.test(range.trim());
+      const authorizeAndAudit = async () => {
+        const db = await store.readDb();
+        const { registration, asset } = authorizeRegistrationAssetRead({
+          db, eventId: req.params.eventId, registrationId: req.params.registrationId,
+          kind: req.params.kind, actor: req.user, channel
+        });
+        if (recordAccess) {
+          const rangeStart = isVideo && range ? 0 : null;
+          recordSubmissionAssetAudit(db, {
+            actor: req.user,
+            action: disposition === "attachment" ? "registration_asset_download" : "registration_asset_preview",
+            eventId: req.params.eventId,
+            registrationId: registration.id,
+            sessionId: asset.uploadSessionId,
+            asset,
+            assetKind: asset.kind,
+            channel,
+            access: disposition,
+            rangeStart,
+            createdAt: now()
+          });
+          await store.writeDb(db);
+        }
+        return asset;
+      };
+      const asset = store.withMutationLock
+        ? await store.withMutationLock(authorizeAndAudit)
+        : await authorizeAndAudit();
       let response;
       try {
-        response = await readSubmissionRange(asset, asset.mimeType === "video/mp4" ? req.get("range") : null);
+        response = await readSubmissionRange(asset, asset.mimeType === "video/mp4" ? range : null);
       } catch (error) {
         if (error?.code === "ENOENT") return res.status(404).json({ error: "作品文件缺失" });
         return next(error);
       }
-      const disposition = req.query.download === "1" ? "attachment" : "inline";
       res.status(response.status).set({
         ...response.headers,
         "X-Content-Type-Options": "nosniff",

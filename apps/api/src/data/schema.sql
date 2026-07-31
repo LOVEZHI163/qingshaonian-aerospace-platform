@@ -171,6 +171,7 @@ CREATE TABLE IF NOT EXISTS registration_submission_assets (
   width INTEGER,
   height INTEGER,
   duration_ms INTEGER,
+  warnings JSONB NOT NULL DEFAULT '[]'::jsonb,
   uploaded_by_user_id TEXT NOT NULL REFERENCES users(id),
   uploaded_at TIMESTAMPTZ NOT NULL,
   cleaned_at TIMESTAMPTZ,

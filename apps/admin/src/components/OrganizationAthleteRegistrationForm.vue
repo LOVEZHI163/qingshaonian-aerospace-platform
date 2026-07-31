@@ -115,7 +115,8 @@ async function submit() {
     <p class="hint">报名将自动归属当前组织；不支持切换个人身份或其他组织。</p>
     <div class="two"><label>姓名<input v-model="form.athlete.name" data-field="athlete-name" required /></label><label>学校<SchoolCombobox v-model="form.athlete.school" /></label></div>
     <div class="two"><label>年级<input v-model="form.athlete.grade" data-field="athlete-grade" required /></label><label>手机/监护人手机<input v-model="form.athlete.phone" data-field="athlete-phone" required /></label></div>
-    <div class="two"><label>赛项<select v-model="form.projectId" required><option v-for="project in projects" :key="project.id" :value="project.id">{{ project.name }}</option></select></label><label>指导老师<input v-model="form.instructor" data-field="instructor" /></label></div>
+    <div class="two"><label>赛项<select v-model="form.projectId" :disabled="editing" required><option v-for="project in projects" :key="project.id" :value="project.id">{{ project.name }}</option></select></label><label>指导老师<input v-model="form.instructor" data-field="instructor" /></label></div>
+    <p v-if="editing" class="hint">赛项在报名创建后不可修改；如需更换赛项，请取消后重新报名。</p>
     <section v-if="requiresSubmission" class="registration-submission" aria-label="作品材料">
       <p v-if="uploadSessionLoading" class="hint">正在创建作品上传会话…</p>
       <template v-else-if="uploadSession?.id">

@@ -290,6 +290,8 @@ describe("OrganizationEventWorkspacePage", () => {
     expect(wrapper.get('[data-field="athlete-grade"]').element.value).toBe("六年级");
     expect(wrapper.get('[data-field="instructor"]').element.value).toBe("B老师");
     expect(wrapper.get("select").element.value).toBe("P2");
+    expect(wrapper.get("select").attributes("disabled")).toBeDefined();
+    expect(wrapper.text()).toContain("赛项在报名创建后不可修改");
 
     await wrapper.get('[data-field="instructor"]').setValue("B的新编辑值");
     await wrapper.get('[data-testid="organization-registration-editor"]').trigger("submit");

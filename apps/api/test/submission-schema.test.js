@@ -12,3 +12,8 @@ test("submission migration adds project mode and private upload tables", async (
   assert.match(migration, /CHECK \(kind IN \('artwork_image', 'creation_video'\)\)/);
   assert.match(migration, /UNIQUE \(registration_id, kind\)/);
 });
+
+test("submission warning migration uses a non-null JSON array default", async () => {
+  const migration = await readFile(new URL("../src/data/migrations/010-submission-asset-warnings.sql", import.meta.url), "utf8");
+  assert.match(migration, /ADD COLUMN IF NOT EXISTS warnings JSONB NOT NULL DEFAULT '\[\]'::jsonb/);
+});

@@ -29,6 +29,15 @@ const REGISTRATION_END_AT = "2026-11-01T15:59:59.000Z";
 export const APPROVED_GROUP_NAMES = ["小学低段", "小学高段", "中学组", "职高/高中组"];
 export const REGISTRATION_MODES = ["automatic", "force_open", "force_closed"];
 
+export function normalizeSubmissionWarnings(value) {
+  if (!Array.isArray(value)) return [];
+  const warnings = value
+    .filter((warning) => typeof warning === "string")
+    .map((warning) => warning.trim())
+    .filter(Boolean);
+  return [...new Set(warnings)].slice(0, 20);
+}
+
 export const DEFAULT_SITE_SETTINGS = {
   id: "default",
   platformName: "温州市青少年航空航天创新比赛",
@@ -183,6 +192,7 @@ export function ensureDbShape(db) {
   db.registrationUploadSessions ||= [];
   for (const session of db.registrationUploadSessions) session.channel ||= session.organizationId ? "organization" : "personal";
   db.registrationSubmissionAssets ||= [];
+  for (const asset of db.registrationSubmissionAssets) asset.warnings = normalizeSubmissionWarnings(asset.warnings);
   db.users ||= [];
   for (const user of db.users) {
     user.sessionVersion ??= 0;
