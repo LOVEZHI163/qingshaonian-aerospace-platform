@@ -188,6 +188,50 @@ describe("OrganizationEventWorkspacePage", () => {
     expect(wrapper.text()).toContain("已恢复待审核");
   });
 
+  it("does not let a late organization replacement mutate a newer registration session", async () => {
+    const first = {
+      ...registration,
+      id: "R-OLD",
+      projectId: "P1",
+      submission: { required: true, complete: true, assets: { artwork_image: { kind: "artwork_image", originalName: "old.png" }, creation_video: { kind: "creation_video", originalName: "old.mp4" } } }
+    };
+    const second = {
+      ...registration,
+      id: "R-NEW",
+      athlete: { name: "李四", school: "第二学校", grade: "六年级", phone: "13900000000" },
+      projectId: "P2",
+      submission: { required: true, complete: true, assets: { artwork_image: { kind: "artwork_image", originalName: "new.png" }, creation_video: { kind: "creation_video", originalName: "new.mp4" } } }
+    };
+    let resolveOldImage;
+    const delayedOldImage = new Promise((resolve) => { resolveOldImage = resolve; });
+    apiMock.mockImplementation(async (path, options) => {
+      if (path === "/api/organization/events/E2/workspace") return { event, summary: {}, projects: [{ id: "P1", name: "无人机", submissionMode: "image_video" }, { id: "P2", name: "火箭", submissionMode: "image_video" }], registrations: [first, second] };
+      if (path === "/api/organization/events/E2/registrations" && !options?.method) return { rows: [first, second] };
+      if (path === "/api/organization/events/E2/projects/P1/upload-sessions") return { row: { id: "US-OLD", assets: {} } };
+      if (path === "/api/organization/events/E2/projects/P2/upload-sessions") return { row: { id: "US-NEW", assets: {} } };
+      if (path === "/api/organization/events/E2/registrations/R-OLD/assets/artwork_image") return delayedOldImage;
+      if (path.includes("/registrations/R-OLD/assets/creation_video")) return { registration: first };
+      throw new Error(`unexpected API path ${path}`);
+    });
+    const wrapper = mount(OrganizationEventWorkspacePage, { props: { eventId: "E2" } });
+    await flushPromises();
+    await wrapper.get('[data-workspace-tab="records"]').trigger("click");
+    await wrapper.get('[data-action="replace-organization-materials-R-OLD"]').trigger("click");
+    await flushPromises();
+    await wrapper.get('[data-testid="submission-uploader"]').trigger("click");
+    await wrapper.get('[data-action="confirm-organization-material-replacement-R-OLD"]').trigger("click");
+    await wrapper.get('[data-action="replace-organization-materials-R-NEW"]').trigger("click");
+    await flushPromises();
+    resolveOldImage({ registration: first });
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("替换 李四 的作品材料");
+    expect(wrapper.text()).not.toContain("作品图片已替换，作画视频仍待替换");
+    expect(apiMock.mock.calls.filter(([path, options]) => options?.method === "PUT").map(([path]) => path)).toEqual([
+      "/api/organization/events/E2/registrations/R-OLD/assets/artwork_image"
+    ]);
+  });
+
   it("joins an available event idempotently and opens its workspace", async () => {
     apiMock.mockImplementation(async (path, options) => {
       if (path === "/api/me/events") return { rows: [{ event, participationState: "available", registrationState: "open" }] };

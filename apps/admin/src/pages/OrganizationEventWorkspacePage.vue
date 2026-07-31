@@ -56,13 +56,16 @@ async function loadWorkspace() {
   }
 }
 
-async function loadRegistrations() {
+async function loadRegistrations({ isCurrent = () => true } = {}) {
   if (!props.eventId) return;
   try {
     const payload = await api(`/api/organization/events/${encodeURIComponent(props.eventId)}/registrations`);
+    if (!isCurrent()) return false;
     registrations.value = Array.isArray(payload?.rows) ? payload.rows : [];
+    return true;
   } catch (error) {
-    emit("error", error.message || "组织报名记录加载失败");
+    if (isCurrent()) emit("error", error.message || "组织报名记录加载失败");
+    return false;
   }
 }
 
@@ -166,24 +169,35 @@ function retryReplacementSession() {
 async function confirmReplacement() {
   const row = replacingRegistration.value;
   const sessionId = replacementSession.value?.id;
-  if (!row || !sessionId || !replacementComplete.value || replacementLoading.value) return;
+  const registrationId = row?.id;
+  const generation = replacementRequest;
+  const currentReplacement = () => (
+    replacementRequest === generation
+    && replacementSession.value?.id === sessionId
+    && replacingRegistration.value?.id === registrationId
+  );
+  if (!row || !sessionId || !registrationId || !replacementComplete.value || replacementLoading.value || !currentReplacement()) return;
   replacementLoading.value = true;
   replacementError.value = "";
   try {
     let updated = null;
     for (const kind of remainingReplacementKinds.value) {
+      if (!currentReplacement()) return;
       const payload = await api(`${submissionAssetPath(row, kind)}`, { method: "PUT", body: JSON.stringify({ uploadSessionId: sessionId }) });
+      if (!currentReplacement()) return;
       updated = payload?.registration || updated;
       replacementCompletedKinds.value = new Set([...replacementCompletedKinds.value, kind]);
       if (updated?.id) registrations.value = registrations.value.map((item) => item.id === updated.id ? updated : item);
-      await loadRegistrations();
+      await loadRegistrations({ isCurrent: currentReplacement });
+      if (!currentReplacement()) return;
     }
+    if (!currentReplacement()) return;
     replacementResult.value = "作品材料已替换，已恢复待审核";
     cancelReplacement({ keepResult: true });
   } catch {
-    replacementError.value = "作品材料替换失败，请重试";
+    if (currentReplacement()) replacementError.value = "作品材料替换失败，请重试";
   } finally {
-    replacementLoading.value = false;
+    if (currentReplacement()) replacementLoading.value = false;
   }
 }
 

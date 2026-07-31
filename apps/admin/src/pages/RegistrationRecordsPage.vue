@@ -64,9 +64,12 @@ function cancelReplacement({ keepResult = false } = {}) {
   if (!keepResult) replacementResult.value = "";
 }
 
-async function loadRegistrations() {
+async function loadRegistrations({ isCurrent = () => true } = {}) {
   if (!props.eventId) return;
-  rows.value = (await api(`/api/me/events/${encodeURIComponent(props.eventId)}/registrations`)).rows || [];
+  const payload = await api(`/api/me/events/${encodeURIComponent(props.eventId)}/registrations`);
+  if (!isCurrent()) return false;
+  rows.value = payload.rows || [];
+  return true;
 }
 
 async function createReplacementSession(row) {
@@ -102,24 +105,35 @@ function retryReplacementSession() {
 async function confirmReplacement() {
   const row = replacingRegistration.value;
   const sessionId = replacementSession.value?.id;
-  if (!row || !sessionId || !replacementComplete.value || replacementLoading.value) return;
+  const registrationId = row?.id;
+  const generation = replacementRequest;
+  const currentReplacement = () => (
+    replacementRequest === generation
+    && replacementSession.value?.id === sessionId
+    && replacingRegistration.value?.id === registrationId
+  );
+  if (!row || !sessionId || !registrationId || !replacementComplete.value || replacementLoading.value || !currentReplacement()) return;
   replacementLoading.value = true;
   replacementError.value = "";
   try {
     let updated = null;
     for (const kind of remainingReplacementKinds.value) {
+      if (!currentReplacement()) return;
       const payload = await api(submissionAssetPath(row, kind), { method: "PUT", body: JSON.stringify({ uploadSessionId: sessionId }) });
+      if (!currentReplacement()) return;
       updated = payload?.registration || updated;
       replacementCompletedKinds.value = new Set([...replacementCompletedKinds.value, kind]);
       if (updated?.id) rows.value = rows.value.map((item) => item.id === updated.id ? updated : item);
-      await loadRegistrations();
+      await loadRegistrations({ isCurrent: currentReplacement });
+      if (!currentReplacement()) return;
     }
+    if (!currentReplacement()) return;
     replacementResult.value = "作品材料已替换";
     cancelReplacement({ keepResult: true });
   } catch {
-    replacementError.value = "作品材料替换失败，请重试";
+    if (currentReplacement()) replacementError.value = "作品材料替换失败，请重试";
   } finally {
-    replacementLoading.value = false;
+    if (currentReplacement()) replacementLoading.value = false;
   }
 }
 
