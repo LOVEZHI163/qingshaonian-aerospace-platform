@@ -19,6 +19,7 @@ import { createSiteAdminRouter } from "./routes/site-admin.js";
 import { createPublicSiteRouter } from "./routes/public-site.js";
 import { createAccountEventsRouter } from "./routes/account-events.js";
 import { createSystemRouter } from "./routes/system.js";
+import { createSubmissionAssetsRouter } from "./routes/submission-assets.js";
 import { registrationContext } from "./services/events.js";
 import { replayFileCleanupJournal } from "./services/organizations.js";
 import { organizationForOwner, requireOrdinaryUser, requireOrganizationOwner } from "./services/access-control.js";
@@ -211,6 +212,16 @@ app.use("/api", createResourcesRouter({
 }));
 
 app.use("/api", createRegistrationsRouter({
+  store: dataStore,
+  requireUser,
+  requireAdmin,
+  requirePasswordReady,
+  asyncRoute: mutationAsyncRoute,
+  makeId: id,
+  now
+}));
+
+app.use("/api", createSubmissionAssetsRouter({
   store: dataStore,
   requireUser,
   requireAdmin,
