@@ -153,7 +153,9 @@ Object.assign(seedDb, {
   eventPublicProfiles: [],
   contentPosts: [],
   mediaAssets: [],
-  contentAttachments: []
+  contentAttachments: [],
+  registrationUploadSessions: [],
+  registrationSubmissionAssets: []
 });
 for (const organization of seedDb.organizations) {
   Object.assign(organization, {
@@ -166,6 +168,7 @@ for (const organization of seedDb.organizations) {
     currentDocumentId: null
   });
 }
+for (const project of seedDb.projects) project.submissionMode ||= "none";
 for (const row of seedDb.registrations) row.eventId = EVENT.id;
 
 export function ensureDbShape(db) {
@@ -177,6 +180,8 @@ export function ensureDbShape(db) {
   db.contentPosts ||= [];
   db.mediaAssets ||= [];
   db.contentAttachments ||= [];
+  db.registrationUploadSessions ||= [];
+  db.registrationSubmissionAssets ||= [];
   db.users ||= [];
   for (const user of db.users) {
     user.sessionVersion ??= 0;
@@ -208,6 +213,7 @@ export function ensureDbShape(db) {
   db.memberships ||= [];
   db.events ||= structuredClone([EVENT]);
   db.projects ||= structuredClone(PROJECTS);
+  for (const project of db.projects) project.submissionMode ||= "none";
   db.projectGroups ||= db.projects.flatMap((project) =>
     (project.allowedGroups || APPROVED_GROUP_NAMES).map((groupName) => ({ projectId: project.id, groupName }))
   );

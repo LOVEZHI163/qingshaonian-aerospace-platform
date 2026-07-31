@@ -49,6 +49,79 @@ test("PostgreSQL store creates normalized tables and seeds an empty database", a
   });
 });
 
+test("PostgreSQL store round-trips submission modes and private upload assets", async () => {
+  await withStore(async (store) => {
+    const db = await store.readDb();
+    const now = "2026-07-31T00:00:00.000Z";
+    const later = "2026-07-31T01:00:00.000Z";
+
+    db.projects[0].submissionMode = "image_video";
+    db.registrationUploadSessions.push({
+      id: "US1",
+      eventId: db.events[0].id,
+      projectId: db.projects[0].id,
+      ownerUserId: db.users[0].id,
+      organizationId: null,
+      state: "active",
+      createdAt: now,
+      expiresAt: later,
+      committedAt: null
+    });
+    db.registrationSubmissionAssets.push({
+      id: "SA1",
+      registrationId: null,
+      uploadSessionId: "US1",
+      kind: "artwork_image",
+      originalName: "work.png",
+      storedName: "original.png",
+      filePath: "/data/uploads/submission-assets/SA1/original.png",
+      mimeType: "image/png",
+      sizeBytes: 100,
+      width: 800,
+      height: 600,
+      durationMs: null,
+      uploadedByUserId: db.users[0].id,
+      uploadedAt: now,
+      cleanedAt: null,
+      cleanupReason: ""
+    });
+
+    await store.writeDb(db);
+    const reloaded = await store.readDb();
+
+    assert.equal(reloaded.projects[0].submissionMode, "image_video");
+    assert.deepEqual(reloaded.registrationUploadSessions, [{
+      id: "US1",
+      eventId: db.events[0].id,
+      projectId: db.projects[0].id,
+      ownerUserId: db.users[0].id,
+      organizationId: null,
+      state: "active",
+      createdAt: now,
+      expiresAt: later,
+      committedAt: null
+    }]);
+    assert.deepEqual(reloaded.registrationSubmissionAssets, [{
+      id: "SA1",
+      registrationId: null,
+      uploadSessionId: "US1",
+      kind: "artwork_image",
+      originalName: "work.png",
+      storedName: "original.png",
+      filePath: "/data/uploads/submission-assets/SA1/original.png",
+      mimeType: "image/png",
+      sizeBytes: 100,
+      width: 800,
+      height: 600,
+      durationMs: null,
+      uploadedByUserId: db.users[0].id,
+      uploadedAt: now,
+      cleanedAt: null,
+      cleanupReason: ""
+    }]);
+  });
+});
+
 test("multi-event account schema constrains ownership and registration identity", async () => {
   await withStore(async (store, pool) => {
     const tables = new Set((await pool.query(`

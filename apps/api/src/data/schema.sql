@@ -111,7 +111,8 @@ CREATE TABLE IF NOT EXISTS projects (
   category TEXT NOT NULL,
   enabled BOOLEAN NOT NULL DEFAULT TRUE,
   instructor_required BOOLEAN NOT NULL DEFAULT FALSE,
-  display_order INTEGER NOT NULL DEFAULT 0
+  display_order INTEGER NOT NULL DEFAULT 0,
+  submission_mode TEXT NOT NULL DEFAULT 'none' CHECK (submission_mode IN ('none', 'image_video'))
 );
 
 CREATE TABLE IF NOT EXISTS project_groups (
@@ -142,6 +143,38 @@ CREATE TABLE IF NOT EXISTS registrations (
   updated_at TIMESTAMPTZ NOT NULL,
   CHECK (personal_user_id IS NOT NULL OR organization_id IS NOT NULL),
   UNIQUE (event_id, project_id, athlete_key)
+);
+
+CREATE TABLE IF NOT EXISTS registration_upload_sessions (
+  id TEXT PRIMARY KEY,
+  event_id TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  owner_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  organization_id TEXT REFERENCES organizations(id) ON DELETE CASCADE,
+  state TEXT NOT NULL CHECK (state IN ('active', 'committed', 'expired')),
+  created_at TIMESTAMPTZ NOT NULL,
+  expires_at TIMESTAMPTZ NOT NULL,
+  committed_at TIMESTAMPTZ
+);
+
+CREATE TABLE IF NOT EXISTS registration_submission_assets (
+  id TEXT PRIMARY KEY,
+  registration_id TEXT REFERENCES registrations(id) ON DELETE CASCADE,
+  upload_session_id TEXT NOT NULL REFERENCES registration_upload_sessions(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL CHECK (kind IN ('artwork_image', 'creation_video')),
+  original_name TEXT NOT NULL,
+  stored_name TEXT NOT NULL,
+  file_path TEXT NOT NULL,
+  mime_type TEXT NOT NULL,
+  size_bytes BIGINT NOT NULL,
+  width INTEGER,
+  height INTEGER,
+  duration_ms INTEGER,
+  uploaded_by_user_id TEXT NOT NULL REFERENCES users(id),
+  uploaded_at TIMESTAMPTZ NOT NULL,
+  cleaned_at TIMESTAMPTZ,
+  cleanup_reason TEXT NOT NULL DEFAULT '',
+  UNIQUE (registration_id, kind)
 );
 
 CREATE TABLE IF NOT EXISTS results (
@@ -219,6 +252,9 @@ CREATE INDEX IF NOT EXISTS registrations_personal_user_id_idx ON registrations(p
 CREATE INDEX IF NOT EXISTS registrations_organization_id_idx ON registrations(organization_id);
 CREATE INDEX IF NOT EXISTS memberships_organization_id_idx ON memberships(organization_id);
 CREATE INDEX IF NOT EXISTS organization_event_participations_event_id_idx ON organization_event_participations(event_id);
+CREATE INDEX IF NOT EXISTS registration_upload_sessions_owner_expires_at_idx ON registration_upload_sessions(owner_user_id, expires_at);
+CREATE INDEX IF NOT EXISTS registration_submission_assets_registration_id_idx ON registration_submission_assets(registration_id);
+CREATE INDEX IF NOT EXISTS registration_submission_assets_upload_session_id_idx ON registration_submission_assets(upload_session_id);
 
 CREATE TABLE IF NOT EXISTS site_settings (
   id TEXT PRIMARY KEY CHECK (id = 'default'),
