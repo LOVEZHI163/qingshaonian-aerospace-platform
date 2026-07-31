@@ -4,11 +4,11 @@ const SAFE_FAILURE = (status) => `服务暂时不可用，请刷新后重试 (${
 
 function parseResponse(xhr) {
   const contentType = String(xhr.getResponseHeader?.("content-type") || "").toLowerCase();
+  const text = String(xhr.responseText || "");
+  if (!text) return { payload: {}, responseKind: "empty" };
   if (!contentType.includes("application/json") && !contentType.includes("+json")) {
     return { payload: {}, responseKind: "non-json" };
   }
-  const text = String(xhr.responseText || "");
-  if (!text) return { payload: {}, responseKind: "json" };
   try {
     return { payload: JSON.parse(text), responseKind: "json" };
   } catch {

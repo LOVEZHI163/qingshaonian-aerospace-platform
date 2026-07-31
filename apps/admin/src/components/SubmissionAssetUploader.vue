@@ -17,8 +17,9 @@ const definitions = {
 };
 const kinds = Object.keys(definitions);
 const state = reactive(Object.fromEntries(kinds.map((kind) => [kind, {
-  asset: null, uploading: false, progress: null, error: "", previewUrl: "", previewObjectUrl: ""
+  asset: null, uploading: false, progress: null, error: "", previewUrl: "", previewObjectUrl: "", controller: null, requestId: 0
 }])));
+let disposed = false;
 
 function displaySize(bytes) {
   const value = Number(bytes || 0);
@@ -43,9 +44,32 @@ function clearObjectPreview(kind) {
   current.previewObjectUrl = "";
 }
 
-function setPersistedAsset(kind, asset) {
-  if (!asset) return;
+function cancelUpload(kind) {
   const current = state[kind];
+  current.requestId += 1;
+  current.controller?.abort();
+  current.controller = null;
+  current.uploading = false;
+  current.progress = null;
+}
+
+function clearAssetState(kind, { cancel = true } = {}) {
+  const current = state[kind];
+  if (cancel) cancelUpload(kind);
+  clearObjectPreview(kind);
+  current.asset = null;
+  current.previewUrl = "";
+  current.error = "";
+  current.progress = null;
+}
+
+function setPersistedAsset(kind, asset, { cancel = true } = {}) {
+  if (!asset) {
+    clearAssetState(kind, { cancel });
+    return;
+  }
+  const current = state[kind];
+  if (cancel) cancelUpload(kind);
   clearObjectPreview(kind);
   current.asset = asset;
   current.previewUrl = persistedPreview(asset);
@@ -62,27 +86,57 @@ function publishComplete() {
 }
 
 watch(
+  () => [props.sessionId, props.mode],
+  () => {
+    for (const kind of kinds) clearAssetState(kind);
+    if (props.mode === "image_video") {
+      for (const kind of kinds) setPersistedAsset(kind, props.assets?.[kind], { cancel: false });
+    }
+    publishComplete();
+  },
+  { immediate: true }
+);
+
+watch(
   () => props.assets,
   (assets) => {
-    for (const kind of kinds) setPersistedAsset(kind, assets?.[kind]);
+    for (const kind of kinds) setPersistedAsset(kind, props.mode === "image_video" ? assets?.[kind] : null);
     publishComplete();
   },
   { immediate: true, deep: true }
 );
 
+function currentRequest(kind, request) {
+  const current = state[kind];
+  return !disposed
+    && current.requestId === request.id
+    && current.controller === request.controller
+    && props.sessionId === request.sessionId
+    && props.mode === request.mode;
+}
+
 async function chooseAsset(kind, event) {
   const file = event.target.files?.[0];
   event.target.value = "";
-  if (!file || state[kind].uploading) return;
+  if (!file || props.mode !== "image_video") return;
 
+  cancelUpload(kind);
   const current = state[kind];
+  const controller = new AbortController();
+  const request = { id: current.requestId + 1, controller, sessionId: props.sessionId, mode: props.mode };
+  current.requestId = request.id;
+  current.controller = controller;
   current.uploading = true;
   current.progress = { loaded: 0, total: file.size, percent: 0 };
   current.error = "";
   try {
     const result = await uploadFile(`/api/upload-sessions/${encodeURIComponent(props.sessionId)}/${definitions[kind].endpoint}`, file, {
-      onProgress(progress) { current.progress = progress; }
+      signal: controller.signal,
+      onProgress(progress) {
+        if (currentRequest(kind, request)) current.progress = progress;
+      }
     });
+    if (!currentRequest(kind, request)) return;
     const asset = result?.row || result;
     if (!asset?.id) throw new Error("上传结果无效，请重新选择文件");
     if (kind === "artwork_image") {
@@ -94,17 +148,29 @@ async function chooseAsset(kind, event) {
     current.progress = null;
     publishComplete();
   } catch (error) {
+    if (!currentRequest(kind, request)) return;
+    if (error?.name === "AbortError") {
+      current.progress = null;
+      return;
+    }
     current.error = error?.message || `${definitions[kind].label}上传失败，请稍后重试`;
     current.progress = null;
     emit("error", error);
     publishComplete();
   } finally {
-    current.uploading = false;
+    if (currentRequest(kind, request)) {
+      current.uploading = false;
+      current.controller = null;
+    }
   }
 }
 
 onBeforeUnmount(() => {
-  for (const kind of kinds) clearObjectPreview(kind);
+  disposed = true;
+  for (const kind of kinds) {
+    cancelUpload(kind);
+    clearObjectPreview(kind);
+  }
 });
 </script>
 
@@ -117,7 +183,7 @@ onBeforeUnmount(() => {
       </div>
       <label class="file-action" :for="`submission-${kind}`">
         {{ state[kind].uploading ? '正在上传…' : state[kind].asset ? '重新选择文件' : '选择文件' }}
-        <input :id="`submission-${kind}`" :data-action="`choose-${kind}`" type="file" :accept="definitions[kind].accept" :disabled="state[kind].uploading" @change="chooseAsset(kind, $event)">
+        <input :id="`submission-${kind}`" :data-action="`choose-${kind}`" type="file" :accept="definitions[kind].accept" @change="chooseAsset(kind, $event)">
       </label>
       <p class="hint">{{ kind === 'artwork_image' ? '仅 JPG、JPEG、PNG，最大 2MB' : '仅 MP4，最大 200MB、时长不超过 2 分钟' }}</p>
       <div v-if="state[kind].progress" class="submission-upload-progress">

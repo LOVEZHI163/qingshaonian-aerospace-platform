@@ -64,6 +64,17 @@ describe("uploadFile", () => {
     }));
   });
 
+  it("normalizes an empty JSON error response like api.js", async () => {
+    vi.stubGlobal("XMLHttpRequest", FakeXhr);
+    const pending = uploadFile("/api/upload", new File(["image"], "artwork.png", { type: "image/png" }));
+
+    FakeXhr.instances[0].finish({ status: 503, body: "", contentType: "application/json" });
+
+    await expect(pending).rejects.toMatchObject({
+      name: "ApiError", status: 503, payload: {}, message: "服务暂时不可用，请刷新后重试 (503)"
+    });
+  });
+
   it("aborts the request when its signal aborts", async () => {
     vi.stubGlobal("XMLHttpRequest", FakeXhr);
     const controller = new AbortController();

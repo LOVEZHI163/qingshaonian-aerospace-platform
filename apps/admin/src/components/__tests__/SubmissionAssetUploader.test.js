@@ -16,6 +16,14 @@ function mountUploader(props = {}) {
   });
 }
 
+function deferredUpload(options) {
+  let resolve;
+  let reject;
+  const promise = new Promise((nextResolve, nextReject) => { resolve = nextResolve; reject = nextReject; });
+  options.signal?.addEventListener("abort", () => reject(new DOMException("上传已取消", "AbortError")), { once: true });
+  return { promise, resolve, reject };
+}
+
 async function choose(wrapper, action, file) {
   const input = wrapper.get(`[data-action="${action}"]`);
   Object.defineProperty(input.element, "files", { configurable: true, value: [file] });
@@ -95,5 +103,74 @@ describe("SubmissionAssetUploader", () => {
     wrapper.unmount();
 
     expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:artwork-preview");
+  });
+
+  it("cancels an unmounted upload so its late response cannot create a preview or completion event", async () => {
+    let pending;
+    uploadFileMock.mockImplementation((_path, _file, options) => {
+      pending = deferredUpload(options);
+      return pending.promise;
+    });
+    const complete = vi.fn();
+    const wrapper = mountUploader({ onComplete: complete });
+
+    await choose(wrapper, "choose-artwork_image", new File(["image"], "work.png", { type: "image/png" }));
+    const completionsBeforeUnmount = complete.mock.calls.length;
+    wrapper.unmount();
+    pending.resolve({ row: image });
+    await flushPromises();
+
+    expect(URL.createObjectURL).not.toHaveBeenCalled();
+    expect(complete).toHaveBeenCalledTimes(completionsBeforeUnmount);
+  });
+
+  it("cancels a prior upload of the same kind and ignores its late result", async () => {
+    const uploads = [];
+    uploadFileMock.mockImplementation((_path, _file, options) => {
+      const pending = deferredUpload(options);
+      uploads.push(pending);
+      return pending.promise;
+    });
+    const wrapper = mountUploader();
+
+    await choose(wrapper, "choose-artwork_image", new File(["old"], "old.png", { type: "image/png" }));
+    await choose(wrapper, "choose-artwork_image", new File(["new"], "new.png", { type: "image/png" }));
+    uploads[0].resolve({ row: { ...image, originalName: "old.png" } });
+    uploads[1].resolve({ row: { ...image, id: "SA3", originalName: "new.png" } });
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("new.png");
+    expect(wrapper.text()).not.toContain("old.png");
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false);
+  });
+
+  it("cancels a stale session upload and clears all state when supplied assets become empty", async () => {
+    let pending;
+    uploadFileMock.mockImplementation((_path, _file, options) => {
+      pending = deferredUpload(options);
+      return pending.promise;
+    });
+    const wrapper = mountUploader({ assets: { artwork_image: image, creation_video: video } });
+    await choose(wrapper, "choose-artwork_image", new File(["replacement"], "replacement.png", { type: "image/png" }));
+    await wrapper.setProps({ sessionId: "US2", assets: {} });
+    pending.resolve({ row: { ...image, originalName: "stale.png" } });
+    await flushPromises();
+
+    expect(wrapper.text()).not.toContain("work.png");
+    expect(wrapper.text()).not.toContain("making.mp4");
+    expect(wrapper.text()).not.toContain("stale.png");
+    expect(wrapper.emitted("complete").at(-1)).toEqual([false]);
+  });
+
+  it("releases a local artwork URL when complete assets are cleared", async () => {
+    uploadFileMock.mockResolvedValue({ row: image });
+    const wrapper = mountUploader({ assets: { creation_video: video } });
+    await choose(wrapper, "choose-artwork_image", new File(["image"], "work.png", { type: "image/png" }));
+
+    await wrapper.setProps({ assets: {} });
+
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:artwork-preview");
+    expect(wrapper.text()).not.toContain("work.png");
+    expect(wrapper.emitted("complete").at(-1)).toEqual([false]);
   });
 });
