@@ -71,14 +71,22 @@ export function createRegistrationsRouter({
   }
 
   async function discardFailedReplacementSource(db, asset) {
+    const cleanedAt = now();
+    asset.cleanedAt = cleanedAt;
+    asset.cleanupReason = "替换报名写入数据库失败，已撤销新作品材料";
+    try {
+      await store.writeDb(db);
+    } catch {
+      try { logger?.error?.("Replacement source cleanup state persistence failed", { assetId: asset.id }); } catch { /* preserve original database error */ }
+      return;
+    }
     try {
       await deleteFile(asset);
     } catch (error) {
-      const createdAt = now();
       db.fileCleanupJournal ||= [];
       db.fileCleanupJournal.push({
         id: makeId("CLN"), filePath: asset.filePath, category: "registration-asset-replacement-rollback",
-        attempts: 1, lastError: String(error?.message || error).slice(0, 500), createdAt, lastAttemptAt: createdAt
+        attempts: 1, lastError: String(error?.message || error).slice(0, 500), createdAt: cleanedAt, lastAttemptAt: cleanedAt
       });
       try {
         await store.writeDb(db);

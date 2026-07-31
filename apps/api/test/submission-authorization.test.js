@@ -183,12 +183,45 @@ test("committing a complete image-video session binds both assets and returns on
   }, { prefix: "submission-auth-" });
 });
 
+test("an image-video session cannot be committed into an existing registration that already has bound materials", async () => {
+  await withTestServer(async ({ baseUrl, dbPath }) => {
+    const ordinary = await loginAs(baseUrl, "13800000001", "123456");
+    await mutateDb(dbPath, (db) => {
+      const registration = db.registrations.find((row) => row.id === "R20260627001");
+      db.events[0].registrationMode = "force_open";
+      db.projects.find((project) => project.id === registration.projectId).submissionMode = "image_video";
+      db.registrationUploadSessions.push(session("US-existing", { projectId: registration.projectId }));
+      db.registrationSubmissionAssets.push(
+        asset("SA-existing-image", "US-existing", "artwork_image", { registrationId: registration.id }),
+        asset("SA-existing-video", "US-existing", "creation_video", { registrationId: registration.id }),
+        asset("SA-new-image", "US-new", "artwork_image"),
+        asset("SA-new-video", "US-new", "creation_video")
+      );
+      db.registrationUploadSessions.push(session("US-new", { projectId: registration.projectId }));
+    });
+    const existing = JSON.parse(await fs.readFile(dbPath, "utf8")).registrations.find((row) => row.id === "R20260627001");
+    const response = await fetch(`${baseUrl}/api/me/events/${EVENT_ID}/registrations`, withSession(ordinary.cookie, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ athlete: existing.athlete, projectId: existing.projectId, uploadSessionId: "US-new" })
+    }));
+
+    assert.equal(response.status, 409);
+    const db = JSON.parse(await fs.readFile(dbPath, "utf8"));
+    assert.equal(db.registrationSubmissionAssets.filter((row) => row.registrationId === existing.id).length, 2);
+    assert.equal(db.registrationSubmissionAssets.filter((row) => row.uploadSessionId === "US-new" && !row.registrationId).length, 2);
+    assert.equal(db.registrationUploadSessions.find((row) => row.id === "US-new").state, "active");
+  }, { prefix: "submission-auth-" });
+});
+
 test("administrator replacement switches the registration asset, resets approval, and audits without exposing storage paths", async () => {
   await withTestServer(async ({ baseUrl, dbPath, tempDir }) => {
     const admin = await loginAs(baseUrl, "13900000000", "admin123");
     const oldAsset = asset("SA-old", "US-old", "artwork_image", {
       registrationId: "R20260627001", storedName: "old.png",
-      filePath: path.join(tempDir, "uploads", "submission-assets", "SA-old", "old.png")
+      filePath: path.join(tempDir, "uploads", "submission-assets", "SA-old", "old.png"),
+      originalName: "approved-old.jpeg", mimeType: "image/jpeg", sizeBytes: 123, width: 780, height: 600,
+      uploadedAt: "2026-07-30T00:00:00.000Z"
     });
     const replacement = asset("SA-replacement", "US-replacement", "artwork_image", {
       storedName: "replacement.png",
@@ -218,7 +251,12 @@ test("administrator replacement switches the registration asset, resets approval
     await assert.rejects(fs.access(oldAsset.filePath), { code: "ENOENT" });
     assert.deepEqual(await fs.readFile(replacement.filePath), Buffer.from("submission-file"));
     const db = JSON.parse(await fs.readFile(dbPath, "utf8"));
-    assert.equal(db.auditLogs.some((row) => row.action === "registration.asset.replace" && row.targetId === "R20260627001"), true);
+    const audit = db.auditLogs.find((row) => row.action === "registration.asset.replace" && row.targetId === "R20260627001");
+    assert.ok(audit);
+    assert.match(audit.summary, /approved-old\.jpeg/);
+    assert.match(audit.summary, /image\/jpeg/);
+    assert.match(audit.summary, /123/);
+    assert.doesNotMatch(audit.summary, /submission-assets|old\.png/);
   }, { prefix: "submission-auth-" });
 });
 
@@ -267,7 +305,7 @@ test("organization owner may replace its approved asset but cannot replace anoth
     }));
     assert.equal(crossResponse.status, 403);
     const db = JSON.parse(await fs.readFile(dbPath, "utf8"));
-    assert.equal(db.registrationSubmissionAssets.find((row) => row.registrationId === "R20260627002").id, "SA-org-replacement");
+    assert.equal(db.registrationSubmissionAssets.find((row) => row.registrationId === "R20260627002").id, "SA-org-old");
     assert.equal(db.registrationSubmissionAssets.find((row) => row.id === "SA-other-org").registrationId, null);
     await assert.doesNotReject(fs.access(replacement.filePath));
   }, { prefix: "submission-auth-" });
@@ -307,7 +345,7 @@ test("rejected personal registration can replace its material, while a rejected 
     }));
     assert.equal(invalidResponse.status, 422);
     const db = JSON.parse(await fs.readFile(dbPath, "utf8"));
-    assert.equal(db.registrationSubmissionAssets.find((row) => row.registrationId === "R20260627001").id, "SA-personal-replacement");
+    assert.equal(db.registrationSubmissionAssets.find((row) => row.registrationId === "R20260627001").id, "SA-personal-old");
     await assert.doesNotReject(fs.access(replacement.filePath));
   }, { prefix: "submission-auth-" });
 });
@@ -352,4 +390,44 @@ test("a failed replacement database write restores the old row and journals a so
   assert.deepEqual(db.fileCleanupJournal.map((row) => ({ filePath: row.filePath, category: row.category })), [{
     filePath: "C:\\private\\source.png", category: "registration-asset-replacement-rollback"
   }]);
+});
+
+test("a failed replacement database write marks a successfully deleted source as cleaned before it can be reused", async () => {
+  const oldAsset = asset("SA-clean-old", "US-clean-old", "artwork_image", { registrationId: "R-clean", filePath: "C:\\private\\old.png" });
+  const sourceAsset = asset("SA-clean-source", "US-clean-source", "artwork_image", { filePath: "C:\\private\\source.png" });
+  const db = {
+    users: [{ id: "U1001", type: "ordinary", status: "active" }], organizations: [], memberships: [],
+    organizationEventParticipations: [], auditLogs: [], fileCleanupJournal: [],
+    events: [{ id: EVENT_ID, status: "published", registrationMode: "force_open", archivedAt: null }],
+    projects: [{ id: PROJECT_ID, eventId: EVENT_ID, enabled: true, submissionMode: "image_video", allowedGroups: ["小学高段"] }],
+    registrations: [{ id: "R-clean", eventId: EVENT_ID, projectId: PROJECT_ID, personalUserId: "U1001", organizationId: null, status: "pending", rejectReason: "", updatedAt: "2026-07-31T00:00:00.000Z" }],
+    registrationUploadSessions: [session("US-clean-source")],
+    registrationSubmissionAssets: [oldAsset, sourceAsset]
+  };
+  let writes = 0;
+  const store = {
+    readDb: async () => structuredClone(db),
+    writeDb: async (next) => {
+      writes += 1;
+      if (writes === 1) throw new Error("database unavailable");
+      Object.assign(db, structuredClone(next));
+    }
+  };
+  const pass = (req, _res, next) => { req.user = { id: "U1001", type: "ordinary", status: "active" }; next(); };
+  const asyncRoute = (handler) => (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
+  const router = createRegistrationsRouter({
+    store, requireUser: pass, requireAdmin: pass, requirePasswordReady: pass, asyncRoute,
+    makeId: (prefix) => `${prefix}-clean`, now: () => "2026-07-31T00:00:00.000Z",
+    deleteFile: async () => {}, logger: { error: () => {} }
+  });
+
+  await withRouter(router, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/me/events/${EVENT_ID}/registrations/R-clean/assets/artwork_image`, {
+      method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ uploadSessionId: "US-clean-source" })
+    });
+    assert.equal(response.status, 500);
+  });
+  const source = db.registrationSubmissionAssets.find((row) => row.id === "SA-clean-source");
+  assert.equal(source?.cleanedAt, "2026-07-31T00:00:00.000Z");
+  assert.match(source?.cleanupReason || "", /数据库/);
 });

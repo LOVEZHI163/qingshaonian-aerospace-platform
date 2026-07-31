@@ -223,9 +223,11 @@ export async function deleteSubmissionFile(record, {
 } = {}) {
   if (!record?.filePath) throw new Error("作品文件记录无效");
   const root = path.resolve(uploadRoot);
-  const directory = path.resolve(root, "submission-assets", safeAssetId(record.id));
-  const expectedPath = path.resolve(directory, safeStoredName(record.storedName));
   const recordPath = path.resolve(record.filePath);
+  const submissionRoot = path.resolve(root, "submission-assets");
+  const directory = path.resolve(path.dirname(recordPath));
+  const sourceAssetId = safeAssetId(path.basename(directory));
+  const expectedPath = path.resolve(submissionRoot, sourceAssetId, safeStoredName(record.storedName));
   if (recordPath !== expectedPath) throw new Error("Submission file escapes controlled submission directory");
 
   await assertNoLinkedComponents(root, expectedPath, fileSystem);

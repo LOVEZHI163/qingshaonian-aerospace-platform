@@ -270,6 +270,18 @@ test("deletes a file only from its controlled submission-assets directory", asyn
   await assert.rejects(fs.access(record.filePath), { code: "ENOENT" });
 });
 
+test("deletes a replacement file from its controlled source directory when the registration asset id remains stable", async (t) => {
+  const directory = await makeFixture(t);
+  const record = submissionRecord(directory, "SA-bound", "replacement.mp4");
+  record.filePath = path.join(directory, "submission-assets", "SA-source", "replacement.mp4");
+  await fs.mkdir(path.dirname(record.filePath), { recursive: true });
+  await fs.writeFile(record.filePath, "video");
+
+  await deleteSubmissionFile(record, { uploadRoot: directory });
+
+  await assert.rejects(fs.access(record.filePath), { code: "ENOENT" });
+});
+
 test("refuses to delete a submission record outside the controlled upload root", async (t) => {
   const uploadRoot = await makeFixture(t);
   const outsidePath = path.join(os.tmpdir(), `aerogp-submission-outside-${crypto.randomUUID()}.mp4`);

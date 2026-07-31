@@ -62,6 +62,18 @@ function registrationAssetSummary(asset) {
   return summary;
 }
 
+function replacementAuditMetadata(asset) {
+  return JSON.stringify({
+    originalName: asset.originalName,
+    mimeType: asset.mimeType,
+    sizeBytes: asset.sizeBytes,
+    width: asset.width ?? null,
+    height: asset.height ?? null,
+    durationMs: asset.durationMs ?? null,
+    uploadedAt: asset.uploadedAt
+  });
+}
+
 export function registrationSubmissionSummary(db, registration) {
   const project = db.projects.find((row) => row.id === registration.projectId && row.eventId === registration.eventId);
   if (project?.submissionMode !== "image_video") return null;
@@ -173,6 +185,11 @@ export function commitUploadSession({ db, sessionId, registration, actor, channe
   if (sessionIsExpired(session, now)) {
     throw businessError(409, "上传会话已过期", "UPLOAD_SESSION_EXPIRED");
   }
+  if (db.registrationSubmissionAssets.some((asset) => (
+    asset.registrationId === registration.id && SUBMISSION_ASSET_KINDS.has(asset.kind)
+  ))) {
+    throw businessError(409, "该报名已绑定作品材料，不能重复提交上传会话", "REGISTRATION_SUBMISSION_ALREADY_BOUND");
+  }
   const assets = db.registrationSubmissionAssets.filter((asset) => (
     asset.uploadSessionId === session.id && !asset.registrationId && !asset.cleanedAt
   ));
@@ -244,7 +261,6 @@ export function replaceRegistrationAsset({ db, registration, kind, uploadedAsset
   const sourceIndex = db.registrationSubmissionAssets.indexOf(uploadedAsset);
   const registrationBefore = { status: registration.status, rejectReason: registration.rejectReason, updatedAt: registration.updatedAt };
   Object.assign(current, {
-    id: uploadedAsset.id,
     originalName: uploadedAsset.originalName,
     storedName: uploadedAsset.storedName,
     filePath: uploadedAsset.filePath,
@@ -270,7 +286,7 @@ export function replaceRegistrationAsset({ db, registration, kind, uploadedAsset
     action: "registration.asset.replace",
     targetType: "registration",
     targetId: registration.id,
-    summary: `替换报名 ${registration.id} 的 ${kind} 作品材料`,
+    summary: `替换报名 ${registration.id} 的 ${kind} 作品材料；旧素材元数据：${replacementAuditMetadata(previous)}`,
     createdAt: timestampValue
   });
   return {

@@ -4,6 +4,7 @@ import { newDb } from "pg-mem";
 
 import { createPostgresAuthState } from "../src/data/auth-state.js";
 import { createPostgresStore } from "../src/data/postgres-store.js";
+import { replaceRegistrationAsset } from "../src/services/submission-assets.js";
 
 async function withStore(fn) {
   const memory = newDb({ autoCreateForeignKeyIndices: true });
@@ -119,6 +120,51 @@ test("PostgreSQL store round-trips submission modes and private upload assets", 
       cleanedAt: null,
       cleanupReason: ""
     }]);
+  });
+});
+
+test("PostgreSQL store persists a registration asset replacement without changing the bound asset identity", async () => {
+  await withStore(async (store) => {
+    const db = await store.readDb();
+    const registration = db.registrations.find((row) => row.personalUserId === "U1001");
+    const project = db.projects.find((row) => row.id === registration.projectId);
+    const actor = db.users.find((row) => row.id === registration.personalUserId);
+    const timestamp = "2026-07-31T00:00:00.000Z";
+    project.submissionMode = "image_video";
+    db.registrationUploadSessions.push(
+      { id: "US-bound", eventId: registration.eventId, projectId: registration.projectId, ownerUserId: actor.id, organizationId: null, state: "committed", createdAt: timestamp, expiresAt: "2030-01-01T00:00:00.000Z", committedAt: timestamp },
+      { id: "US-source", eventId: registration.eventId, projectId: registration.projectId, ownerUserId: actor.id, organizationId: null, state: "active", createdAt: timestamp, expiresAt: "2030-01-01T00:00:00.000Z", committedAt: null }
+    );
+    db.registrationSubmissionAssets.push(
+      {
+        id: "SA-bound", registrationId: registration.id, uploadSessionId: "US-bound", kind: "artwork_image",
+        originalName: "old.png", storedName: "old.png", filePath: "/data/uploads/submission-assets/SA-bound/old.png",
+        mimeType: "image/png", sizeBytes: 100, width: 800, height: 600, durationMs: null,
+        uploadedByUserId: actor.id, uploadedAt: timestamp, cleanedAt: null, cleanupReason: ""
+      },
+      {
+        id: "SA-source", registrationId: null, uploadSessionId: "US-source", kind: "artwork_image",
+        originalName: "replacement.png", storedName: "replacement.png", filePath: "/data/uploads/submission-assets/SA-source/replacement.png",
+        mimeType: "image/png", sizeBytes: 200, width: 1024, height: 768, durationMs: null,
+        uploadedByUserId: actor.id, uploadedAt: timestamp, cleanedAt: null, cleanupReason: ""
+      }
+    );
+    await store.writeDb(db);
+
+    const replacementDb = await store.readDb();
+    const replacementRegistration = replacementDb.registrations.find((row) => row.id === registration.id);
+    const source = replacementDb.registrationSubmissionAssets.find((row) => row.id === "SA-source");
+    replaceRegistrationAsset({
+      db: replacementDb, registration: replacementRegistration, kind: "artwork_image", uploadedAsset: source,
+      actor, channel: "personal", now: () => timestamp
+    });
+    await store.writeDb(replacementDb);
+
+    const reloaded = await store.readDb();
+    assert.deepEqual(reloaded.registrationSubmissionAssets.filter((row) => row.registrationId === registration.id).map((row) => ({
+      id: row.id, originalName: row.originalName, sizeBytes: row.sizeBytes, width: row.width, height: row.height
+    })), [{ id: "SA-bound", originalName: "replacement.png", sizeBytes: 200, width: 1024, height: 768 }]);
+    assert.equal(reloaded.registrationSubmissionAssets.some((row) => row.id === "SA-source"), false);
   });
 });
 
