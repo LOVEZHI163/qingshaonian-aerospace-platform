@@ -574,6 +574,10 @@ app.get("/api/organizations/:id/members", requireUser, requirePasswordReady, asy
 app.use((error, _req, res, next) => {
   if (res.headersSent) return next(error);
   const status = Number.isInteger(error.status) ? error.status : 500;
+  const contentRange = error?.headers?.["Content-Range"];
+  if (typeof contentRange === "string" && /^bytes \*\/\d+$/.test(contentRange)) {
+    res.setHeader("Content-Range", contentRange);
+  }
   res.status(status).json({
     error: status === 500 ? "服务器内部错误" : error.message,
     ...(error.code ? { code: error.code } : {})

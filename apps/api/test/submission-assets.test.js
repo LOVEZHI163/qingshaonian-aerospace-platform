@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
+import express from "express";
 
+import { createSubmissionAssetsRouter } from "../src/routes/submission-assets.js";
 import { withTestServer } from "../test-support/server.js";
 import { loginAs, withSession } from "./helpers/api-client.js";
 
@@ -25,6 +27,59 @@ function imageForm() {
   const form = new FormData();
   form.set("file", new Blob([PNG], { type: "image/png" }), "work.png");
   return form;
+}
+
+async function withRouter(router, fn) {
+  const app = express();
+  app.use("/api", router);
+  app.use((error, _req, res, _next) => res.status(error.status || 500).json({ error: error.message, code: error.code }));
+  const server = await new Promise((resolve) => {
+    const listening = app.listen(0, "127.0.0.1", () => resolve(listening));
+  });
+  try {
+    await fn(`http://127.0.0.1:${server.address().port}`);
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
+}
+
+function routeFixture({ asset = null } = {}) {
+  return {
+    users: [{ id: "U-owner", type: "ordinary", status: "active" }],
+    organizations: [],
+    organizationEventParticipations: [],
+    events: [{ id: "E-upload", status: "published", registrationMode: "force_open", archivedAt: null }],
+    projects: [{ id: "P-upload", eventId: "E-upload", enabled: true, submissionMode: "image_video" }],
+    registrations: [],
+    registrationUploadSessions: [{
+      id: "US-upload", eventId: "E-upload", projectId: "P-upload", ownerUserId: "U-owner", organizationId: null,
+      state: "active", createdAt: "2026-07-31T00:00:00.000Z", expiresAt: "2030-01-01T00:00:00.000Z", committedAt: null
+    }],
+    registrationSubmissionAssets: asset ? [asset] : [],
+    fileCleanupJournal: []
+  };
+}
+
+function assetRecord(uploadRoot, id = "SA-old") {
+  const storedName = "old.png";
+  return {
+    id, registrationId: null, uploadSessionId: "US-upload", kind: "artwork_image", originalName: "old.png", storedName,
+    filePath: path.join(uploadRoot, "submission-assets", id, storedName), mimeType: "image/png", sizeBytes: PNG.length,
+    width: 1, height: 1, durationMs: null, uploadedByUserId: "U-owner", uploadedAt: "2026-07-31T00:00:00.000Z", cleanedAt: null, cleanupReason: ""
+  };
+}
+
+function submissionRouter({ db, uploadRoot, deleteFile = async () => {}, storageStatus, assertCapacity, inspectFile, makeId = (prefix) => `${prefix}-new` }) {
+  const store = {
+    readDb: async () => structuredClone(db),
+    writeDb: async (next) => { Object.assign(db, structuredClone(next)); }
+  };
+  const pass = (req, _res, next) => { req.user = { id: "U-owner", type: "ordinary", status: "active" }; next(); };
+  const wrap = (handler) => (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
+  return createSubmissionAssetsRouter({
+    store, requireUser: pass, requireAdmin: pass, requirePasswordReady: pass, asyncRoute: wrap,
+    makeId, now: () => "2026-07-31T00:00:00.000Z", uploadRoot, deleteFile, storageStatus, assertCapacity, inspectFile
+  });
 }
 
 test("ordinary users create sessions only for published writable image-video projects", async () => {
@@ -164,5 +219,94 @@ test("private asset reads resolve registration identifiers and enforce user orga
     assert.equal(range.status, 206);
     assert.equal(range.headers.get("content-range"), "bytes 2-5/10");
     assert.equal(await range.text(), "2345");
+    const invalidRange = await fetch(`${baseUrl}/api/me/events/${EVENT_ID}/registrations/R20260627001/assets/creation_video`, withSession(ordinary.cookie, {
+      headers: { Range: "bytes=10-" }
+    }));
+    assert.equal(invalidRange.status, 416);
+    assert.equal(invalidRange.headers.get("content-range"), "bytes */10");
+  });
+});
+
+test("journals a failed post-commit replacement cleanup without exposing storage fields", async (t) => {
+  const uploadRoot = await fs.mkdtemp(path.join(process.env.TEMP || process.env.TMP || "C:\\Temp", "submission-assets-journal-"));
+  t.after(() => fs.rm(uploadRoot, { recursive: true, force: true }));
+  const previous = assetRecord(uploadRoot);
+  const db = routeFixture({ asset: previous });
+  const router = submissionRouter({
+    db,
+    uploadRoot,
+    deleteFile: async () => { throw new Error("disk unavailable"); },
+    inspectFile: async () => ({ mimeType: "image/png", sizeBytes: PNG.length, width: 1, height: 1, durationMs: null, warnings: [] })
+  });
+
+  await withRouter(router, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/upload-sessions/US-upload/artwork-image`, { method: "PUT", body: imageForm() });
+    assert.equal(response.status, 201);
+    const payload = await response.json();
+    assert.equal(Object.hasOwn(payload.row, "filePath"), false);
+    assert.equal(Object.hasOwn(payload.row, "storedName"), false);
+  });
+  assert.equal(db.registrationSubmissionAssets.length, 1);
+  assert.deepEqual(db.fileCleanupJournal.map((marker) => ({
+    filePath: marker.filePath, category: marker.category, attempts: marker.attempts, lastError: marker.lastError
+  })), [{
+    filePath: previous.filePath, category: "submission-session-asset-replaced", attempts: 1, lastError: "disk unavailable"
+  }]);
+});
+
+test("journals a failed post-commit session-asset deletion", async (t) => {
+  const uploadRoot = await fs.mkdtemp(path.join(process.env.TEMP || process.env.TMP || "C:\\Temp", "submission-assets-delete-"));
+  t.after(() => fs.rm(uploadRoot, { recursive: true, force: true }));
+  const asset = assetRecord(uploadRoot);
+  const db = routeFixture({ asset });
+  const router = submissionRouter({ db, uploadRoot, deleteFile: async () => { throw new Error("disk unavailable"); } });
+
+  await withRouter(router, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/upload-sessions/US-upload/assets/artwork_image`, { method: "DELETE" });
+    assert.equal(response.status, 200);
+  });
+  assert.equal(db.registrationSubmissionAssets.length, 0);
+  assert.equal(db.fileCleanupJournal.length, 1);
+  assert.equal(db.fileCleanupJournal[0].filePath, asset.filePath);
+  assert.equal(db.fileCleanupJournal[0].category, "submission-session-asset-deleted");
+});
+
+test("rejects a video when the post-write capacity check crosses 90 percent and removes its temporary file", async (t) => {
+  const uploadRoot = await fs.mkdtemp(path.join(process.env.TEMP || process.env.TMP || "C:\\Temp", "submission-assets-capacity-"));
+  t.after(() => fs.rm(uploadRoot, { recursive: true, force: true }));
+  const db = routeFixture();
+  let calls = 0;
+  const router = submissionRouter({
+    db, uploadRoot, makeId: () => "SA-capacity",
+    storageStatus: async () => ({ disk: { totalBytes: 100, usedBytes: calls++ === 0 ? 80 : 90 }, level: calls === 1 ? "warning" : "critical" }),
+    assertCapacity: (status) => {
+      if (status.level === "critical") throw Object.assign(new Error("disk full"), { status: 507 });
+    },
+    inspectFile: async () => ({ mimeType: "video/mp4", sizeBytes: PNG.length, width: 1280, height: 720, durationMs: 1_000, warnings: [] })
+  });
+  const form = new FormData();
+  form.set("file", new Blob([PNG], { type: "video/mp4" }), "creation.mp4");
+
+  await withRouter(router, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/upload-sessions/US-upload/creation-video`, { method: "PUT", body: form });
+    assert.equal(response.status, 507);
+  });
+  assert.equal(db.registrationSubmissionAssets.length, 0);
+  await assert.rejects(fs.access(path.join(uploadRoot, "submission-assets", "SA-capacity")), { code: "ENOENT" });
+});
+
+test("does not consult the capacity guard for an image upload", async (t) => {
+  const uploadRoot = await fs.mkdtemp(path.join(process.env.TEMP || process.env.TMP || "C:\\Temp", "submission-assets-image-"));
+  t.after(() => fs.rm(uploadRoot, { recursive: true, force: true }));
+  const db = routeFixture();
+  const router = submissionRouter({
+    db, uploadRoot, storageStatus: async () => { throw new Error("image upload must not read disk capacity"); },
+    assertCapacity: () => { throw new Error("image upload must not assert disk capacity"); },
+    inspectFile: async () => ({ mimeType: "image/png", sizeBytes: PNG.length, width: 1, height: 1, durationMs: null, warnings: [] })
+  });
+
+  await withRouter(router, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/upload-sessions/US-upload/artwork-image`, { method: "PUT", body: imageForm() });
+    assert.equal(response.status, 201);
   });
 });

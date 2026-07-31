@@ -65,11 +65,44 @@ function incomingContentLength(req) {
   return Number.isFinite(value) && value >= 0 ? value : 0;
 }
 
+const SAFE_ASSET_COMPONENT = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+const SAFE_STORED_FILE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$/;
+
+function isControlledSubmissionAsset(asset, uploadRoot) {
+  if (!asset || !SAFE_ASSET_COMPONENT.test(String(asset.id || "")) || !SAFE_STORED_FILE.test(String(asset.storedName || ""))) return false;
+  const expected = path.resolve(uploadRoot, "submission-assets", asset.id, asset.storedName);
+  return path.resolve(String(asset.filePath || "")) === expected;
+}
+
+async function removeEmptyAssetDirectory(asset, uploadRoot) {
+  if (!isControlledSubmissionAsset(asset, uploadRoot)) return;
+  try { await fs.rmdir(path.dirname(asset.filePath)); } catch (error) {
+    if (!new Set(["ENOENT", "ENOTEMPTY"]).has(error?.code)) throw error;
+  }
+}
+
+async function finishCommittedAssetCleanup({ store, db, asset, category, deleteFile, uploadRoot, makeId, now }) {
+  if (!isControlledSubmissionAsset(asset, uploadRoot)) return;
+  try {
+    await deleteFile(asset, { uploadRoot });
+    await removeEmptyAssetDirectory(asset, uploadRoot);
+  } catch (error) {
+    db.fileCleanupJournal ||= [];
+    const createdAt = now();
+    db.fileCleanupJournal.push({
+      id: makeId("CLN"), filePath: asset.filePath, category, attempts: 1,
+      lastError: String(error?.message || error).slice(0, 500), createdAt, lastAttemptAt: createdAt
+    });
+    await store.writeDb(db);
+  }
+}
+
 export function createSubmissionAssetsRouter({
   store, requireUser, requireAdmin, requirePasswordReady, asyncRoute, makeId, now,
   uploadRoot = process.env.UPLOAD_ROOT || "/data/uploads",
   storageStatus = readStorageStatus,
-  assertCapacity = assertVideoUploadCapacity
+  assertCapacity = assertVideoUploadCapacity,
+  deleteFile = deleteSubmissionFile
 }) {
   const router = express.Router();
   const user = [requireUser, requirePasswordReady];
@@ -127,7 +160,10 @@ export function createSubmissionAssetsRouter({
           await store.writeDb(db);
           const result = { db, session, ...replacement };
           if (result.previous) {
-            try { await deleteSubmissionFile(result.previous, { uploadRoot }); } catch { /* a later cleanup pass can remove the old unbound file */ }
+            await finishCommittedAssetCleanup({
+              store, db: result.db, asset: result.previous, category: "submission-session-asset-replaced",
+              deleteFile, uploadRoot, makeId, now
+            });
           }
           res.status(201).json({ row: submissionAssetSummary(result.asset), session: uploadSessionSummary(result.db, result.session) });
         } catch (error) {
@@ -148,7 +184,9 @@ export function createSubmissionAssetsRouter({
     const session = requireUploadSessionAccess({ db, sessionId: req.params.sessionId, actor: req.user, channel, now, kind: req.params.kind });
     const result = removeSessionAsset({ db, session, kind: req.params.kind });
     await store.writeDb(db);
-    try { await deleteSubmissionFile(result, { uploadRoot }); } catch { /* metadata is no longer bound */ }
+    await finishCommittedAssetCleanup({
+      store, db, asset: result, category: "submission-session-asset-deleted", deleteFile, uploadRoot, makeId, now
+    });
     res.json({ ok: true });
   }));
 
