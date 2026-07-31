@@ -45,14 +45,14 @@ function isControlledTemporaryAsset(asset, uploadRoot) {
   return path.resolve(String(asset.filePath || "")) === expected;
 }
 
-function cleanupMarker({ asset, makeId, now, error }) {
+function pendingCleanupMarker({ asset, makeId, now }) {
   const createdAt = timestamp(now);
   return {
     id: makeId("CLN"),
     filePath: asset.filePath,
     category: "submission-session-expired",
     attempts: 1,
-    lastError: String(error?.message || error).slice(0, 500),
+    lastError: "pending cleanup",
     createdAt,
     lastAttemptAt: createdAt
   };
@@ -86,40 +86,57 @@ export async function cleanupExpiredSubmissionSessions({
       if (expiredSessionIds.has(session.id) && session.state === "active") session.state = "expired";
     }
     db.registrationSubmissionAssets = (db.registrationSubmissionAssets || []).filter((asset) => !removableAssetIds.has(asset.id));
+    db.fileCleanupJournal ||= [];
+    const removablePaths = new Set(removableAssets.map((asset) => asset.filePath));
+    const pendingMarkersByPath = new Map();
+    db.fileCleanupJournal = db.fileCleanupJournal.filter((marker) => {
+      if (marker.category !== "submission-session-expired" || !removablePaths.has(marker.filePath)) return true;
+      if (pendingMarkersByPath.has(marker.filePath)) return false;
+      pendingMarkersByPath.set(marker.filePath, marker);
+      return true;
+    });
+    const markerByAssetId = new Map();
+    for (const asset of removableAssets) {
+      let marker = pendingMarkersByPath.get(asset.filePath);
+      if (!marker) {
+        marker = pendingCleanupMarker({ asset, makeId, now });
+        db.fileCleanupJournal.push(marker);
+        pendingMarkersByPath.set(asset.filePath, marker);
+      }
+      markerByAssetId.set(asset.id, marker);
+    }
 
-    // Persist the expired state before touching the filesystem, so a retry can never
-    // mistake a committed or current session for a disposable temporary upload.
+    // Persist both expiry and the retry marker before touching the filesystem. A
+    // crash or later write failure can then leave only a replayable marker, never
+    // an untracked physical orphan.
     await store.writeDb(db);
 
-    const failed = [];
+    const completedMarkerPaths = new Set();
+    const failedAssetIds = [];
     for (const asset of removableAssets) {
       try {
         await deleteFile(asset, { uploadRoot });
+        completedMarkerPaths.add(markerByAssetId.get(asset.id).filePath);
       } catch (error) {
-        if (error?.code !== "ENOENT") failed.push({ asset, error });
+        if (error?.code === "ENOENT") completedMarkerPaths.add(markerByAssetId.get(asset.id).filePath);
+        else failedAssetIds.push(asset.id);
       }
     }
-    if (!failed.length) {
-      return { expiredSessionIds: [...expiredSessionIds], removedAssetIds: [...removableAssetIds], journaledAssetIds: [] };
-    }
-
-    try {
-      const journalDb = await store.readDb();
-      journalDb.fileCleanupJournal ||= [];
-      const known = new Set(journalDb.fileCleanupJournal
-        .filter((marker) => marker.category === "submission-session-expired")
-        .map((marker) => marker.filePath));
-      for (const { asset, error } of failed) {
-        if (!known.has(asset.filePath)) journalDb.fileCleanupJournal.push(cleanupMarker({ asset, makeId, now, error }));
+    if (completedMarkerPaths.size) {
+      const finalizedDb = structuredClone(db);
+      finalizedDb.fileCleanupJournal = finalizedDb.fileCleanupJournal.filter((marker) => (
+        marker.category !== "submission-session-expired" || !completedMarkerPaths.has(marker.filePath)
+      ));
+      try {
+        await store.writeDb(finalizedDb);
+      } catch {
+        try { logger?.error?.("Submission-session expiry marker removal persistence failed", { completedFileCount: completedMarkerPaths.size }); } catch { /* a durable marker remains for generic replay */ }
       }
-      await store.writeDb(journalDb);
-    } catch {
-      try { logger?.error?.("Submission-session expiry cleanup journal persistence failed", { failedAssetCount: failed.length }); } catch { /* logging cannot alter cleanup state */ }
     }
     return {
       expiredSessionIds: [...expiredSessionIds],
       removedAssetIds: [...removableAssetIds],
-      journaledAssetIds: failed.map(({ asset }) => asset.id)
+      journaledAssetIds: failedAssetIds
     };
   };
   return store.withMutationLock ? store.withMutationLock(run) : run();

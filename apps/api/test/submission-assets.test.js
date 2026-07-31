@@ -6,6 +6,7 @@ import express from "express";
 
 import { createSubmissionAssetsRouter } from "../src/routes/submission-assets.js";
 import { cleanupExpiredSubmissionSessions, startSubmissionSessionExpiryCleanup } from "../src/services/submission-assets.js";
+import { replayFileCleanupJournal } from "../src/services/organizations.js";
 import { withTestServer } from "../test-support/server.js";
 import { loginAs, withSession } from "./helpers/api-client.js";
 
@@ -438,15 +439,19 @@ test("expires only active sessions and removes only their unbound submission fil
   await fs.access(committed.filePath);
 });
 
-test("journals a failed expired-session file deletion after committing expiry state", async () => {
+test("retains a pending expiry marker when file deletion fails and a later journal write would fail", async () => {
   const uploadRoot = await fs.mkdtemp(path.join(process.env.TEMP || process.env.TMP || "C:\\Temp", "submission-assets-expiry-journal-"));
   const asset = assetRecord(uploadRoot, "SA-expiry-failure");
   const db = routeFixture({ asset });
   db.registrationUploadSessions[0].expiresAt = "2026-07-30T23:59:59.999Z";
-  const writes = [];
+  let writes = 0;
   const store = {
     readDb: async () => structuredClone(db),
-    writeDb: async (next) => { writes.push(structuredClone(next)); Object.assign(db, structuredClone(next)); },
+    writeDb: async (next) => {
+      writes += 1;
+      if (writes === 2) throw new Error("journal write unavailable");
+      Object.assign(db, structuredClone(next));
+    },
     withMutationLock: async (work) => work()
   };
 
@@ -455,13 +460,96 @@ test("journals a failed expired-session file deletion after committing expiry st
     deleteFile: async () => { throw new Error("disk unavailable"); }
   });
 
-  assert.equal(writes[0].registrationUploadSessions[0].state, "expired");
-  assert.equal(writes[0].registrationSubmissionAssets.length, 0);
+  assert.equal(writes, 1);
+  assert.equal(db.registrationUploadSessions[0].state, "expired");
+  assert.equal(db.registrationSubmissionAssets.length, 0);
   assert.equal(db.fileCleanupJournal.length, 1);
   assert.deepEqual(db.fileCleanupJournal[0], {
     id: "CLN-expiry", filePath: asset.filePath, category: "submission-session-expired", attempts: 1,
-    lastError: "disk unavailable", createdAt: "2026-07-31T00:00:00.000Z", lastAttemptAt: "2026-07-31T00:00:00.000Z"
+    lastError: "pending cleanup", createdAt: "2026-07-31T00:00:00.000Z", lastAttemptAt: "2026-07-31T00:00:00.000Z"
   });
+});
+
+test("deduplicates existing pending expiry markers for the same controlled asset", async () => {
+  const uploadRoot = await fs.mkdtemp(path.join(process.env.TEMP || process.env.TMP || "C:\\Temp", "submission-assets-expiry-dedupe-"));
+  const asset = assetRecord(uploadRoot, "SA-expiry-dedupe");
+  const db = routeFixture({ asset });
+  db.registrationUploadSessions[0].expiresAt = "2026-07-30T23:59:59.999Z";
+  db.fileCleanupJournal = [
+    { id: "CLN-first", filePath: asset.filePath, category: "submission-session-expired", attempts: 1, lastError: "pending cleanup", createdAt: "2026-07-30T00:00:00.000Z", lastAttemptAt: "2026-07-30T00:00:00.000Z" },
+    { id: "CLN-duplicate", filePath: asset.filePath, category: "submission-session-expired", attempts: 2, lastError: "pending cleanup", createdAt: "2026-07-30T00:00:00.000Z", lastAttemptAt: "2026-07-30T01:00:00.000Z" }
+  ];
+  const store = {
+    readDb: async () => structuredClone(db),
+    writeDb: async (next) => { Object.assign(db, structuredClone(next)); },
+    withMutationLock: async (work) => work()
+  };
+
+  await cleanupExpiredSubmissionSessions({
+    store, now: "2026-07-31T00:00:00.000Z", uploadRoot,
+    deleteFile: async () => { throw new Error("disk unavailable"); }
+  });
+
+  assert.deepEqual(db.fileCleanupJournal.map((marker) => marker.id), ["CLN-first"]);
+});
+
+test("keeps a pending expiry marker for generic replay when marker removal persistence fails", async (t) => {
+  const uploadRoot = await fs.mkdtemp(path.join(process.env.TEMP || process.env.TMP || "C:\\Temp", "submission-assets-expiry-replay-"));
+  t.after(() => fs.rm(uploadRoot, { recursive: true, force: true }));
+  const asset = assetRecord(uploadRoot, "SA-expiry-replay");
+  await fs.mkdir(path.dirname(asset.filePath), { recursive: true });
+  await fs.writeFile(asset.filePath, PNG);
+  const db = routeFixture({ asset });
+  db.registrationUploadSessions[0].expiresAt = "2026-07-30T23:59:59.999Z";
+  let writes = 0;
+  const store = {
+    readDb: async () => structuredClone(db),
+    writeDb: async (next) => {
+      writes += 1;
+      if (writes === 2) throw new Error("marker removal unavailable");
+      Object.assign(db, structuredClone(next));
+    },
+    withMutationLock: async (work) => work()
+  };
+
+  await cleanupExpiredSubmissionSessions({
+    store, now: "2026-07-31T00:00:00.000Z", uploadRoot, makeId: (prefix) => `${prefix}-expiry`, logger: { error: () => {} }
+  });
+
+  await assert.rejects(fs.access(asset.filePath), { code: "ENOENT" });
+  assert.equal(db.fileCleanupJournal.length, 1);
+  const replay = await replayFileCleanupJournal({
+    store, removePrivateFile: async () => { throw Object.assign(new Error("already removed"), { code: "ENOENT" }); },
+    now: () => "2026-07-31T00:00:01.000Z"
+  });
+  assert.deepEqual(replay, { removed: 1, retained: 0 });
+  assert.deepEqual(db.fileCleanupJournal, []);
+});
+
+test("does not delete an expired-session file when the initial database commit fails", async (t) => {
+  const uploadRoot = await fs.mkdtemp(path.join(process.env.TEMP || process.env.TMP || "C:\\Temp", "submission-assets-expiry-first-write-"));
+  t.after(() => fs.rm(uploadRoot, { recursive: true, force: true }));
+  const asset = assetRecord(uploadRoot, "SA-expiry-first-write");
+  await fs.mkdir(path.dirname(asset.filePath), { recursive: true });
+  await fs.writeFile(asset.filePath, PNG);
+  const db = routeFixture({ asset });
+  db.registrationUploadSessions[0].expiresAt = "2026-07-30T23:59:59.999Z";
+  let deleteCalls = 0;
+  const store = {
+    readDb: async () => structuredClone(db),
+    writeDb: async () => { throw new Error("initial write unavailable"); },
+    withMutationLock: async (work) => work()
+  };
+
+  await assert.rejects(cleanupExpiredSubmissionSessions({
+    store, now: "2026-07-31T00:00:00.000Z", uploadRoot,
+    deleteFile: async () => { deleteCalls += 1; await fs.unlink(asset.filePath); }
+  }), /initial write unavailable/);
+
+  assert.equal(deleteCalls, 0);
+  assert.equal(db.registrationUploadSessions[0].state, "active");
+  assert.equal(db.fileCleanupJournal.length, 0);
+  await fs.access(asset.filePath);
 });
 
 test("production expiry cleanup runs once, schedules an unref timer, and can be stopped", async () => {

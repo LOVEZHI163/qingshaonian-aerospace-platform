@@ -35,6 +35,14 @@
 - Migration 009 已包含将历史组织会话回填为 `organization` 的 SQL，本轮未重复修改。
 - 审核抽屉的 missing marker reset/focus 不属于本任务的网关、清理和部署脚本范围，未扩展修改。
 
+## Fix Round 1：过期作品会话清理日志可靠性（2026-08-01）
+
+- 问题：原清理流程先持久化过期状态和资产移除，待物理删除失败后才在第二次写入中新增 journal。若该第二次写入失败，会留下没有可重试记录的物理孤儿。
+- 修复：首次数据库提交同时写入每个受控未绑定资产的 `submission-session-expired` pending marker，并把会话标为 `expired`、移除临时资产元数据。首次提交失败时绝不触碰物理文件。物理删除失败时 marker 原样保留；物理删除成功或文件已不存在时才尝试移除 marker。该收尾写失败时 marker 仍保留，通用 journal replay 会把缺失文件视为已完成并移除 marker。
+- 去重与范围：已有同分类同文件路径 marker 会被复用，不再重复创建；只会为受控 `submission-assets/<asset-id>/<stored-name>` 路径写入 marker。
+- 红绿：新增“删除失败且后续写失败仍有 marker”“历史重复 marker 去重”“成功删除但 marker 移除写失败可重放”“首次写失败不删文件”四项回归；旧实现前三项失败，修复后全部通过。
+- 验证：Task 9 定向 API 测试 32/32 通过。
+
 ## 交付
 
 - 提交：`fc14590 feat: add organization event workspace`
