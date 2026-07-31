@@ -76,16 +76,22 @@ function isControlledSubmissionAsset(asset, uploadRoot) {
 
 async function removeEmptyAssetDirectory(asset, uploadRoot) {
   if (!isControlledSubmissionAsset(asset, uploadRoot)) return;
-  try { await fs.rmdir(path.dirname(asset.filePath)); } catch (error) {
-    if (!new Set(["ENOENT", "ENOTEMPTY"]).has(error?.code)) throw error;
-  }
+  try { await fs.rmdir(path.dirname(asset.filePath)); } catch { /* directory cleanup is best effort */ }
 }
 
-async function finishCommittedAssetCleanup({ store, db, asset, category, deleteFile, uploadRoot, makeId, now }) {
+function logCleanupJournalPersistenceFailure(logger, asset, category) {
+  try {
+    logger?.error?.("Submission asset cleanup journal persistence failed", {
+      assetId: asset.id,
+      category
+    });
+  } catch { /* logging must not affect a committed response */ }
+}
+
+async function finishCommittedAssetCleanup({ store, db, asset, category, deleteFile, uploadRoot, makeId, now, logger }) {
   if (!isControlledSubmissionAsset(asset, uploadRoot)) return;
   try {
     await deleteFile(asset, { uploadRoot });
-    await removeEmptyAssetDirectory(asset, uploadRoot);
   } catch (error) {
     db.fileCleanupJournal ||= [];
     const createdAt = now();
@@ -93,8 +99,14 @@ async function finishCommittedAssetCleanup({ store, db, asset, category, deleteF
       id: makeId("CLN"), filePath: asset.filePath, category, attempts: 1,
       lastError: String(error?.message || error).slice(0, 500), createdAt, lastAttemptAt: createdAt
     });
-    await store.writeDb(db);
+    try {
+      await store.writeDb(db);
+    } catch {
+      logCleanupJournalPersistenceFailure(logger, asset, category);
+    }
+    return;
   }
+  await removeEmptyAssetDirectory(asset, uploadRoot);
 }
 
 export function createSubmissionAssetsRouter({
@@ -102,7 +114,8 @@ export function createSubmissionAssetsRouter({
   uploadRoot = process.env.UPLOAD_ROOT || "/data/uploads",
   storageStatus = readStorageStatus,
   assertCapacity = assertVideoUploadCapacity,
-  deleteFile = deleteSubmissionFile
+  deleteFile = deleteSubmissionFile,
+  logger = console
 }) {
   const router = express.Router();
   const user = [requireUser, requirePasswordReady];
@@ -140,6 +153,7 @@ export function createSubmissionAssetsRouter({
       multipartUpload(kind, uploadRoot),
       asyncRoute(async (req, res, next) => {
         if (!req.file) return res.status(422).json({ error: "请上传 file 字段" });
+        let committed = false;
         try {
           if (kind === "creation_video") {
             const status = await storageStatus({ uploadRoot });
@@ -158,16 +172,19 @@ export function createSubmissionAssetsRouter({
             }
           });
           await store.writeDb(db);
+          committed = true;
           const result = { db, session, ...replacement };
           if (result.previous) {
             await finishCommittedAssetCleanup({
               store, db: result.db, asset: result.previous, category: "submission-session-asset-replaced",
-              deleteFile, uploadRoot, makeId, now
+              deleteFile, uploadRoot, makeId, now, logger
             });
           }
           res.status(201).json({ row: submissionAssetSummary(result.asset), session: uploadSessionSummary(result.db, result.session) });
         } catch (error) {
-          try { await removeUploadedFile(req.file); } catch { /* preserve original error */ }
+          if (!committed) {
+            try { await removeUploadedFile(req.file); } catch { /* preserve original error */ }
+          }
           next(error);
         }
       })
@@ -185,7 +202,7 @@ export function createSubmissionAssetsRouter({
     const result = removeSessionAsset({ db, session, kind: req.params.kind });
     await store.writeDb(db);
     await finishCommittedAssetCleanup({
-      store, db, asset: result, category: "submission-session-asset-deleted", deleteFile, uploadRoot, makeId, now
+      store, db, asset: result, category: "submission-session-asset-deleted", deleteFile, uploadRoot, makeId, now, logger
     });
     res.json({ ok: true });
   }));

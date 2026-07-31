@@ -69,16 +69,16 @@ function assetRecord(uploadRoot, id = "SA-old") {
   };
 }
 
-function submissionRouter({ db, uploadRoot, deleteFile = async () => {}, storageStatus, assertCapacity, inspectFile, makeId = (prefix) => `${prefix}-new` }) {
+function submissionRouter({ db, uploadRoot, deleteFile = async () => {}, storageStatus, assertCapacity, inspectFile, writeDb, logger, makeId = (prefix) => `${prefix}-new` }) {
   const store = {
     readDb: async () => structuredClone(db),
-    writeDb: async (next) => { Object.assign(db, structuredClone(next)); }
+    writeDb: writeDb || (async (next) => { Object.assign(db, structuredClone(next)); })
   };
   const pass = (req, _res, next) => { req.user = { id: "U-owner", type: "ordinary", status: "active" }; next(); };
   const wrap = (handler) => (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
   return createSubmissionAssetsRouter({
     store, requireUser: pass, requireAdmin: pass, requirePasswordReady: pass, asyncRoute: wrap,
-    makeId, now: () => "2026-07-31T00:00:00.000Z", uploadRoot, deleteFile, storageStatus, assertCapacity, inspectFile
+    makeId, now: () => "2026-07-31T00:00:00.000Z", uploadRoot, deleteFile, storageStatus, assertCapacity, inspectFile, logger
   });
 }
 
@@ -269,6 +269,67 @@ test("journals a failed post-commit session-asset deletion", async (t) => {
   assert.equal(db.fileCleanupJournal.length, 1);
   assert.equal(db.fileCleanupJournal[0].filePath, asset.filePath);
   assert.equal(db.fileCleanupJournal[0].category, "submission-session-asset-deleted");
+});
+
+test("keeps a committed replacement when cleanup journaling cannot be persisted", async (t) => {
+  const uploadRoot = await fs.mkdtemp(path.join(process.env.TEMP || process.env.TMP || "C:\\Temp", "submission-assets-journal-write-"));
+  t.after(() => fs.rm(uploadRoot, { recursive: true, force: true }));
+  const previous = assetRecord(uploadRoot);
+  const db = routeFixture({ asset: previous });
+  let writes = 0;
+  const logs = [];
+  const router = submissionRouter({
+    db,
+    uploadRoot,
+    deleteFile: async () => { throw new Error(`cannot remove ${previous.filePath}`); },
+    writeDb: async (next) => {
+      writes += 1;
+      if (writes === 2) throw new Error("journal unavailable");
+      Object.assign(db, structuredClone(next));
+    },
+    logger: { error: (...entry) => logs.push(entry) }
+  });
+
+  await withRouter(router, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/upload-sessions/US-upload/artwork-image`, { method: "PUT", body: imageForm() });
+    assert.equal(response.status, 201);
+  });
+  const replacement = db.registrationSubmissionAssets[0];
+  assert.notEqual(replacement.id, previous.id);
+  assert.deepEqual(await fs.readFile(replacement.filePath), PNG);
+  assert.equal(db.fileCleanupJournal.length, 0);
+  assert.equal(logs.length, 1);
+  assert.doesNotMatch(JSON.stringify(logs), new RegExp(previous.filePath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+});
+
+test("reports successful deletion when cleanup journaling cannot be persisted", async (t) => {
+  const uploadRoot = await fs.mkdtemp(path.join(process.env.TEMP || process.env.TMP || "C:\\Temp", "submission-assets-delete-write-"));
+  t.after(() => fs.rm(uploadRoot, { recursive: true, force: true }));
+  const asset = assetRecord(uploadRoot);
+  const db = routeFixture({ asset });
+  let writes = 0;
+  const logs = [];
+  const router = submissionRouter({
+    db,
+    uploadRoot,
+    deleteFile: async () => { throw new Error(`cannot remove ${asset.filePath}`); },
+    writeDb: async (next) => {
+      writes += 1;
+      if (writes === 2) throw new Error("journal unavailable");
+      Object.assign(db, structuredClone(next));
+    },
+    logger: { error: (...entry) => logs.push(entry) }
+  });
+
+  await withRouter(router, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/upload-sessions/US-upload/assets/artwork_image`, { method: "DELETE" });
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { ok: true });
+  });
+  assert.equal(db.registrationSubmissionAssets.length, 0);
+  assert.equal(db.fileCleanupJournal.length, 0);
+  assert.equal(logs.length, 1);
+  assert.doesNotMatch(JSON.stringify(logs), new RegExp(asset.filePath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
 });
 
 test("rejects a video when the post-write capacity check crosses 90 percent and removes its temporary file", async (t) => {
