@@ -92,6 +92,7 @@ test("pure preview payloads use a safe DTO and omit contact phone numbers", () =
   assert.equal(homepage.payload.site.contact, undefined);
   assert.equal(homepage.payload.featuredEvent.contact, undefined);
   assert.equal(event.payload.event.contact, undefined);
+  assert.equal(event.payload.projects[0].submissionMode, "none");
   assert.doesNotMatch(JSON.stringify([homepage, event, content]), /13900000000/);
   assert.match(content.payload.row.bodyHtml, /2026 年第 100 条内容/);
 });

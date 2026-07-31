@@ -28,7 +28,7 @@ const PREVIEW_SAFE_FIELDS = new Set([
   "key", "label", "eventId", "contentId", "available", "href",
   "eventSlug", "type", "title", "publishAt", "pinned", "bodyHtml",
   "url", "mimeType", "sizeBytes", "width", "height", "mobileUrl", "desktopUrl",
-  "displayOrder", "category", "enabled", "instructorRequired", "allowedGroups"
+  "displayOrder", "category", "enabled", "instructorRequired", "allowedGroups", "submissionMode"
 ]);
 
 function redactPreviewText(value) {

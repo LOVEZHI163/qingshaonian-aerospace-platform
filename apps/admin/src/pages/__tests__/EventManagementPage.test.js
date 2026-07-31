@@ -131,6 +131,24 @@ describe("EventManagementPage", () => {
     expect(wrapper.emitted("event-changed")).toHaveLength(1);
   });
 
+  it("offers submission modes and saves the selected project submission mode", async () => {
+    mockLoads();
+    const wrapper = mount(EventManagementPage);
+    await flushPromises();
+    await wrapper.get('[data-section="projects"]').trigger("click");
+    await wrapper.get('[data-action="edit-project"]').trigger("click");
+
+    expect(wrapper.get('[data-field="submission-mode"]').findAll("option").map((node) => node.text()))
+      .toEqual(["无需上传", "图像视频作品"]);
+
+    await wrapper.get('[data-field="submission-mode"]').setValue("image_video");
+    await wrapper.get("form.project-form").trigger("submit");
+
+    expect(apiMock).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+      body: expect.stringContaining('"submissionMode":"image_video"')
+    }));
+  });
+
   it("copies an event with the entered name", async () => {
     mockLoads();
     vi.spyOn(window, "prompt").mockReturnValue("2027赛事");

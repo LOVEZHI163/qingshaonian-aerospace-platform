@@ -19,8 +19,10 @@ const PROJECT_EDITABLE_FIELDS = [
   "enabled",
   "instructorRequired",
   "displayOrder",
-  "allowedGroups"
+  "allowedGroups",
+  "submissionMode"
 ];
+const SUBMISSION_MODES = new Set(["none", "image_video"]);
 const STRICT_ISO_8601 = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d+))?)?(Z|([+-])(\d{2}):(\d{2}))$/;
 
 export function businessError(status, message, code) {
@@ -98,6 +100,13 @@ function normalizeAllowedGroups(value) {
   return groups;
 }
 
+function submissionMode(value = "none") {
+  if (!SUBMISSION_MODES.has(value)) {
+    throw businessError(422, "作品提交类型不合法");
+  }
+  return value;
+}
+
 function normalizeProjectFields(input, current = {}) {
   assertObjectInput(input);
   const next = { ...current };
@@ -113,6 +122,7 @@ function normalizeProjectFields(input, current = {}) {
     throw businessError(422, "显示顺序必须是非负整数");
   }
   next.allowedGroups = normalizeAllowedGroups(next.allowedGroups);
+  next.submissionMode = submissionMode(next.submissionMode);
   return next;
 }
 

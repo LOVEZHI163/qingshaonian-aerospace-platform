@@ -261,6 +261,67 @@ test("project management validates fixed groups and prevents deleting historical
   });
 });
 
+test("project submission mode is validated, defaults to none, and is returned by registration context", async () => {
+  await withServer(async (baseUrl) => {
+    const admin = await loginAs(baseUrl, "13900000000", "admin123");
+    const ordinary = await loginAs(baseUrl, "13800000001", "123456");
+    const events = await json(await fetch(`${baseUrl}/api/admin/events`, withSession(admin.cookie)));
+    const current = events.rows.find((row) => row.isCurrent);
+    assert.equal((await fetch(`${baseUrl}/api/admin/events/${current.id}`, jsonOptions("PATCH", {
+      registrationMode: "force_open"
+    }, admin.cookie))).status, 200);
+
+    const imageVideoResponse = await fetch(`${baseUrl}/api/admin/events/${current.id}/projects`, jsonOptions("POST", {
+      name: "绘画赛",
+      type: "individual",
+      category: "美术",
+      enabled: true,
+      instructorRequired: false,
+      displayOrder: 90,
+      allowedGroups: ["小学低段"],
+      submissionMode: "image_video"
+    }, admin.cookie));
+    assert.equal(imageVideoResponse.status, 201);
+    const imageVideoProject = (await json(imageVideoResponse)).row;
+    assert.equal(imageVideoProject.submissionMode, "image_video");
+
+    const adminProjects = await json(await fetch(`${baseUrl}/api/admin/events`, withSession(admin.cookie)));
+    assert.equal(adminProjects.projects.find((row) => row.id === imageVideoProject.id).submissionMode, "image_video");
+
+    const contextResponse = await fetch(
+      `${baseUrl}/api/me/registration-context?eventId=${encodeURIComponent(current.id)}`,
+      withSession(ordinary.cookie)
+    );
+    assert.equal(contextResponse.status, 200);
+    const context = await json(contextResponse);
+    assert.equal(context.projects.find((row) => row.id === imageVideoProject.id).submissionMode, "image_video");
+
+    const invalid = await fetch(`${baseUrl}/api/admin/events/${current.id}/projects`, jsonOptions("POST", {
+      name: "无效作品类型赛项",
+      type: "individual",
+      category: "美术",
+      enabled: true,
+      instructorRequired: false,
+      displayOrder: 91,
+      allowedGroups: ["小学低段"],
+      submissionMode: "video_only"
+    }, admin.cookie));
+    assert.equal(invalid.status, 422);
+
+    const defaultResponse = await fetch(`${baseUrl}/api/admin/events/${current.id}/projects`, jsonOptions("POST", {
+      name: "默认作品类型赛项",
+      type: "individual",
+      category: "美术",
+      enabled: true,
+      instructorRequired: false,
+      displayOrder: 92,
+      allowedGroups: ["小学低段"]
+    }, admin.cookie));
+    assert.equal(defaultResponse.status, 201);
+    assert.equal((await json(defaultResponse)).row.submissionMode, "none");
+  });
+});
+
 test("archived events reject event and project mutations without changing stored data", async () => {
   await withServer(async (baseUrl) => {
     const admin = await loginAs(baseUrl, "13900000000", "admin123");

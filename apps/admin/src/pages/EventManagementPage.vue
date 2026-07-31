@@ -8,7 +8,7 @@ import ResourceCleanupPanel from "../components/ResourceCleanupPanel.vue";
 const emit = defineEmits(["event-changed"]);
 const GROUPS = ["小学低段", "小学高段", "中学组", "职高/高中组"];
 const EVENT_FIELDS = ["name", "theme", "dateLabel", "venue", "contact", "registrationStartAt", "registrationEndAt", "registrationMode"];
-const PROJECT_FIELDS = ["name", "type", "category", "enabled", "instructorRequired", "displayOrder", "allowedGroups"];
+const PROJECT_FIELDS = ["name", "type", "category", "enabled", "instructorRequired", "displayOrder", "allowedGroups", "submissionMode"];
 
 const events = ref([]);
 const projects = ref([]);
@@ -54,7 +54,8 @@ function emptyProject() {
     enabled: true,
     instructorRequired: false,
     displayOrder: 0,
-    allowedGroups: [...GROUPS]
+    allowedGroups: [...GROUPS],
+    submissionMode: "none"
   };
 }
 
@@ -211,7 +212,10 @@ async function eventDeleted() {
 
 function editProject(row) {
   if (selectedArchived.value) return;
-  Object.assign(projectForm, emptyProject(), row, { allowedGroups: [...(row.allowedGroups || [])] });
+  Object.assign(projectForm, emptyProject(), row, {
+    allowedGroups: [...(row.allowedGroups || [])],
+    submissionMode: row.submissionMode || "none"
+  });
 }
 
 function projectPayload() {
@@ -339,7 +343,7 @@ onMounted(() => loadEvents({ preserveSelection: false }));
           <p v-if="selectedArchived" class="hint" data-readonly-projects>赛事已归档，只可查看；赛项编辑、停用和删除均已禁用。</p>
           <div class="project-list">
             <article v-for="row in selectedProjects" :key="row.id">
-              <div><strong>{{ row.name }}</strong><span>{{ row.category }} · {{ row.type === 'team' ? '团体赛' : '个人赛' }}</span><small>{{ row.allowedGroups.join('、') }}</small></div>
+              <div><strong>{{ row.name }}</strong><span>{{ row.category }} · {{ row.type === 'team' ? '团体赛' : '个人赛' }}</span><small>{{ row.allowedGroups.join('、') }}</small><small v-if="row.submissionMode === 'image_video'">图像视频作品</small></div>
               <div class="project-actions">
                 <button type="button" class="mini" data-action="edit-project" :disabled="selectedArchived" @click="editProject(row)">编辑</button>
                 <button v-if="registrationCount(row.id)" type="button" class="mini reject" data-action="disable-project" :disabled="selectedArchived || !row.enabled || saving" @click="disableProject(row)">停用</button>
@@ -355,6 +359,7 @@ onMounted(() => loadEvents({ preserveSelection: false }));
               <label>类型<select v-model="projectForm.type" :disabled="selectedArchived"><option value="individual">个人赛</option><option value="team">团体赛</option></select></label>
               <label>显示顺序<input v-model.number="projectForm.displayOrder" type="number" min="0" :disabled="selectedArchived" /></label>
             </div>
+            <label>作品提交<select v-model="projectForm.submissionMode" data-field="submission-mode" :disabled="selectedArchived"><option value="none">无需上传</option><option value="image_video">图像视频作品</option></select></label>
             <div class="checkbox-row">
               <label v-for="group in GROUPS" :key="group"><input v-model="projectForm.allowedGroups" type="checkbox" :value="group" :disabled="selectedArchived" />{{ group }}</label>
             </div>

@@ -240,6 +240,7 @@ function publicProject(row) {
     enabled: row.enabled,
     instructorRequired: row.instructorRequired,
     displayOrder: row.displayOrder,
+    submissionMode: row.submissionMode || "none",
     allowedGroups: Array.isArray(row.allowedGroups) ? row.allowedGroups : []
   };
 }
