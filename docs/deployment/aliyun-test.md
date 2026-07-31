@@ -213,11 +213,21 @@ docker compose config --quiet
 推荐发布命令（在 `/opt/aerogp`，确认预检通过之后）：
 
 ```bash
-docker compose build --pull
-docker compose up -d
-docker compose ps
-BASE_URL=http://127.0.0.1 /bin/sh deploy/remote-smoke-test.sh
+export RELEASE_SHA="$(git rev-parse HEAD)"
+docker compose build --pull api web
+docker compose up -d --no-deps --wait --wait-timeout 240 api web
+if EXPECTED_RELEASE="$RELEASE_SHA" BASE_URL=http://127.0.0.1 sh deploy/verify-release.sh &&
+  ADMIN_TEST_PASSWORD='...' BASE_URL=http://127.0.0.1 sh deploy/remote-smoke-test.sh; then
+  printf '%s\n' "$RELEASE_SHA" > .release.next
+  mv .release.next .release
+else
+  rm -f .release.next
+  echo 'Release verification failed; existing .release was preserved.' >&2
+  exit 1
+fi
 ```
+
+`.release` 只能在 `verify-release.sh` 与 `remote-smoke-test.sh` 均成功后写入；任一验证失败时必须保留当前 marker。
 
 其中 `ADMIN_TEST_PASSWORD` 必须按前文通过静默输入导出，不得写入命令历史、文档或 Git。
 
@@ -232,7 +242,7 @@ CONFIRM_RESTORE=yes docker compose run --rm \
   backup /bin/sh /scripts/restore-postgres.sh /backups/备份文件.dump
 ```
 
-应用回滚只切换到已经验证过的 Git commit。先把上一版本完整 SHA 保存到 `PREVIOUS_RELEASE`，再执行健康等待和 smoke；只有所有检查成功后才更新 `.release`：
+应用回滚只切换到已经验证过的 Git commit。先把上一版本完整 SHA 保存到 `PREVIOUS_RELEASE`，再执行健康等待、版本一致性验证和 smoke；只有所有检查成功后才更新 `.release`：
 
 ```bash
 PREVIOUS_RELEASE='<上一版本完整 SHA>'
@@ -240,9 +250,15 @@ docker compose up -d --build --wait --wait-timeout 240
 curl -fsS http://127.0.0.1/healthz
 curl -fsS http://127.0.0.1/api/public/home >/dev/null
 curl -fsS http://127.0.0.1/admin/ >/dev/null
-BASE_URL=http://127.0.0.1 /bin/sh deploy/remote-smoke-test.sh
-printf '%s\n' "$PREVIOUS_RELEASE" > .release.next
-mv .release.next .release
+if EXPECTED_RELEASE="$PREVIOUS_RELEASE" BASE_URL=http://127.0.0.1 /bin/sh deploy/verify-release.sh &&
+  BASE_URL=http://127.0.0.1 /bin/sh deploy/remote-smoke-test.sh; then
+  printf '%s\n' "$PREVIOUS_RELEASE" > .release.next
+  mv .release.next .release
+else
+  rm -f .release.next
+  echo 'Rollback verification failed; existing .release was preserved.' >&2
+  exit 1
+fi
 ```
 
 不要删除 `aerogp_postgres_data` 或 `aerogp_uploads_data` volume。若数据库结构已经变化，必须先验证旧版应用是否兼容当前数据库。
@@ -538,3 +554,16 @@ CONFIRM_RESTORE=yes docker compose run --rm \
 - 线上契约：未知媒体用途 422；真实 PDF 以 `content-attachment` 上传 201、删除 204；最终媒体仍为 12、cleanup journal 为 0。线上现有归档赛事数为 0，因此没有为了写保护验证创建或改变生产赛事数据。
 - 真实 PNG 浏览器验收：临时内容 `POST1785440192275778` / `true-png-qa-20260731` 使用媒体 `M1785440129151338`，完成 UI 上传、插入、替代文本/题注、保存、reload、发布检查及公开发布。公开图片完整加载，natural size 375×812，公开响应为 HTTP 200、`image/png`；公开页 `clientWidth=scrollWidth=1265` 且控制台无 warn/error。
 - 受保护预览线上对照为匿名 401、管理员会话 200。随后经 UI 下线并删除临时内容，再删除媒体返回 204；媒体公开地址为 404，内容页显示“内容不存在”。终态恢复为用户 2、赛事 6、内容 3、媒体 12、cleanup journal 0、active 管理员 1。
+
+#### 发布一致性与管理端错误修复完整部署（2026-07-31）
+
+- 发布身份：`3ad0feb535269b67d3d88b6ed3eaadd29dfe3672`，tree 为 `4498ca215a457319074daeec016e6950ffac1738`。对象级源码归档共 318 项、6,645,760 字节，SHA-256 为 `0cc04587f33dd0b53ec2d226cc7ce5b38887de36712f472f196d9c36491d30b3`；独立校验器逐项核对 Git blob、模式和符号链接，结果 318/318 通过。
+- 本地发布门禁：Admin 345/345、Web 134/134、API 338/338；Admin/Web 生产构建和 `git diff --check` 均通过。
+- 发布前备份与预检：数据库备份 `/opt/aerogp/backups/aerogp-20260731T091830Z.dump` 已通过 `pg_restore -l`；上传卷备份 `/opt/aerogp/backups/uploads/aerogp-uploads-20260731T091838Z-KEapgk.tar.gz` 已通过 `tar -tzf`；`deploy/preflight-admin-upgrade.sh` 输出 `Upgrade preflight passed.`。
+- 直接前版为 `530b8087eb11ed1420310983757c0ad887ca6db8`。旧源码保存在 `/opt/aerogp-rollback-530b8087eb11ed1420310983757c0ad887ca6db8/source.tar`，API/Web 回滚镜像标签分别为 `aerogp-api:rollback-530b8087eb11ed1420310983757c0ad887ca6db8`、`aerogp-web:rollback-530b8087eb11ed1420310983757c0ad887ca6db8`。
+- 候选源码先解压到独立 staging 目录并复核归档摘要与 318 个条目，再同步到 `/opt/aerogp`；`.env`、`.release`、备份、上传数据和命名卷均被排除。同步后的 `rsync` dry-run 为零差异。
+- API/Web 使用精确 `RELEASE_SHA` 重建并通过 Compose 健康等待。新镜像 ID 分别为 `sha256:ca770bf804a576508c5bcce0bedcbf813eb841ba374a46e8ce2110406b20da53`、`sha256:ec25ae936b977cf577cd179ed8bca1178780e45eb65734e6695c033a0e50291e`；当前管理端入口引用 `/admin/assets/index-C02lxJah.js`。
+- 发布一致性验证从本机 WSL 对公网地址执行并通过：`release-consistency=3ad0feb535269b67d3d88b6ed3eaadd29dfe3672`。服务器宿主机没有 Node，因此没有直接在宿主机执行同一脚本；验证仍覆盖运行时版本接口、唯一管理端哈希资源及旧 `/api/admin/registrations` 字面量缺失。
+- 认证 smoke 通过：健康页、官网、管理端、公开首页/赛事/内容/内容详情、sitemap、品牌资源、版本接口、管理员登录、赛事列表、账号赛事、带赛事上下文的报名接口、官网设置与内容接口均为预期 200；旧无赛事上下文报名接口为预期 404，匿名官网管理接口为预期 401。凭据文件的 CRLF 仅在内存中规范化，凭据未输出或写入文档。
+- 只有在发布一致性验证和认证 smoke 都成功后，才以 `.release.next` 原子替换 `.release`；最终 marker 为 `3ad0feb535269b67d3d88b6ed3eaadd29dfe3672`。PostgreSQL、API、Web、Backup 四服务均为 healthy，`aerogp_postgres_data` 与 `aerogp_uploads_data` 卷保持存在；磁盘为 40G 总量、约 15G 已用、23G 可用（41%）。
+- 本轮未运行 `docker compose down -v`，未删除或重建数据库卷、上传卷、备份和 `.env`。若需要代码回滚，优先使用上述源码归档或回滚镜像；回滚后仍须先完成健康检查与两类验证，再原子恢复旧 marker。
