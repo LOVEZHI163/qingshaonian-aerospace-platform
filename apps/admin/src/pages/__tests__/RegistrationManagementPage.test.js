@@ -3,6 +3,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { apiMock, apiBlobMock } = vi.hoisted(() => ({ apiMock: vi.fn(), apiBlobMock: vi.fn() }));
 vi.mock("../../lib/api.js", () => ({ api: apiMock, apiBlob: apiBlobMock }));
+vi.mock("../../components/SubmissionAssetReview.vue", () => ({
+  default: {
+    props: ["eventId", "registration", "disabled"],
+    emits: ["close", "refresh", "error"],
+    template: '<section data-testid="submission-review">{{ registration.id }}</section>'
+  }
+}));
 
 import RegistrationManagementPage from "../RegistrationManagementPage.vue";
 const mount = (component, options = {}) => vueMount(component, { ...options, props: { eventId: "E1", ...(options.props || {}) } });
@@ -61,6 +68,30 @@ describe("RegistrationManagementPage", () => {
     await wrapper.get('[data-action="manage-certificates"]').trigger("click");
 
     expect(wrapper.emitted("open-certificates")?.[0]).toEqual([registration]);
+  });
+
+  it("opens the material review drawer and blocks direct approval when required material is missing", async () => {
+    const missingMaterials = {
+      ...registration,
+      submission: { required: true, complete: false, warnings: [], assets: { artwork_image: null, creation_video: null } }
+    };
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/admin/events") return { rows: [event], projects: [project] };
+      if (path === "/api/admin/organizations") return { rows: [{ id: "O1", name: "实验小学" }] };
+      if (path.startsWith("/api/admin/events/E1/registrations?")) return { rows: [missingMaterials], total: 1, page: 1, pageSize: 25, refreshedAt: "2026-07-17T08:00:00.000Z" };
+      throw new Error(`unexpected ${path}`);
+    });
+    const wrapper = mount(RegistrationManagementPage);
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("待上传");
+    await wrapper.get('[data-action="review-materials-R1"]').trigger("click");
+    expect(wrapper.get('[data-testid="submission-review"]').text()).toContain("R1");
+    await wrapper.get('[data-action="approve-R1"]').trigger("click");
+    await flushPromises();
+
+    expect(apiMock.mock.calls.some(([path, options]) => path.endsWith("/registrations/R1/status") && options?.method === "PATCH")).toBe(false);
+    expect(wrapper.text()).toContain("作品材料");
   });
 
   it("releases successful Blob downloads on unmount and does not create a URL for failures", async () => {

@@ -124,6 +124,10 @@ export function createUploadSession({ db, eventId, projectId, actor, channel, no
     requireOrdinaryUser(actor);
   } else if (channel === "organization") {
     organizationId = requireOrganizationEventParticipation(db, actor, eventId, { writable: true }).organization.id;
+  } else if (channel === "admin") {
+    if (actor?.type !== "admin") {
+      throw businessError(403, "仅平台管理员可创建管理员作品上传会话", "UPLOAD_SESSION_FORBIDDEN");
+    }
   } else {
     throw businessError(422, "上传渠道不合法", "SUBMISSION_CHANNEL_INVALID");
   }
@@ -148,6 +152,10 @@ export function requireUploadSessionAccess({ db, sessionId, actor, channel, now,
   } else if (channel === "organization") {
     const { organization } = requireOrganizationEventParticipation(db, actor, session.eventId, { writable: true });
     if (session.organizationId !== organization.id) throw businessError(403, "无权访问该组织上传会话", "UPLOAD_SESSION_FORBIDDEN");
+  } else if (channel === "admin") {
+    if (actor?.type !== "admin" || session.organizationId) {
+      throw businessError(403, "无权访问该管理员上传会话", "UPLOAD_SESSION_FORBIDDEN");
+    }
   } else {
     throw businessError(422, "上传渠道不合法", "SUBMISSION_CHANNEL_INVALID");
   }

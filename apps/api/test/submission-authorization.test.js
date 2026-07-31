@@ -260,6 +260,51 @@ test("administrator replacement switches the registration asset, resets approval
   }, { prefix: "submission-auth-" });
 });
 
+test("administrator cannot approve a required submission when a material is missing or cleaned", async () => {
+  await withTestServer(async ({ baseUrl, dbPath }) => {
+    const admin = await loginAs(baseUrl, "13900000000", "admin123");
+    await mutateDb(dbPath, (db) => {
+      const registration = db.registrations.find((row) => row.id === "R20260627001");
+      db.events[0].registrationMode = "force_open";
+      db.projects.find((project) => project.id === registration.projectId).submissionMode = "image_video";
+      db.registrationSubmissionAssets.push(asset("SA-cleaned-video", "US-cleaned-video", "creation_video", {
+        registrationId: registration.id,
+        cleanedAt: "2026-07-31T09:00:00.000Z",
+        cleanupReason: "管理员清理"
+      }));
+    });
+
+    const response = await fetch(`${baseUrl}/api/admin/events/${EVENT_ID}/registrations/R20260627001/status`, withSession(admin.cookie, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "approved" })
+    }));
+
+    assert.equal(response.status, 422);
+    assert.match((await response.json()).error, /作品材料|完整|清理/);
+  }, { prefix: "submission-auth-" });
+});
+
+test("administrator registration summaries expose material metadata without storage paths", async () => {
+  await withTestServer(async ({ baseUrl, dbPath }) => {
+    const admin = await loginAs(baseUrl, "13900000000", "admin123");
+    await mutateDb(dbPath, (db) => {
+      const registration = db.registrations.find((row) => row.id === "R20260627001");
+      db.projects.find((project) => project.id === registration.projectId).submissionMode = "image_video";
+      db.registrationSubmissionAssets.push(
+        asset("SA-summary-image", "US-summary", "artwork_image", { registrationId: registration.id, filePath: "C:\\private\\image.png", storedName: "private-image.png" }),
+        asset("SA-summary-video", "US-summary", "creation_video", { registrationId: registration.id, filePath: "C:\\private\\video.mp4", storedName: "private-video.mp4" })
+      );
+    });
+
+    const response = await fetch(`${baseUrl}/api/admin/events/${EVENT_ID}/registrations?pageSize=10`, withSession(admin.cookie));
+    assert.equal(response.status, 200);
+    const row = (await response.json()).rows.find((item) => item.id === "R20260627001");
+    assert.equal(row.submission.complete, true);
+    assert.doesNotMatch(JSON.stringify(row.submission), /filePath|storedName|C:\\private/);
+  }, { prefix: "submission-auth-" });
+});
+
 test("organization owner may replace its approved asset but cannot replace another organization asset", async () => {
   await withTestServer(async ({ baseUrl, dbPath, tempDir }) => {
     const admin = await loginAs(baseUrl, "13900000000", "admin123");
@@ -311,7 +356,7 @@ test("organization owner may replace its approved asset but cannot replace anoth
   }, { prefix: "submission-auth-" });
 });
 
-test("rejected personal registration can replace its material, while a rejected replacement source leaves the old file and row intact", async () => {
+test("pending personal registration can replace its material, while approved replacement is rejected", async () => {
   await withTestServer(async ({ baseUrl, dbPath, tempDir }) => {
     const ordinary = await loginAs(baseUrl, "13800000001", "123456");
     const oldAsset = asset("SA-personal-old", "US-personal-old", "artwork_image", {
@@ -322,23 +367,40 @@ test("rejected personal registration can replace its material, while a rejected 
       storedName: "replacement.png",
       filePath: path.join(tempDir, "uploads", "submission-assets", "SA-personal-replacement", "replacement.png")
     });
-    await Promise.all([writeAssetFile(oldAsset), writeAssetFile(replacement)]);
+    const approvedSource = asset("SA-personal-approved-source", "US-approved-source", "artwork_image", {
+      storedName: "approved-source.png",
+      filePath: path.join(tempDir, "uploads", "submission-assets", "SA-personal-approved-source", "approved-source.png")
+    });
+    await Promise.all([writeAssetFile(oldAsset), writeAssetFile(replacement), writeAssetFile(approvedSource)]);
     await mutateDb(dbPath, (db) => {
       db.events[0].registrationMode = "force_open";
       db.projects.find((project) => project.id === "paper-plane-gate").submissionMode = "image_video";
       const registration = db.registrations.find((row) => row.id === "R20260627001");
-      registration.status = "rejected";
+      registration.status = "pending";
       db.registrationUploadSessions.push(
         session("US-personal-replacement", { projectId: "paper-plane-gate" }),
+        session("US-approved-source", { projectId: "paper-plane-gate" }),
         session("US-invalid-source", { projectId: "paper-plane-gate" })
       );
-      db.registrationSubmissionAssets.push(oldAsset, replacement);
+      db.registrationSubmissionAssets.push(oldAsset, replacement, approvedSource);
     });
 
     const replacementResponse = await fetch(`${baseUrl}/api/me/events/${EVENT_ID}/registrations/R20260627001/assets/artwork_image`, withSession(ordinary.cookie, {
       method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ uploadSessionId: "US-personal-replacement" })
     }));
     assert.equal(replacementResponse.status, 200);
+
+    const afterPendingReplacement = JSON.parse(await fs.readFile(dbPath, "utf8"));
+    afterPendingReplacement.registrations.find((row) => row.id === "R20260627001").status = "approved";
+    await fs.writeFile(dbPath, JSON.stringify(afterPendingReplacement));
+    const approvedResponse = await fetch(`${baseUrl}/api/me/events/${EVENT_ID}/registrations/R20260627001/assets/artwork_image`, withSession(ordinary.cookie, {
+      method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ uploadSessionId: "US-approved-source" })
+    }));
+    assert.equal(approvedResponse.status, 403);
+
+    const afterApprovedRejection = JSON.parse(await fs.readFile(dbPath, "utf8"));
+    afterApprovedRejection.registrations.find((row) => row.id === "R20260627001").status = "rejected";
+    await fs.writeFile(dbPath, JSON.stringify(afterApprovedRejection));
 
     const invalidResponse = await fetch(`${baseUrl}/api/me/events/${EVENT_ID}/registrations/R20260627001/assets/artwork_image`, withSession(ordinary.cookie, {
       method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ uploadSessionId: "US-invalid-source" })

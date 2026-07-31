@@ -158,6 +158,26 @@ test("organization upload sessions require the sole approved owner and event par
   });
 });
 
+test("administrators create and upload through their own replacement session", async () => {
+  await withTestServer(async ({ baseUrl, dbPath }) => {
+    await configureImageVideoProject(dbPath);
+    const admin = await loginAs(baseUrl, "13900000000", "admin123");
+
+    const created = await fetch(`${baseUrl}/api/admin/events/${EVENT_ID}/projects/${IMAGE_VIDEO_PROJECT}/upload-sessions`, withSession(admin.cookie, { method: "POST" }));
+    assert.equal(created.status, 201);
+    const payload = await json(created);
+    assert.equal(payload.row.eventId, EVENT_ID);
+    assert.equal(payload.row.projectId, IMAGE_VIDEO_PROJECT);
+
+    const uploaded = await fetch(`${baseUrl}/api/upload-sessions/${payload.row.id}/artwork-image`, withSession(admin.cookie, { method: "PUT", body: imageForm() }));
+    assert.equal(uploaded.status, 201);
+    assert.equal((await json(uploaded)).row.originalName, "work.png");
+
+    const db = JSON.parse(await fs.readFile(dbPath, "utf8"));
+    assert.equal(db.registrationUploadSessions.find((row) => row.id === payload.row.id).ownerUserId, "U9001");
+  });
+});
+
 test("private asset reads resolve registration identifiers and enforce user organization and admin scopes", async () => {
   await withTestServer(async ({ baseUrl, dbPath, tempDir }) => {
     const db = JSON.parse(await fs.readFile(dbPath, "utf8"));

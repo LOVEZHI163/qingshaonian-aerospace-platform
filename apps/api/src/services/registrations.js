@@ -3,7 +3,7 @@ import { isRegistrationOpen } from "../domain/registration-window.js";
 import { businessError, projectForHistoricalRegistration, publishedRegistrationEvent, registrationContext } from "./events.js";
 import { recordAudit } from "./audit.js";
 import { requireOrdinaryUser, requireOrganizationEventParticipation, requireWritableEvent } from "./access-control.js";
-import { withRegistrationSubmission } from "./submission-assets.js";
+import { registrationSubmissionSummary, withRegistrationSubmission } from "./submission-assets.js";
 
 function normalizeText(value) {
   return String(value || "").trim().replace(/\s+/g, "").toLowerCase();
@@ -202,6 +202,12 @@ export function prepareOrdinaryRegistrationUpdate(db, row, input, userId) {
 
 export function updateRegistrationStatus(db, row, input, user) {
   const status = String(input?.status || "");
+  if (user.type === "admin" && status === "approved") {
+    const submission = registrationSubmissionSummary(db, row);
+    if (submission?.required && !submission.complete) {
+      throw businessError(422, "必传作品材料不完整、已清理或文件缺失，不能直接通过报名", "SUBMISSION_ASSETS_INCOMPLETE");
+    }
+  }
   if (!new Set(["approved", "rejected", "cancelled", "pending"]).has(status)) throw businessError(422, "状态不合法");
   if (user.type !== "admin") {
     if (row.personalUserId !== user.id) throw businessError(403, "无权修改该报名");

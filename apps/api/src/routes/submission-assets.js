@@ -135,13 +135,19 @@ export function createSubmissionAssetsRouter({
 
   router.post("/me/events/:eventId/projects/:projectId/upload-sessions", ...user, createSession("personal"));
   router.post("/organization/events/:eventId/projects/:projectId/upload-sessions", ...user, createSession("organization"));
+  router.post("/admin/events/:eventId/projects/:projectId/upload-sessions", ...admin, createSession("admin"));
+
+  function sessionChannel(session, actor) {
+    if (session?.organizationId) return "organization";
+    return actor?.type === "admin" && session?.ownerUserId === actor?.id ? "admin" : "personal";
+  }
 
   function uploadAsset(kind) {
     return [
       asyncRoute(async (req, _res, next) => {
         const db = await store.readDb();
         const storedSession = db.registrationUploadSessions.find((row) => row.id === req.params.sessionId);
-        const channel = storedSession?.organizationId ? "organization" : "personal";
+        const channel = sessionChannel(storedSession, req.user);
         const session = requireUploadSessionAccess({ db, sessionId: req.params.sessionId, actor: req.user, channel, now, kind });
         if (kind === "creation_video") {
           const status = await storageStatus({ uploadRoot });
@@ -162,7 +168,7 @@ export function createSubmissionAssetsRouter({
           const metadata = await inspectSubmissionFile({ kind, filePath: req.file.path, originalName: req.file.originalname });
           const db = await store.readDb();
           const storedSession = db.registrationUploadSessions.find((row) => row.id === req.params.sessionId);
-          const channel = storedSession?.organizationId ? "organization" : "personal";
+          const channel = sessionChannel(storedSession, req.user);
           const session = requireUploadSessionAccess({ db, sessionId: req.params.sessionId, actor: req.user, channel, now, kind });
           const replacement = replaceSessionAsset({
             db, session, kind, actor: req.user, now, makeId,
@@ -197,7 +203,7 @@ export function createSubmissionAssetsRouter({
   router.delete("/upload-sessions/:sessionId/assets/:kind", ...user, asyncRoute(async (req, res) => {
     const db = await store.readDb();
     const storedSession = db.registrationUploadSessions.find((row) => row.id === req.params.sessionId);
-    const channel = storedSession?.organizationId ? "organization" : "personal";
+    const channel = sessionChannel(storedSession, req.user);
     const session = requireUploadSessionAccess({ db, sessionId: req.params.sessionId, actor: req.user, channel, now, kind: req.params.kind });
     const result = removeSessionAsset({ db, session, kind: req.params.kind });
     await store.writeDb(db);
