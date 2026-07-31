@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -119,6 +120,13 @@ test("rejects overlong videos and warns without rejecting sub-720P videos", asyn
     }),
     /视频时长超过 120 秒限制/
   );
+  await assert.rejects(
+    inspectSubmissionFile({
+      kind: "creation_video", filePath: mp4Path, originalName: "rounded-long.mp4",
+      probeVideo: async () => ({ durationMs: 120_000.4, width: 1280, height: 720 })
+    }),
+    /视频时长超过 120 秒限制/
+  );
 
   const lowResolution = await inspectSubmissionFile({
     kind: "creation_video", filePath: mp4Path, originalName: "small.mp4",
@@ -146,6 +154,25 @@ test("probes video metadata through ffprobe with an argument array", async () =>
     "C:/uploads/creation.mp4"
   ]]]);
   assert.deepEqual(metadata, { durationMs: 12_345, width: 1280, height: 720 });
+});
+
+test("rejects a raw ffprobe duration that exceeds 120 seconds before display rounding", async (t) => {
+  const directory = await makeFixture(t);
+  const mp4Path = await writeMp4(directory);
+  const probeWithFractionalOverrun = (filePath) => probeVideo(filePath, async () => ({
+    stdout: JSON.stringify({
+      format: { duration: "120.0004" },
+      streams: [{ codec_type: "video", width: 1280, height: 720 }]
+    })
+  }));
+
+  await assert.rejects(
+    inspectSubmissionFile({
+      kind: "creation_video", filePath: mp4Path, originalName: "fractional-long.mp4",
+      probeVideo: probeWithFractionalOverrun
+    }),
+    /视频时长超过 120 秒限制/
+  );
 });
 
 test("rejects non-MP4 signatures and oversized videos before probing", async (t) => {
@@ -181,6 +208,15 @@ test("serves exact single video byte ranges and rejects malformed or multi-range
   await fs.writeFile(filePath, Buffer.from("0123456789"));
   const record = { filePath, mimeType: "video/mp4" };
 
+  const full = await readSubmissionRange(record);
+  assert.equal(full.status, 200);
+  assert.deepEqual(full.headers, {
+    "Content-Type": "video/mp4",
+    "Content-Length": "10",
+    "Accept-Ranges": "bytes"
+  });
+  assert.equal((await readStream(full.stream)).toString(), "0123456789");
+
   const explicit = await readSubmissionRange(record, "bytes=2-5");
   assert.equal(explicit.status, 206);
   assert.deepEqual(explicit.headers, {
@@ -195,6 +231,14 @@ test("serves exact single video byte ranges and rejects malformed or multi-range
   assert.equal(suffix.headers["Content-Range"], "bytes 7-9/10");
   assert.equal((await readStream(suffix.stream)).toString(), "789");
 
+  const openEnded = await readSubmissionRange(record, "bytes=6-");
+  assert.equal(openEnded.headers["Content-Range"], "bytes 6-9/10");
+  assert.equal((await readStream(openEnded.stream)).toString(), "6789");
+
+  const oversizedSuffix = await readSubmissionRange(record, "bytes=-99");
+  assert.equal(oversizedSuffix.headers["Content-Range"], "bytes 0-9/10");
+  assert.equal((await readStream(oversizedSuffix.stream)).toString(), "0123456789");
+
   await assert.rejects(readSubmissionRange(record, "bytes=0-1,4-5"), (error) => {
     assert.equal(error.status, 416);
     assert.equal(error.headers["Content-Range"], "bytes */10");
@@ -207,12 +251,54 @@ test("serves exact single video byte ranges and rejects malformed or multi-range
   await assert.rejects(readSubmissionRange({ filePath: emptyPath, mimeType: "video/mp4" }, "bytes=-1"), (error) => error.status === 416);
 });
 
-test("deletes the stored submission file without buffering it", async (t) => {
+function submissionRecord(uploadRoot, id = "SA1", storedName = "original.mp4") {
+  return {
+    id,
+    storedName,
+    filePath: path.join(uploadRoot, "submission-assets", id, storedName)
+  };
+}
+
+test("deletes a file only from its controlled submission-assets directory", async (t) => {
   const directory = await makeFixture(t);
-  const filePath = path.join(directory, "cleanup.mp4");
-  await fs.writeFile(filePath, "video");
+  const record = submissionRecord(directory);
+  await fs.mkdir(path.dirname(record.filePath), { recursive: true });
+  await fs.writeFile(record.filePath, "video");
 
-  await deleteSubmissionFile({ filePath });
+  await deleteSubmissionFile(record, { uploadRoot: directory });
 
-  await assert.rejects(fs.access(filePath), { code: "ENOENT" });
+  await assert.rejects(fs.access(record.filePath), { code: "ENOENT" });
+});
+
+test("refuses to delete a submission record outside the controlled upload root", async (t) => {
+  const uploadRoot = await makeFixture(t);
+  const outsidePath = path.join(os.tmpdir(), `aerogp-submission-outside-${crypto.randomUUID()}.mp4`);
+  await fs.writeFile(outsidePath, "outside");
+  t.after(() => fs.rm(outsidePath, { force: true }));
+  const record = { id: "SA1", storedName: "original.mp4", filePath: outsidePath };
+
+  await assert.rejects(
+    deleteSubmissionFile(record, { uploadRoot }),
+    /escapes controlled submission directory/i
+  );
+  assert.equal((await fs.readFile(outsidePath)).toString(), "outside");
+});
+
+test("refuses to follow a symbolic link from the controlled submission directory", async (t) => {
+  const uploadRoot = await makeFixture(t);
+  const outside = await fs.mkdtemp(path.join(os.tmpdir(), "aerogp-submission-linked-outside-"));
+  t.after(() => fs.rm(outside, { recursive: true, force: true }));
+  const parent = path.join(uploadRoot, "submission-assets");
+  const linkedDirectory = path.join(parent, "SA1");
+  const victim = path.join(outside, "original.mp4");
+  await fs.mkdir(parent, { recursive: true });
+  await fs.writeFile(victim, "outside");
+  await fs.symlink(outside, linkedDirectory, process.platform === "win32" ? "junction" : "dir");
+  const record = submissionRecord(uploadRoot);
+
+  await assert.rejects(
+    deleteSubmissionFile(record, { uploadRoot }),
+    /symbolic link|escapes controlled submission directory/i
+  );
+  assert.equal((await fs.readFile(victim)).toString(), "outside");
 });

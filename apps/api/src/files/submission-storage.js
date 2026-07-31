@@ -1,6 +1,7 @@
 import { execFile as execFileCallback } from "node:child_process";
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
+import path from "node:path";
 import { promisify } from "node:util";
 import { fileTypeFromFile } from "file-type";
 import sharp from "sharp";
@@ -10,6 +11,8 @@ import { SUBMISSION_IMAGE_POLICY, SUBMISSION_VIDEO_POLICY } from "./policy.js";
 const execFile = promisify(execFileCallback);
 const IMAGE_DIMENSION_WARNING = "作品图片长边低于建议的 780 像素";
 const VIDEO_RESOLUTION_WARNING = "制作视频分辨率低于建议的 720P";
+const SAFE_ASSET_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+const SAFE_STORED_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$/;
 
 function validationError(message) {
   return Object.assign(new Error(message), { status: 422 });
@@ -20,6 +23,40 @@ function rangeError(size) {
     status: 416,
     headers: { "Content-Range": `bytes */${size}` }
   });
+}
+
+function assertInside(parent, target, message) {
+  const relative = path.relative(parent, target);
+  if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) throw new Error(message);
+}
+
+function safeAssetId(value) {
+  if (typeof value !== "string" || !SAFE_ASSET_ID.test(value)) {
+    throw new Error("Submission asset id is invalid");
+  }
+  return value;
+}
+
+function safeStoredName(value) {
+  if (typeof value !== "string" || !SAFE_STORED_NAME.test(value) || path.basename(value) !== value) {
+    throw new Error("Submission stored file name is invalid");
+  }
+  return value;
+}
+
+async function assertNoLinkedComponents(root, target, fileSystem) {
+  const relative = path.relative(root, target);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) {
+    throw new Error("Submission file escapes controlled submission directory");
+  }
+  const rootStats = await fileSystem.lstat(root);
+  if (rootStats.isSymbolicLink()) throw new Error("Submission upload root contains a symbolic link");
+  let current = root;
+  for (const component of relative.split(path.sep).filter(Boolean)) {
+    current = path.join(current, component);
+    const stats = await fileSystem.lstat(current);
+    if (stats.isSymbolicLink()) throw new Error("Submission file path contains a symbolic link");
+  }
 }
 
 function policyFor(kind) {
@@ -59,7 +96,7 @@ export async function probeVideo(filePath, execute = execFile) {
       throw new Error("invalid metadata");
     }
     return {
-      durationMs: Math.round(durationSeconds * 1000),
+      durationMs: durationSeconds * 1000,
       width: stream.width,
       height: stream.height
     };
@@ -180,7 +217,32 @@ export async function readSubmissionRange(record, rangeHeader) {
   };
 }
 
-export async function deleteSubmissionFile(record, fileSystem = fs) {
+export async function deleteSubmissionFile(record, {
+  uploadRoot = process.env.UPLOAD_ROOT || "/data/uploads",
+  fileSystem = fs
+} = {}) {
   if (!record?.filePath) throw new Error("作品文件记录无效");
-  await fileSystem.unlink(record.filePath);
+  const root = path.resolve(uploadRoot);
+  const directory = path.resolve(root, "submission-assets", safeAssetId(record.id));
+  const expectedPath = path.resolve(directory, safeStoredName(record.storedName));
+  const recordPath = path.resolve(record.filePath);
+  if (recordPath !== expectedPath) throw new Error("Submission file escapes controlled submission directory");
+
+  await assertNoLinkedComponents(root, expectedPath, fileSystem);
+  const [realRoot, realDirectory, realFilePath] = await Promise.all([
+    fileSystem.realpath(root),
+    fileSystem.realpath(directory),
+    fileSystem.realpath(expectedPath)
+  ]);
+  assertInside(realRoot, realDirectory, "Submission file escapes controlled submission directory");
+  assertInside(realDirectory, realFilePath, "Submission file escapes controlled submission directory");
+  const [confirmedRoot, confirmedDirectory, confirmedFilePath] = await Promise.all([
+    fileSystem.realpath(root),
+    fileSystem.realpath(directory),
+    fileSystem.realpath(expectedPath)
+  ]);
+  if (confirmedRoot !== realRoot || confirmedDirectory !== realDirectory || confirmedFilePath !== realFilePath) {
+    throw new Error("Submission file path changed during validation");
+  }
+  await fileSystem.unlink(realFilePath);
 }
