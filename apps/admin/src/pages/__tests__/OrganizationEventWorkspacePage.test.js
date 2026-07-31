@@ -2,7 +2,14 @@ import { flushPromises, mount } from "@vue/test-utils";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { apiMock, apiBlobMock } = vi.hoisted(() => ({ apiMock: vi.fn(), apiBlobMock: vi.fn() }));
-vi.mock("../../lib/api.js", () => ({ api: apiMock, apiBlob: apiBlobMock }));
+vi.mock("../../lib/api.js", () => ({ api: apiMock, apiBlob: apiBlobMock, apiUrl: (path) => path }));
+vi.mock("../../components/SubmissionAssetUploader.vue", () => ({
+  default: {
+    props: ["sessionId", "mode", "assets"],
+    emits: ["complete"],
+    template: '<button type="button" data-testid="submission-uploader" @click="$emit(\'complete\', true)">素材已完成</button>'
+  }
+}));
 
 import EventCenterPage from "../EventCenterPage.vue";
 import OrganizationAthleteRegistrationForm from "../../components/OrganizationAthleteRegistrationForm.vue";
@@ -60,6 +67,70 @@ describe("OrganizationEventWorkspacePage", () => {
     }));
     expect(wrapper.text()).toContain("已与现有个人报名合并，未重复创建");
     expect(wrapper.find("select[data-field=organization]").exists()).toBe(false);
+  });
+
+  it("creates organization-owned material sessions and includes the completed session without exposing an editable organization id", async () => {
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/organization/events/E2/projects/P-IMAGE/upload-sessions") return { row: { id: "US-ORG", assets: {} } };
+      if (path === "/api/organization/events/E2/registrations") return { row: registration };
+      if (path.startsWith("/api/schools")) return { rows: [] };
+      throw new Error(`unexpected API path ${path}`);
+    });
+    const wrapper = mount(OrganizationAthleteRegistrationForm, {
+      props: { eventId: "E2", projects: [{ id: "P-IMAGE", name: "绘画", submissionMode: "image_video" }] }
+    });
+    await flushPromises();
+    await wrapper.get('[data-field="athlete-name"]').setValue("张三");
+    await wrapper.get('input[placeholder="输入或选择学校"]').setValue("航空学校");
+    await wrapper.get('[data-field="athlete-grade"]').setValue("五年级");
+    await wrapper.get('[data-field="athlete-phone"]').setValue("13800000000");
+    await flushPromises();
+
+    expect(apiMock).toHaveBeenCalledWith("/api/organization/events/E2/projects/P-IMAGE/upload-sessions", { method: "POST" });
+    expect(wrapper.get("button.primary").attributes("disabled")).toBeDefined();
+    expect(wrapper.find('[data-field="organization"]').exists()).toBe(false);
+
+    await wrapper.get('[data-testid="submission-uploader"]').trigger("click");
+    await wrapper.get("form").trigger("submit");
+    await flushPromises();
+
+    expect(apiMock).toHaveBeenCalledWith("/api/organization/events/E2/registrations", expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({ athlete: { name: "张三", school: "航空学校", grade: "五年级", phone: "13800000000" }, projectId: "P-IMAGE", instructor: "", uploadSessionId: "US-ORG" })
+    }));
+  });
+
+  it("allows the organization owner to replace approved materials and immediately reports the restored pending review", async () => {
+    const withSubmission = {
+      ...registration,
+      submission: {
+        required: true,
+        complete: true,
+        assets: {
+          artwork_image: { kind: "artwork_image", originalName: "work.png", mimeType: "image/png", sizeBytes: 1024 },
+          creation_video: { kind: "creation_video", originalName: "making.mp4", mimeType: "video/mp4", sizeBytes: 2048 }
+        }
+      }
+    };
+    apiMock.mockImplementation(async (path, options) => {
+      if (path === "/api/organization/events/E2/workspace") return { event, summary: {}, projects: [{ id: "P1", name: "无人机", submissionMode: "image_video" }], registrations: [withSubmission] };
+      if (path === "/api/organization/events/E2/registrations" && !options?.method) return { rows: [withSubmission] };
+      if (path === "/api/organization/events/E2/projects/P1/upload-sessions") return { row: { id: "US-REPLACE", assets: {} } };
+      if (path.includes("/assets/artwork_image") || path.includes("/assets/creation_video")) return { registration: { ...withSubmission, status: "pending" } };
+      return { rows: [] };
+    });
+    const wrapper = mount(OrganizationEventWorkspacePage, { props: { eventId: "E2" } });
+    await flushPromises();
+    await wrapper.get('[data-workspace-tab="records"]').trigger("click");
+    await wrapper.get('[data-action="replace-organization-materials-R1"]').trigger("click");
+    await flushPromises();
+    await wrapper.get('[data-testid="submission-uploader"]').trigger("click");
+    await wrapper.get('[data-action="confirm-organization-material-replacement-R1"]').trigger("click");
+    await flushPromises();
+
+    expect(apiMock).toHaveBeenCalledWith("/api/organization/events/E2/registrations/R1/assets/artwork_image", expect.objectContaining({ method: "PUT", body: JSON.stringify({ uploadSessionId: "US-REPLACE" }) }));
+    expect(apiMock).toHaveBeenCalledWith("/api/organization/events/E2/registrations/R1/assets/creation_video", expect.objectContaining({ method: "PUT", body: JSON.stringify({ uploadSessionId: "US-REPLACE" }) }));
+    expect(wrapper.text()).toContain("已恢复待审核");
   });
 
   it("joins an available event idempotently and opens its workspace", async () => {

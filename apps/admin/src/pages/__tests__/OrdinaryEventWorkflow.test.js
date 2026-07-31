@@ -10,7 +10,14 @@ const { apiMock, apiBlobMock, session } = vi.hoisted(() => {
   };
 });
 
-vi.mock("../../lib/api.js", () => ({ api: apiMock, apiBlob: apiBlobMock }));
+vi.mock("../../lib/api.js", () => ({ api: apiMock, apiBlob: apiBlobMock, apiUrl: (path) => path }));
+vi.mock("../../components/SubmissionAssetUploader.vue", () => ({
+  default: {
+    props: ["sessionId", "mode", "assets"],
+    emits: ["complete"],
+    template: '<button type="button" data-testid="submission-uploader" @click="$emit(\'complete\', true)">素材已完成</button>'
+  }
+}));
 vi.mock("../../state/session.js", () => ({ useSession: () => session }));
 
 import MyCertificatesPage from "../MyCertificatesPage.vue";
@@ -80,6 +87,43 @@ describe("ordinary user event workflow", () => {
     expect(apiMock.mock.calls.some(([path]) => path === "/api/me/registrations" || path === "/api/me/certificates")).toBe(false);
     records.unmount();
     certificates.unmount();
+  });
+
+  it("shows private material availability and replacement only for pending or rejected registrations", async () => {
+    const assetRows = [
+      {
+        id: "R-PENDING", status: "pending", athlete: { name: "张三", school: "实验小学", grade: "二年级" }, projectId: "P2", projectName: "纸飞机",
+        submission: { required: true, complete: true, assets: { artwork_image: { kind: "artwork_image", originalName: "work.png" }, creation_video: { kind: "creation_video", originalName: "making.mp4" } } }
+      },
+      {
+        id: "R-APPROVED", status: "approved", athlete: { name: "李四", school: "实验小学", grade: "二年级" }, projectId: "P2", projectName: "纸飞机",
+        submission: { required: true, complete: true, assets: { artwork_image: { kind: "artwork_image", originalName: "approved.png" }, creation_video: { kind: "creation_video", originalName: "approved.mp4" } } }
+      },
+      {
+        id: "R-REJECTED", status: "rejected", athlete: { name: "王五", school: "实验小学", grade: "二年级" }, projectId: "P2", projectName: "纸飞机",
+        submission: { required: true, complete: true, assets: { artwork_image: { kind: "artwork_image", originalName: "rejected.png" }, creation_video: { kind: "creation_video", originalName: "rejected.mp4" } } }
+      }
+    ];
+    apiMock.mockImplementation(async (path, options) => {
+      if (path === "/api/me/events/E2/registrations" && !options?.method) return { rows: assetRows };
+      if (path === "/api/me/events/E2/projects/P2/upload-sessions") return { row: { id: "US-PERSONAL", assets: {} } };
+      if (path.includes("/assets/artwork_image") || path.includes("/assets/creation_video")) return { registration: { ...assetRows[0], status: "pending" } };
+      throw new Error(`unexpected API path ${path}`);
+    });
+    const wrapper = mount(RegistrationRecordsPage, { props: { eventId: "E2" } });
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("作品图片可用");
+    expect(wrapper.find('[data-action="replace-personal-materials-R-PENDING"]').exists()).toBe(true);
+    expect(wrapper.find('[data-action="replace-personal-materials-R-REJECTED"]').exists()).toBe(true);
+    expect(wrapper.find('[data-action="replace-personal-materials-R-APPROVED"]').exists()).toBe(false);
+    await wrapper.get('[data-action="replace-personal-materials-R-PENDING"]').trigger("click");
+    await flushPromises();
+    expect(apiMock).toHaveBeenCalledWith("/api/me/events/E2/projects/P2/upload-sessions", { method: "POST" });
+    await wrapper.get('[data-testid="submission-uploader"]').trigger("click");
+    await wrapper.get('[data-action="confirm-personal-material-replacement-R-PENDING"]').trigger("click");
+    await flushPromises();
+    expect(apiMock).toHaveBeenCalledWith("/api/me/events/E2/registrations/R-PENDING/assets/artwork_image", expect.objectContaining({ method: "PUT", body: JSON.stringify({ uploadSessionId: "US-PERSONAL" }) }));
   });
 
   it("queries a historical certificate event id without an active event", async () => {

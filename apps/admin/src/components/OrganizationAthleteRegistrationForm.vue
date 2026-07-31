@@ -2,6 +2,7 @@
 import { computed, reactive, ref, watch } from "vue";
 
 import SchoolCombobox from "./SchoolCombobox.vue";
+import SubmissionAssetUploader from "./SubmissionAssetUploader.vue";
 import { api } from "../lib/api.js";
 
 const props = defineProps({
@@ -18,8 +19,16 @@ const form = reactive({
 });
 const submitting = ref(false);
 const message = ref("");
+const uploadSession = ref(null);
+const uploadSessionLoading = ref(false);
+const uploadSessionError = ref("");
+const assetsComplete = ref(false);
+let uploadSessionRequest = 0;
 const hasEventContext = computed(() => Boolean(String(props.eventId || "").trim()));
 const editing = computed(() => Boolean(props.registration?.id));
+const selectedProject = computed(() => props.projects.find((project) => project.id === form.projectId) || null);
+const requiresSubmission = computed(() => !editing.value && selectedProject.value?.submissionMode === "image_video");
+const submitDisabled = computed(() => submitting.value || !form.projectId || (requiresSubmission.value && (!uploadSession.value?.id || uploadSessionLoading.value || !assetsComplete.value)));
 
 watch(() => props.projects, (projects) => {
   if (!projects.some((project) => project.id === form.projectId)) form.projectId = projects[0]?.id || "";
@@ -33,8 +42,47 @@ watch(() => props.registration, (registration) => {
   message.value = "";
 }, { immediate: true });
 
+function clearUploadSession() {
+  uploadSessionRequest += 1;
+  uploadSession.value = null;
+  uploadSessionLoading.value = false;
+  uploadSessionError.value = "";
+  assetsComplete.value = false;
+}
+
+async function createUploadSession() {
+  const project = selectedProject.value;
+  if (!hasEventContext.value || editing.value || project?.submissionMode !== "image_video") return;
+  const request = uploadSessionRequest + 1;
+  uploadSessionRequest = request;
+  uploadSessionLoading.value = true;
+  uploadSessionError.value = "";
+  try {
+    const payload = await api(`/api/organization/events/${encodeURIComponent(props.eventId)}/projects/${encodeURIComponent(project.id)}/upload-sessions`, { method: "POST" });
+    if (request !== uploadSessionRequest || editing.value || form.projectId !== project.id) return;
+    const session = payload?.row || payload;
+    if (!session?.id) throw new Error("invalid upload session");
+    uploadSession.value = session;
+  } catch {
+    if (request !== uploadSessionRequest || editing.value || form.projectId !== project.id) return;
+    uploadSessionError.value = "无法创建作品上传会话，请重试";
+  } finally {
+    if (request === uploadSessionRequest) uploadSessionLoading.value = false;
+  }
+}
+
+function retryUploadSession() {
+  clearUploadSession();
+  void createUploadSession();
+}
+
+watch(() => [form.projectId, editing.value], () => {
+  clearUploadSession();
+  if (requiresSubmission.value) void createUploadSession();
+}, { immediate: true });
+
 async function submit() {
-  if (!hasEventContext.value || props.disabled || submitting.value) return;
+  if (!hasEventContext.value || props.disabled || submitDisabled.value) return;
   submitting.value = true;
   message.value = "";
   try {
@@ -43,12 +91,14 @@ async function submit() {
       : `/api/organization/events/${encodeURIComponent(props.eventId)}/registrations`;
     const payload = await api(path, {
       method: editing.value ? "PATCH" : "POST",
-      body: JSON.stringify({ athlete: form.athlete, projectId: form.projectId, instructor: form.instructor })
+      body: JSON.stringify({ athlete: form.athlete, projectId: form.projectId, instructor: form.instructor, ...(requiresSubmission.value ? { uploadSessionId: uploadSession.value.id } : {}) })
     });
     message.value = editing.value ? "组织报名已更新" : payload.merged ? "已与现有个人报名合并，未重复创建" : "组织报名已提交";
     if (!editing.value) {
       Object.assign(form.athlete, { name: "", school: "", grade: "", phone: "" });
       form.instructor = "";
+      form.projectId = "";
+      clearUploadSession();
     }
     emit("registered", payload);
   } catch (error) {
@@ -66,7 +116,15 @@ async function submit() {
     <div class="two"><label>姓名<input v-model="form.athlete.name" data-field="athlete-name" required /></label><label>学校<SchoolCombobox v-model="form.athlete.school" /></label></div>
     <div class="two"><label>年级<input v-model="form.athlete.grade" data-field="athlete-grade" required /></label><label>手机/监护人手机<input v-model="form.athlete.phone" data-field="athlete-phone" required /></label></div>
     <div class="two"><label>赛项<select v-model="form.projectId" required><option v-for="project in projects" :key="project.id" :value="project.id">{{ project.name }}</option></select></label><label>指导老师<input v-model="form.instructor" data-field="instructor" /></label></div>
-    <button class="primary" :disabled="submitting || !form.projectId">{{ submitting ? "正在提交…" : editing ? "保存修改" : "提交组织报名" }}</button>
+    <section v-if="requiresSubmission" class="registration-submission" aria-label="作品材料">
+      <p v-if="uploadSessionLoading" class="hint">正在创建作品上传会话…</p>
+      <template v-else-if="uploadSession?.id">
+        <SubmissionAssetUploader :key="uploadSession.id" :session-id="uploadSession.id" mode="image_video" :assets="uploadSession.assets || {}" @complete="assetsComplete = $event" @error="uploadSessionError = '作品材料上传失败，请重试'" />
+        <p v-if="!assetsComplete" class="hint">请先完成作品图片和作画视频的上传。</p>
+      </template>
+      <p v-else class="message" role="alert">{{ uploadSessionError || "作品上传会话不可用" }} <button type="button" class="mini" @click="retryUploadSession">重试</button></p>
+    </section>
+    <button class="primary" :disabled="submitDisabled">{{ submitting ? "正在提交…" : editing ? "保存修改" : "提交组织报名" }}</button>
     <p v-if="message" class="message">{{ message }}</p>
   </form>
 </template>
