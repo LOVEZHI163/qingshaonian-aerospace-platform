@@ -1,5 +1,6 @@
 import { isRegistrationOpen } from "../domain/registration-window.js";
-import { submissionFileExists } from "../files/submission-storage.js";
+import { deleteSubmissionFile, submissionFileExists } from "../files/submission-storage.js";
+import path from "node:path";
 import { businessError } from "./events.js";
 import { requireOrganizationEventParticipation, requireOrdinaryUser, requireWritableEvent } from "./access-control.js";
 import { recordAudit } from "./audit.js";
@@ -10,6 +11,8 @@ const SUBMISSION_ASSET_LABELS = {
   creation_video: "作画视频"
 };
 const SESSION_TTL_MS = Number(process.env.SUBMISSION_SESSION_TTL_MS || 86_400_000);
+const SAFE_ASSET_COMPONENT = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+const SAFE_STORED_FILE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$/;
 
 function timestamp(now) {
   const value = typeof now === "function" ? now() : now;
@@ -32,6 +35,118 @@ function eventProject(db, eventId, projectId) {
 
 function sessionIsExpired(session, now) {
   return !session?.expiresAt || Date.parse(session.expiresAt) <= Date.parse(timestamp(now));
+}
+
+function isControlledTemporaryAsset(asset, uploadRoot) {
+  if (!asset || !SAFE_ASSET_COMPONENT.test(String(asset.id || "")) || !SAFE_STORED_FILE.test(String(asset.storedName || ""))) {
+    return false;
+  }
+  const expected = path.resolve(uploadRoot, "submission-assets", asset.id, asset.storedName);
+  return path.resolve(String(asset.filePath || "")) === expected;
+}
+
+function cleanupMarker({ asset, makeId, now, error }) {
+  const createdAt = timestamp(now);
+  return {
+    id: makeId("CLN"),
+    filePath: asset.filePath,
+    category: "submission-session-expired",
+    attempts: 1,
+    lastError: String(error?.message || error).slice(0, 500),
+    createdAt,
+    lastAttemptAt: createdAt
+  };
+}
+
+export async function cleanupExpiredSubmissionSessions({
+  store,
+  now = () => new Date().toISOString(),
+  makeId = (prefix) => `${prefix}${Date.now()}${Math.floor(Math.random() * 1000)}`,
+  uploadRoot = process.env.UPLOAD_ROOT || "/data/uploads",
+  deleteFile = deleteSubmissionFile,
+  logger = console
+}) {
+  const run = async () => {
+    const originalDb = await store.readDb();
+    const expiredSessionIds = new Set(
+      (originalDb.registrationUploadSessions || [])
+        .filter((session) => session.state === "active" && sessionIsExpired(session, now))
+        .map((session) => session.id)
+    );
+    if (!expiredSessionIds.size) return { expiredSessionIds: [], removedAssetIds: [], journaledAssetIds: [] };
+
+    const db = structuredClone(originalDb);
+    const removableAssets = (db.registrationSubmissionAssets || []).filter((asset) => (
+      expiredSessionIds.has(asset.uploadSessionId)
+      && !asset.registrationId
+      && isControlledTemporaryAsset(asset, uploadRoot)
+    ));
+    const removableAssetIds = new Set(removableAssets.map((asset) => asset.id));
+    for (const session of db.registrationUploadSessions) {
+      if (expiredSessionIds.has(session.id) && session.state === "active") session.state = "expired";
+    }
+    db.registrationSubmissionAssets = (db.registrationSubmissionAssets || []).filter((asset) => !removableAssetIds.has(asset.id));
+
+    // Persist the expired state before touching the filesystem, so a retry can never
+    // mistake a committed or current session for a disposable temporary upload.
+    await store.writeDb(db);
+
+    const failed = [];
+    for (const asset of removableAssets) {
+      try {
+        await deleteFile(asset, { uploadRoot });
+      } catch (error) {
+        if (error?.code !== "ENOENT") failed.push({ asset, error });
+      }
+    }
+    if (!failed.length) {
+      return { expiredSessionIds: [...expiredSessionIds], removedAssetIds: [...removableAssetIds], journaledAssetIds: [] };
+    }
+
+    try {
+      const journalDb = await store.readDb();
+      journalDb.fileCleanupJournal ||= [];
+      const known = new Set(journalDb.fileCleanupJournal
+        .filter((marker) => marker.category === "submission-session-expired")
+        .map((marker) => marker.filePath));
+      for (const { asset, error } of failed) {
+        if (!known.has(asset.filePath)) journalDb.fileCleanupJournal.push(cleanupMarker({ asset, makeId, now, error }));
+      }
+      await store.writeDb(journalDb);
+    } catch {
+      try { logger?.error?.("Submission-session expiry cleanup journal persistence failed", { failedAssetCount: failed.length }); } catch { /* logging cannot alter cleanup state */ }
+    }
+    return {
+      expiredSessionIds: [...expiredSessionIds],
+      removedAssetIds: [...removableAssetIds],
+      journaledAssetIds: failed.map(({ asset }) => asset.id)
+    };
+  };
+  return store.withMutationLock ? store.withMutationLock(run) : run();
+}
+
+export function startSubmissionSessionExpiryCleanup({
+  store,
+  intervalMs = Number(process.env.SUBMISSION_SESSION_CLEANUP_INTERVAL_MS || 60 * 60 * 1000),
+  cleanup = cleanupExpiredSubmissionSessions,
+  setIntervalFn = setInterval,
+  clearIntervalFn = clearInterval,
+  logger = console
+}) {
+  let activeCleanup = null;
+  const run = () => {
+    if (activeCleanup) return activeCleanup;
+    activeCleanup = Promise.resolve(cleanup({ store }))
+      .catch(() => {
+        try { logger?.error?.("Submission-session expiry cleanup failed"); } catch { /* cleanup errors must not stop the API */ }
+      })
+      .finally(() => { activeCleanup = null; });
+    return activeCleanup;
+  };
+  void run();
+  const timer = setIntervalFn(run, intervalMs);
+  timer?.unref?.();
+  return () => clearIntervalFn(timer);
 }
 
 function validKind(kind) {

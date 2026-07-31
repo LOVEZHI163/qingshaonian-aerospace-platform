@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 
 import { resolveImportStagingPath, deletePrivateFile } from "../files/storage.js";
+import { deleteSubmissionFile } from "../files/submission-storage.js";
 import { recordAudit } from "./audit.js";
 import { businessError } from "./events.js";
 
@@ -31,8 +32,9 @@ function importFilesForBatch(batch) {
   })));
 }
 
-function eventResources(db, eventId, categories = CLEANUP_CATEGORIES) {
+function eventResources(db, eventId, categories = CLEANUP_CATEGORIES, { includeSubmissionAssets = false } = {}) {
   const registrationIds = new Set(db.registrations.filter((row) => row.eventId === eventId).map((row) => row.id));
+  const sessionIds = new Set((db.registrationUploadSessions || []).filter((row) => row.eventId === eventId).map((row) => row.id));
   const certificateRecords = categories.has("certificates")
     ? db.certificates.filter((row) => registrationIds.has(row.registrationId) && !row.cleanedAt)
     : [];
@@ -40,13 +42,19 @@ function eventResources(db, eventId, categories = CLEANUP_CATEGORIES) {
   const batches = categories.has("imports")
     ? db.certificateImportBatches.filter((row) => row.eventId === eventId)
     : [];
+  const submissionAssets = includeSubmissionAssets
+    ? (db.registrationSubmissionAssets || []).filter((row) => registrationIds.has(row.registrationId) || sessionIds.has(row.uploadSessionId))
+    : [];
   return {
     certificateRecords,
     certificateFiles,
     batches,
     files: [
       ...certificateFiles.map((row) => ({ category: "event-certificate", filePath: row.filePath, label: row.fileName || row.title || row.id })),
-      ...batches.flatMap(importFilesForBatch)
+      ...batches.flatMap(importFilesForBatch),
+      ...submissionAssets.filter((row) => row.filePath && !row.cleanedAt).map((row) => ({
+        category: "event-submission-asset", filePath: row.filePath, label: row.originalName || row.id, asset: row
+      }))
     ]
   };
 }
@@ -96,7 +104,7 @@ async function removePhysicalFiles({ store, db, entries, removeFile, now, onFail
   const attemptedAt = timestamp(now);
   for (const entry of entries) {
     try {
-      await removeFile(entry.marker);
+      await removeFile(entry.file, entry.marker);
       completedIds.add(entry.marker.id);
     } catch (error) {
       if (error?.code === "ENOENT") {
@@ -209,13 +217,18 @@ export async function deleteArchivedEvent({ store, eventId, confirmName, actor, 
   const event = eventOrThrow(db, eventId);
   if (event.isCurrent || event.status !== "archived") throw businessError(409, "只能彻底删除非当前的已归档赛事");
   if (String(confirmName || "") !== event.name) throw businessError(422, "赛事名称确认不一致");
-  const resources = eventResources(db, eventId);
+  const resources = eventResources(db, eventId, CLEANUP_CATEGORIES, { includeSubmissionAssets: true });
   const entries = stageCleanupFiles(db, resources.files, { makeId, now }, `event-delete:${event.id}`);
   const registrationIds = new Set(db.registrations.filter((row) => row.eventId === eventId).map((row) => row.id));
+  const sessionIds = new Set((db.registrationUploadSessions || []).filter((row) => row.eventId === eventId).map((row) => row.id));
   const projectIds = new Set(db.projects.filter((row) => row.eventId === eventId).map((row) => row.id));
   const batchIds = new Set(db.certificateImportBatches.filter((row) => row.eventId === eventId).map((row) => row.id));
   db.certificateImportErrors = db.certificateImportErrors.filter((row) => !batchIds.has(row.batchId));
   db.certificates = db.certificates.filter((row) => !registrationIds.has(row.registrationId));
+  db.registrationSubmissionAssets = (db.registrationSubmissionAssets || []).filter((row) => (
+    !registrationIds.has(row.registrationId) && !sessionIds.has(row.uploadSessionId)
+  ));
+  db.registrationUploadSessions = (db.registrationUploadSessions || []).filter((row) => row.eventId !== eventId);
   db.registrations = db.registrations.filter((row) => row.eventId !== eventId);
   db.projectGroups = db.projectGroups.filter((row) => !projectIds.has(row.projectId));
   db.projects = db.projects.filter((row) => row.eventId !== eventId);
@@ -225,8 +238,11 @@ export async function deleteArchivedEvent({ store, eventId, confirmName, actor, 
   const deletedAt = timestamp(now);
   recordAudit(db, { actor, action: "event.delete", targetType: "event", targetId: event.id, summary: `${event.name} 已彻底删除，附件 ${resources.files.length} 个`, createdAt: deletedAt });
   await store.writeDb(db);
+  const removeEventFile = (file) => file.category === "event-submission-asset"
+    ? deleteSubmissionFile(file.asset)
+    : removeFile(file);
   return { deletedEventId: event.id, ...(await removePhysicalFiles({
-    store, db, entries, removeFile, now,
+    store, db, entries, removeFile: removeEventFile, now,
     onFailures: (failedFiles) => recordAudit(db, {
       actor,
       action: "event.delete-files-failed",

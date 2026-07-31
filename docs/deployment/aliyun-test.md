@@ -586,3 +586,10 @@ CONFIRM_RESTORE=yes docker compose run --rm \
 - 只有在发布一致性验证和认证 smoke 都成功后，才以 `.release.next` 原子替换 `.release`；最终 marker 为 `3ad0feb535269b67d3d88b6ed3eaadd29dfe3672`。PostgreSQL、API、Web、Backup 四服务均为 healthy，`aerogp_postgres_data` 与 `aerogp_uploads_data` 卷保持存在；磁盘为 40G 总量、约 15G 已用、23G 可用（41%）。
 - 本轮未运行 `docker compose down -v`，未删除或重建数据库卷、上传卷、备份和 `.env`。若需要代码回滚，优先使用上述源码归档或回滚镜像；回滚后仍须先完成健康检查与两类验证，再原子恢复旧 marker。
 - Fix round 1（2026-07-31）：推荐命令已改为由发布负责人显式提供已审核归档对应的 40 位十六进制 `RELEASE_SHA`，禁止在非 Git 的 `/opt/aerogp` 推导；`ADMIN_TEST_PASSWORD` 只消费此前静默导出的环境变量，不再内联覆盖。认证 smoke 新增组织管理列表 200、赛事错误路径 404 JSON、组织错误路径 404 JSON，并校验 `application/json` 与非空 `error` 字段。脚本 SHA-256 为 `b9df0504d7e4fb2ad10008e893844574b75471b29ac62f1b8adc0f7e74776aeb`，原子同步前备份为 `/opt/aerogp/backups/remote-smoke-test-before-fix1-20260731T100733Z.sh`；远端认证 smoke 退出 0，最终 marker 仍为 `3ad0feb535269b67d3d88b6ed3eaadd29dfe3672`。本轮仅更新部署脚本，未重建 API/Web 镜像，未改变业务数据和命名卷。
+
+### 图像视频作品上传上线前核验（待执行）
+
+- 本次仅完成代码与本地验证，尚未部署。上线前仍须先完成数据库和完整 uploads 卷备份、运行升级预检，并保留 API/Web 回滚镜像；禁止使用 `docker compose down -v`。
+- Nginx 仅对 `/api/upload-sessions/` 使用 `205m` 请求上限、关闭请求缓冲并设置 300 秒读超时；通用 `/api/` 仍保持较小上限。API 容器环境固定传入 `SUBMISSION_SESSION_TTL_MS=86400000`、`UPLOAD_WARNING_PERCENT=80`、`UPLOAD_CRITICAL_PERCENT=90`。
+- 生产 API 启动时会执行一次已过期临时作品会话清理，并以不阻塞退出的定时器继续执行。清理只处理 `active` 且过期的会话，并且只删除未绑定报名、位于受控目录的文件；删除失败写入 `file_cleanup_journal`，已提交、未过期和已绑定材料不会被该任务删除。
+- 在四个 Compose 服务健康、发布一致性校验完成后，以静默提供的管理员密码运行：`ADMIN_TEST_PASSWORD="$ADMIN_TEST_PASSWORD" BASE_URL=http://127.0.0.1 /bin/sh deploy/remote-smoke-test.sh`。该脚本会生成小 PNG 和短 MP4，复制当前赛事进行隔离验证，覆盖会话、上传、报名绑定、管理员材料汇总和匿名访问拒绝；无论正常结束或中断都会尝试恢复原当前赛事并删除临时赛事、临时账户及文件。脚本不会输出密码、Cookie、响应正文或服务器文件路径。

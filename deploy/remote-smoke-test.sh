@@ -7,6 +7,9 @@ umask 077
 work_dir=
 
 cleanup() {
+  if command -v cleanup_submission_smoke >/dev/null 2>&1; then
+    cleanup_submission_smoke || true
+  fi
   if [ -n "$work_dir" ]; then
     rm -rf "$work_dir"
   fi
@@ -39,6 +42,10 @@ work_dir="$(mktemp -d "${TMPDIR:-/tmp}/aerogp-smoke.XXXXXX")"
 response_file="$work_dir/response.json"
 cookie_jar="$work_dir/cookies"
 received_media_type=
+smoke_event_id=
+smoke_event_name=
+original_current_event_id=
+smoke_user_id=
 
 assert_status() {
   label="$1"
@@ -190,3 +197,115 @@ assert_status "authenticated-site-content" 200 \
   "$base_url/api/admin/content"
 assert_status "unauthenticated-site-settings" 401 \
   "$base_url/api/admin/site-settings"
+
+cleanup_submission_smoke() {
+  test -n "$smoke_event_id" || return 0
+  cleanup_failed=0
+  if test -n "$original_current_event_id"; then
+    curl -sS -f -o /dev/null -b "$cookie_jar" -X POST \
+      "$base_url/api/admin/events/$original_current_event_id/current" || cleanup_failed=1
+  fi
+  curl -sS -f -o /dev/null -b "$cookie_jar" -X POST \
+    "$base_url/api/admin/events/$smoke_event_id/archive" || cleanup_failed=1
+  cleanup_payload="{\"confirmName\":\"$smoke_event_name\"}"
+  printf '%s' "$cleanup_payload" | curl -sS -f -o /dev/null -b "$cookie_jar" \
+    -H 'Content-Type: application/json' --data-binary @- \
+    -X DELETE "$base_url/api/admin/events/$smoke_event_id" || cleanup_failed=1
+  if test -n "$smoke_user_id"; then
+    curl -sS -f -o /dev/null -b "$cookie_jar" -X DELETE \
+      "$base_url/api/admin/users/$smoke_user_id" || cleanup_failed=1
+  fi
+  if test "$cleanup_failed" -ne 0; then
+    echo "submission-smoke-cleanup=failed" >&2
+    return 1
+  fi
+  smoke_event_id=
+  smoke_user_id=
+  echo "submission-smoke-cleanup=ok"
+}
+
+submission_token="$(date +%s)-$$"
+smoke_event_name="上传冒烟-$submission_token"
+original_current_event_id="$(json_path 'let input="";process.stdin.on("data",chunk=>input+=chunk).on("end",()=>{const data=JSON.parse(input);const event=(data.rows||[]).find(item=>item.status === "published" && item.isCurrent && !item.archivedAt);if(event&&event.id)process.stdout.write(encodeURIComponent(event.id));});')"
+if test -z "$original_current_event_id"; then
+  echo "No current published event is available for submission smoke coverage" >&2
+  exit 1
+fi
+printf '{"name":"%s"}' "$smoke_event_name" | \
+assert_status "submission-event-copy" 201 \
+  -b "$cookie_jar" -H 'Content-Type: application/json' --data-binary @- \
+  "$base_url/api/admin/events/$original_current_event_id/copy"
+assert_json_response "submission-event-copy"
+smoke_event_id="$(json_path 'let input="";process.stdin.on("data",chunk=>input+=chunk).on("end",()=>{const data=JSON.parse(input);if(data.event&&data.event.id)process.stdout.write(encodeURIComponent(data.event.id));});')"
+smoke_project_id="$(json_path 'let input="";process.stdin.on("data",chunk=>input+=chunk).on("end",()=>{const data=JSON.parse(input);const project=(data.projects||[])[0];if(project&&project.id)process.stdout.write(encodeURIComponent(project.id));});')"
+if test -z "$smoke_event_id" || test -z "$smoke_project_id"; then
+  echo "Submission smoke fixture creation returned no event or project" >&2
+  exit 1
+fi
+assert_status "submission-event-current" 200 -b "$cookie_jar" -X POST \
+  "$base_url/api/admin/events/$smoke_event_id/current"
+printf '%s' '{"submissionMode":"image_video"}' | \
+assert_status "submission-project-mode" 200 \
+  -b "$cookie_jar" -H 'Content-Type: application/json' --data-binary @- \
+  -X PATCH "$base_url/api/admin/projects/$smoke_project_id"
+
+smoke_phone="1$(date +%s)"
+smoke_password="Smoke-${submission_token}!a"
+printf '{"name":"上传冒烟用户","phone":"%s","password":"%s","type":"ordinary"}' "$smoke_phone" "$smoke_password" | \
+assert_status "submission-user-create" 201 \
+  -b "$cookie_jar" -H 'Content-Type: application/json' --data-binary @- \
+  "$base_url/api/admin/users"
+assert_json_response "submission-user-create"
+smoke_user_id="$(json_path 'let input="";process.stdin.on("data",chunk=>input+=chunk).on("end",()=>{const data=JSON.parse(input);if(data.row&&data.row.id)process.stdout.write(encodeURIComponent(data.row.id));});')"
+smoke_cookie_jar="$work_dir/submission-user.cookies"
+printf '{"phone":"%s","password":"%s"}' "$smoke_phone" "$smoke_password" | \
+assert_status "submission-user-login" 200 \
+  -c "$smoke_cookie_jar" -H 'Content-Type: application/json' --data-binary @- \
+  "$base_url/api/auth/login"
+unset smoke_password
+
+png_file="$work_dir/submission-work.png"
+video_file="$work_dir/submission-work.mp4"
+printf '%s' 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACklEQVR42mNgAAAAAgAB4iG8MwAAAABJRU5ErkJggg==' | base64 -d > "$png_file"
+docker compose exec -T api ffmpeg -hide_banner -loglevel error -f lavfi -i color=c=black:s=16x16:r=1 \
+  -t 1 -c:v libx264 -movflags frag_keyframe+empty_moov -f mp4 pipe:1 > "$video_file"
+test -s "$png_file" && test -s "$video_file"
+
+assert_status "submission-session-create" 201 \
+  -b "$smoke_cookie_jar" -X POST \
+  "$base_url/api/me/events/$smoke_event_id/projects/$smoke_project_id/upload-sessions"
+assert_json_response "submission-session-create"
+submission_session_id="$(json_path 'let input="";process.stdin.on("data",chunk=>input+=chunk).on("end",()=>{const data=JSON.parse(input);if(data.row&&data.row.id)process.stdout.write(encodeURIComponent(data.row.id));});')"
+if test -z "$submission_session_id"; then
+  echo "Submission smoke session creation returned no session" >&2
+  exit 1
+fi
+assert_status "submission-image-upload" 201 \
+  -b "$smoke_cookie_jar" -X PUT -F "file=@$png_file;type=image/png" \
+  "$base_url/api/upload-sessions/$submission_session_id/artwork-image"
+assert_json_response "submission-image-upload"
+json_path 'let input="";process.stdin.on("data",chunk=>input+=chunk).on("end",()=>{const row=JSON.parse(input).row||{};if(Object.hasOwn(row,"filePath")||Object.hasOwn(row,"storedName"))process.exit(2);});' >/dev/null
+assert_status "submission-video-upload" 201 \
+  -b "$smoke_cookie_jar" -X PUT -F "file=@$video_file;type=video/mp4" \
+  "$base_url/api/upload-sessions/$submission_session_id/creation-video"
+assert_json_response "submission-video-upload"
+
+printf '{"projectId":"%s","athlete":{"name":"上传冒烟选手","school":"上传冒烟学校","grade":"五年级","phone":"%s"},"uploadSessionId":"%s"}' \
+  "$smoke_project_id" "$smoke_phone" "$submission_session_id" | \
+assert_status "submission-registration-bind" 201 \
+  -b "$smoke_cookie_jar" -H 'Content-Type: application/json' --data-binary @- \
+  "$base_url/api/me/events/$smoke_event_id/registrations"
+assert_json_response "submission-registration-bind"
+submission_registration_id="$(json_path 'let input="";process.stdin.on("data",chunk=>input+=chunk).on("end",()=>{const data=JSON.parse(input);if(data.row&&data.row.id)process.stdout.write(encodeURIComponent(data.row.id));});')"
+if test -z "$submission_registration_id"; then
+  echo "Submission smoke registration binding returned no registration" >&2
+  exit 1
+fi
+assert_status "submission-admin-summary" 200 \
+  -b "$cookie_jar" "$base_url/api/admin/events/$smoke_event_id/registrations"
+assert_json_response "submission-admin-summary"
+json_path 'let input="";process.stdin.on("data",chunk=>input+=chunk).on("end",()=>{const row=(JSON.parse(input).rows||[]).find(item=>item.submission&&item.submission.complete);if(!row)process.exit(2);});' >/dev/null
+assert_status "submission-private-unauthorized" 401 \
+  "$base_url/api/me/events/$smoke_event_id/registrations/$submission_registration_id/assets/artwork_image"
+
+cleanup_submission_smoke

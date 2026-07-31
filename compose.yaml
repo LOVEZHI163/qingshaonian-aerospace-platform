@@ -40,6 +40,9 @@ services:
       ALIYUN_SMS_TEMPLATE_CODE: ${ALIYUN_SMS_TEMPLATE_CODE:-}
       PUBLIC_SITE_URL: https://aerogp.cn
       UPLOAD_ROOT: /data/uploads
+      SUBMISSION_SESSION_TTL_MS: 86400000
+      UPLOAD_WARNING_PERCENT: 80
+      UPLOAD_CRITICAL_PERCENT: 90
       DATABASE_POOL_SIZE: 10
     volumes:
       - uploads_data:/data/uploads

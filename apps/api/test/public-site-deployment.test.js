@@ -96,6 +96,38 @@ test("nginx protects HTML and public media while caching immutable assets", asyn
   assert.match(nginx, /location \/\s*\{[\s\S]*\/index\.html/);
 });
 
+test("nginx streams only submission uploads with the enlarged request limit", async () => {
+  const nginx = await read("deploy/nginx.conf");
+  const uploadLocation = nginx.match(/location \^~ \/api\/upload-sessions\/\s*\{([\s\S]*?)\n  \}/)?.[1];
+  const genericApiLocation = nginx.match(/location \/api\/\s*\{([\s\S]*?)\n  \}/)?.[1];
+
+  assert.ok(uploadLocation, "submission upload location must precede the generic API location");
+  assert.ok(genericApiLocation, "generic API location must remain present");
+  assert.match(uploadLocation, /client_max_body_size 205m/);
+  assert.match(uploadLocation, /proxy_request_buffering off/);
+  assert.match(uploadLocation, /proxy_read_timeout 300s/);
+  assert.doesNotMatch(genericApiLocation, /205m|proxy_request_buffering off|proxy_read_timeout 300s/);
+  assert.ok(nginx.indexOf("location ^~ /api/upload-sessions/") < nginx.indexOf("location /api/"));
+});
+
+test("API enables submission-session expiry cleanup only in production", async () => {
+  const server = await read("apps/api/src/server.js");
+
+  assert.match(server, /import \{[^}]*startSubmissionSessionExpiryCleanup[^}]*\} from "\.\/services\/submission-assets\.js"/);
+  assert.match(server, /process\.env\.NODE_ENV === "production"[\s\S]*startSubmissionSessionExpiryCleanup\(\{ store: dataStore \}\)/);
+  assert.match(server, /stopSubmissionSessionExpiryCleanup\(\)/);
+});
+
+test("compose supplies upload session and disk-capacity thresholds to the API", async () => {
+  const compose = await read("compose.yaml");
+  const apiEnvironment = compose.match(/  api:\s*[\s\S]*?    environment:\s*([\s\S]*?)\n    volumes:/)?.[1];
+
+  assert.ok(apiEnvironment, "API environment must be discoverable from compose");
+  assert.match(apiEnvironment, /SUBMISSION_SESSION_TTL_MS:\s*86400000/);
+  assert.match(apiEnvironment, /UPLOAD_WARNING_PERCENT:\s*80/);
+  assert.match(apiEnvironment, /UPLOAD_CRITICAL_PERCENT:\s*90/);
+});
+
 test("nginx never makes unpublished media errors publicly cacheable", async () => {
   const nginx = await read("deploy/nginx.conf");
   const mediaLocation = nginx.match(/location \^~ \/api\/public\/media\/\s*\{([\s\S]*?)\n  \}/)?.[1];
@@ -148,7 +180,14 @@ test("remote smoke discovers public resources dynamically and checks admin autho
     "admin-registrations-event",
     "authenticated-site-settings",
     "authenticated-site-content",
-    "unauthenticated-site-settings"
+    "unauthenticated-site-settings",
+    "submission-event-copy",
+    "submission-session-create",
+    "submission-image-upload",
+    "submission-video-upload",
+    "submission-registration-bind",
+    "submission-admin-summary",
+    "submission-private-unauthorized"
   ];
   let last = -1;
   for (const label of labels) {
@@ -178,4 +217,9 @@ test("remote smoke discovers public resources dynamically and checks admin autho
   assert.doesNotMatch(smoke, /\/api\/public\/events\/(?:E\d+|[a-z0-9-]{4,})["']/i);
   assert.doesNotMatch(smoke, /set -[^\r\n]*x/);
   assert.doesNotMatch(smoke, /echo[^\r\n]*(?:password|cookie)|cat[^\r\n]*(?:cookie|response)/i);
+  assert.match(smoke, /base64 -d/);
+  assert.match(smoke, /docker compose exec -T api ffmpeg/);
+  assert.match(smoke, /cleanup_submission_smoke\(\)/);
+  assert.match(smoke, /smoke_password="Smoke-\$\{submission_token\}/);
+  assert.doesNotMatch(smoke, /SmokeSubmission!2026/);
 });

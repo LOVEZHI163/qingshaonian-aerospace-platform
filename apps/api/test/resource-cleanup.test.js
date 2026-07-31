@@ -37,6 +37,7 @@ async function writeFixture(dbPath, tempDir) {
     targetCertificate: path.join(uploadRoot, "certificates", "old.png"),
     otherCertificate: path.join(uploadRoot, "certificates", "other.png"),
     targetImport: path.join(uploadRoot, "import-staging", "B-OLD", "7-1.png"),
+    targetSubmission: path.join(uploadRoot, "submission-assets", "SA-OLD", "work.png"),
     credential: path.join(uploadRoot, "organization-credentials", "O1002", "license.pdf")
   };
   await Promise.all(Object.values(paths).map((filePath) => fs.mkdir(path.dirname(filePath), { recursive: true })));
@@ -44,6 +45,7 @@ async function writeFixture(dbPath, tempDir) {
     fs.writeFile(paths.targetCertificate, Buffer.alloc(11)),
     fs.writeFile(paths.otherCertificate, Buffer.alloc(13)),
     fs.writeFile(paths.targetImport, Buffer.alloc(17)),
+    fs.writeFile(paths.targetSubmission, Buffer.alloc(23)),
     fs.writeFile(paths.credential, Buffer.alloc(19))
   ]);
 
@@ -73,6 +75,15 @@ async function writeFixture(dbPath, tempDir) {
     id: "B-OLD", eventId: "E-OLD", createdBy: "U9001", originalName: "old.xlsx", status: "preview",
     previewJson: [{ rowNumber: 7, certificates: [{ slot: 1, relativePath: "7-1.png" }] }],
     validCount: 1, errorCount: 0, replaceCount: 0, createdAt: "2026-01-01T00:00:00.000Z", committedAt: null
+  });
+  db.registrationUploadSessions.push({
+    id: "US-OLD", eventId: "E-OLD", projectId: "P-OLD", ownerUserId: "U1001", organizationId: null,
+    state: "committed", createdAt: "2026-01-01T00:00:00.000Z", expiresAt: "2026-01-02T00:00:00.000Z", committedAt: "2026-01-01T00:00:00.000Z"
+  });
+  db.registrationSubmissionAssets.push({
+    id: "SA-OLD", registrationId: "R-OLD", uploadSessionId: "US-OLD", kind: "artwork_image", originalName: "work.png",
+    storedName: "work.png", filePath: paths.targetSubmission, mimeType: "image/png", sizeBytes: 23, width: 1, height: 1,
+    durationMs: null, uploadedByUserId: "U1001", uploadedAt: "2026-01-01T00:00:00.000Z", cleanedAt: null, cleanupReason: ""
   });
   db.organizationDocuments.push({
     id: "DOC-CLEANUP", organizationId: "O1002", documentType: "business_license", originalName: "license.pdf",
@@ -106,6 +117,7 @@ test("resource cleanup summarizes and cleans only archived event attachments", a
     assert.deepEqual(cleanup.failedFiles, []);
     assert.equal(await exists(fixture.paths.targetCertificate), false);
     assert.equal(await exists(fixture.paths.targetImport), false);
+    assert.equal(await exists(fixture.paths.targetSubmission), true);
     assert.equal(await exists(fixture.paths.otherCertificate), true);
     assert.equal(await exists(fixture.paths.credential), true);
 
@@ -213,6 +225,7 @@ test("resource cleanup thoroughly deletes only a confirmed non-current archived 
     assert.deepEqual(deleted.failedFiles, []);
     assert.equal(await exists(fixture.paths.targetCertificate), false);
     assert.equal(await exists(fixture.paths.targetImport), false);
+    assert.equal(await exists(fixture.paths.targetSubmission), false);
     assert.equal(await exists(fixture.paths.otherCertificate), true);
     assert.equal(await exists(fixture.paths.credential), true);
 
@@ -224,6 +237,8 @@ test("resource cleanup thoroughly deletes only a confirmed non-current archived 
     assert.equal(persisted.registrations.some((row) => row.eventId === "E-OLD"), false);
     assert.equal(persisted.certificates.some((row) => row.id === "C-OLD"), false);
     assert.equal(persisted.certificateImportBatches.some((row) => row.eventId === "E-OLD"), false);
+    assert.equal(persisted.registrationUploadSessions.some((row) => row.eventId === "E-OLD"), false);
+    assert.equal(persisted.registrationSubmissionAssets.some((row) => row.id === "SA-OLD"), false);
     assert.equal(persisted.users.length, fixture.before.users);
     assert.equal(persisted.organizations.length, fixture.before.organizations);
     assert.equal(persisted.memberships.length, fixture.before.memberships);

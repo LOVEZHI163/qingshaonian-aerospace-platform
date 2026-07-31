@@ -1,5 +1,40 @@
 # Task 9：组织多赛事工作台交付报告
 
+## Phase 2 Task 9：作品上传网关、过期清理与部署冒烟（2026-07-31）
+
+### 状态
+
+已完成本地实现和验证，未执行任何线上部署。
+
+### 交付
+
+- Nginx 在通用 `/api/` 前新增精确的 `/api/upload-sessions/` 位置：仅该位置使用 `client_max_body_size 205m`、`proxy_request_buffering off` 和 300 秒读超时；通用接口仍为 30MB/60 秒。
+- Compose 为 API 固定提供临时会话 24 小时 TTL、80% 磁盘预警、90% 视频拒绝阈值。
+- `cleanupExpiredSubmissionSessions()` 在存储互斥锁内执行：仅将已过期的 `active` 会话变为 `expired`；状态和资产元数据先持久化，再删除受控目录中的未绑定文件。已绑定、未过期或已提交会话不受影响；物理删除失败会安全写入 `file_cleanup_journal`。
+- 生产 API 启动时执行一次清理，并启动 `unref()` 的定时器；关闭时停止定时器，测试环境不启动该计时器。
+- 删除非当前归档赛事时同时清理其作品材料与上传会话，避免隔离 smoke 夹具遗留数据库记录或物理文件。
+- 远程 smoke 生成小 PNG 与由 API 容器 ffmpeg 生成的短 MP4，使用复制的隔离赛事完成真实会话、双文件上传、报名绑定、管理员材料汇总及匿名私有读取 401 验证；正常或中断路径均尝试恢复原当前赛事并清理临时资源，且不输出密码、Cookie、响应正文或服务器路径。
+
+### 红绿记录
+
+- 先新增过期清理测试，因 `cleanupExpiredSubmissionSessions` 尚不存在而失败；实现后覆盖 active/expired、current、committed、已绑定材料和删除失败日志。
+- 先新增网关/Compose/生产启动契约测试，分别在位置、环境变量和启动接线缺失时失败；实现后通过。
+- 先新增定时器测试，验证启动立即执行一次、计时器 `unref()`、并可停止。
+- 为 smoke 资源清理先新增归档赛事删除回归，初始失败于遗留作品文件；实现受控作品删除后通过。
+- 为避免脚本内固定临时密码，先新增 smoke 安全契约并确认失败；改为基于运行时 token 派生的短寿命密码后通过。
+
+### 验证摘要
+
+- `node --test apps/api/test/submission-assets.test.js`：14 通过。
+- `node --test apps/api/test/public-site-deployment.test.js`：10 通过。
+- `node --test apps/api/test/resource-cleanup.test.js`：5 通过。
+- `wsl.exe -d Ubuntu -- sh -n deploy/remote-smoke-test.sh`：通过。
+
+### 范围账本
+
+- Migration 009 已包含将历史组织会话回填为 `organization` 的 SQL，本轮未重复修改。
+- 审核抽屉的 missing marker reset/focus 不属于本任务的网关、清理和部署脚本范围，未扩展修改。
+
 ## 交付
 
 - 提交：`fc14590 feat: add organization event workspace`

@@ -20,6 +20,7 @@ import { createPublicSiteRouter } from "./routes/public-site.js";
 import { createAccountEventsRouter } from "./routes/account-events.js";
 import { createSystemRouter } from "./routes/system.js";
 import { createSubmissionAssetsRouter } from "./routes/submission-assets.js";
+import { startSubmissionSessionExpiryCleanup } from "./services/submission-assets.js";
 import { registrationContext } from "./services/events.js";
 import { replayFileCleanupJournal } from "./services/organizations.js";
 import { organizationForOwner, requireOrdinaryUser, requireOrganizationOwner } from "./services/access-control.js";
@@ -588,6 +589,9 @@ await dataStore.initialize();
 await cleanupExpiredCertificateImportPreviews({ store: dataStore, makeId: id, now });
 await replayFileCleanupJournal({ store: dataStore, now });
 const stopScheduledContentPublisher = startScheduledContentPublisher({ store: dataStore });
+const stopSubmissionSessionExpiryCleanup = process.env.NODE_ENV === "production"
+  ? startSubmissionSessionExpiryCleanup({ store: dataStore })
+  : () => {};
 
 const server = app.listen(PORT, () => {
   console.log(`API listening on http://localhost:${server.address().port}`);
@@ -595,6 +599,7 @@ const server = app.listen(PORT, () => {
 
 async function shutdown() {
   stopScheduledContentPublisher();
+  stopSubmissionSessionExpiryCleanup();
   server.close(async () => {
     await dataStore.close();
   });
