@@ -3,6 +3,7 @@ import { isRegistrationOpen } from "../domain/registration-window.js";
 import { businessError, projectForHistoricalRegistration, publishedRegistrationEvent, registrationContext } from "./events.js";
 import { recordAudit } from "./audit.js";
 import { requireOrdinaryUser, requireOrganizationEventParticipation, requireWritableEvent } from "./access-control.js";
+import { withRegistrationSubmission } from "./submission-assets.js";
 
 function normalizeText(value) {
   return String(value || "").trim().replace(/\s+/g, "").toLowerCase();
@@ -236,7 +237,7 @@ export function listAdminRegistrations(db, query, clock = () => new Date()) {
   let rows = filterAdminRegistrations(db, query);
   const total = rows.length;
   rows = rows.slice((page - 1) * pageSize, page * pageSize).map((row) => ({
-    ...row,
+    ...withRegistrationSubmission(db, row),
     grade: row.athlete?.grade || ""
   }));
   return { rows, total, page, pageSize, refreshedAt: clock().toISOString() };

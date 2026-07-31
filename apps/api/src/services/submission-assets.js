@@ -1,8 +1,13 @@
 import { isRegistrationOpen } from "../domain/registration-window.js";
 import { businessError } from "./events.js";
 import { requireOrganizationEventParticipation, requireOrdinaryUser, requireWritableEvent } from "./access-control.js";
+import { recordAudit } from "./audit.js";
 
 export const SUBMISSION_ASSET_KINDS = new Set(["artwork_image", "creation_video"]);
+const SUBMISSION_ASSET_LABELS = {
+  artwork_image: "作品图片",
+  creation_video: "作画视频"
+};
 const SESSION_TTL_MS = Number(process.env.SUBMISSION_SESSION_TTL_MS || 86_400_000);
 
 function timestamp(now) {
@@ -49,6 +54,34 @@ export function submissionAssetSummary(asset) {
     cleanupReason: asset.cleanupReason || "",
     warnings: Array.isArray(asset.warnings) ? asset.warnings : []
   };
+}
+
+function registrationAssetSummary(asset) {
+  if (!asset) return null;
+  const { id: _id, ...summary } = submissionAssetSummary(asset);
+  return summary;
+}
+
+export function registrationSubmissionSummary(db, registration) {
+  const project = db.projects.find((row) => row.id === registration.projectId && row.eventId === registration.eventId);
+  if (project?.submissionMode !== "image_video") return null;
+  const byKind = new Map(
+    db.registrationSubmissionAssets
+      .filter((asset) => asset.registrationId === registration.id)
+      .map((asset) => [asset.kind, asset])
+  );
+  const assets = {
+    artwork_image: registrationAssetSummary(byKind.get("artwork_image")),
+    creation_video: registrationAssetSummary(byKind.get("creation_video"))
+  };
+  const complete = [...SUBMISSION_ASSET_KINDS].every((kind) => assets[kind] && !assets[kind].cleanedAt);
+  const warnings = [...new Set(Object.values(assets).flatMap((asset) => asset?.warnings || []))];
+  return { required: true, complete, warnings, assets };
+}
+
+export function withRegistrationSubmission(db, registration) {
+  const submission = registrationSubmissionSummary(db, registration);
+  return submission ? { ...registration, submission } : registration;
 }
 
 export function uploadSessionSummary(db, session) {
@@ -110,6 +143,149 @@ export function requireUploadSessionAccess({ db, sessionId, actor, channel, now,
   if (session.state !== "active") throw businessError(409, "上传会话已提交或不可用", "UPLOAD_SESSION_NOT_ACTIVE");
   if (sessionIsExpired(session, now)) throw businessError(409, "上传会话已过期", "UPLOAD_SESSION_EXPIRED");
   return session;
+}
+
+export function commitUploadSession({ db, sessionId, registration, actor, channel, now }) {
+  const session = db.registrationUploadSessions.find((row) => row.id === sessionId);
+  if (!session) throw businessError(422, "请先创建上传会话", "UPLOAD_SESSION_REQUIRED");
+  if (session.ownerUserId !== actor?.id) {
+    throw businessError(403, "无权使用该上传会话", "UPLOAD_SESSION_FORBIDDEN");
+  }
+  if (channel === "personal") {
+    requireOrdinaryUser(actor);
+    if (session.organizationId || registration.personalUserId !== actor.id) {
+      throw businessError(403, "上传会话与个人报名不匹配", "UPLOAD_SESSION_FORBIDDEN");
+    }
+  } else if (channel === "organization") {
+    const { organization } = requireOrganizationEventParticipation(db, actor, session.eventId, { writable: true });
+    if (session.organizationId !== organization.id || registration.organizationId !== organization.id) {
+      throw businessError(403, "上传会话与组织报名不匹配", "UPLOAD_SESSION_FORBIDDEN");
+    }
+  } else {
+    throw businessError(422, "报名渠道不合法", "SUBMISSION_CHANNEL_INVALID");
+  }
+  if (session.eventId !== registration.eventId || session.projectId !== registration.projectId) {
+    throw businessError(422, "上传会话与报名赛项不匹配", "UPLOAD_SESSION_SCOPE_MISMATCH");
+  }
+  if (session.state !== "active") {
+    throw businessError(409, "上传会话已提交或不可用", "UPLOAD_SESSION_NOT_ACTIVE");
+  }
+  if (sessionIsExpired(session, now)) {
+    throw businessError(409, "上传会话已过期", "UPLOAD_SESSION_EXPIRED");
+  }
+  const assets = db.registrationSubmissionAssets.filter((asset) => (
+    asset.uploadSessionId === session.id && !asset.registrationId && !asset.cleanedAt
+  ));
+  const byKind = new Map(assets.map((asset) => [asset.kind, asset]));
+  const missing = [...SUBMISSION_ASSET_KINDS].filter((kind) => !byKind.has(kind));
+  if (missing.length) {
+    throw businessError(422, `缺少必传作品材料：${missing.map((kind) => SUBMISSION_ASSET_LABELS[kind]).join("、")}`, "SUBMISSION_ASSETS_INCOMPLETE");
+  }
+  for (const kind of SUBMISSION_ASSET_KINDS) byKind.get(kind).registrationId = registration.id;
+  session.state = "committed";
+  session.committedAt = timestamp(now);
+  return session;
+}
+
+export function replacementSessionAsset({ db, sessionId, registration, kind, actor, channel, now }) {
+  validKind(kind);
+  let session;
+  if (channel === "admin") {
+    session = db.registrationUploadSessions.find((row) => row.id === sessionId);
+    if (!session) throw businessError(404, "上传会话不存在", "UPLOAD_SESSION_NOT_FOUND");
+    eventProject(db, session.eventId, session.projectId);
+    if (session.state !== "active") throw businessError(409, "上传会话已提交或不可用", "UPLOAD_SESSION_NOT_ACTIVE");
+    if (sessionIsExpired(session, now)) throw businessError(409, "上传会话已过期", "UPLOAD_SESSION_EXPIRED");
+  } else {
+    session = requireUploadSessionAccess({ db, sessionId, actor, channel, now, kind });
+  }
+  if (session.eventId !== registration.eventId || session.projectId !== registration.projectId) {
+    throw businessError(422, "上传会话与报名赛项不匹配", "UPLOAD_SESSION_SCOPE_MISMATCH");
+  }
+  const asset = db.registrationSubmissionAssets.find((row) => (
+    row.uploadSessionId === session.id && row.kind === kind && !row.registrationId && !row.cleanedAt
+  ));
+  if (!asset) throw businessError(422, "上传会话缺少待替换的作品材料", "SUBMISSION_REPLACEMENT_ASSET_MISSING");
+  return { session, asset };
+}
+
+export function replaceRegistrationAsset({ db, registration, kind, uploadedAsset, actor, channel, now }) {
+  validKind(kind);
+  const current = db.registrationSubmissionAssets.find((asset) => (
+    asset.registrationId === registration.id && asset.kind === kind
+  ));
+  if (!current) throw businessError(404, "报名作品材料不存在", "SUBMISSION_ASSET_NOT_FOUND");
+  if (!uploadedAsset || uploadedAsset.kind !== kind || uploadedAsset.registrationId || uploadedAsset.cleanedAt) {
+    throw businessError(422, "替换作品材料无效", "SUBMISSION_REPLACEMENT_ASSET_INVALID");
+  }
+  if (!db.registrationSubmissionAssets.includes(uploadedAsset)) {
+    throw businessError(422, "替换作品材料不存在", "SUBMISSION_REPLACEMENT_ASSET_INVALID");
+  }
+
+  if (channel === "personal") {
+    requireOrdinaryUser(actor);
+    if (registration.personalUserId !== actor.id) {
+      throw businessError(403, "无权替换该报名作品材料", "REGISTRATION_ASSET_FORBIDDEN");
+    }
+    if (!new Set(["pending", "rejected"]).has(registration.status)) {
+      throw businessError(403, "已通过报名不可由个人替换作品材料", "REGISTRATION_ASSET_APPROVED_READONLY");
+    }
+  } else if (channel === "organization") {
+    const { organization } = requireOrganizationEventParticipation(db, actor, registration.eventId, { writable: true });
+    if (registration.organizationId !== organization.id) {
+      throw businessError(403, "无权替换其他组织的报名作品材料", "REGISTRATION_ASSET_FORBIDDEN");
+    }
+  } else if (channel !== "admin") {
+    throw businessError(422, "替换渠道不合法", "SUBMISSION_CHANNEL_INVALID");
+  }
+
+  const timestampValue = timestamp(now);
+  const previous = structuredClone(current);
+  const sourceIndex = db.registrationSubmissionAssets.indexOf(uploadedAsset);
+  const registrationBefore = { status: registration.status, rejectReason: registration.rejectReason, updatedAt: registration.updatedAt };
+  Object.assign(current, {
+    id: uploadedAsset.id,
+    originalName: uploadedAsset.originalName,
+    storedName: uploadedAsset.storedName,
+    filePath: uploadedAsset.filePath,
+    mimeType: uploadedAsset.mimeType,
+    sizeBytes: uploadedAsset.sizeBytes,
+    width: uploadedAsset.width,
+    height: uploadedAsset.height,
+    durationMs: uploadedAsset.durationMs,
+    warnings: [...(uploadedAsset.warnings || [])],
+    uploadedByUserId: actor.id,
+    uploadedAt: timestampValue,
+    cleanedAt: null,
+    cleanupReason: ""
+  });
+  db.registrationSubmissionAssets.splice(sourceIndex, 1);
+  if ((channel === "organization" || channel === "admin") && registration.status === "approved") {
+    registration.status = "pending";
+    registration.rejectReason = "";
+    registration.updatedAt = timestampValue;
+  }
+  recordAudit(db, {
+    actor,
+    action: "registration.asset.replace",
+    targetType: "registration",
+    targetId: registration.id,
+    summary: `替换报名 ${registration.id} 的 ${kind} 作品材料`,
+    createdAt: timestampValue
+  });
+  return {
+    asset: current,
+    previous,
+    rollback() {
+      Object.assign(current, previous);
+      db.registrationSubmissionAssets.splice(sourceIndex, 0, uploadedAsset);
+      Object.assign(registration, registrationBefore);
+      const audit = db.auditLogs.find((row) => (
+        row.targetId === registration.id && row.action === "registration.asset.replace" && row.createdAt === timestampValue
+      ));
+      if (audit) db.auditLogs.splice(db.auditLogs.indexOf(audit), 1);
+    }
+  };
 }
 
 export function replaceSessionAsset({ db, session, kind, stored, actor, now, makeId }) {

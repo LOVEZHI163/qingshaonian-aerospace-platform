@@ -1,0 +1,355 @@
+import assert from "node:assert/strict";
+import fs from "node:fs/promises";
+import path from "node:path";
+import test from "node:test";
+import express from "express";
+
+import { createRegistrationsRouter } from "../src/routes/registrations.js";
+import { withTestServer } from "../test-support/server.js";
+import { loginAs, withSession } from "./helpers/api-client.js";
+
+const EVENT_ID = "wz-aerospace-2026";
+const PROJECT_ID = "aviation-painting";
+
+async function mutateDb(dbPath, mutate) {
+  const db = JSON.parse(await fs.readFile(dbPath, "utf8"));
+  mutate(db);
+  await fs.writeFile(dbPath, JSON.stringify(db, null, 2), "utf8");
+}
+
+function registrationInput(overrides = {}) {
+  return {
+    athlete: { name: "素材校验学生", school: "测试学校", grade: "五年级", phone: "13600005001" },
+    projectId: PROJECT_ID,
+    ...overrides
+  };
+}
+
+function session(id, overrides = {}) {
+  return {
+    id, eventId: EVENT_ID, projectId: PROJECT_ID, ownerUserId: "U1001", organizationId: null,
+    state: "active", createdAt: "2026-07-31T00:00:00.000Z", expiresAt: "2030-01-01T00:00:00.000Z", committedAt: null,
+    ...overrides
+  };
+}
+
+function asset(id, uploadSessionId, kind, overrides = {}) {
+  return {
+    id, registrationId: null, uploadSessionId, kind, originalName: `${kind}.png`, storedName: `${id}.bin`,
+    filePath: `C:\\private\\${id}.bin`, mimeType: kind === "artwork_image" ? "image/png" : "video/mp4",
+    sizeBytes: 100, width: 800, height: 720, durationMs: kind === "artwork_image" ? null : 1_000,
+    uploadedByUserId: "U1001", uploadedAt: "2026-07-31T00:00:00.000Z", cleanedAt: null, cleanupReason: "",
+    warnings: [], ...overrides
+  };
+}
+
+async function writeAssetFile(assetRecord) {
+  await fs.mkdir(path.dirname(assetRecord.filePath), { recursive: true });
+  await fs.writeFile(assetRecord.filePath, "submission-file");
+}
+
+async function withRouter(router, fn) {
+  const app = express();
+  app.use(express.json());
+  app.use("/api", router);
+  app.use((error, _req, res, _next) => res.status(error.status || 500).json({ error: error.message, code: error.code }));
+  const server = await new Promise((resolve) => {
+    const listening = app.listen(0, "127.0.0.1", () => resolve(listening));
+  });
+  try {
+    await fn(`http://127.0.0.1:${server.address().port}`);
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
+}
+
+test("image-video registration requires an upload session", async () => {
+  await withTestServer(async ({ baseUrl, dbPath }) => {
+    const ordinary = await loginAs(baseUrl, "13800000001", "123456");
+    await mutateDb(dbPath, (db) => {
+      db.events[0].registrationMode = "force_open";
+      db.projects.find((project) => project.id === PROJECT_ID).submissionMode = "image_video";
+    });
+
+    const response = await fetch(`${baseUrl}/api/me/events/${EVENT_ID}/registrations`, withSession(ordinary.cookie, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(registrationInput())
+    }));
+
+    assert.equal(response.status, 422);
+    assert.match((await response.json()).error, /上传会话|作品材料/);
+  }, { prefix: "submission-auth-" });
+});
+
+test("ordinary projects retain the JSON registration flow without an upload session", async () => {
+  await withTestServer(async ({ baseUrl, dbPath }) => {
+    const ordinary = await loginAs(baseUrl, "13800000001", "123456");
+    await mutateDb(dbPath, (db) => { db.events[0].registrationMode = "force_open"; });
+    const response = await fetch(`${baseUrl}/api/me/events/${EVENT_ID}/registrations`, withSession(ordinary.cookie, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(registrationInput({
+        athlete: { name: "普通赛项学生", school: "测试学校", grade: "五年级", phone: "13600005002" },
+        projectId: "paper-plane-gate"
+      }))
+    }));
+    assert.equal(response.status, 201);
+    const payload = await response.json();
+    assert.equal(payload.row.projectId, "paper-plane-gate");
+    assert.equal(Object.hasOwn(payload.row, "submission"), false);
+  }, { prefix: "submission-auth-" });
+});
+
+test("image-video registration names the missing required material and leaves its session reusable", async () => {
+  await withTestServer(async ({ baseUrl, dbPath }) => {
+    const ordinary = await loginAs(baseUrl, "13800000001", "123456");
+    await mutateDb(dbPath, (db) => {
+      db.events[0].registrationMode = "force_open";
+      db.projects.find((project) => project.id === PROJECT_ID).submissionMode = "image_video";
+      db.registrationUploadSessions.push(session("US-image-only"));
+      db.registrationSubmissionAssets.push(asset("SA-image-only", "US-image-only", "artwork_image"));
+    });
+
+    const response = await fetch(`${baseUrl}/api/me/events/${EVENT_ID}/registrations`, withSession(ordinary.cookie, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(registrationInput({ uploadSessionId: "US-image-only" }))
+    }));
+
+    assert.equal(response.status, 422);
+    assert.match((await response.json()).error, /作画视频/);
+    const db = JSON.parse(await fs.readFile(dbPath, "utf8"));
+    assert.equal(db.registrationUploadSessions.find((row) => row.id === "US-image-only").state, "active");
+    assert.equal(db.registrationSubmissionAssets.find((row) => row.id === "SA-image-only").registrationId, null);
+  }, { prefix: "submission-auth-" });
+});
+
+test("committing a complete image-video session binds both assets and returns only safe submission fields", async () => {
+  await withTestServer(async ({ baseUrl, dbPath }) => {
+    const ordinary = await loginAs(baseUrl, "13800000001", "123456");
+    await mutateDb(dbPath, (db) => {
+      db.events[0].registrationMode = "force_open";
+      db.projects.find((project) => project.id === PROJECT_ID).submissionMode = "image_video";
+      db.registrationUploadSessions.push(session("US-complete"));
+      db.registrationSubmissionAssets.push(
+        asset("SA-image", "US-complete", "artwork_image"),
+        asset("SA-video", "US-complete", "creation_video", { warnings: ["建议提高视频分辨率"] })
+      );
+    });
+
+    const response = await fetch(`${baseUrl}/api/me/events/${EVENT_ID}/registrations`, withSession(ordinary.cookie, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(registrationInput({ uploadSessionId: "US-complete" }))
+    }));
+
+    assert.equal(response.status, 201);
+    const payload = await response.json();
+    assert.deepEqual(payload.row.submission, {
+      required: true,
+      complete: true,
+      warnings: ["建议提高视频分辨率"],
+      assets: {
+        artwork_image: {
+          kind: "artwork_image", originalName: "artwork_image.png", mimeType: "image/png", sizeBytes: 100,
+          width: 800, height: 720, durationMs: null, uploadedAt: "2026-07-31T00:00:00.000Z", cleanedAt: null,
+          cleanupReason: "", warnings: []
+        },
+        creation_video: {
+          kind: "creation_video", originalName: "creation_video.png", mimeType: "video/mp4", sizeBytes: 100,
+          width: 800, height: 720, durationMs: 1_000, uploadedAt: "2026-07-31T00:00:00.000Z", cleanedAt: null,
+          cleanupReason: "", warnings: ["建议提高视频分辨率"]
+        }
+      }
+    });
+    assert.doesNotMatch(JSON.stringify(payload), /filePath|storedName|C:\\private/);
+
+    const db = JSON.parse(await fs.readFile(dbPath, "utf8"));
+    assert.equal(db.registrationUploadSessions.find((row) => row.id === "US-complete").state, "committed");
+    assert.equal(db.registrationSubmissionAssets.every((row) => row.registrationId === payload.row.id), true);
+
+    const secondCommit = await fetch(`${baseUrl}/api/me/events/${EVENT_ID}/registrations`, withSession(ordinary.cookie, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(registrationInput({
+        uploadSessionId: "US-complete",
+        athlete: { name: "不可复用会话学生", school: "测试学校", grade: "五年级", phone: "13600005003" }
+      }))
+    }));
+    assert.equal(secondCommit.status, 409);
+    const afterSecondCommit = JSON.parse(await fs.readFile(dbPath, "utf8"));
+    assert.equal(afterSecondCommit.registrations.some((row) => row.athlete?.name === "不可复用会话学生"), false);
+  }, { prefix: "submission-auth-" });
+});
+
+test("administrator replacement switches the registration asset, resets approval, and audits without exposing storage paths", async () => {
+  await withTestServer(async ({ baseUrl, dbPath, tempDir }) => {
+    const admin = await loginAs(baseUrl, "13900000000", "admin123");
+    const oldAsset = asset("SA-old", "US-old", "artwork_image", {
+      registrationId: "R20260627001", storedName: "old.png",
+      filePath: path.join(tempDir, "uploads", "submission-assets", "SA-old", "old.png")
+    });
+    const replacement = asset("SA-replacement", "US-replacement", "artwork_image", {
+      storedName: "replacement.png",
+      filePath: path.join(tempDir, "uploads", "submission-assets", "SA-replacement", "replacement.png")
+    });
+    await writeAssetFile(oldAsset);
+    await writeAssetFile(replacement);
+    await mutateDb(dbPath, (db) => {
+      db.events[0].registrationMode = "force_open";
+      db.projects.find((project) => project.id === "paper-plane-gate").submissionMode = "image_video";
+      db.registrations.find((row) => row.id === "R20260627001").status = "approved";
+      db.registrationUploadSessions.push(session("US-replacement", { projectId: "paper-plane-gate" }));
+      db.registrationSubmissionAssets.push(oldAsset, replacement);
+    });
+
+    const response = await fetch(`${baseUrl}/api/admin/events/${EVENT_ID}/registrations/R20260627001/assets/artwork_image`, withSession(admin.cookie, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ uploadSessionId: "US-replacement" })
+    }));
+
+    assert.equal(response.status, 200);
+    const payload = await response.json();
+    assert.equal(payload.registration.status, "pending");
+    assert.equal(payload.row.originalName, "artwork_image.png");
+    assert.doesNotMatch(JSON.stringify(payload), /filePath|storedName|submission-assets/);
+    await assert.rejects(fs.access(oldAsset.filePath), { code: "ENOENT" });
+    assert.deepEqual(await fs.readFile(replacement.filePath), Buffer.from("submission-file"));
+    const db = JSON.parse(await fs.readFile(dbPath, "utf8"));
+    assert.equal(db.auditLogs.some((row) => row.action === "registration.asset.replace" && row.targetId === "R20260627001"), true);
+  }, { prefix: "submission-auth-" });
+});
+
+test("organization owner may replace its approved asset but cannot replace another organization asset", async () => {
+  await withTestServer(async ({ baseUrl, dbPath, tempDir }) => {
+    const admin = await loginAs(baseUrl, "13900000000", "admin123");
+    const owner = await loginAs(baseUrl, "13800000012", "123456");
+    const otherOwner = await loginAs(baseUrl, "13800000011", "123456");
+    const oldAsset = asset("SA-org-old", "US-org-old", "artwork_image", {
+      registrationId: "R20260627002", storedName: "old.png",
+      filePath: path.join(tempDir, "uploads", "submission-assets", "SA-org-old", "old.png")
+    });
+    const replacement = asset("SA-org-replacement", "US-org-replacement", "artwork_image", {
+      uploadSessionId: "US-org-replacement", storedName: "replacement.png",
+      filePath: path.join(tempDir, "uploads", "submission-assets", "SA-org-replacement", "replacement.png"),
+      uploadedByUserId: "U2002"
+    });
+    const crossOrganizationSource = asset("SA-other-org", "US-other-org", "artwork_image", {
+      uploadSessionId: "US-other-org", storedName: "other.png",
+      filePath: path.join(tempDir, "uploads", "submission-assets", "SA-other-org", "other.png"),
+      uploadedByUserId: "U2001"
+    });
+    await Promise.all([writeAssetFile(oldAsset), writeAssetFile(replacement), writeAssetFile(crossOrganizationSource)]);
+    await mutateDb(dbPath, (db) => {
+      db.events[0].registrationMode = "force_open";
+      db.projects.find((project) => project.id === "drone-relay").submissionMode = "image_video";
+      db.registrationUploadSessions.push(
+        session("US-org-replacement", { projectId: "drone-relay", ownerUserId: "U2002", organizationId: "O1002" }),
+        session("US-other-org", { projectId: "drone-relay", ownerUserId: "U2001", organizationId: "O1001" })
+      );
+      db.registrationSubmissionAssets.push(oldAsset, replacement, crossOrganizationSource);
+    });
+    for (const cookie of [owner.cookie, otherOwner.cookie]) {
+      const joined = await fetch(`${baseUrl}/api/organization/events/${EVENT_ID}/join`, withSession(cookie, { method: "POST" }));
+      assert.equal(joined.status, 201);
+    }
+
+    const ownResponse = await fetch(`${baseUrl}/api/organization/events/${EVENT_ID}/registrations/R20260627002/assets/artwork_image`, withSession(owner.cookie, {
+      method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ uploadSessionId: "US-org-replacement" })
+    }));
+    assert.equal(ownResponse.status, 200);
+    assert.equal((await ownResponse.json()).registration.status, "pending");
+
+    const crossResponse = await fetch(`${baseUrl}/api/organization/events/${EVENT_ID}/registrations/R20260627002/assets/artwork_image`, withSession(otherOwner.cookie, {
+      method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ uploadSessionId: "US-other-org" })
+    }));
+    assert.equal(crossResponse.status, 403);
+    const db = JSON.parse(await fs.readFile(dbPath, "utf8"));
+    assert.equal(db.registrationSubmissionAssets.find((row) => row.registrationId === "R20260627002").id, "SA-org-replacement");
+    assert.equal(db.registrationSubmissionAssets.find((row) => row.id === "SA-other-org").registrationId, null);
+    await assert.doesNotReject(fs.access(replacement.filePath));
+  }, { prefix: "submission-auth-" });
+});
+
+test("rejected personal registration can replace its material, while a rejected replacement source leaves the old file and row intact", async () => {
+  await withTestServer(async ({ baseUrl, dbPath, tempDir }) => {
+    const ordinary = await loginAs(baseUrl, "13800000001", "123456");
+    const oldAsset = asset("SA-personal-old", "US-personal-old", "artwork_image", {
+      registrationId: "R20260627001", storedName: "old.png",
+      filePath: path.join(tempDir, "uploads", "submission-assets", "SA-personal-old", "old.png")
+    });
+    const replacement = asset("SA-personal-replacement", "US-personal-replacement", "artwork_image", {
+      storedName: "replacement.png",
+      filePath: path.join(tempDir, "uploads", "submission-assets", "SA-personal-replacement", "replacement.png")
+    });
+    await Promise.all([writeAssetFile(oldAsset), writeAssetFile(replacement)]);
+    await mutateDb(dbPath, (db) => {
+      db.events[0].registrationMode = "force_open";
+      db.projects.find((project) => project.id === "paper-plane-gate").submissionMode = "image_video";
+      const registration = db.registrations.find((row) => row.id === "R20260627001");
+      registration.status = "rejected";
+      db.registrationUploadSessions.push(
+        session("US-personal-replacement", { projectId: "paper-plane-gate" }),
+        session("US-invalid-source", { projectId: "paper-plane-gate" })
+      );
+      db.registrationSubmissionAssets.push(oldAsset, replacement);
+    });
+
+    const replacementResponse = await fetch(`${baseUrl}/api/me/events/${EVENT_ID}/registrations/R20260627001/assets/artwork_image`, withSession(ordinary.cookie, {
+      method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ uploadSessionId: "US-personal-replacement" })
+    }));
+    assert.equal(replacementResponse.status, 200);
+
+    const invalidResponse = await fetch(`${baseUrl}/api/me/events/${EVENT_ID}/registrations/R20260627001/assets/artwork_image`, withSession(ordinary.cookie, {
+      method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ uploadSessionId: "US-invalid-source" })
+    }));
+    assert.equal(invalidResponse.status, 422);
+    const db = JSON.parse(await fs.readFile(dbPath, "utf8"));
+    assert.equal(db.registrationSubmissionAssets.find((row) => row.registrationId === "R20260627001").id, "SA-personal-replacement");
+    await assert.doesNotReject(fs.access(replacement.filePath));
+  }, { prefix: "submission-auth-" });
+});
+
+test("a failed replacement database write restores the old row and journals a source file that cannot be removed", async () => {
+  const oldAsset = asset("SA-db-old", "US-db-old", "artwork_image", { registrationId: "R-db", filePath: "C:\\private\\old.png" });
+  const sourceAsset = asset("SA-db-source", "US-db-source", "artwork_image", { filePath: "C:\\private\\source.png" });
+  const db = {
+    users: [{ id: "U1001", type: "ordinary", status: "active" }], organizations: [], memberships: [],
+    organizationEventParticipations: [], auditLogs: [], fileCleanupJournal: [],
+    events: [{ id: EVENT_ID, status: "published", registrationMode: "force_open", archivedAt: null }],
+    projects: [{ id: PROJECT_ID, eventId: EVENT_ID, enabled: true, submissionMode: "image_video", allowedGroups: ["小学高段"] }],
+    registrations: [{ id: "R-db", eventId: EVENT_ID, projectId: PROJECT_ID, personalUserId: "U1001", organizationId: null, status: "pending", rejectReason: "", updatedAt: "2026-07-31T00:00:00.000Z" }],
+    registrationUploadSessions: [session("US-db-source")],
+    registrationSubmissionAssets: [oldAsset, sourceAsset]
+  };
+  let writes = 0;
+  const store = {
+    readDb: async () => structuredClone(db),
+    writeDb: async (next) => {
+      writes += 1;
+      if (writes === 1) throw new Error("database unavailable");
+      Object.assign(db, structuredClone(next));
+    }
+  };
+  const pass = (req, _res, next) => { req.user = { id: "U1001", type: "ordinary", status: "active" }; next(); };
+  const asyncRoute = (handler) => (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
+  const router = createRegistrationsRouter({
+    store, requireUser: pass, requireAdmin: pass, requirePasswordReady: pass, asyncRoute,
+    makeId: (prefix) => `${prefix}-db`, now: () => "2026-07-31T00:00:00.000Z",
+    deleteFile: async () => { throw new Error("disk unavailable"); }, logger: { error: () => {} }
+  });
+
+  await withRouter(router, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/me/events/${EVENT_ID}/registrations/R-db/assets/artwork_image`, {
+      method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ uploadSessionId: "US-db-source" })
+    });
+    assert.equal(response.status, 500);
+  });
+  assert.equal(db.registrationSubmissionAssets.find((row) => row.registrationId === "R-db").id, "SA-db-old");
+  assert.equal(db.registrationSubmissionAssets.find((row) => row.id === "SA-db-source").registrationId, null);
+  assert.deepEqual(db.fileCleanupJournal.map((row) => ({ filePath: row.filePath, category: row.category })), [{
+    filePath: "C:\\private\\source.png", category: "registration-asset-replacement-rollback"
+  }]);
+});

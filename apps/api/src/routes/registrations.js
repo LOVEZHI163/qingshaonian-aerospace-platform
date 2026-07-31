@@ -1,4 +1,5 @@
 import express from "express";
+import { deleteSubmissionFile } from "../files/submission-storage.js";
 
 import { MAX_CERTIFICATE_ROWS } from "../certificates/workbook-parser.js";
 import { buildCertificateTemplate } from "../certificates/template.js";
@@ -18,8 +19,18 @@ import {
 } from "../services/registrations.js";
 import { requireOrganizationEventParticipation, requireOrdinaryUser, requireWritableEvent } from "../services/access-control.js";
 import { recordAudit } from "../services/audit.js";
+import {
+  commitUploadSession,
+  replacementSessionAsset,
+  replaceRegistrationAsset,
+  submissionAssetSummary,
+  withRegistrationSubmission
+} from "../services/submission-assets.js";
 
-export function createRegistrationsRouter({ store, requireUser, requireAdmin, requirePasswordReady, asyncRoute, makeId, now, clock = () => new Date() }) {
+export function createRegistrationsRouter({
+  store, requireUser, requireAdmin, requirePasswordReady, asyncRoute, makeId, now,
+  clock = () => new Date(), deleteFile = deleteSubmissionFile, logger = console
+}) {
   const router = express.Router();
   const user = [requireUser, requirePasswordReady];
   const admin = [requireAdmin, requirePasswordReady];
@@ -41,6 +52,42 @@ export function createRegistrationsRouter({ store, requireUser, requireAdmin, re
     return { ...(req.body || {}), eventId: req.params.eventId };
   }
 
+  async function cleanOldRegistrationAsset(db, asset) {
+    try {
+      await deleteFile(asset);
+    } catch (error) {
+      const createdAt = now();
+      db.fileCleanupJournal ||= [];
+      db.fileCleanupJournal.push({
+        id: makeId("CLN"), filePath: asset.filePath, category: "registration-asset-replaced",
+        attempts: 1, lastError: String(error?.message || error).slice(0, 500), createdAt, lastAttemptAt: createdAt
+      });
+      try {
+        await store.writeDb(db);
+      } catch {
+        try { logger?.error?.("Registration asset cleanup journal persistence failed", { assetId: asset.id }); } catch { /* response stays committed */ }
+      }
+    }
+  }
+
+  async function discardFailedReplacementSource(db, asset) {
+    try {
+      await deleteFile(asset);
+    } catch (error) {
+      const createdAt = now();
+      db.fileCleanupJournal ||= [];
+      db.fileCleanupJournal.push({
+        id: makeId("CLN"), filePath: asset.filePath, category: "registration-asset-replacement-rollback",
+        attempts: 1, lastError: String(error?.message || error).slice(0, 500), createdAt, lastAttemptAt: createdAt
+      });
+      try {
+        await store.writeDb(db);
+      } catch {
+        try { logger?.error?.("Replacement source cleanup journal persistence failed", { assetId: asset.id }); } catch { /* preserve original database error */ }
+      }
+    }
+  }
+
   router.get("/me/events/:eventId/registrations", ...user, asyncRoute(async (req, res) => {
     requireOrdinaryUser(req.user);
     const db = await store.readDb();
@@ -49,15 +96,20 @@ export function createRegistrationsRouter({ store, requireUser, requireAdmin, re
     }
     res.json({ rows: db.registrations.filter((row) => (
       row.eventId === req.params.eventId && row.personalUserId === req.user.id
-    )) });
+    )).map((row) => withRegistrationSubmission(db, row)) });
   }));
 
   router.post("/me/events/:eventId/registrations", ...user, asyncRoute(async (req, res) => {
     requireOrdinaryUser(req.user);
     const db = await store.readDb();
-    const result = createOrMergeRegistration(db, eventScopedInput(req), req.user, "personal", { makeId, now, clock });
+    const input = eventScopedInput(req);
+    const result = createOrMergeRegistration(db, input, req.user, "personal", { makeId, now, clock });
+    const project = db.projects.find((item) => item.id === result.row.projectId && item.eventId === result.row.eventId);
+    if (project?.submissionMode === "image_video") {
+      commitUploadSession({ db, sessionId: input.uploadSessionId, registration: result.row, actor: req.user, channel: "personal", now });
+    }
     await store.writeDb(db);
-    res.status(result.created ? 201 : 200).json(result);
+    res.status(result.created ? 201 : 200).json({ ...result, row: withRegistrationSubmission(db, result.row) });
   }));
 
   router.get("/organization/events/:eventId/registrations", ...user, asyncRoute(async (req, res) => {
@@ -65,15 +117,48 @@ export function createRegistrationsRouter({ store, requireUser, requireAdmin, re
     const { organization } = requireOrganizationEventParticipation(db, req.user, req.params.eventId);
     res.json({ rows: db.registrations.filter((row) => (
       row.eventId === req.params.eventId && row.organizationId === organization.id
-    )) });
+    )).map((row) => withRegistrationSubmission(db, row)) });
   }));
 
   router.post("/organization/events/:eventId/registrations", ...user, asyncRoute(async (req, res) => {
     const db = await store.readDb();
-    const result = createOrMergeRegistration(db, eventScopedInput(req), req.user, "organization", { makeId, now, clock });
+    const input = eventScopedInput(req);
+    const result = createOrMergeRegistration(db, input, req.user, "organization", { makeId, now, clock });
+    const project = db.projects.find((item) => item.id === result.row.projectId && item.eventId === result.row.eventId);
+    if (project?.submissionMode === "image_video") {
+      commitUploadSession({ db, sessionId: input.uploadSessionId, registration: result.row, actor: req.user, channel: "organization", now });
+    }
     await store.writeDb(db);
-    res.status(result.created ? 201 : 200).json(result);
+    res.status(result.created ? 201 : 200).json({ ...result, row: withRegistrationSubmission(db, result.row) });
   }));
+
+  function replaceAsset(channel, middleware) {
+    return [...middleware, asyncRoute(async (req, res) => {
+      const db = await store.readDb();
+      const registration = db.registrations.find((row) => row.id === req.params.registrationId && row.eventId === req.params.eventId);
+      if (!registration) return res.status(404).json({ error: "Registration not found" });
+      const uploaded = replacementSessionAsset({
+        db, sessionId: req.body?.uploadSessionId, registration, kind: req.params.kind,
+        actor: req.user, channel, now
+      });
+      const replacement = replaceRegistrationAsset({
+        db, registration, kind: req.params.kind, uploadedAsset: uploaded.asset, actor: req.user, channel, now
+      });
+      try {
+        await store.writeDb(db);
+      } catch (error) {
+        replacement.rollback();
+        await discardFailedReplacementSource(db, uploaded.asset);
+        throw error;
+      }
+      await cleanOldRegistrationAsset(db, replacement.previous);
+      res.json({ row: submissionAssetSummary(replacement.asset), registration: withRegistrationSubmission(db, registration) });
+    })];
+  }
+
+  router.put("/me/events/:eventId/registrations/:registrationId/assets/:kind", ...replaceAsset("personal", user));
+  router.put("/organization/events/:eventId/registrations/:registrationId/assets/:kind", ...replaceAsset("organization", user));
+  router.put("/admin/events/:eventId/registrations/:registrationId/assets/:kind", ...replaceAsset("admin", admin));
 
   function applyRegistrationUpdate(row, prepared, timestamp) {
     Object.assign(row, {
@@ -104,7 +189,7 @@ export function createRegistrationsRouter({ store, requireUser, requireAdmin, re
     }
     applyRegistrationUpdate(row, prepared, now());
     await store.writeDb(db);
-    res.json({ row });
+    res.json({ row: withRegistrationSubmission(db, row) });
   }));
 
   router.patch("/organization/events/:eventId/registrations/:registrationId", ...user, asyncRoute(async (req, res) => {
@@ -118,7 +203,7 @@ export function createRegistrationsRouter({ store, requireUser, requireAdmin, re
     const prepared = prepareAdminRegistrationUpdate(db, row, { ...eventScopedInput(req), organizationId: organization.id });
     applyRegistrationUpdate(row, prepared, now());
     await store.writeDb(db);
-    res.json({ row });
+    res.json({ row: withRegistrationSubmission(db, row) });
   }));
 
   router.patch("/me/events/:eventId/registrations/:registrationId/status", ...user, asyncRoute(async (req, res) => {
@@ -130,7 +215,7 @@ export function createRegistrationsRouter({ store, requireUser, requireAdmin, re
     updateRegistrationStatus(db, row, req.body, req.user);
     row.updatedAt = now();
     await store.writeDb(db);
-    res.json({ row });
+    res.json({ row: withRegistrationSubmission(db, row) });
   }));
 
   router.patch("/admin/events/:eventId/registrations/:registrationId/status", ...admin, asyncRoute(async (req, res) => {
@@ -149,7 +234,7 @@ export function createRegistrationsRouter({ store, requireUser, requireAdmin, re
       createdAt: row.updatedAt
     });
     await store.writeDb(db);
-    res.json({ row });
+    res.json({ row: withRegistrationSubmission(db, row) });
   }));
 
   router.patch("/admin/events/:eventId/registrations/:registrationId", ...admin, asyncRoute(async (req, res) => {
@@ -160,7 +245,7 @@ export function createRegistrationsRouter({ store, requireUser, requireAdmin, re
     const prepared = prepareAdminRegistrationUpdate(db, row, { ...eventScopedInput(req), eventId: req.params.eventId });
     applyRegistrationUpdate(row, prepared, now());
     await store.writeDb(db);
-    res.json({ row });
+    res.json({ row: withRegistrationSubmission(db, row) });
   }));
 
   router.post("/admin/events/:eventId/registrations/:registrationId/result", ...admin, asyncRoute(async (req, res) => {
