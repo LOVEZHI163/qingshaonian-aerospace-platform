@@ -213,11 +213,19 @@ docker compose config --quiet
 推荐发布命令（在 `/opt/aerogp`，确认预检通过之后）：
 
 ```bash
-export RELEASE_SHA="$(git rev-parse HEAD)"
+: "${RELEASE_SHA:?请显式导出已审核源码归档对应的完整 release SHA}"
+case "$RELEASE_SHA" in
+  (*[!0-9a-fA-F]*|'') echo 'RELEASE_SHA 必须是 40 位十六进制 Git commit SHA' >&2; exit 1 ;;
+esac
+if [ "${#RELEASE_SHA}" -ne 40 ]; then
+  echo 'RELEASE_SHA 必须是 40 位十六进制 Git commit SHA' >&2
+  exit 1
+fi
+: "${ADMIN_TEST_PASSWORD:?请先按前文通过静默输入导出 ADMIN_TEST_PASSWORD}"
 docker compose build --pull api web
 docker compose up -d --no-deps --wait --wait-timeout 240 api web
 if EXPECTED_RELEASE="$RELEASE_SHA" BASE_URL=http://127.0.0.1 sh deploy/verify-release.sh &&
-  ADMIN_TEST_PASSWORD='...' BASE_URL=http://127.0.0.1 sh deploy/remote-smoke-test.sh; then
+  BASE_URL=http://127.0.0.1 sh deploy/remote-smoke-test.sh; then
   printf '%s\n' "$RELEASE_SHA" > .release.next
   mv .release.next .release
 else
@@ -228,6 +236,7 @@ fi
 ```
 
 `.release` 只能在 `verify-release.sh` 与 `remote-smoke-test.sh` 均成功后写入；任一验证失败时必须保留当前 marker。
+`RELEASE_SHA` 必须由发布负责人根据已经审核并完成对象级校验的源码归档显式提供；服务器 `/opt/aerogp` 不是 Git 仓库，禁止从远端目录推导版本号。
 
 其中 `ADMIN_TEST_PASSWORD` 必须按前文通过静默输入导出，不得写入命令历史、文档或 Git。
 
@@ -567,3 +576,4 @@ CONFIRM_RESTORE=yes docker compose run --rm \
 - 认证 smoke 通过：健康页、官网、管理端、公开首页/赛事/内容/内容详情、sitemap、品牌资源、版本接口、管理员登录、赛事列表、账号赛事、带赛事上下文的报名接口、官网设置与内容接口均为预期 200；旧无赛事上下文报名接口为预期 404，匿名官网管理接口为预期 401。凭据文件的 CRLF 仅在内存中规范化，凭据未输出或写入文档。
 - 只有在发布一致性验证和认证 smoke 都成功后，才以 `.release.next` 原子替换 `.release`；最终 marker 为 `3ad0feb535269b67d3d88b6ed3eaadd29dfe3672`。PostgreSQL、API、Web、Backup 四服务均为 healthy，`aerogp_postgres_data` 与 `aerogp_uploads_data` 卷保持存在；磁盘为 40G 总量、约 15G 已用、23G 可用（41%）。
 - 本轮未运行 `docker compose down -v`，未删除或重建数据库卷、上传卷、备份和 `.env`。若需要代码回滚，优先使用上述源码归档或回滚镜像；回滚后仍须先完成健康检查与两类验证，再原子恢复旧 marker。
+- Fix round 1（2026-07-31）：推荐命令已改为由发布负责人显式提供已审核归档对应的 40 位十六进制 `RELEASE_SHA`，禁止在非 Git 的 `/opt/aerogp` 推导；`ADMIN_TEST_PASSWORD` 只消费此前静默导出的环境变量，不再内联覆盖。认证 smoke 新增组织管理列表 200、赛事错误路径 404 JSON、组织错误路径 404 JSON，并校验 `application/json` 与非空 `error` 字段。脚本 SHA-256 为 `b9df0504d7e4fb2ad10008e893844574b75471b29ac62f1b8adc0f7e74776aeb`，原子同步前备份为 `/opt/aerogp/backups/remote-smoke-test-before-fix1-20260731T100733Z.sh`；远端认证 smoke 退出 0，最终 marker 仍为 `3ad0feb535269b67d3d88b6ed3eaadd29dfe3672`。本轮仅更新部署脚本，未重建 API/Web 镜像，未改变业务数据和命名卷。

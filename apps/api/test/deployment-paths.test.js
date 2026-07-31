@@ -5,6 +5,52 @@ import test from "node:test";
 
 const root = path.resolve(import.meta.dirname, "../../..");
 
+function shellBlockAfter(document, marker) {
+  const markerIndex = document.indexOf(marker);
+  assert.notEqual(markerIndex, -1, `missing document marker: ${marker}`);
+  const fenceIndex = document.indexOf("```bash", markerIndex);
+  assert.notEqual(fenceIndex, -1, `missing shell block after: ${marker}`);
+  const bodyIndex = document.indexOf("\n", fenceIndex) + 1;
+  const endIndex = document.indexOf("```", bodyIndex);
+  assert.notEqual(endIndex, -1, `unterminated shell block after: ${marker}`);
+  return document.slice(bodyIndex, endIndex);
+}
+
+function assertAtomicMarkerGate(shellBlock, releaseVariable) {
+  const release = `\\$${releaseVariable}`;
+  assert.match(
+    shellBlock,
+    new RegExp(
+      `^if EXPECTED_RELEASE="${release}"[^\\r\\n]*verify-release\\.sh &&\\r?\\n` +
+      `\\s+[^\\r\\n]*remote-smoke-test\\.sh; then$`,
+      "m"
+    )
+  );
+  assert.match(
+    shellBlock,
+    new RegExp(
+      `^  printf '%s\\\\n' "${release}" > \\.release\\.next\\r?\\n` +
+      `  mv \\.release\\.next \\.release$`,
+      "m"
+    )
+  );
+  assert.match(
+    shellBlock,
+    /^else\r?\n  rm -f \.release\.next\r?\n  echo '[^'\r\n]*existing \.release was preserved\.' >&2\r?\n  exit 1\r?\nfi$/m
+  );
+  assert.doesNotMatch(shellBlock, /> \.release\s*$/m);
+}
+
+function assertExplicitReleaseInput(shellBlock, releaseVariable) {
+  assert.match(shellBlock, new RegExp(`^: "\\$\\{${releaseVariable}:\\?[^}]+\\}"$`, "m"));
+  assert.match(
+    shellBlock,
+    new RegExp(`^case "\\$${releaseVariable}" in\\r?\\n\\s+\\(\\*\\[\\!0-9a-fA-F\\]\\*\\|.{0,20}\\)`, "m")
+  );
+  assert.match(shellBlock, new RegExp(`^if \\[ "\\$\\{#${releaseVariable}\\}" -ne 40 \\]; then$`, "m"));
+  assert.doesNotMatch(shellBlock, /git rev-parse|git describe|git log/);
+}
+
 test("deployment paths use same-origin API and the /admin/ base", async () => {
   const [webApi, webFooter, admin, adminApi, adminVite] = await Promise.all([
     fs.readFile(path.join(root, "apps/web/src/api/client.js"), "utf8"),
@@ -73,6 +119,25 @@ test("deployment publishes the canonical public origin without treating it as a 
   assert.match(webDockerfile, /^ENV VITE_PUBLIC_SITE_URL=\$VITE_PUBLIC_SITE_URL$/m);
 });
 
+test("deployment injects one required release identity into the API and web builds", async () => {
+  const [apiDockerfile, webDockerfile, compose] = await Promise.all([
+    fs.readFile(path.join(root, "Dockerfile.api"), "utf8"),
+    fs.readFile(path.join(root, "Dockerfile.web"), "utf8"),
+    fs.readFile(path.join(root, "compose.yaml"), "utf8")
+  ]);
+  const requiredRelease = "${RELEASE_SHA:?RELEASE_SHA is required}";
+  const apiService = compose.split("\n  web:")[0];
+  const webService = compose.split("\n  web:")[1].split("\n  backup:")[0];
+
+  assert.match(apiDockerfile, /^ARG RELEASE_SHA$/m);
+  assert.match(apiDockerfile, /^ENV RELEASE_SHA=\$RELEASE_SHA$/m);
+  assert.match(webDockerfile, /^ARG RELEASE_SHA$/m);
+  assert.match(webDockerfile, /^ENV VITE_RELEASE_SHA=\$RELEASE_SHA$/m);
+  assert.match(compose, /RELEASE_SHA:\s*\$\{RELEASE_SHA:\?RELEASE_SHA is required\}/);
+  assert.equal(apiService.includes(`RELEASE_SHA: ${requiredRelease}`), true);
+  assert.equal(webService.includes(`RELEASE_SHA: ${requiredRelease}`), true);
+});
+
 test("deployment preflight requires cleanup and one-time administrator bootstrap tooling", async () => {
   const [preflight, guide] = await Promise.all([
     fs.readFile(path.join(root, "deploy/preflight-admin-upgrade.sh"), "utf8"),
@@ -86,4 +151,59 @@ test("deployment preflight requires cleanup and one-time administrator bootstrap
   assert.match(guide, /cleanup-test-business-data\.js\s*\n/);
   assert.match(guide, /--confirm=DELETE-TEST-BUSINESS-DATA/);
   assert.match(guide, /bootstrap-admin\.js/);
+});
+
+test("deployment verifies that API and admin assets share the expected release", async () => {
+  const verifyRelease = await fs.readFile(path.join(root, "deploy/verify-release.sh"), "utf8");
+  const executable = verifyRelease
+    .split(/\r?\n/)
+    .filter((line) => !line.trimStart().startsWith("#"))
+    .join("\n");
+
+  assert.match(executable, /api\/system\/version/);
+  assert.match(executable, /EXPECTED_RELEASE/);
+  assert.match(executable, /admin\/index\.html/);
+  assert.match(executable, /html\.matchAll\(/);
+  assert.match(executable, /matches\.length !== 1/);
+  assert.match(executable, /process\.stdout\.write\(matches\[0\]\)/);
+  assert.match(executable, /api\/admin\/registrations\?pageSize=100/);
+  assert.match(executable, /cleanup\(\) \{[\s\S]*rm -rf "\$work_dir"/);
+  for (const [signal, handler, status] of [
+    ["HUP", "handle_hup", 129],
+    ["INT", "handle_int", 130],
+    ["TERM", "handle_term", 143]
+  ]) {
+    assert.match(executable, new RegExp(`trap '${handler}' ${signal}`));
+    assert.match(executable, new RegExp(`${handler}\\(\\) \\{[\\s\\S]*?cleanup[\\s\\S]*?exit ${status}\\r?\\n\\}`));
+  }
+  assert.doesNotMatch(executable, /set -[^\r\n]*x/);
+});
+
+test("recommended deployment atomically advances the marker only after both verifiers pass", async () => {
+  const guide = await fs.readFile(path.join(root, "docs/deployment/aliyun-test.md"), "utf8");
+  const releaseBlock = shellBlockAfter(guide, "推荐发布命令");
+
+  assertExplicitReleaseInput(releaseBlock, "RELEASE_SHA");
+  assert.match(releaseBlock, /^: "\$\{ADMIN_TEST_PASSWORD:\?[^}]+\}"$/m);
+  assert.doesNotMatch(releaseBlock, /ADMIN_TEST_PASSWORD=['"]/);
+  assertAtomicMarkerGate(releaseBlock, "RELEASE_SHA");
+});
+
+test("rollback atomically advances the marker only after both previous-release verifiers pass", async () => {
+  const guide = await fs.readFile(path.join(root, "docs/deployment/aliyun-test.md"), "utf8");
+  const rollbackBlock = shellBlockAfter(guide, "应用回滚只切换到已经验证过的 Git commit");
+
+  assertAtomicMarkerGate(rollbackBlock, "PREVIOUS_RELEASE");
+});
+
+test("authenticated smoke covers organization management and rejects raw HTML management errors", async () => {
+  const smoke = await fs.readFile(path.join(root, "deploy/remote-smoke-test.sh"), "utf8");
+
+  assert.match(smoke, /"\$base_url\/api\/admin\/organizations"/);
+  assert.match(smoke, /"\$base_url\/api\/admin\/organizations\/__smoke_missing_organization__"/);
+  assert.match(smoke, /"\$base_url\/api\/admin\/events\/__smoke_missing_event__\/registrations"/);
+  assert.match(smoke, /assert_json_response "admin-organizations"/);
+  assert.match(smoke, /assert_json_error "admin-event-error"/);
+  assert.match(smoke, /assert_json_error "admin-organization-error"/);
+  assert.match(smoke, /application\/json/);
 });
