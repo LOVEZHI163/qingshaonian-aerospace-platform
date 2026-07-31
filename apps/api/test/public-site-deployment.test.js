@@ -140,10 +140,11 @@ test("remote smoke discovers public resources dynamically and checks admin autho
     "sitemap",
     "brand-mark",
     "brand-wordmark",
+    "system-version",
     "admin-events",
     "account-events",
-    "admin-registrations-event",
     "admin-registrations-legacy-rejected",
+    "admin-registrations-event",
     "authenticated-site-settings",
     "authenticated-site-content",
     "unauthenticated-site-settings"
@@ -161,6 +162,18 @@ test("remote smoke discovers public resources dynamically and checks admin autho
   assert.match(smoke, /status === "published" && !item\.archivedAt/);
   assert.match(smoke, /\/api\/admin\/events\/\$\{event_id\}\/registrations/);
   assert.match(smoke, /\/api\/admin\/registrations/);
+  assert.match(smoke, /work_dir="\$\(mktemp -d /);
+  assert.match(smoke, /response_file="\$work_dir\/response\.json"/);
+  assert.match(smoke, /cookie_jar="\$work_dir\/cookies"/);
+  assert.doesNotMatch(smoke, /\/tmp\/aerogp-smoke-[^\r\n]*\$\$/);
+  for (const [signal, handler, status] of [
+    ["HUP", "handle_hup", 129],
+    ["INT", "handle_int", 130],
+    ["TERM", "handle_term", 143]
+  ]) {
+    assert.match(smoke, new RegExp(`trap '${handler}' ${signal}`));
+    assert.match(smoke, new RegExp(`${handler}\\(\\) \\{[\\s\\S]*?cleanup[\\s\\S]*?exit ${status}\\r?\\n\\}`));
+  }
   assert.doesNotMatch(smoke, /\/api\/public\/events\/(?:E\d+|[a-z0-9-]{4,})["']/i);
   assert.doesNotMatch(smoke, /set -[^\r\n]*x/);
   assert.doesNotMatch(smoke, /echo[^\r\n]*(?:password|cookie)|cat[^\r\n]*(?:cookie|response)/i);

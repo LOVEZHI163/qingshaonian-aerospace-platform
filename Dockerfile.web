@@ -1,6 +1,8 @@
 FROM m.daocloud.io/docker.io/library/node:22-alpine AS build
 
 WORKDIR /app
+ARG RELEASE_SHA
+ENV VITE_RELEASE_SHA=$RELEASE_SHA
 ARG VITE_PUBLIC_SITE_URL
 ENV VITE_PUBLIC_SITE_URL=$VITE_PUBLIC_SITE_URL
 COPY package.json package-lock.json ./

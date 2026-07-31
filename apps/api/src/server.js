@@ -18,6 +18,7 @@ import { createSiteMediaRouter } from "./routes/site-media.js";
 import { createSiteAdminRouter } from "./routes/site-admin.js";
 import { createPublicSiteRouter } from "./routes/public-site.js";
 import { createAccountEventsRouter } from "./routes/account-events.js";
+import { createSystemRouter } from "./routes/system.js";
 import { registrationContext } from "./services/events.js";
 import { replayFileCleanupJournal } from "./services/organizations.js";
 import { organizationForOwner, requireOrdinaryUser, requireOrganizationOwner } from "./services/access-control.js";
@@ -157,6 +158,7 @@ app.use((req, res, next) => {
   }
   next();
 });
+app.use("/api", createSystemRouter({ releaseSha: process.env.RELEASE_SHA }));
 app.use(createSessionMiddleware({ env: process.env, dataStore }));
 app.use(asyncRoute(async (req, _res, next) => {
   if (req.session.userId) {

@@ -26,9 +26,12 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.api
+      args:
+        RELEASE_SHA: ${RELEASE_SHA:?RELEASE_SHA is required}
     environment:
       NODE_ENV: production
       PORT: 4300
+      RELEASE_SHA: ${RELEASE_SHA:?RELEASE_SHA is required}
       DATABASE_URL: postgresql://${POSTGRES_USER:-aerogp}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:-aerogp}
       SESSION_SECRET: ${SESSION_SECRET:?SESSION_SECRET is required}
       ALIBABA_CLOUD_ACCESS_KEY_ID: ${ALIBABA_CLOUD_ACCESS_KEY_ID:-}
@@ -62,6 +65,7 @@ services:
       dockerfile: Dockerfile.web
       args:
         VITE_PUBLIC_SITE_URL: https://aerogp.cn
+        RELEASE_SHA: ${RELEASE_SHA:?RELEASE_SHA is required}
     ports:
       - "80:80"
     depends_on:

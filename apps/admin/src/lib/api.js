@@ -22,17 +22,25 @@ export function setPasswordChangeRequiredHandler(handler) {
 }
 
 async function readPayload(response) {
+  const contentType = String(response.headers.get("content-type") || "").toLowerCase();
   const text = await response.text().catch(() => "");
-  if (!text) return {};
-  try { return JSON.parse(text); } catch { return { message: text }; }
+  if (!text) return { payload: {}, responseKind: "empty" };
+  if (contentType.includes("application/json")) {
+    try { return { payload: JSON.parse(text), responseKind: "json" }; }
+    catch { return { payload: {}, responseKind: "invalid-json" }; }
+  }
+  return { payload: {}, responseKind: contentType.includes("text/html") ? "html" : "text" };
 }
 
-function apiFailure(response, payload) {
+function apiFailure(response, parsed) {
+  const payload = parsed.payload || {};
   const code = payload.code || "";
   const passwordChangeRequired = response.status === 428 || code === "PASSWORD_CHANGE_REQUIRED";
   if (passwordChangeRequired) passwordChangeRequiredHandler?.();
   else if (response.status === 401) unauthorizedHandler?.();
-  const message = payload.error || payload.message || payload.errors?.join("，") || `请求失败 (${response.status})`;
+  const message = parsed.responseKind === "json"
+    ? payload.error || payload.message || payload.errors?.join("\uff0c") || `\u8bf7\u6c42\u5931\u8d25 (${response.status})`
+    : `服务暂时不可用，请刷新后重试 (${response.status})`;
   return new ApiError(message, { status: response.status, code, payload });
 }
 
@@ -63,9 +71,9 @@ export async function api(path, options = {}) {
   const formData = typeof FormData !== "undefined" && options.body instanceof FormData;
   const headers = formData ? { ...(options.headers || {}) } : { "Content-Type": "application/json", ...(options.headers || {}) };
   const response = await fetch(`${API_BASE}${path}`, { ...options, credentials: "include", headers });
-  const payload = await readPayload(response);
-  if (!response.ok) throw apiFailure(response, payload);
-  return payload;
+  const parsed = await readPayload(response);
+  if (!response.ok) throw apiFailure(response, parsed);
+  return parsed.payload;
 }
 
 export async function apiBlob(path, options = {}) {

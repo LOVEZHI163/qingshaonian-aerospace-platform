@@ -1,7 +1,11 @@
 import { flushPromises, mount } from "@vue/test-utils";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-const { apiMock, apiBlobMock } = vi.hoisted(() => ({ apiMock: vi.fn(), apiBlobMock: vi.fn() }));
-vi.mock("../lib/api.js", () => ({ api: apiMock, apiBlob: apiBlobMock, apiUrl: (path) => path }));
+const { apiMock, apiBlobMock, MockApiError } = vi.hoisted(() => ({
+  apiMock: vi.fn(),
+  apiBlobMock: vi.fn(),
+  MockApiError: class ApiError extends Error {}
+}));
+vi.mock("../lib/api.js", () => ({ ApiError: MockApiError, api: apiMock, apiBlob: apiBlobMock, apiUrl: (path) => path }));
 vi.mock("../state/session.js", async () => {
   const { ref } = await import("vue");
   const sessionUser = ref(null);
@@ -37,6 +41,7 @@ function publicData() {
 
 describe("App session integration", () => {
   beforeEach(() => {
+    vi.unstubAllEnvs();
     window.history.replaceState({}, "", "/");
     apiMock.mockReset();
     sessionUser.value = null;
@@ -77,6 +82,36 @@ describe("App session integration", () => {
     const ordinary = mount(App);
     await flushPromises();
     expect(ordinary.find('[data-testid="admin-shell"]').exists()).toBe(false);
+  });
+
+  it("blocks the admin shell when production release identities differ", async () => {
+    vi.stubEnv("VITE_RELEASE_SHA", "new-web");
+    sessionUser.value = { id: "A1", type: "admin", name: "管理员", mustChangePassword: false };
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/public/event") return publicData();
+      if (path === "/api/system/version") return { releaseSha: "old-api", apiVersion: 1 };
+      return { rows: [] };
+    });
+
+    const wrapper = mount(App);
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("系统版本不一致，请刷新页面或联系管理员");
+    expect(wrapper.find('[data-testid="admin-shell"]').exists()).toBe(false);
+  });
+
+  it("uses the normalized API error when the version check fails", async () => {
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/system/version") throw new MockApiError("服务暂时不可用，请刷新后重试 (502)");
+      return { rows: [] };
+    });
+
+    const wrapper = mount(App);
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("服务暂时不可用，请刷新后重试 (502)");
+    expect(wrapper.text()).not.toContain("<html>");
+    expect(wrapper.find('[data-testid="admin-shell"]').exists()).toBe(false);
   });
 
   it.each(["ordinary", "organization"])("opens the event center by default for %s accounts", async (type) => {

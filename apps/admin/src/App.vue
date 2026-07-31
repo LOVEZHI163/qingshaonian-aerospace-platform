@@ -2,7 +2,8 @@
 import { computed, onMounted, reactive, ref, watch } from "vue";
 
 import AdminShell from "./components/AdminShell.vue";
-import { api } from "./lib/api.js";
+import { ApiError, api } from "./lib/api.js";
+import { checkReleaseCompatibility } from "./lib/release.js";
 import AuthPage from "./pages/AuthPage.vue";
 import CertificateManagementPage from "./pages/CertificateManagementPage.vue";
 import DashboardPage from "./pages/DashboardPage.vue";
@@ -25,6 +26,9 @@ const restoring = session.restoring;
 const eventData = ref({ event: {}, projects: [], grades: [] });
 const currentView = ref("login");
 const message = ref("");
+const releaseReady = ref(false);
+const releaseBlocked = ref(false);
+const releaseMessage = ref("");
 const certificateRegistrationId = ref("");
 const DEEP_LINK_VIEWS = new Set(["overview", "events", "siteContent", "organizations", "registration", "registrationRecords", "records", "certificates", "users", "organization", "eventCenter", "organizationWorkspace"]);
 const SAFE_EVENT_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
@@ -197,6 +201,21 @@ async function loadEvent() {
   eventData.value = await api("/api/public/event");
 }
 
+async function verifyRelease() {
+  try {
+    const result = await checkReleaseCompatibility(api, import.meta.env.VITE_RELEASE_SHA);
+    releaseBlocked.value = !result.compatible;
+    releaseMessage.value = releaseBlocked.value ? "系统版本不一致，请刷新页面或联系管理员" : "";
+  } catch (error) {
+    releaseBlocked.value = true;
+    releaseMessage.value = error instanceof ApiError
+      ? error.message
+      : "无法检查系统版本，请刷新页面后重试";
+  } finally {
+    releaseReady.value = true;
+  }
+}
+
 async function login(credentials) {
   message.value = "";
   try {
@@ -337,6 +356,8 @@ watch([currentView, selectedEventId, certificateEventId, siteContentId, adminEve
 }, { flush: "post" });
 
 onMounted(async () => {
+  await verifyRelease();
+  if (releaseBlocked.value) return;
   try {
     await loadEvent();
   } catch (error) {
@@ -352,7 +373,16 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div v-if="restoring" class="app-loading">正在恢复登录状态…</div>
+  <div v-if="!releaseReady" class="app-loading">正在检查系统版本…</div>
+
+  <section v-else-if="releaseBlocked" class="auth-shell release-blocked-shell" role="alert">
+    <div class="panel auth-panel">
+      <h3>系统版本检查失败</h3>
+      <p class="message">{{ releaseMessage }}</p>
+    </div>
+  </section>
+
+  <div v-else-if="restoring" class="app-loading">正在恢复登录状态…</div>
 
   <AuthPage v-else-if="!currentUser" :event-name="eventData.event.name" @login="login" />
 

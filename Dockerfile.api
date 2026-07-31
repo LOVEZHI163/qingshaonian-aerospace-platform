@@ -9,8 +9,10 @@ RUN npm ci --omit=dev --workspace apps/api
 
 FROM m.daocloud.io/docker.io/library/node:22-alpine AS runtime
 
+ARG RELEASE_SHA
 ENV NODE_ENV=production
 ENV PORT=4300
+ENV RELEASE_SHA=$RELEASE_SHA
 WORKDIR /app
 
 RUN apk add --no-cache libc6-compat
