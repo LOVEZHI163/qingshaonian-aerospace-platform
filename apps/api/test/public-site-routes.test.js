@@ -374,8 +374,9 @@ test("public event detail combines facts, enabled projects, fixed groups, resour
     assert.deepEqual(detail.projects.map((row) => row.id), ["P1"]);
     assert.deepEqual(Object.keys(detail.projects[0]), [
       "id", "eventId", "name", "type", "category", "enabled",
-      "instructorRequired", "displayOrder", "allowedGroups"
+      "instructorRequired", "displayOrder", "submissionMode", "allowedGroups"
     ]);
+    assert.equal(detail.projects[0].submissionMode, "none");
     assert.equal(JSON.stringify(detail.projects).includes("内部字段"), false);
     assert.deepEqual(detail.groups, APPROVED_GROUP_NAMES);
     assert.deepEqual(detail.resources.map((row) => row.name), ["规程.pdf"]);
