@@ -24,6 +24,17 @@ export const SITE_ATTACHMENT_POLICY = {
   maxBytes: 20 * 1024 * 1024
 };
 
+export const SUBMISSION_IMAGE_POLICY = {
+  mimeTypes: new Set(["image/png", "image/jpeg"]),
+  maxBytes: 2 * 1024 * 1024
+};
+
+export const SUBMISSION_VIDEO_POLICY = {
+  mimeTypes: new Set(["video/mp4"]),
+  maxBytes: 200 * 1024 * 1024,
+  maxDurationMs: 120_000
+};
+
 export async function validateUpload(file, policy = CREDENTIAL_POLICY) {
   if (!file || !Buffer.isBuffer(file.buffer) || file.buffer.length === 0) {
     throw new Error("A non-empty file buffer is required");

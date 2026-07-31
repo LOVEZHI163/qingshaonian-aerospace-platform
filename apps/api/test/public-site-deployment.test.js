@@ -53,6 +53,7 @@ test("container contract keeps private ports private and ships runtime assets", 
   ]);
 
   assert.match(apiDockerfile, /apk add --no-cache[^\r\n]*libc6-compat/);
+  assert.match(apiDockerfile, /apk add --no-cache[^\r\n]*ffmpeg/);
   assert.match(apiDockerfile, /^USER node$/m);
   assert.match(webDockerfile, /COPY --from=build \/app\/apps\/web\/dist \/usr\/share\/nginx\/html/);
   await Promise.all([
