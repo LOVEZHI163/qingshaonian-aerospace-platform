@@ -255,6 +255,15 @@ CONFIRM_RESTORE=yes docker compose run --rm \
 
 ```bash
 PREVIOUS_RELEASE='<上一版本完整 SHA>'
+: "${PREVIOUS_RELEASE:?请显式提供已经验证过的上一版本完整 release SHA}"
+case "$PREVIOUS_RELEASE" in
+  (*[!0-9a-fA-F]*|'') echo 'PREVIOUS_RELEASE 必须是 40 位十六进制 Git commit SHA' >&2; exit 1 ;;
+esac
+if [ "${#PREVIOUS_RELEASE}" -ne 40 ]; then
+  echo 'PREVIOUS_RELEASE 必须是 40 位十六进制 Git commit SHA' >&2
+  exit 1
+fi
+export RELEASE_SHA="$PREVIOUS_RELEASE"
 docker compose up -d --build --wait --wait-timeout 240
 curl -fsS http://127.0.0.1/healthz
 curl -fsS http://127.0.0.1/api/public/home >/dev/null

@@ -100,6 +100,28 @@ describe("App session integration", () => {
     expect(wrapper.find('[data-testid="admin-shell"]').exists()).toBe(false);
   });
 
+  it("waits for release verification to resolve before restoring the session", async () => {
+    let resolveVersion;
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/system/version") {
+        return new Promise((resolve) => { resolveVersion = resolve; });
+      }
+      if (path === "/api/public/event") return publicData();
+      return { rows: [] };
+    });
+
+    mount(App);
+    await Promise.resolve();
+
+    expect(resolveVersion).toBeTypeOf("function");
+    expect(session.restore).not.toHaveBeenCalled();
+
+    resolveVersion({ releaseSha: "development", apiVersion: 1 });
+    await flushPromises();
+
+    expect(session.restore).toHaveBeenCalledTimes(1);
+  });
+
   it("uses the normalized API error when the version check fails", async () => {
     apiMock.mockImplementation(async (path) => {
       if (path === "/api/system/version") throw new MockApiError("服务暂时不可用，请刷新后重试 (502)");

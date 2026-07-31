@@ -119,23 +119,39 @@ test("deployment publishes the canonical public origin without treating it as a 
   assert.match(webDockerfile, /^ENV VITE_PUBLIC_SITE_URL=\$VITE_PUBLIC_SITE_URL$/m);
 });
 
-test("deployment injects one required release identity into the API and web builds", async () => {
-  const [apiDockerfile, webDockerfile, compose] = await Promise.all([
+test("API image build receives the required release identity", async () => {
+  const [apiDockerfile, compose] = await Promise.all([
     fs.readFile(path.join(root, "Dockerfile.api"), "utf8"),
-    fs.readFile(path.join(root, "Dockerfile.web"), "utf8"),
     fs.readFile(path.join(root, "compose.yaml"), "utf8")
   ]);
   const requiredRelease = "${RELEASE_SHA:?RELEASE_SHA is required}";
-  const apiService = compose.split("\n  web:")[0];
-  const webService = compose.split("\n  web:")[1].split("\n  backup:")[0];
+  const apiService = compose.split("\n  api:")[1].split("\n  web:")[0];
+  const apiBuild = apiService.split("\n    environment:")[0];
 
   assert.match(apiDockerfile, /^ARG RELEASE_SHA$/m);
   assert.match(apiDockerfile, /^ENV RELEASE_SHA=\$RELEASE_SHA$/m);
+  assert.equal(apiBuild.includes(`RELEASE_SHA: ${requiredRelease}`), true);
+});
+
+test("API runtime receives the required release identity", async () => {
+  const compose = await fs.readFile(path.join(root, "compose.yaml"), "utf8");
+  const apiService = compose.split("\n  api:")[1].split("\n  web:")[0];
+  const apiEnvironment = apiService.split("\n    environment:")[1].split("\n    volumes:")[0];
+
+  assert.equal(apiEnvironment.includes(`RELEASE_SHA: ${"${RELEASE_SHA:?RELEASE_SHA is required}"}`), true);
+});
+
+test("Web image build receives the required release identity", async () => {
+  const [webDockerfile, compose] = await Promise.all([
+    fs.readFile(path.join(root, "Dockerfile.web"), "utf8"),
+    fs.readFile(path.join(root, "compose.yaml"), "utf8")
+  ]);
+  const webService = compose.split("\n  web:")[1].split("\n  backup:")[0];
+  const webBuild = webService.split("\n    ports:")[0];
+
   assert.match(webDockerfile, /^ARG RELEASE_SHA$/m);
   assert.match(webDockerfile, /^ENV VITE_RELEASE_SHA=\$RELEASE_SHA$/m);
-  assert.match(compose, /RELEASE_SHA:\s*\$\{RELEASE_SHA:\?RELEASE_SHA is required\}/);
-  assert.equal(apiService.includes(`RELEASE_SHA: ${requiredRelease}`), true);
-  assert.equal(webService.includes(`RELEASE_SHA: ${requiredRelease}`), true);
+  assert.equal(webBuild.includes(`RELEASE_SHA: ${"${RELEASE_SHA:?RELEASE_SHA is required}"}`), true);
 });
 
 test("deployment preflight requires cleanup and one-time administrator bootstrap tooling", async () => {
@@ -153,7 +169,7 @@ test("deployment preflight requires cleanup and one-time administrator bootstrap
   assert.match(guide, /bootstrap-admin\.js/);
 });
 
-test("deployment verifies that API and admin assets share the expected release", async () => {
+test("deployment verifier is host-runnable and bounds every HTTP request", async () => {
   const verifyRelease = await fs.readFile(path.join(root, "deploy/verify-release.sh"), "utf8");
   const executable = verifyRelease
     .split(/\r?\n/)
@@ -163,9 +179,9 @@ test("deployment verifies that API and admin assets share the expected release",
   assert.match(executable, /api\/system\/version/);
   assert.match(executable, /EXPECTED_RELEASE/);
   assert.match(executable, /admin\/index\.html/);
-  assert.match(executable, /html\.matchAll\(/);
-  assert.match(executable, /matches\.length !== 1/);
-  assert.match(executable, /process\.stdout\.write\(matches\[0\]\)/);
+  assert.doesNotMatch(executable, /\bnode\b/);
+  assert.match(executable, /--connect-timeout\s+["']?\$?curl_connect_timeout/);
+  assert.match(executable, /--max-time\s+["']?\$?curl_max_time/);
   assert.match(executable, /api\/admin\/registrations\?pageSize=100/);
   assert.match(executable, /cleanup\(\) \{[\s\S]*rm -rf "\$work_dir"/);
   for (const [signal, handler, status] of [
@@ -194,6 +210,20 @@ test("rollback atomically advances the marker only after both previous-release v
   const rollbackBlock = shellBlockAfter(guide, "应用回滚只切换到已经验证过的 Git commit");
 
   assertAtomicMarkerGate(rollbackBlock, "PREVIOUS_RELEASE");
+});
+
+test("rollback validates and maps the previous release into Compose before rebuilding", async () => {
+  const guide = await fs.readFile(path.join(root, "docs/deployment/aliyun-test.md"), "utf8");
+  const rollbackBlock = shellBlockAfter(guide, "应用回滚只切换到已经验证过的 Git commit");
+
+  assertExplicitReleaseInput(rollbackBlock, "PREVIOUS_RELEASE");
+  assert.match(rollbackBlock, /^export RELEASE_SHA="\$PREVIOUS_RELEASE"$/m);
+  assert.ok(
+    rollbackBlock.indexOf('export RELEASE_SHA="$PREVIOUS_RELEASE"')
+      < rollbackBlock.indexOf("docker compose"),
+    "rollback must map RELEASE_SHA before invoking Compose"
+  );
+  assert.match(rollbackBlock, /EXPECTED_RELEASE="\$PREVIOUS_RELEASE"/);
 });
 
 test("authenticated smoke covers organization management and rejects raw HTML management errors", async () => {

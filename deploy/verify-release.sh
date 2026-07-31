@@ -3,6 +3,18 @@ set -eu
 
 base_url="${BASE_URL:-http://127.0.0.1}"
 expected_release="${EXPECTED_RELEASE:?EXPECTED_RELEASE is required}"
+case "$expected_release" in
+  (*[!0-9a-fA-F]*|'')
+    echo "EXPECTED_RELEASE must be exactly 40 hexadecimal characters" >&2
+    exit 1
+    ;;
+esac
+if [ "${#expected_release}" -ne 40 ]; then
+  echo "EXPECTED_RELEASE must be exactly 40 hexadecimal characters" >&2
+  exit 1
+fi
+curl_connect_timeout=5
+curl_max_time=15
 umask 077
 work_dir=
 
@@ -35,51 +47,77 @@ trap 'handle_hup' HUP
 trap 'handle_int' INT
 trap 'handle_term' TERM
 
+fetch() {
+  label="$1"
+  output="$2"
+  shift 2
+  if http_status="$(curl -sS \
+    --connect-timeout "$curl_connect_timeout" \
+    --max-time "$curl_max_time" \
+    -o "$output" -w '%{http_code}' "$@")"; then
+    :
+  else
+    curl_exit=$?
+    echo "$label request failed (curl exit $curl_exit)" >&2
+    exit 1
+  fi
+  if [ "$http_status" != 200 ]; then
+    echo "$label expected 200 but received $http_status" >&2
+    exit 1
+  fi
+}
+
 work_dir="$(mktemp -d "${TMPDIR:-/tmp}/aerogp-release.XXXXXX")"
 version_json="$work_dir/version.json"
 admin_html="$work_dir/admin.html"
 admin_asset="$work_dir/admin.js"
 
-version_status="$(curl -fsS -o "$version_json" -w '%{http_code}' \
+fetch "system-version" "$version_json" \
   -H 'Cache-Control: no-cache' \
-  "$base_url/api/system/version")"
-if [ "$version_status" != 200 ]; then
-  echo "system-version expected 200 but received $version_status" >&2
+  "$base_url/api/system/version"
+
+actual_release="$(LC_ALL=C sed -n \
+  's/^[[:space:]]*{"releaseSha":"\([0-9A-Fa-f]*\)","apiVersion":1}[[:space:]]*$/\1/p' \
+  "$version_json")"
+case "$actual_release" in
+  (*[!0-9a-fA-F]*|'')
+    echo "system-version response was not the expected JSON" >&2
+    exit 1
+    ;;
+esac
+if [ "${#actual_release}" -ne 40 ]; then
+  echo "system-version response was not the expected JSON" >&2
   exit 1
 fi
-
-actual_release="$(node -e '
-const fs = require("fs");
-const value = JSON.parse(fs.readFileSync(process.argv[1], "utf8")).releaseSha;
-if (typeof value !== "string" || !value.trim()) process.exit(2);
-process.stdout.write(value.trim());
-' "$version_json")"
 if [ "$actual_release" != "$expected_release" ]; then
   echo "API release does not match EXPECTED_RELEASE" >&2
   exit 1
 fi
 
-release_check="$(node -e 'process.stdout.write(encodeURIComponent(process.argv[1]));' "$expected_release")"
-admin_status="$(curl -fsS -o "$admin_html" -w '%{http_code}' \
-  "$base_url/admin/index.html?release-check=$release_check")"
-if [ "$admin_status" != 200 ]; then
-  echo "admin HTML expected 200 but received $admin_status" >&2
+fetch "admin HTML" "$admin_html" \
+  "$base_url/admin/index.html?release-check=$expected_release"
+
+if asset_path="$(LC_ALL=C awk '
+{
+  line = $0
+  while (match(line, /src="\/admin\/assets\/index-[A-Za-z0-9_-]+\.js"/)) {
+    count += 1
+    path = substr(line, RSTART + 5, RLENGTH - 6)
+    line = substr(line, RSTART + RLENGTH)
+  }
+}
+END {
+  if (count != 1) exit 2
+  printf "%s", path
+}
+' "$admin_html")"; then
+  :
+else
+  echo "admin HTML must contain exactly one hashed Admin asset" >&2
   exit 1
 fi
 
-asset_path="$(node -e '
-const fs = require("fs");
-const html = fs.readFileSync(process.argv[1], "utf8");
-const matches = [...html.matchAll(/src="(\/admin\/assets\/index-[A-Za-z0-9_-]+\.js)"/g)].map(m => m[1]);
-if (matches.length !== 1) process.exit(2);
-process.stdout.write(matches[0]);
-' "$admin_html")"
-
-asset_status="$(curl -fsS -o "$admin_asset" -w '%{http_code}' "$base_url$asset_path")"
-if [ "$asset_status" != 200 ]; then
-  echo "admin asset expected 200 but received $asset_status" >&2
-  exit 1
-fi
+fetch "admin asset" "$admin_asset" "$base_url$asset_path"
 if ! grep -F -- "$expected_release" "$admin_asset" >/dev/null; then
   echo "admin asset does not contain EXPECTED_RELEASE" >&2
   exit 1

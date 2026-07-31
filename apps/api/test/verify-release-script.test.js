@@ -6,7 +6,7 @@ import { spawn } from "node:child_process";
 import test from "node:test";
 
 const root = path.resolve(import.meta.dirname, "../../..");
-const expectedRelease = "release-123";
+const expectedRelease = "3ad0feb535269b67d3d88b6ed3eaadd29dfe3672";
 
 function shellCommand() {
   if (process.platform !== "win32") return "sh";
@@ -19,10 +19,10 @@ function shellCommand() {
   return shell;
 }
 
-function runVerifier({ baseUrl, includeRelease = true }) {
+function runVerifier({ baseUrl, includeRelease = true, release = expectedRelease }) {
   return new Promise((resolve, reject) => {
     const env = { ...process.env, BASE_URL: baseUrl };
-    if (includeRelease) env.EXPECTED_RELEASE = expectedRelease;
+    if (includeRelease) env.EXPECTED_RELEASE = release;
     else delete env.EXPECTED_RELEASE;
     const child = spawn(shellCommand(), ["deploy/verify-release.sh"], {
       cwd: root,
@@ -70,8 +70,22 @@ test("verify-release enforces the runtime API and hashed admin asset contract", 
 
     if (route === "/api/system/version") {
       response.setHeader("Content-Type", "application/json");
+      if (mode === "transport-error") {
+        response.socket.destroy();
+        return;
+      }
+      if (mode === "api-status") {
+        response.statusCode = 503;
+        response.end(JSON.stringify({ error: "unavailable" }));
+        return;
+      }
+      if (mode === "malformed-json") {
+        response.end(`{"releaseSha":"${expectedRelease}","apiVersion":1} trailing`);
+        return;
+      }
       response.end(JSON.stringify({
-        releaseSha: mode === "wrong-release" ? "other-release" : expectedRelease
+        releaseSha: mode === "wrong-release" ? "4".repeat(40) : expectedRelease,
+        apiVersion: 1
       }));
       return;
     }
@@ -100,14 +114,14 @@ test("verify-release enforces the runtime API and hashed admin asset contract", 
     const result = await runVerifier({ baseUrl: `${origin}/success` });
     assert.equal(result.code, 0, result.stderr);
     assert.equal(result.signal, null);
-    assert.match(result.stdout, /release-consistency=release-123/);
+    assert.match(result.stdout, new RegExp(`release-consistency=${expectedRelease}`));
     const successRequests = requests.filter(({ mode }) => mode === "success");
     assert.deepEqual(
       successRequests.map(({ route }) => route),
       ["/api/system/version", "/admin/index.html", "/admin/assets/index-Ab_cd-12.js"]
     );
     assert.equal(successRequests[0].cacheControl, "no-cache");
-    assert.equal(successRequests[1].query, "?release-check=release-123");
+    assert.equal(successRequests[1].query, `?release-check=${expectedRelease}`);
   });
 
   await t.test("rejects a wrong API release before requesting admin HTML", async () => {
@@ -129,6 +143,28 @@ test("verify-release enforces the runtime API and hashed admin asset contract", 
     assert.notEqual(result.code, 0);
   });
 
+  await t.test("rejects malformed version JSON before requesting admin HTML", async () => {
+    const result = await runVerifier({ baseUrl: `${origin}/malformed-json` });
+    assert.notEqual(result.code, 0);
+    assert.match(result.stderr, /system-version response was not the expected JSON/);
+    assert.deepEqual(
+      requests.filter(({ mode }) => mode === "malformed-json").map(({ route }) => route),
+      ["/api/system/version"]
+    );
+  });
+
+  await t.test("reports an HTTP status instead of letting curl hide it", async () => {
+    const result = await runVerifier({ baseUrl: `${origin}/api-status` });
+    assert.notEqual(result.code, 0);
+    assert.match(result.stderr, /system-version expected 200 but received 503/);
+  });
+
+  await t.test("reports a curl transport failure explicitly", async () => {
+    const result = await runVerifier({ baseUrl: `${origin}/transport-error` });
+    assert.notEqual(result.code, 0);
+    assert.match(result.stderr, /system-version request failed \(curl exit [1-9][0-9]*\)/);
+  });
+
   await t.test("requires EXPECTED_RELEASE before making a request", async () => {
     const requestCount = requests.length;
     const result = await runVerifier({
@@ -138,4 +174,17 @@ test("verify-release enforces the runtime API and hashed admin asset contract", 
     assert.notEqual(result.code, 0);
     assert.equal(requests.length, requestCount);
   });
+
+  for (const invalidRelease of ["abc", "g".repeat(40), `${"a".repeat(40)}0`]) {
+    await t.test(`rejects invalid EXPECTED_RELEASE ${invalidRelease.length}/${invalidRelease[0]}`, async () => {
+      const requestCount = requests.length;
+      const result = await runVerifier({
+        baseUrl: `${origin}/invalid-expected-release`,
+        release: invalidRelease
+      });
+      assert.notEqual(result.code, 0);
+      assert.match(result.stderr, /EXPECTED_RELEASE must be exactly 40 hexadecimal characters/);
+      assert.equal(requests.length, requestCount);
+    });
+  }
 });
