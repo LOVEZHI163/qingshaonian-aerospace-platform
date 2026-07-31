@@ -19,6 +19,7 @@ const replacingRegistration = ref(null);
 const replacementSession = ref(null);
 const replacementLoading = ref(false);
 const replacementComplete = ref(false);
+const replacementCompletedKinds = ref(new Set());
 const replacementError = ref("");
 const replacementResult = ref("");
 let replacementRequest = 0;
@@ -26,6 +27,14 @@ const downloads = createBlobDownloadManager();
 const event = computed(() => workspace.value?.event || {});
 const summary = computed(() => workspace.value?.summary || {});
 const archived = computed(() => Boolean(event.value.archivedAt || event.value.archived_at || event.value.status === "archived"));
+const replacementKinds = ["artwork_image", "creation_video"];
+const replacementKindLabels = { artwork_image: "作品图片", creation_video: "作画视频" };
+const remainingReplacementKinds = computed(() => replacementKinds.filter((kind) => !replacementCompletedKinds.value.has(kind)));
+const partialReplacementMessage = computed(() => {
+  const completed = replacementKinds.filter((kind) => replacementCompletedKinds.value.has(kind)).map((kind) => replacementKindLabels[kind]);
+  const remaining = remainingReplacementKinds.value.map((kind) => replacementKindLabels[kind]);
+  return completed.length && remaining.length ? `${completed.join("、")}已替换，${remaining.join("、")}仍待替换` : "";
+});
 
 async function loadWorkspace() {
   if (!props.eventId) {
@@ -71,6 +80,7 @@ async function loadCertificates() {
 }
 
 async function selectTab(tab) {
+  if (tab !== "records") cancelReplacement();
   activeTab.value = tab;
   if (tab === "certificates" && certificates.value.length === 0) await loadCertificates();
 }
@@ -113,12 +123,24 @@ function downloadSubmissionAsset(row, kind, asset) {
     .catch(() => emit("error", "作品材料下载失败，请重试"));
 }
 
+function cancelReplacement({ keepResult = false } = {}) {
+  replacementRequest += 1;
+  replacingRegistration.value = null;
+  replacementSession.value = null;
+  replacementLoading.value = false;
+  replacementComplete.value = false;
+  replacementCompletedKinds.value = new Set();
+  replacementError.value = "";
+  if (!keepResult) replacementResult.value = "";
+}
+
 async function createReplacementSession(row) {
   const request = replacementRequest + 1;
   replacementRequest = request;
   replacingRegistration.value = row;
   replacementSession.value = null;
   replacementComplete.value = false;
+  replacementCompletedKinds.value = new Set();
   replacementError.value = "";
   replacementResult.value = "";
   replacementLoading.value = true;
@@ -137,7 +159,8 @@ async function createReplacementSession(row) {
 }
 
 function retryReplacementSession() {
-  if (replacingRegistration.value) void createReplacementSession(replacingRegistration.value);
+  if (replacementSession.value?.id) void confirmReplacement();
+  else if (replacingRegistration.value) void createReplacementSession(replacingRegistration.value);
 }
 
 async function confirmReplacement() {
@@ -148,16 +171,15 @@ async function confirmReplacement() {
   replacementError.value = "";
   try {
     let updated = null;
-    for (const kind of ["artwork_image", "creation_video"]) {
+    for (const kind of remainingReplacementKinds.value) {
       const payload = await api(`${submissionAssetPath(row, kind)}`, { method: "PUT", body: JSON.stringify({ uploadSessionId: sessionId }) });
       updated = payload?.registration || updated;
+      replacementCompletedKinds.value = new Set([...replacementCompletedKinds.value, kind]);
+      if (updated?.id) registrations.value = registrations.value.map((item) => item.id === updated.id ? updated : item);
+      await loadRegistrations();
     }
-    if (updated?.id) registrations.value = registrations.value.map((item) => item.id === updated.id ? updated : item);
     replacementResult.value = "作品材料已替换，已恢复待审核";
-    replacementSession.value = null;
-    replacingRegistration.value = null;
-    replacementComplete.value = false;
-    await loadRegistrations();
+    cancelReplacement({ keepResult: true });
   } catch {
     replacementError.value = "作品材料替换失败，请重试";
   } finally {
@@ -186,7 +208,10 @@ onBeforeUnmount(() => downloads.dispose());
           <p v-if="replacementLoading && !replacementSession" class="hint">正在创建作品上传会话…</p>
           <template v-else-if="replacementSession?.id">
             <SubmissionAssetUploader :key="replacementSession.id" :session-id="replacementSession.id" mode="image_video" :assets="replacementSession.assets || {}" @complete="replacementComplete = $event" @error="replacementError = '作品材料上传失败，请重试'" />
-            <button type="button" class="primary" :data-action="`confirm-organization-material-replacement-${replacingRegistration.id}`" :disabled="replacementLoading || !replacementComplete" @click="confirmReplacement">{{ replacementLoading ? "正在替换…" : "确认替换作品材料" }}</button>
+            <p v-if="partialReplacementMessage" class="message" role="status">{{ partialReplacementMessage }}</p>
+            <p v-if="replacementError" class="message" role="alert">{{ replacementError }} <button type="button" class="mini" :data-action="`retry-organization-material-replacement-${replacingRegistration.id}`" :disabled="replacementLoading" @click="retryReplacementSession">重试</button></p>
+            <button type="button" class="primary" :data-action="`confirm-organization-material-replacement-${replacingRegistration.id}`" :disabled="replacementLoading || !replacementComplete || !remainingReplacementKinds.length" @click="confirmReplacement">{{ replacementLoading ? "正在替换…" : partialReplacementMessage ? "继续替换剩余素材" : "确认替换作品材料" }}</button>
+            <button type="button" class="mini" @click="cancelReplacement">取消替换</button>
           </template>
           <p v-else class="message" role="alert">{{ replacementError || "作品上传会话不可用" }} <button type="button" class="mini" @click="retryReplacementSession">重试</button></p>
         </section>

@@ -133,6 +133,61 @@ describe("OrganizationEventWorkspacePage", () => {
     expect(wrapper.text()).toContain("已恢复待审核");
   });
 
+  it("resumes an organization material replacement from the failed video without replaying the consumed image", async () => {
+    const withSubmission = {
+      ...registration,
+      submission: {
+        required: true,
+        complete: true,
+        assets: {
+          artwork_image: { kind: "artwork_image", originalName: "work.png", mimeType: "image/png", sizeBytes: 1024 },
+          creation_video: { kind: "creation_video", originalName: "making.mp4", mimeType: "video/mp4", sizeBytes: 2048 }
+        }
+      }
+    };
+    let status = "approved";
+    let videoAttempts = 0;
+    apiMock.mockImplementation(async (path, options) => {
+      if (path === "/api/organization/events/E2/workspace") return { event, summary: {}, projects: [{ id: "P1", name: "无人机", submissionMode: "image_video" }], registrations: [{ ...withSubmission, status }] };
+      if (path === "/api/organization/events/E2/registrations" && !options?.method) return { rows: [{ ...withSubmission, status }] };
+      if (path === "/api/organization/events/E2/projects/P1/upload-sessions") return { row: { id: "US-RESUME", assets: {} } };
+      if (path.endsWith("/assets/artwork_image")) {
+        status = "pending";
+        return { registration: { ...withSubmission, status } };
+      }
+      if (path.endsWith("/assets/creation_video")) {
+        videoAttempts += 1;
+        if (videoAttempts === 1) throw new Error("video replacement failed");
+        return { registration: { ...withSubmission, status } };
+      }
+      return { rows: [] };
+    });
+    const wrapper = mount(OrganizationEventWorkspacePage, { props: { eventId: "E2" } });
+    await flushPromises();
+    await wrapper.get('[data-workspace-tab="records"]').trigger("click");
+    await wrapper.get('[data-action="replace-organization-materials-R1"]').trigger("click");
+    await flushPromises();
+    await wrapper.get('[data-testid="submission-uploader"]').trigger("click");
+    await wrapper.get('[data-action="confirm-organization-material-replacement-R1"]').trigger("click");
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("作品图片已替换，作画视频仍待替换");
+    expect(apiMock.mock.calls.filter(([path, options]) => options?.method === "PUT").map(([path]) => path)).toEqual([
+      "/api/organization/events/E2/registrations/R1/assets/artwork_image",
+      "/api/organization/events/E2/registrations/R1/assets/creation_video"
+    ]);
+
+    await wrapper.get('[data-action="retry-organization-material-replacement-R1"]').trigger("click");
+    await flushPromises();
+
+    expect(apiMock.mock.calls.filter(([path, options]) => options?.method === "PUT").map(([path]) => path)).toEqual([
+      "/api/organization/events/E2/registrations/R1/assets/artwork_image",
+      "/api/organization/events/E2/registrations/R1/assets/creation_video",
+      "/api/organization/events/E2/registrations/R1/assets/creation_video"
+    ]);
+    expect(wrapper.text()).toContain("已恢复待审核");
+  });
+
   it("joins an available event idempotently and opens its workspace", async () => {
     apiMock.mockImplementation(async (path, options) => {
       if (path === "/api/me/events") return { rows: [{ event, participationState: "available", registrationState: "open" }] };

@@ -126,6 +126,48 @@ describe("ordinary user event workflow", () => {
     expect(apiMock).toHaveBeenCalledWith("/api/me/events/E2/registrations/R-PENDING/assets/artwork_image", expect.objectContaining({ method: "PUT", body: JSON.stringify({ uploadSessionId: "US-PERSONAL" }) }));
   });
 
+  it("resumes a personal material replacement with only the video after its first request fails", async () => {
+    const row = {
+      id: "R-RESUME", status: "pending", athlete: { name: "张三", school: "实验小学", grade: "二年级" }, projectId: "P2", projectName: "纸飞机",
+      submission: { required: true, complete: true, assets: { artwork_image: { kind: "artwork_image", originalName: "work.png" }, creation_video: { kind: "creation_video", originalName: "making.mp4" } } }
+    };
+    let videoAttempts = 0;
+    apiMock.mockImplementation(async (path, options) => {
+      if (path === "/api/me/events/E2/registrations" && !options?.method) return { rows: [row] };
+      if (path === "/api/me/events/E2/projects/P2/upload-sessions") return { row: { id: "US-RESUME", assets: {} } };
+      if (path.endsWith("/assets/artwork_image")) return { registration: row };
+      if (path.endsWith("/assets/creation_video")) {
+        videoAttempts += 1;
+        if (videoAttempts === 1) throw new Error("video replacement failed");
+        return { registration: row };
+      }
+      throw new Error(`unexpected API path ${path}`);
+    });
+    const wrapper = mount(RegistrationRecordsPage, { props: { eventId: "E2" } });
+    await flushPromises();
+    await wrapper.get('[data-action="replace-personal-materials-R-RESUME"]').trigger("click");
+    await flushPromises();
+    await wrapper.get('[data-testid="submission-uploader"]').trigger("click");
+    await wrapper.get('[data-action="confirm-personal-material-replacement-R-RESUME"]').trigger("click");
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("作品图片已替换，作画视频仍待替换");
+    expect(apiMock.mock.calls.filter(([path, options]) => options?.method === "PUT").map(([path]) => path)).toEqual([
+      "/api/me/events/E2/registrations/R-RESUME/assets/artwork_image",
+      "/api/me/events/E2/registrations/R-RESUME/assets/creation_video"
+    ]);
+
+    await wrapper.get('[data-action="retry-personal-material-replacement-R-RESUME"]').trigger("click");
+    await flushPromises();
+
+    expect(apiMock.mock.calls.filter(([path, options]) => options?.method === "PUT").map(([path]) => path)).toEqual([
+      "/api/me/events/E2/registrations/R-RESUME/assets/artwork_image",
+      "/api/me/events/E2/registrations/R-RESUME/assets/creation_video",
+      "/api/me/events/E2/registrations/R-RESUME/assets/creation_video"
+    ]);
+    expect(wrapper.text()).toContain("作品材料已替换");
+  });
+
   it("queries a historical certificate event id without an active event", async () => {
     apiMock.mockImplementation(async (path) => {
       if (path === "/api/me/events/E-ARCHIVED/certificates") return { rows: [{ id: "C1", title: "历史证书" }] };
