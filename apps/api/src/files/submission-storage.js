@@ -59,6 +59,36 @@ async function assertNoLinkedComponents(root, target, fileSystem) {
   }
 }
 
+export async function submissionFileExists(record, {
+  uploadRoot = process.env.UPLOAD_ROOT || "/data/uploads",
+  fileSystem = fs
+} = {}) {
+  try {
+    if (!record?.filePath) return false;
+    const root = path.resolve(uploadRoot);
+    const recordPath = path.resolve(record.filePath);
+    const submissionRoot = path.resolve(root, "submission-assets");
+    const directory = path.resolve(path.dirname(recordPath));
+    const sourceAssetId = safeAssetId(path.basename(directory));
+    const expectedPath = path.resolve(submissionRoot, sourceAssetId, safeStoredName(record.storedName));
+    if (recordPath !== expectedPath) return false;
+
+    await fileSystem.access(expectedPath);
+    await assertNoLinkedComponents(root, expectedPath, fileSystem);
+    const [linkStats, fileStats, realRoot, realFile] = await Promise.all([
+      fileSystem.lstat(expectedPath),
+      fileSystem.stat(expectedPath),
+      fileSystem.realpath(root),
+      fileSystem.realpath(expectedPath)
+    ]);
+    if (linkStats.isSymbolicLink() || !linkStats.isFile() || !fileStats.isFile()) return false;
+    assertInside(realRoot, realFile, "Submission file escapes controlled submission directory");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function policyFor(kind) {
   if (kind === "artwork_image") return SUBMISSION_IMAGE_POLICY;
   if (kind === "creation_video") return SUBMISSION_VIDEO_POLICY;

@@ -23,3 +23,23 @@
 - `npm test -w apps/api`：393 个测试通过。
 - `npm run build -w apps/admin`：通过；Vite 仍报告既有主 bundle 大于 500 kB 的体积提示，不影响构建成功。
 - `git diff --check`：通过。
+
+## 修复轮次 1：安全审查补强
+
+- 上传会话增加持久化 `channel`；管理员替换仅接受当前管理员本人创建、`channel=admin` 且未关联组织的活跃会话，个人、组织和其他管理员会话均不会被消费。
+- 管理员列表和审批前都会验证当前未清理素材实体对应的受控文件：必须位于 `submission-assets/<assetId>/<storedName>`、为普通文件且不经过符号链接；实际缺失时返回安全摘要和 `422`，不泄露存储路径。
+- 审核抽屉替换成功后将响应中的报名记录按 ID 同步回父列表和已打开抽屉，立即更新状态、元数据和警告，随后后台刷新列表。
+- 新旧 PostgreSQL 数据库均兼容 009 迁移：新 schema 跳过已存在列，旧 schema 正常补列。
+
+### TDD 记录
+
+1. 管理员能盗用个人、组织及其他管理员上传会话的新增测试先失败（错误返回 200）；补齐 `channel` 持久化和严格来源校验后均为 403，来源未被消费。
+2. 实体存在但磁盘文件不存在时，列表仍显示 `complete: true`、审批返回 200；补齐受控路径、常规文件和符号链接检查后，列表标记缺失且审批返回 422。
+3. 审核抽屉替换后，父页面测试中的已打开记录不更新；向 `refresh` 传递响应报名记录并按 ID 替换后，抽屉立刻呈现新状态和警告。
+
+### 验证
+
+- `node --test apps/api/test/submission-storage.test.js apps/api/test/submission-assets.test.js apps/api/test/submission-authorization.test.js apps/api/test/postgres-store.test.js`：通过。
+- `npm test -w apps/api`：397/397 通过。
+- `npm test -w apps/admin`：39 个测试文件、380 个测试通过。
+- `npm run build -w apps/admin`：通过；仍有既有主 bundle 超过 500 kB 的 Vite 提示。

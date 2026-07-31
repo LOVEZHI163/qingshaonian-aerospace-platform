@@ -181,6 +181,7 @@ export function ensureDbShape(db) {
   db.mediaAssets ||= [];
   db.contentAttachments ||= [];
   db.registrationUploadSessions ||= [];
+  for (const session of db.registrationUploadSessions) session.channel ||= session.organizationId ? "organization" : "personal";
   db.registrationSubmissionAssets ||= [];
   db.users ||= [];
   for (const user of db.users) {

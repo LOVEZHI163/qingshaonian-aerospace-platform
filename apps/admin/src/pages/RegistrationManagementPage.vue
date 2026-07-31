@@ -65,12 +65,20 @@ function materialStatus(row) {
   const assets = submission.assets || {};
   const values = [assets.artwork_image, assets.creation_video];
   if (values.some((asset) => asset?.cleanedAt)) return "已清理";
+  if (submission.missingKinds?.length) return "文件缺失";
   if (values.every((asset) => !asset)) return "待上传";
   if (values.some((asset) => !asset)) return "文件缺失";
   if (submission.warnings?.length) return "有警告";
   return submission.complete ? "已齐全" : "文件缺失";
 }
 function beginReview(row) { reviewRow.value = row; }
+function refreshReview(row) {
+  if (row?.id) {
+    rows.value = rows.value.map((item) => item.id === row.id ? row : item);
+    if (reviewRow.value?.id === row.id) reviewRow.value = row;
+  }
+  void loadRows();
+}
 function beginEdit(row) { if (archived.value) return; editRow.value = row; Object.assign(edit, { organizationId: row.organizationId || "", athlete: { ...row.athlete }, projectId: row.projectId, instructor: row.instructor || "" }); }
 async function saveEdit() { if (archived.value) return; try { await api(`/api/admin/events/${encodeURIComponent(props.eventId)}/registrations/${editRow.value.id}`, { method: "PATCH", body: JSON.stringify(edit) }); editRow.value = null; success.value = "报名信息已修改"; await loadRows(); } catch (cause) { error.value = cause.message; } }
 function beginResult(row) { if (archived.value) return; resultRow.value = row; Object.assign(result, { awardName: row.awardName || "", rank: row.rank || "", score: row.score || "" }); }
@@ -100,7 +108,7 @@ onBeforeUnmount(() => downloads.dispose());
     <p class="hint">{{ loading ? '正在刷新…' : `最近刷新：${refreshedAt ? new Date(refreshedAt).toLocaleString('zh-CN') : '-'}` }}</p>
     <div class="table-wrap"><table><thead><tr><th>编号</th><th>姓名</th><th>学校/实际年级</th><th>组织</th><th>组别/赛项</th><th>指导老师</th><th>作品材料</th><th>状态</th><th v-if="!archived">操作</th></tr></thead><tbody><tr v-for="row in rows" :key="row.id"><td>{{ row.id }}</td><td>{{ row.athlete.name }}</td><td>{{ row.athlete.school }}<br><span>{{ row.grade || row.athlete.grade }}</span></td><td>{{ row.organization || '个人报名' }}</td><td>{{ row.group }}<br><span>{{ row.projectName }}</span></td><td>{{ row.instructor || '-' }}</td><td><button v-if="row.submission?.required" type="button" class="mini" :data-action="`review-materials-${row.id}`" :aria-label="`查看${row.athlete.name}的作品材料`" @click="beginReview(row)">{{ materialStatus(row) }}</button><span v-else>{{ materialStatus(row) }}</span></td><td><em :class="row.status">{{ row.status }}</em></td><td v-if="!archived"><button class="mini" :data-action="`approve-${row.id}`" @click="status(row, 'approved')">审核</button><button class="mini reject" @click="status(row, 'rejected')">驳回</button><button class="mini" @click="beginEdit(row)">编辑</button><button class="mini" @click="beginResult(row)">成绩</button><button class="mini" data-action="manage-certificates" @click="emit('open-certificates', row)">证书</button></td></tr></tbody></table><p v-if="!loading && rows.length === 0" class="hint empty-state">暂无报名记录。</p></div>
     <div class="form-actions pagination"><button class="mini" :disabled="filters.page <= 1" @click="filters.page -= 1; loadRows()">上一页</button><span>第 {{ filters.page }} / {{ pageCount }} 页，共 {{ total }} 条</span><button class="mini" :disabled="filters.page >= pageCount" @click="filters.page += 1; loadRows()">下一页</button></div></section>
-    <div v-if="reviewRow" class="dialog-backdrop"><SubmissionAssetReview :event-id="eventId" :registration="reviewRow" :disabled="archived" @close="reviewRow = null" @refresh="loadRows" @error="error = $event" /></div>
+    <div v-if="reviewRow" class="dialog-backdrop"><SubmissionAssetReview :event-id="eventId" :registration="reviewRow" :disabled="archived" @close="reviewRow = null" @refresh="refreshReview" @error="error = $event" /></div>
     <div v-if="editRow" class="dialog-backdrop"><form class="panel organization-dialog" @submit.prevent="saveEdit"><h3>编辑报名</h3><div class="two"><label>姓名<input v-model="edit.athlete.name" required></label><label>学校<input v-model="edit.athlete.school" required></label></div><div class="two"><label>年级<input v-model="edit.athlete.grade" required></label><label>手机号<input v-model="edit.athlete.phone" required></label></div><label>组织<select v-model="edit.organizationId"><option value="">不关联组织</option><option v-for="organization in organizations" :key="organization.id" :value="organization.id">{{ organization.name }}</option></select></label><label>赛项<select v-model="edit.projectId"><option v-for="project in eventProjects" :key="project.id" :value="project.id">{{ project.name }}</option></select></label><label>指导老师<input v-model="edit.instructor"></label><div class="form-actions"><button class="primary">保存</button><button type="button" @click="editRow = null">取消</button></div></form></div>
     <div v-if="resultRow" class="dialog-backdrop"><form class="panel organization-dialog" @submit.prevent="saveResult"><h3>录入成绩</h3><label>奖项/等级<input v-model="result.awardName"></label><label>名次<input v-model="result.rank"></label><label>成绩/分数<input v-model="result.score"></label><div class="form-actions"><button class="primary">保存</button><button type="button" @click="resultRow = null">取消</button></div></form></div>
   </section>

@@ -57,11 +57,11 @@ function displayTime(value) {
 }
 
 function assetAvailable(asset, kind) {
-  return Boolean(asset && !asset.cleanedAt && !missingFiles.value.has(kind));
+  return Boolean(asset && !asset.cleanedAt && !submission.value?.missingKinds?.includes(kind) && !missingFiles.value.has(kind));
 }
 
 function assetMessage(asset, kind) {
-  if (missingFiles.value.has(kind)) return "文件缺失或损坏，无法播放或下载";
+  if (missingFiles.value.has(kind) || submission.value?.missingKinds?.includes(kind)) return "文件缺失或损坏，无法播放或下载";
   if (!asset) return "待上传";
   if (asset.cleanedAt) return kind === "creation_video" ? "视频文件已由管理员清理" : "图片文件已由管理员清理";
   return "可预览";
@@ -71,11 +71,11 @@ function submissionStatus() {
   if (!submission.value?.required) return "无需作品";
   const values = kinds.map((kind) => assets.value[kind]);
   if (values.some((asset) => asset?.cleanedAt)) return "已清理";
-  if (missingFiles.value.size) return "文件缺失";
+  if (missingFiles.value.size || submission.value.missingKinds?.length) return "文件缺失";
   if (values.every((asset) => !asset)) return "待上传";
   if (values.some((asset) => !asset)) return "文件缺失";
   if (submission.value.warnings?.length) return "有警告";
-  return "已齐全";
+  return submission.value.complete ? "已齐全" : "文件缺失";
 }
 
 function noteMissing(kind) {
@@ -149,10 +149,10 @@ async function confirmReplacement() {
   try {
     for (const kind of remainingReplacementKinds.value) {
       if (!currentReplacement()) return;
-      await api(assetPath(kind), { method: "PUT", body: JSON.stringify({ uploadSessionId: sessionId }) });
+      const payload = await api(assetPath(kind), { method: "PUT", body: JSON.stringify({ uploadSessionId: sessionId }) });
       if (!currentReplacement()) return;
       replacementCompletedKinds.value = new Set([...replacementCompletedKinds.value, kind]);
-      emit("refresh");
+      emit("refresh", payload?.registration || null);
     }
     if (!currentReplacement()) return;
     replacementResult.value = "作品材料已替换，报名已恢复待审核";

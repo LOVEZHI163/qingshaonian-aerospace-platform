@@ -26,11 +26,13 @@ function registrationInput(overrides = {}) {
 }
 
 function session(id, overrides = {}) {
-  return {
+  const row = {
     id, eventId: EVENT_ID, projectId: PROJECT_ID, ownerUserId: "U1001", organizationId: null,
     state: "active", createdAt: "2026-07-31T00:00:00.000Z", expiresAt: "2030-01-01T00:00:00.000Z", committedAt: null,
     ...overrides
   };
+  row.channel ||= row.organizationId ? "organization" : "personal";
+  return row;
 }
 
 function asset(id, uploadSessionId, kind, overrides = {}) {
@@ -233,7 +235,7 @@ test("administrator replacement switches the registration asset, resets approval
       db.events[0].registrationMode = "force_open";
       db.projects.find((project) => project.id === "paper-plane-gate").submissionMode = "image_video";
       db.registrations.find((row) => row.id === "R20260627001").status = "approved";
-      db.registrationUploadSessions.push(session("US-replacement", { projectId: "paper-plane-gate" }));
+      db.registrationUploadSessions.push(session("US-replacement", { projectId: "paper-plane-gate", ownerUserId: "U9001", channel: "admin" }));
       db.registrationSubmissionAssets.push(oldAsset, replacement);
     });
 
@@ -257,6 +259,42 @@ test("administrator replacement switches the registration asset, resets approval
     assert.match(audit.summary, /image\/jpeg/);
     assert.match(audit.summary, /123/);
     assert.doesNotMatch(audit.summary, /submission-assets|old\.png/);
+  }, { prefix: "submission-auth-" });
+});
+
+test("administrator cannot consume personal, organization, or another administrator replacement sessions", async () => {
+  await withTestServer(async ({ baseUrl, dbPath, tempDir }) => {
+    const admin = await loginAs(baseUrl, "13900000000", "admin123");
+    const oldAsset = asset("SA-admin-current", "US-admin-current", "artwork_image", {
+      registrationId: "R20260627001", storedName: "current.png",
+      filePath: path.join(tempDir, "uploads", "submission-assets", "SA-admin-current", "current.png")
+    });
+    const sources = [
+      asset("SA-admin-personal", "US-admin-personal", "artwork_image", { storedName: "personal.png", filePath: path.join(tempDir, "uploads", "submission-assets", "SA-admin-personal", "personal.png") }),
+      asset("SA-admin-org", "US-admin-org", "artwork_image", { storedName: "organization.png", filePath: path.join(tempDir, "uploads", "submission-assets", "SA-admin-org", "organization.png") }),
+      asset("SA-admin-other", "US-admin-other", "artwork_image", { storedName: "other.png", filePath: path.join(tempDir, "uploads", "submission-assets", "SA-admin-other", "other.png") })
+    ];
+    await Promise.all([writeAssetFile(oldAsset), ...sources.map(writeAssetFile)]);
+    await mutateDb(dbPath, (db) => {
+      db.events[0].registrationMode = "force_open";
+      db.projects.find((project) => project.id === "paper-plane-gate").submissionMode = "image_video";
+      db.registrationUploadSessions.push(
+        session("US-admin-personal", { projectId: "paper-plane-gate", channel: "personal" }),
+        session("US-admin-org", { projectId: "paper-plane-gate", ownerUserId: "U2001", organizationId: "O1001", channel: "organization" }),
+        session("US-admin-other", { projectId: "paper-plane-gate", ownerUserId: "U9002", channel: "admin" })
+      );
+      db.registrationSubmissionAssets.push(oldAsset, ...sources);
+    });
+
+    for (const sessionId of ["US-admin-personal", "US-admin-org", "US-admin-other"]) {
+      const response = await fetch(`${baseUrl}/api/admin/events/${EVENT_ID}/registrations/R20260627001/assets/artwork_image`, withSession(admin.cookie, {
+        method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ uploadSessionId: sessionId })
+      }));
+      assert.equal(response.status, 403);
+    }
+    const db = JSON.parse(await fs.readFile(dbPath, "utf8"));
+    assert.equal(db.registrationSubmissionAssets.find((row) => row.registrationId === "R20260627001").id, "SA-admin-current");
+    assert.equal(db.registrationSubmissionAssets.filter((row) => row.id.startsWith("SA-admin-") && !row.registrationId).length, 3);
   }, { prefix: "submission-auth-" });
 });
 
@@ -285,16 +323,71 @@ test("administrator cannot approve a required submission when a material is miss
   }, { prefix: "submission-auth-" });
 });
 
-test("administrator registration summaries expose material metadata without storage paths", async () => {
-  await withTestServer(async ({ baseUrl, dbPath }) => {
+test("administrator list marks absent submission files missing and refuses approval", async () => {
+  await withTestServer(async ({ baseUrl, dbPath, tempDir }) => {
     const admin = await loginAs(baseUrl, "13900000000", "admin123");
     await mutateDb(dbPath, (db) => {
       const registration = db.registrations.find((row) => row.id === "R20260627001");
+      db.events[0].registrationMode = "force_open";
       db.projects.find((project) => project.id === registration.projectId).submissionMode = "image_video";
       db.registrationSubmissionAssets.push(
-        asset("SA-summary-image", "US-summary", "artwork_image", { registrationId: registration.id, filePath: "C:\\private\\image.png", storedName: "private-image.png" }),
-        asset("SA-summary-video", "US-summary", "creation_video", { registrationId: registration.id, filePath: "C:\\private\\video.mp4", storedName: "private-video.mp4" })
+        asset("SA-absent-image", "US-absent", "artwork_image", { registrationId: registration.id, storedName: "image.png", filePath: path.join(tempDir, "uploads", "submission-assets", "SA-absent-image", "image.png") }),
+        asset("SA-absent-video", "US-absent", "creation_video", { registrationId: registration.id, storedName: "video.mp4", filePath: path.join(tempDir, "uploads", "submission-assets", "SA-absent-video", "video.mp4") })
       );
+    });
+
+    const listed = await fetch(`${baseUrl}/api/admin/events/${EVENT_ID}/registrations?pageSize=10`, withSession(admin.cookie));
+    const row = (await listed.json()).rows.find((item) => item.id === "R20260627001");
+    assert.equal(row.submission.complete, false);
+    assert.deepEqual(row.submission.missingKinds, ["artwork_image", "creation_video"]);
+    assert.doesNotMatch(JSON.stringify(row.submission), /filePath|storedName|submission-assets/);
+
+    const response = await fetch(`${baseUrl}/api/admin/events/${EVENT_ID}/registrations/R20260627001/status`, withSession(admin.cookie, {
+      method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "approved" })
+    }));
+    assert.equal(response.status, 422);
+  }, { prefix: "submission-auth-" });
+});
+
+test("administrator approves an image-video registration only when both controlled files exist", async () => {
+  await withTestServer(async ({ baseUrl, dbPath, tempDir }) => {
+    const admin = await loginAs(baseUrl, "13900000000", "admin123");
+    const image = asset("SA-present-image", "US-present", "artwork_image", {
+      registrationId: "R20260627001", storedName: "image.png", filePath: path.join(tempDir, "uploads", "submission-assets", "SA-present-image", "image.png")
+    });
+    const video = asset("SA-present-video", "US-present", "creation_video", {
+      registrationId: "R20260627001", storedName: "video.mp4", filePath: path.join(tempDir, "uploads", "submission-assets", "SA-present-video", "video.mp4")
+    });
+    await Promise.all([writeAssetFile(image), writeAssetFile(video)]);
+    await mutateDb(dbPath, (db) => {
+      const registration = db.registrations.find((row) => row.id === "R20260627001");
+      db.events[0].registrationMode = "force_open";
+      db.projects.find((project) => project.id === registration.projectId).submissionMode = "image_video";
+      db.registrationSubmissionAssets.push(image, video);
+    });
+
+    const response = await fetch(`${baseUrl}/api/admin/events/${EVENT_ID}/registrations/R20260627001/status`, withSession(admin.cookie, {
+      method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "approved" })
+    }));
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).row.status, "approved");
+  }, { prefix: "submission-auth-" });
+});
+
+test("administrator registration summaries expose material metadata without storage paths", async () => {
+  await withTestServer(async ({ baseUrl, dbPath, tempDir }) => {
+    const admin = await loginAs(baseUrl, "13900000000", "admin123");
+    const image = asset("SA-summary-image", "US-summary", "artwork_image", {
+      registrationId: "R20260627001", storedName: "private-image.png", filePath: path.join(tempDir, "uploads", "submission-assets", "SA-summary-image", "private-image.png")
+    });
+    const video = asset("SA-summary-video", "US-summary", "creation_video", {
+      registrationId: "R20260627001", storedName: "private-video.mp4", filePath: path.join(tempDir, "uploads", "submission-assets", "SA-summary-video", "private-video.mp4")
+    });
+    await Promise.all([writeAssetFile(image), writeAssetFile(video)]);
+    await mutateDb(dbPath, (db) => {
+      const registration = db.registrations.find((row) => row.id === "R20260627001");
+      db.projects.find((project) => project.id === registration.projectId).submissionMode = "image_video";
+      db.registrationSubmissionAssets.push(image, video);
     });
 
     const response = await fetch(`${baseUrl}/api/admin/events/${EVENT_ID}/registrations?pageSize=10`, withSession(admin.cookie));

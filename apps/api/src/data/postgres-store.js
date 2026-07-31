@@ -121,6 +121,13 @@ async function runMigrations(pool) {
             .replace(/CREATE INDEX registration_submission_assets_upload_session_id_idx[\s\S]*?;\s*/, "");
         }
       }
+      if (name === "009-admin-submission-session-channel.sql") {
+        const sessionChannel = await client.query(`
+          SELECT 1 FROM information_schema.columns
+          WHERE table_name = 'registration_upload_sessions' AND column_name = 'channel'
+        `);
+        if (sessionChannel.rowCount > 0) migration = "";
+      }
       for (const tableName of ["site_settings", "event_public_profiles", "content_posts", "media_assets", "content_attachments"]) {
         const existing = await client.query(`
           SELECT 1 FROM information_schema.tables
@@ -661,6 +668,7 @@ export function createPostgresStore(pool, { seedOnEmpty = true } = {}) {
           projectId: row.project_id,
           ownerUserId: row.owner_user_id,
           organizationId: row.organization_id,
+          channel: row.channel,
           state: row.state,
           createdAt: iso(row.created_at),
           expiresAt: iso(row.expires_at),
@@ -928,18 +936,19 @@ export function createPostgresStore(pool, { seedOnEmpty = true } = {}) {
         for (const row of db.registrationUploadSessions) {
           await client.query(
             `INSERT INTO registration_upload_sessions
-              (id, event_id, project_id, owner_user_id, organization_id, state, created_at, expires_at, committed_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+              (id, event_id, project_id, owner_user_id, organization_id, channel, state, created_at, expires_at, committed_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
              ON CONFLICT (id) DO UPDATE SET
                event_id = EXCLUDED.event_id,
                project_id = EXCLUDED.project_id,
                owner_user_id = EXCLUDED.owner_user_id,
                organization_id = EXCLUDED.organization_id,
+               channel = EXCLUDED.channel,
                state = EXCLUDED.state,
                created_at = EXCLUDED.created_at,
                expires_at = EXCLUDED.expires_at,
                committed_at = EXCLUDED.committed_at`,
-            [row.id, row.eventId, row.projectId, row.ownerUserId, row.organizationId || null, row.state, row.createdAt, row.expiresAt, row.committedAt || null]
+            [row.id, row.eventId, row.projectId, row.ownerUserId, row.organizationId || null, row.channel || (row.organizationId ? "organization" : "personal"), row.state, row.createdAt, row.expiresAt, row.committedAt || null]
           );
         }
 

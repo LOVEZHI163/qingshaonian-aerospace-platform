@@ -10,7 +10,8 @@ import {
   deleteSubmissionFile,
   inspectSubmissionFile,
   probeVideo,
-  readSubmissionRange
+  readSubmissionRange,
+  submissionFileExists
 } from "../src/files/submission-storage.js";
 
 const IMAGE_WARNING = "作品图片长边低于建议的 780 像素";
@@ -258,6 +259,29 @@ function submissionRecord(uploadRoot, id = "SA1", storedName = "original.mp4") {
     filePath: path.join(uploadRoot, "submission-assets", id, storedName)
   };
 }
+
+test("checks that an approval asset is a real regular file under its controlled directory", async (t) => {
+  const uploadRoot = await makeFixture(t);
+  const record = submissionRecord(uploadRoot, "SA-approval", "work.mp4");
+  await fs.mkdir(path.dirname(record.filePath), { recursive: true });
+  await fs.writeFile(record.filePath, "video");
+  assert.equal(await submissionFileExists(record, { uploadRoot }), true);
+
+  await fs.rm(record.filePath);
+  await fs.mkdir(record.filePath);
+  assert.equal(await submissionFileExists(record, { uploadRoot }), false);
+
+  await fs.rm(record.filePath, { recursive: true });
+  const outside = path.join(uploadRoot, "outside.mp4");
+  await fs.writeFile(outside, "outside");
+  try {
+    await fs.symlink(outside, record.filePath, "file");
+  } catch (error) {
+    if (error?.code === "EPERM") return;
+    throw error;
+  }
+  assert.equal(await submissionFileExists(record, { uploadRoot }), false);
+});
 
 test("deletes a file only from its controlled submission-assets directory", async (t) => {
   const directory = await makeFixture(t);

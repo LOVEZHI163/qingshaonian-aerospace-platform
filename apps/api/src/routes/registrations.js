@@ -23,6 +23,7 @@ import {
   commitUploadSession,
   replacementSessionAsset,
   replaceRegistrationAsset,
+  registrationSubmissionAvailability,
   submissionAssetSummary,
   withRegistrationSubmission
 } from "../services/submission-assets.js";
@@ -231,6 +232,12 @@ export function createRegistrationsRouter({
     requireWritableEvent(db, req.params.eventId, clock);
     const row = db.registrations.find((item) => item.id === req.params.registrationId && item.eventId === req.params.eventId);
     if (!row) return res.status(404).json({ error: "Registration not found" });
+    if (req.body?.status === "approved") {
+      const submission = await registrationSubmissionAvailability(db, row);
+      if (submission?.required && !submission.complete) {
+        return res.status(422).json({ error: "必传作品材料不完整、已清理或文件缺失，不能直接通过报名", code: "SUBMISSION_ASSETS_INCOMPLETE" });
+      }
+    }
     updateRegistrationStatus(db, row, req.body, req.user);
     row.updatedAt = now();
     recordAudit(db, {
@@ -283,7 +290,12 @@ export function createRegistrationsRouter({
   router.get("/admin/events/:eventId/registrations", ...admin, asyncRoute(async (req, res) => {
     const db = await store.readDb();
     requireEventId(db, req.params.eventId);
-    res.json(listAdminRegistrations(db, { ...req.query, eventId: req.params.eventId }, clock));
+    const payload = listAdminRegistrations(db, { ...req.query, eventId: req.params.eventId }, clock);
+    await Promise.all(payload.rows.map(async (row) => {
+      const submission = await registrationSubmissionAvailability(db, row);
+      if (submission) row.submission = submission;
+    }));
+    res.json(payload);
   }));
 
   router.get("/admin/events/:eventId/registrations/export.xlsx", ...admin, asyncRoute(async (req, res) => {

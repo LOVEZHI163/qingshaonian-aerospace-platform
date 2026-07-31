@@ -175,6 +175,7 @@ test("administrators create and upload through their own replacement session", a
 
     const db = JSON.parse(await fs.readFile(dbPath, "utf8"));
     assert.equal(db.registrationUploadSessions.find((row) => row.id === payload.row.id).ownerUserId, "U9001");
+    assert.equal(db.registrationUploadSessions.find((row) => row.id === payload.row.id).channel, "admin");
   });
 });
 

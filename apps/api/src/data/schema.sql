@@ -151,6 +151,7 @@ CREATE TABLE IF NOT EXISTS registration_upload_sessions (
   project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
   owner_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   organization_id TEXT REFERENCES organizations(id) ON DELETE CASCADE,
+  channel TEXT NOT NULL DEFAULT 'personal' CHECK (channel IN ('personal', 'organization', 'admin')),
   state TEXT NOT NULL CHECK (state IN ('active', 'committed', 'expired')),
   created_at TIMESTAMPTZ NOT NULL,
   expires_at TIMESTAMPTZ NOT NULL,

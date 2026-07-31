@@ -1,4 +1,5 @@
 import { isRegistrationOpen } from "../domain/registration-window.js";
+import { submissionFileExists } from "../files/submission-storage.js";
 import { businessError } from "./events.js";
 import { requireOrganizationEventParticipation, requireOrdinaryUser, requireWritableEvent } from "./access-control.js";
 import { recordAudit } from "./audit.js";
@@ -91,6 +92,22 @@ export function registrationSubmissionSummary(db, registration) {
   return { required: true, complete, warnings, assets };
 }
 
+export async function registrationSubmissionAvailability(db, registration, { fileExists = submissionFileExists } = {}) {
+  const submission = registrationSubmissionSummary(db, registration);
+  if (!submission) return null;
+  const records = new Map(
+    db.registrationSubmissionAssets
+      .filter((asset) => asset.registrationId === registration.id)
+      .map((asset) => [asset.kind, asset])
+  );
+  const missingKinds = [];
+  for (const kind of SUBMISSION_ASSET_KINDS) {
+    const asset = records.get(kind);
+    if (!asset || (!asset.cleanedAt && !(await fileExists(asset)))) missingKinds.push(kind);
+  }
+  return { ...submission, complete: submission.complete && missingKinds.length === 0, missingKinds };
+}
+
 export function withRegistrationSubmission(db, registration) {
   const submission = registrationSubmissionSummary(db, registration);
   return submission ? { ...registration, submission } : registration;
@@ -135,7 +152,7 @@ export function createUploadSession({ db, eventId, projectId, actor, channel, no
   const expiresAt = new Date(Date.parse(createdAt) + SESSION_TTL_MS).toISOString();
   const session = {
     id: makeId("US"), eventId, projectId, ownerUserId: actor.id, organizationId,
-    state: "active", createdAt, expiresAt, committedAt: null
+    channel, state: "active", createdAt, expiresAt, committedAt: null
   };
   db.registrationUploadSessions.push(session);
   return session;
@@ -146,14 +163,15 @@ export function requireUploadSessionAccess({ db, sessionId, actor, channel, now,
   const session = db.registrationUploadSessions.find((row) => row.id === sessionId);
   if (!session) throw businessError(404, "上传会话不存在", "UPLOAD_SESSION_NOT_FOUND");
   if (session.ownerUserId !== actor?.id) throw businessError(403, "无权访问该上传会话", "UPLOAD_SESSION_FORBIDDEN");
+  const sessionChannel = session.channel || (session.organizationId ? "organization" : "personal");
   if (channel === "personal") {
     requireOrdinaryUser(actor);
-    if (session.organizationId) throw businessError(403, "该上传会话不属于个人报名", "UPLOAD_SESSION_FORBIDDEN");
+    if (sessionChannel !== "personal" || session.organizationId) throw businessError(403, "该上传会话不属于个人报名", "UPLOAD_SESSION_FORBIDDEN");
   } else if (channel === "organization") {
     const { organization } = requireOrganizationEventParticipation(db, actor, session.eventId, { writable: true });
-    if (session.organizationId !== organization.id) throw businessError(403, "无权访问该组织上传会话", "UPLOAD_SESSION_FORBIDDEN");
+    if (sessionChannel !== "organization" || session.organizationId !== organization.id) throw businessError(403, "无权访问该组织上传会话", "UPLOAD_SESSION_FORBIDDEN");
   } else if (channel === "admin") {
-    if (actor?.type !== "admin" || session.organizationId) {
+    if (actor?.type !== "admin" || session.ownerUserId !== actor.id || session.channel !== "admin" || session.organizationId) {
       throw businessError(403, "无权访问该管理员上传会话", "UPLOAD_SESSION_FORBIDDEN");
     }
   } else {
@@ -218,6 +236,9 @@ export function replacementSessionAsset({ db, sessionId, registration, kind, act
   if (channel === "admin") {
     session = db.registrationUploadSessions.find((row) => row.id === sessionId);
     if (!session) throw businessError(404, "上传会话不存在", "UPLOAD_SESSION_NOT_FOUND");
+    if (actor?.type !== "admin" || session.ownerUserId !== actor.id || session.channel !== "admin" || session.organizationId) {
+      throw businessError(403, "无权使用该管理员上传会话", "UPLOAD_SESSION_FORBIDDEN");
+    }
     eventProject(db, session.eventId, session.projectId);
     if (session.state !== "active") throw businessError(409, "上传会话已提交或不可用", "UPLOAD_SESSION_NOT_ACTIVE");
     if (sessionIsExpired(session, now)) throw businessError(409, "上传会话已过期", "UPLOAD_SESSION_EXPIRED");
