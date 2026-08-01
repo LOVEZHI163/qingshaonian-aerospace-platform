@@ -572,9 +572,17 @@ app.get("/api/organizations/:id/members", requireUser, requirePasswordReady, asy
   res.json({ rows: db.memberships.filter((membership) => membership.organizationId === req.params.id) });
 }));
 
-app.use((error, _req, res, next) => {
+app.use((error, req, res, next) => {
   if (res.headersSent) return next(error);
   const status = Number.isInteger(error.status) ? error.status : 500;
+  if (status === 500) {
+    console.error("Unhandled API request error", {
+      method: req.method,
+      path: req.originalUrl,
+      message: error?.message || "Unknown error",
+      stack: error?.stack || ""
+    });
+  }
   const contentRange = error?.headers?.["Content-Range"];
   if (typeof contentRange === "string" && /^bytes \*\/\d+$/.test(contentRange)) {
     res.setHeader("Content-Range", contentRange);
