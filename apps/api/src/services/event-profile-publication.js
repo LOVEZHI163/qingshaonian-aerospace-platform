@@ -1,11 +1,16 @@
 import { recordAudit } from "./audit.js";
+import { isRegistrationOpen } from "../domain/registration-window.js";
 
 const PUBLICATION_ACTION = "event.profile-public";
 
 export function isEventProfilePublic(db, eventId) {
   const event = (db.events || []).find((row) => row.id === eventId);
   const profile = (db.eventPublicProfiles || []).find((row) => row.eventId === eventId);
-  return profile?.isVisible === true && ["published", "archived"].includes(event?.status);
+  return profile?.isVisible === true && Boolean(event) && (
+    ["published", "archived"].includes(event.status)
+    || event.isCurrent === true
+    || (!event.archivedAt && isRegistrationOpen(event, new Date()).open)
+  );
 }
 
 export function eventProfileSlugIsLocked(db, eventId) {

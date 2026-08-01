@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import express from "express";
 import multer from "multer";
+import archiver from "archiver";
 
 import { SUBMISSION_IMAGE_POLICY, SUBMISSION_VIDEO_POLICY } from "../files/policy.js";
 import { deleteSubmissionFile, inspectSubmissionFile, readSubmissionRange } from "../files/submission-storage.js";
@@ -27,6 +28,51 @@ function safeFileName(value) {
     .replace(/[\\/\x00-\x1f<>:"|?*]/g, "_")
     .replace(/["\\]/g, "_")
     .slice(0, 180) || "submission";
+}
+
+function safeDownloadPart(value, fallback) {
+  const result = String(value || "").trim()
+    .replace(/[\\/\x00-\x1f<>:"|?*]/g, "_")
+    .replace(/\s+/g, " ")
+    .replace(/[. ]+$/g, "")
+    .slice(0, 48);
+  return result || fallback;
+}
+
+function extensionForAsset(asset) {
+  const extension = path.extname(String(asset.originalName || "")).toLowerCase();
+  if (/^\.[a-z0-9]{1,8}$/.test(extension)) return extension;
+  if (asset.kind === "creation_video") return ".mp4";
+  return asset.mimeType === "image/jpeg" ? ".jpg" : ".png";
+}
+
+export function submissionDownloadName(db, registration, asset) {
+  const project = (db.projects || []).find((row) => row.id === registration.projectId);
+  const label = asset.kind === "creation_video" ? "作画视频" : "作品图片";
+  return [
+    safeDownloadPart(registration.id, "报名"),
+    safeDownloadPart(registration.athlete?.name, "选手"),
+    safeDownloadPart(registration.athlete?.school, "学校"),
+    safeDownloadPart(project?.name || registration.projectName, "赛项"),
+    safeDownloadPart(registration.group, "组别"),
+    label
+  ].join("_") + extensionForAsset(asset);
+}
+
+function attachmentDisposition(fileName) {
+  const encoded = encodeURIComponent(fileName).replace(/[!'()*]/g, (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`);
+  return `attachment; filename="download${path.extname(fileName)}"; filename*=UTF-8''${encoded}`;
+}
+
+function adminEventAssets(db, eventId, { kind = "", includeCleaned = false } = {}) {
+  const registrations = new Map((db.registrations || [])
+    .filter((row) => row.eventId === eventId)
+    .map((row) => [row.id, row]));
+  return (db.registrationSubmissionAssets || []).filter((asset) => {
+    if (!registrations.has(asset.registrationId)) return false;
+    if (kind && asset.kind !== kind) return false;
+    return includeCleaned || !asset.cleanedAt;
+  }).map((asset) => ({ asset, registration: registrations.get(asset.registrationId) }));
 }
 
 async function removeUploadedFile(file) {
@@ -294,9 +340,9 @@ export function createSubmissionAssetsRouter({
           });
           await store.writeDb(db);
         }
-        return asset;
+        return { db, registration, asset };
       };
-      const asset = store.withMutationLock
+      const { db, registration, asset } = store.withMutationLock
         ? await store.withMutationLock(authorizeAndAudit)
         : await authorizeAndAudit();
       let response;
@@ -310,7 +356,9 @@ export function createSubmissionAssetsRouter({
         ...response.headers,
         "X-Content-Type-Options": "nosniff",
         "Cache-Control": "private, no-store",
-        "Content-Disposition": `${disposition}; filename="${safeFileName(asset.originalName)}"`
+        "Content-Disposition": disposition === "attachment"
+          ? attachmentDisposition(submissionDownloadName(db, registration, asset))
+          : `inline; filename="${safeFileName(asset.originalName)}"`
       });
       response.stream.on("error", next).pipe(res);
     });
@@ -319,6 +367,93 @@ export function createSubmissionAssetsRouter({
   router.get("/me/events/:eventId/registrations/:registrationId/assets/:kind", ...user, streamAsset("personal"));
   router.get("/organization/events/:eventId/registrations/:registrationId/assets/:kind", ...user, streamAsset("organization"));
   router.get("/admin/events/:eventId/registrations/:registrationId/assets/:kind", ...admin, streamAsset("admin"));
+
+  router.get("/admin/events/:eventId/submission-assets", ...admin, asyncRoute(async (req, res) => {
+    const db = await store.readDb();
+    if (!(db.events || []).some((event) => event.id === req.params.eventId)) {
+      return res.status(404).json({ error: "赛事不存在" });
+    }
+    const kind = String(req.query.kind || "");
+    if (kind && !new Set(["artwork_image", "creation_video"]).has(kind)) {
+      return res.status(422).json({ error: "作品材料类型不合法" });
+    }
+    const rows = adminEventAssets(db, req.params.eventId, { kind }).map(({ asset, registration }) => ({
+      ...submissionAssetSummary(asset),
+      registrationId: registration.id,
+      athleteName: registration.athlete?.name || "",
+      school: registration.athlete?.school || "",
+      group: registration.group || "",
+      projectName: (db.projects || []).find((project) => project.id === registration.projectId)?.name || "",
+      downloadName: submissionDownloadName(db, registration, asset),
+      downloadUrl: `/api/admin/events/${encodeURIComponent(req.params.eventId)}/registrations/${encodeURIComponent(registration.id)}/assets/${asset.kind}?download=1`
+    }));
+    res.json({ rows, total: rows.length });
+  }));
+
+  router.post("/admin/events/:eventId/submission-assets/download", ...admin, asyncRoute(async (req, res) => {
+    const ids = [...new Set(Array.isArray(req.body?.ids) ? req.body.ids.map(String) : [])];
+    if (!ids.length || ids.length > 500) return res.status(422).json({ error: "请选择 1 至 500 个作品文件" });
+    const db = await store.readDb();
+    const selected = adminEventAssets(db, req.params.eventId).filter(({ asset }) => ids.includes(asset.id));
+    if (selected.length !== ids.length) return res.status(422).json({ error: "部分作品文件不存在、已清理或不属于当前赛事" });
+    if (selected.some(({ asset }) => !isControlledSubmissionAsset(asset, uploadRoot))) {
+      return res.status(422).json({ error: "部分作品文件的存储记录无效，请联系平台维护人员" });
+    }
+    try {
+      await Promise.all(selected.map(({ asset }) => fs.access(asset.filePath)));
+    } catch {
+      return res.status(404).json({ error: "部分作品文件已缺失，请刷新列表后处理" });
+    }
+    for (const { asset, registration } of selected) {
+      recordSubmissionAssetAudit(db, {
+        actor: req.user, action: "registration_asset_download", eventId: req.params.eventId,
+        organizationId: registration.organizationId || null, registrationId: registration.id,
+        sessionId: asset.uploadSessionId, asset, assetKind: asset.kind, channel: "admin", access: "bulk-download", createdAt: now()
+      });
+    }
+    await store.writeDb(db);
+    const event = (db.events || []).find((row) => row.id === req.params.eventId);
+    const zipName = `${safeDownloadPart(event?.name, "赛事")}_作品材料.zip`;
+    res.set({
+      "Content-Type": "application/zip",
+      "Content-Disposition": attachmentDisposition(zipName),
+      "Cache-Control": "private, no-store"
+    });
+    const archive = archiver("zip", { zlib: { level: 6 } });
+    archive.on("warning", (error) => { if (error.code !== "ENOENT") res.destroy(error); });
+    archive.on("error", (error) => res.destroy(error));
+    archive.pipe(res);
+    for (const { asset, registration } of selected) {
+      archive.file(asset.filePath, { name: submissionDownloadName(db, registration, asset) });
+    }
+    await archive.finalize();
+  }));
+
+  router.post("/admin/events/:eventId/submission-assets/bulk-delete", ...admin, asyncRoute(async (req, res) => {
+    const ids = [...new Set(Array.isArray(req.body?.ids) ? req.body.ids.map(String) : [])];
+    if (!ids.length || ids.length > 500) return res.status(422).json({ error: "请选择 1 至 500 个作品文件" });
+    const db = await store.readDb();
+    const selected = adminEventAssets(db, req.params.eventId).filter(({ asset }) => ids.includes(asset.id));
+    if (selected.length !== ids.length) return res.status(422).json({ error: "部分作品文件不存在、已清理或不属于当前赛事" });
+    const cleanedAt = now();
+    for (const { asset, registration } of selected) {
+      asset.cleanedAt = cleanedAt;
+      asset.cleanupReason = "admin-classified-cleanup";
+      recordSubmissionAssetAudit(db, {
+        actor: req.user, action: "registration_asset_cleanup", eventId: req.params.eventId,
+        organizationId: registration.organizationId || null, registrationId: registration.id,
+        sessionId: asset.uploadSessionId, asset, assetKind: asset.kind, channel: "admin",
+        cleanupCategory: "admin-classified-cleanup", createdAt: cleanedAt
+      });
+    }
+    await store.writeDb(db);
+    for (const { asset } of selected) {
+      await finishCommittedAssetCleanup({
+        store, db, asset, category: "admin-classified-cleanup", deleteFile, uploadRoot, makeId, now, logger
+      });
+    }
+    res.json({ ok: true, cleanedCount: selected.length });
+  }));
 
   return router;
 }

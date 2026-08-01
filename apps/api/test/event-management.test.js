@@ -169,7 +169,7 @@ test("event management creates, validates, copies, publishes, and archives event
     assert.equal(setCurrent.status, 200);
     const afterCurrent = await json(await fetch(`${baseUrl}/api/admin/events`, withSession(admin.cookie)));
     assert.equal(afterCurrent.rows.filter((row) => row.isCurrent).length, 1);
-    assert.equal(afterCurrent.rows.find((row) => row.id === copy.event.id).status, "published");
+    assert.equal(afterCurrent.rows.find((row) => row.id === copy.event.id).status, "draft");
 
     const archived = await fetch(`${baseUrl}/api/admin/events/${copy.event.id}/archive`, jsonOptions("POST", {}, admin.cookie));
     assert.equal(archived.status, 200);

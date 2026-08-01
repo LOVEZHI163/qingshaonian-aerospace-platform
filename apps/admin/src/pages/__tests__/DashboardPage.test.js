@@ -1,8 +1,8 @@
 import { flushPromises, mount as vueMount } from "@vue/test-utils";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { apiMock } = vi.hoisted(() => ({ apiMock: vi.fn() }));
-vi.mock("../../lib/api.js", () => ({ api: apiMock }));
+const { apiMock, apiBlobMock } = vi.hoisted(() => ({ apiMock: vi.fn(), apiBlobMock: vi.fn() }));
+vi.mock("../../lib/api.js", () => ({ api: apiMock, apiBlob: apiBlobMock }));
 
 import DashboardPage from "../DashboardPage.vue";
 const mount = (component, options = {}) => vueMount(component, { ...options, props: { eventId: "E1", ...(options.props || {}) } });
@@ -11,6 +11,8 @@ const dashboard = {
   event: { id: "E1", name: "2026航空航天创新比赛", status: "published", isCurrent: true },
   registrationWindow: { open: false, reason: "管理员临时关闭" },
   counts: { registrations: 12, pendingRegistrations: 3, pendingOrganizations: 2, draftCertificates: 4 },
+  serverStorage: { available: true, level: "normal", thresholds: { warningPercent: 80, criticalPercent: 90 }, disk: { totalBytes: 1000, usedBytes: 350, availableBytes: 650, usedPercent: 35 } },
+  submissionStorage: { totalFiles: 2, totalBytes: 300, artworkImages: { count: 1, bytes: 100 }, creationVideos: { count: 1, bytes: 200 } },
   recentImports: [{ id: "B1", originalName: "证书名单.xlsx", status: "committed", validCount: 8, createdAt: "2026-07-18T08:00:00.000Z" }],
   recentAuditLogs: [{ id: "A1", actorName: "赛事管理员", action: "certificate.publish", summary: "发布 4 张证书", createdAt: "2026-07-18T09:00:00.000Z" }]
 };
@@ -18,7 +20,8 @@ const dashboard = {
 describe("DashboardPage", () => {
   beforeEach(() => {
     apiMock.mockReset();
-    apiMock.mockResolvedValue(dashboard);
+    apiMock.mockImplementation((path) => Promise.resolve(path.includes("submission-assets") ? { rows: [] } : dashboard));
+    apiBlobMock.mockReset();
   });
 
   it("shows operational status, counts, imports and audit logs", async () => {
@@ -33,6 +36,9 @@ describe("DashboardPage", () => {
     expect(wrapper.get('[data-count="draft-certificates"]').text()).toContain("4");
     expect(wrapper.text()).toContain("证书名单.xlsx");
     expect(wrapper.text()).toContain("发布 4 张证书");
+    expect(wrapper.text()).toContain("服务器存储概览");
+    expect(wrapper.text()).toContain("35.0%");
+    expect(wrapper.text()).toContain("图片 1 个");
   });
 
   it("emits navigation targets from review shortcuts", async () => {
@@ -42,7 +48,8 @@ describe("DashboardPage", () => {
     await wrapper.get('[data-dashboard-target="organizations"]').trigger("click");
     await wrapper.get('[data-dashboard-target="registrations"]').trigger("click");
     await wrapper.get('[data-dashboard-target="certificates"]').trigger("click");
+    await wrapper.get('[data-action="dashboard-certificate-import"]').trigger("click");
 
-    expect(wrapper.emitted("navigate")).toEqual([["organizations"], ["registrations"], ["certificates"]]);
+    expect(wrapper.emitted("navigate")).toEqual([["organizations"], ["registrations"], ["certificates"], ["certificates", "import"]]);
   });
 });

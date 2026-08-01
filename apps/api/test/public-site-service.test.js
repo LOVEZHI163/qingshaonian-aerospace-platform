@@ -201,16 +201,16 @@ test("homepage preview uses protected URLs for private event fallbacks and conte
   assert.doesNotMatch(JSON.stringify(view), /\/api\/public\/media\/(?:DEFAULT-HERO-PRIVATE|CONTENT-COVER-PRIVATE)/);
 });
 
-test("event preview bypasses public visibility without changing the event status", () => {
+test("an in-window draft is public automatically while preview still preserves its status", () => {
   const source = seededPublicSiteDb();
   source.events[0].status = "draft";
   source.eventPublicProfiles[0].isVisible = false;
 
-  assert.equal(buildEventDetailView(source, "current-event", now), null);
+  assert.equal(buildEventDetailView(source, "current-event", now).event.status, "draft");
   const view = buildEventDetailView(source, "current-event", now, { allowUnpublished: true });
 
   assert.equal(view.event.status, "draft");
-  assert.deepEqual(view.event.registrationWindow, { open: false, reason: "赛事尚未发布" });
+  assert.deepEqual(view.event.registrationWindow, { open: true, reason: "报名进行中" });
 });
 
 test("home event selection respects a valid manual feature and caps concurrent events", () => {
@@ -228,7 +228,7 @@ test("home event selection respects a valid manual feature and caps concurrent e
   assert.equal(selection.mode, "active");
 });
 
-test("home event selection falls back when the manual feature is not public", () => {
+test("home event selection does not require a second website-visibility switch", () => {
   const source = db(
     [event("E1"), event("E2"), event("E3")],
     [profile("E1", { displayOrder: 2 }), profile("E2", { isVisible: false }), profile("E3", { displayOrder: 1 })],
@@ -237,8 +237,23 @@ test("home event selection falls back when the manual feature is not public", ()
 
   const selection = selectHomeEvents(source, now);
 
-  assert.equal(selection.featuredEvent.id, "E3");
-  assert.deepEqual(selection.concurrentEvents.map((row) => row.id), ["E1"]);
+  assert.equal(selection.featuredEvent.id, "E2");
+  assert.deepEqual(selection.concurrentEvents.map((row) => row.id), ["E3", "E1"]);
+});
+
+test("an automatic draft becomes visible in its registration window and force-open is immediately visible", () => {
+  const source = db(
+    [
+      event("AUTO-DRAFT", { status: "draft" }),
+      event("FORCED-DRAFT", { status: "draft", registrationMode: "force_open", registrationStartAt: "2030-01-01T00:00:00.000Z", registrationEndAt: "2030-02-01T00:00:00.000Z" })
+    ],
+    [profile("AUTO-DRAFT", { isVisible: false }), profile("FORCED-DRAFT", { isVisible: false })]
+  );
+
+  const selection = selectHomeEvents(source, now);
+
+  assert.equal(selection.featuredEvent.id, "AUTO-DRAFT");
+  assert.deepEqual(selection.concurrentEvents.map((row) => row.id), ["FORCED-DRAFT"]);
 });
 
 test("home event selection keeps a valid manual feature outside the registration window", () => {

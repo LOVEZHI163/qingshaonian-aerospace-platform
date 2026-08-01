@@ -215,7 +215,7 @@ test("site admin event public profiles validate events, unique and stable slugs,
   }, { prefix: "site-admin-profiles-" });
 });
 
-test("draft events reject website visibility, content scheduling, and content publishing", async () => {
+test("a current draft may be shown as an event while its content still cannot be published", async () => {
   await withTestServer(async ({ baseUrl, dbPath }) => {
     const admin = await loginAs(baseUrl, "13900000000", "admin123");
     await mutateDb(dbPath, (db) => {
@@ -233,8 +233,8 @@ test("draft events reject website visibility, content scheduling, and content pu
         allowUnpublishedVisibility: true
       }
     );
-    assert.equal(profile.status, 422);
-    assert.equal((await profile.json()).code, "EVENT_NOT_PUBLISHED");
+    assert.equal(profile.status, 201);
+    assert.equal((await profile.json()).row.isVisible, true);
 
     const created = await jsonRequest(
       `${baseUrl}/api/admin/content`,

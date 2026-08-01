@@ -109,7 +109,7 @@ test("event preview renders an unpublished event only in its cloned snapshot", (
   });
 
   assert.equal(preview.payload.event.status, "draft");
-  assert.deepEqual(preview.payload.event.registrationWindow, { open: false, reason: "赛事尚未发布" });
+  assert.deepEqual(preview.payload.event.registrationWindow, { open: false, reason: "报名尚未开始" });
   assert.deepEqual(input, inputBefore);
   assert.deepEqual(db, before);
 });

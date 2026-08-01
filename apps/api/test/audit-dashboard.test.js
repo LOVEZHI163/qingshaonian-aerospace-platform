@@ -94,7 +94,17 @@ test("audit dashboard returns event counts, registration window, recent imports 
       registrations: 2,
       pendingRegistrations: 1,
       pendingOrganizations: 0,
-      draftCertificates: 0
+      draftCertificates: 0,
+      artworkImages: 0,
+      creationVideos: 0
+    });
+    assert.equal(typeof body.serverStorage.available, "boolean");
+    if (body.serverStorage.available) assert.equal(typeof body.serverStorage.disk.totalBytes, "number");
+    assert.deepEqual(body.submissionStorage, {
+      totalFiles: 0,
+      totalBytes: 0,
+      artworkImages: { count: 0, bytes: 0 },
+      creationVideos: { count: 0, bytes: 0 }
     });
     assert.equal(typeof body.registrationWindow.open, "boolean");
     assert.deepEqual(body.recentImports.map((row) => row.id), ["B-DASHBOARD"]);
@@ -191,14 +201,14 @@ test("audit dashboard records organization, registration, event and certificate 
       "organization.status",
       "registration.review",
       "event.registration-mode",
-      "event.publish",
+      "event.feature",
       "event.archive",
       "certificate.publish",
       "certificate.withdraw",
       "certificate.delete"
     ]));
     assert.equal(logs.rows.find((row) => row.action === "organization.status")?.targetId, "O1002");
-    assert.equal(logs.rows.find((row) => row.action === "event.publish")?.targetId, "wz-aerospace-2026");
+    assert.equal(logs.rows.find((row) => row.action === "event.feature")?.targetId, "wz-aerospace-2026");
     assert.equal(logs.rows.find((row) => row.action === "event.archive")?.targetId, "wz-aerospace-2026");
     assert.equal(logs.rows.find((row) => row.action === "certificate.withdraw")?.targetId, "C-AUDIT");
     assert.equal(logs.rows.find((row) => row.action === "certificate.delete")?.targetId, "C-AUDIT");

@@ -256,7 +256,8 @@ app.use("/api", createDashboardRouter({
   store: dataStore,
   requireAdmin,
   requirePasswordReady,
-  asyncRoute
+  asyncRoute,
+  uploadRoot: process.env.UPLOAD_ROOT || "/data/uploads"
 }));
 
 app.use("/api", createSiteMediaRouter({

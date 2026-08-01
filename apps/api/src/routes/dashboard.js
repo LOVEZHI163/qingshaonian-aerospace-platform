@@ -2,6 +2,7 @@ import express from "express";
 
 import { isRegistrationOpen } from "../domain/registration-window.js";
 import { requireEventId } from "../services/registrations.js";
+import { readStorageStatus } from "../services/system-storage.js";
 
 function positiveInteger(value, fallback, name, maximum) {
   if (value === undefined || value === "") return fallback;
@@ -37,6 +38,9 @@ function publicImport(batch) {
 function dashboardPayload(db, event, clock) {
   const registrations = db.registrations.filter((row) => row.eventId === event.id);
   const registrationIds = new Set(registrations.map((row) => row.id));
+  const submissionAssets = (db.registrationSubmissionAssets || []).filter((row) => (
+    registrationIds.has(row.registrationId) && !row.cleanedAt
+  ));
   return {
     event,
     events: sortNewest(db.events).map(({ id, name, status, isCurrent, createdAt, updatedAt }) => ({
@@ -49,7 +53,21 @@ function dashboardPayload(db, event, clock) {
       pendingOrganizations: db.organizations.filter((row) => row.reviewStatus === "pending").length,
       draftCertificates: db.certificates.filter((row) => (
         registrationIds.has(row.registrationId) && row.status === "draft" && !row.cleanedAt
-      )).length
+      )).length,
+      artworkImages: submissionAssets.filter((row) => row.kind === "artwork_image").length,
+      creationVideos: submissionAssets.filter((row) => row.kind === "creation_video").length
+    },
+    submissionStorage: {
+      totalFiles: submissionAssets.length,
+      totalBytes: submissionAssets.reduce((sum, row) => sum + Number(row.sizeBytes || 0), 0),
+      artworkImages: {
+        count: submissionAssets.filter((row) => row.kind === "artwork_image").length,
+        bytes: submissionAssets.filter((row) => row.kind === "artwork_image").reduce((sum, row) => sum + Number(row.sizeBytes || 0), 0)
+      },
+      creationVideos: {
+        count: submissionAssets.filter((row) => row.kind === "creation_video").length,
+        bytes: submissionAssets.filter((row) => row.kind === "creation_video").reduce((sum, row) => sum + Number(row.sizeBytes || 0), 0)
+      }
     },
     recentImports: sortNewest(db.certificateImportBatches.filter((row) => row.eventId === event.id))
       .slice(0, 5)
@@ -58,14 +76,23 @@ function dashboardPayload(db, event, clock) {
   };
 }
 
-export function createDashboardRouter({ store, requireAdmin, requirePasswordReady, asyncRoute, clock = () => new Date() }) {
+export function createDashboardRouter({
+  store, requireAdmin, requirePasswordReady, asyncRoute, clock = () => new Date(),
+  uploadRoot = process.env.UPLOAD_ROOT || "/data/uploads", storageStatus = readStorageStatus
+}) {
   const router = express.Router();
   const admin = [requireAdmin, requirePasswordReady];
 
   router.get("/admin/dashboard", ...admin, asyncRoute(async (req, res) => {
     const db = await store.readDb();
     const event = requireEventId(db, req.query.eventId);
-    res.json(dashboardPayload(db, event, clock));
+    const payload = dashboardPayload(db, event, clock);
+    try {
+      payload.serverStorage = { available: true, ...(await storageStatus({ uploadRoot })) };
+    } catch (error) {
+      payload.serverStorage = { available: false, error: "暂时无法读取服务器磁盘状态" };
+    }
+    res.json(payload);
   }));
 
   router.get("/admin/audit-logs", ...admin, asyncRoute(async (req, res) => {

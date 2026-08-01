@@ -40,7 +40,9 @@ export function listAccountEvents(db, user, clock = () => new Date()) {
     ? db.organizations.find((row) => row.ownerUserId === user.id)
     : null;
   const rows = db.events
-    .filter((event) => event.status === "published" && !event.archivedAt)
+    .filter((event) => !event.archivedAt && event.status !== "archived" && (
+      event.status === "published" || isRegistrationOpen(event, clock()).open
+    ))
     .map((event) => {
       const registrationCount = db.registrations.filter((row) => (
         row.eventId === event.id && (

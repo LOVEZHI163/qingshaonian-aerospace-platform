@@ -284,6 +284,49 @@ test("private asset reads resolve registration identifiers and enforce user orga
   });
 });
 
+test("admin lists, names, downloads and classifies event submission assets for cleanup", async () => {
+  await withTestServer(async ({ baseUrl, dbPath, tempDir }) => {
+    const db = JSON.parse(await fs.readFile(dbPath, "utf8"));
+    const assetId = "SA-dashboard-image";
+    const storedName = "work.png";
+    const filePath = path.join(tempDir, "uploads", "submission-assets", assetId, storedName);
+    await fs.mkdir(path.dirname(filePath), { recursive: true });
+    await fs.writeFile(filePath, PNG);
+    db.registrationSubmissionAssets.push({
+      id: assetId, registrationId: "R20260627001", uploadSessionId: "US-dashboard", kind: "artwork_image",
+      originalName: storedName, storedName, filePath, mimeType: "image/png", sizeBytes: PNG.length,
+      width: 1, height: 1, durationMs: null, uploadedByUserId: "U1001",
+      uploadedAt: "2026-07-31T00:00:00.000Z", cleanedAt: null, cleanupReason: ""
+    });
+    await fs.writeFile(dbPath, JSON.stringify(db));
+    const admin = await loginAs(baseUrl, "13900000000", "admin123");
+
+    const listedResponse = await fetch(`${baseUrl}/api/admin/events/${EVENT_ID}/submission-assets`, withSession(admin.cookie));
+    assert.equal(listedResponse.status, 200);
+    const listed = await json(listedResponse);
+    assert.equal(listed.total, 1);
+    assert.equal(listed.rows[0].id, assetId);
+    assert.match(listed.rows[0].downloadName, /^R20260627001_.+_作品图片\.png$/);
+    assert.doesNotMatch(JSON.stringify(listed), /filePath|storedName|submission-assets\\/);
+
+    const zip = await fetch(`${baseUrl}/api/admin/events/${EVENT_ID}/submission-assets/download`, withSession(admin.cookie, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ids: [assetId] })
+    }));
+    assert.equal(zip.status, 200);
+    assert.equal(zip.headers.get("content-type"), "application/zip");
+    assert.equal((await zip.arrayBuffer()).byteLength > PNG.length, true);
+
+    const removed = await fetch(`${baseUrl}/api/admin/events/${EVENT_ID}/submission-assets/bulk-delete`, withSession(admin.cookie, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ids: [assetId] })
+    }));
+    assert.equal(removed.status, 200);
+    assert.equal((await json(removed)).cleanedCount, 1);
+    const persisted = JSON.parse(await fs.readFile(dbPath, "utf8"));
+    assert.equal(persisted.registrationSubmissionAssets.find((row) => row.id === assetId).cleanupReason, "admin-classified-cleanup");
+    await assert.rejects(fs.access(filePath), { code: "ENOENT" });
+  }, { prefix: "submission-assets-admin-storage-" });
+});
+
 test("journals a failed post-commit replacement cleanup without exposing storage fields", async (t) => {
   const uploadRoot = await fs.mkdtemp(path.join(process.env.TEMP || process.env.TMP || "C:\\Temp", "submission-assets-journal-"));
   t.after(() => fs.rm(uploadRoot, { recursive: true, force: true }));

@@ -71,11 +71,15 @@ export function visiblePosts(db, now) {
 }
 
 export function publicProfile(db, eventId) {
-  return (db.eventPublicProfiles || []).find((row) => row.eventId === eventId && row.isVisible === true) || null;
+  return (db.eventPublicProfiles || []).find((row) => row.eventId === eventId) || null;
 }
 
-export function eventIsPublic(db, event) {
-  return Boolean(publicProfile(db, event?.id)) && ["published", "archived"].includes(event?.status);
+export function eventIsPublic(db, event, now = new Date()) {
+  const profile = publicProfile(db, event?.id);
+  if (!profile) return false;
+  if (event?.status === "archived") return profile.isVisible === true;
+  return event?.status === "published" || event?.isCurrent === true
+    || (!event?.archivedAt && isRegistrationOpen(event, now).open);
 }
 
 export function contentSummary(db, row, mediaOptions) {
@@ -105,7 +109,6 @@ function contentDetail(db, row, mediaOptions) {
 
 function publicRegistrationWindow(event, now) {
   if (event.status === "archived" || event.archivedAt) return { open: false, reason: "赛事已归档" };
-  if (event.status !== "published") return { open: false, reason: "赛事尚未发布" };
   return isRegistrationOpen(event, now);
 }
 
@@ -141,7 +144,7 @@ export function historicalEvents(db, now) {
   ].filter(Boolean));
   return (db.events || [])
     .filter((event) => {
-      if (!eventIsPublic(db, event)) return false;
+      if (!eventIsPublic(db, event, now) || publicProfile(db, event.id)?.isVisible !== true) return false;
       if (event.isCurrent === true || homepageEventIds.has(event.id)) return false;
       const endedAt = Date.parse(event.registrationEndAt);
       return event.status === "archived"
@@ -247,9 +250,9 @@ function publicProject(row) {
 
 export function buildEventDetailView(db, slug, now, { allowUnpublished = false, mediaUrl } = {}) {
   const profile = (db.eventPublicProfiles || []).find((row) =>
-    row.slug === slug && (allowUnpublished || row.isVisible === true));
+    row.slug === slug && (allowUnpublished || eventIsPublic(db, (db.events || []).find((event) => event.id === row.eventId), now)));
   const event = profile && (db.events || []).find((row) => row.id === profile.eventId);
-  if (!event || (!allowUnpublished && !eventIsPublic(db, event))) return null;
+  if (!event || (!allowUnpublished && !eventIsPublic(db, event, now))) return null;
   const mediaOptions = typeof mediaUrl === "function" ? { allowPrivate: true, urlFor: mediaUrl } : undefined;
   const posts = visiblePosts(db, now).filter((row) => row.eventId === event.id);
   const guideIds = new Set(posts.filter((row) => row.type === "guide").map((row) => row.id));

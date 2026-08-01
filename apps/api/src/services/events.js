@@ -137,6 +137,19 @@ function assertEventWritable(event) {
   }
 }
 
+function ensureDefaultPublicProfile(db, event, updatedAt) {
+  db.eventPublicProfiles ||= [];
+  if (db.eventPublicProfiles.some((row) => row.eventId === event.id)) return;
+  const base = String(event.id).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "event";
+  let slug = base;
+  let suffix = 2;
+  while (db.eventPublicProfiles.some((row) => row.slug === slug)) slug = `${base}-${suffix++}`;
+  db.eventPublicProfiles.push({
+    eventId: event.id, slug, slogan: "", summary: "", isVisible: false,
+    displayOrder: 0, heroMediaId: null, version: 1, updatedAt
+  });
+}
+
 export function createEvent(db, input, { makeId, clock }) {
   assertNoEventSystemFields(input);
   const fields = normalizeEventFields(input);
@@ -151,6 +164,7 @@ export function createEvent(db, input, { makeId, clock }) {
     updatedAt: timestamp
   };
   db.events.push(event);
+  ensureDefaultPublicProfile(db, event, timestamp);
   return event;
 }
 
@@ -180,6 +194,7 @@ export function copyEvent(db, sourceId, input, { makeId, clock }) {
     updatedAt: timestamp
   };
   db.events.push(event);
+  ensureDefaultPublicProfile(db, event, timestamp);
 
   const sourceProjects = db.projects.filter((row) => row.eventId === sourceId);
   const projects = sourceProjects.map((sourceProject) => {
@@ -201,8 +216,8 @@ export function setCurrentEvent(db, eventId, { clock }) {
   if (!target) throw businessError(404, "赛事不存在");
   if (target.status === "archived") throw businessError(409, "归档赛事不能直接设为当前赛事");
   for (const event of db.events) event.isCurrent = event.id === eventId;
-  target.status = "published";
   target.archivedAt = null;
+  if (db.siteSettings) db.siteSettings.featuredEventId = target.id;
   target.updatedAt = clock().toISOString();
   return target;
 }
@@ -256,24 +271,14 @@ export function deleteProject(db, projectId) {
 }
 
 export function currentPublishedEvent(db) {
-  const current = db.events.filter((row) => row.isCurrent && row.status === "published");
+  const current = db.events.filter((row) => row.isCurrent && row.status !== "archived" && !row.archivedAt);
   if (current.length !== 1) throw businessError(503, "当前赛事尚未配置");
   return current[0];
 }
 
-function registrationProfileVisible(db, eventId) {
-  const profiles = db.eventPublicProfiles || [];
-  const profile = profiles.find((row) => row.eventId === eventId);
-  if (profile) return profile.isVisible === true;
-  return profiles.length === 0 && db.events.find((row) => row.id === eventId)?.isCurrent === true;
-}
-
 function assertPublishedRegistrationEvent(db, event, clock) {
-  if (event.status !== "published" || event.archivedAt) {
+  if (event.archivedAt || event.status === "archived") {
     throw businessError(409, "赛事当前不可报名", "REGISTRATION_EVENT_UNAVAILABLE");
-  }
-  if (!registrationProfileVisible(db, event.id)) {
-    throw businessError(409, "赛事未公开，暂不可报名", "REGISTRATION_EVENT_UNAVAILABLE");
   }
   const window = isRegistrationOpen(event, clock());
   if (!window.open) throw businessError(409, window.reason, "REGISTRATION_CLOSED");
@@ -289,14 +294,14 @@ export function publishedRegistrationEvent(db, eventId, clock = () => new Date()
   }
 
   const available = db.events.filter((event) => {
-    if (event.status !== "published" || event.archivedAt || !registrationProfileVisible(db, event.id)) return false;
+    if (event.status === "archived" || event.archivedAt) return false;
     return isRegistrationOpen(event, clock()).open;
   });
   if (available.length === 1) return available[0];
   if (available.length > 1) throw businessError(422, "存在多场可报名赛事，请选择赛事", "REGISTRATION_EVENT_REQUIRED");
 
   const publicEvents = db.events.filter((event) => (
-    event.status === "published" && !event.archivedAt && registrationProfileVisible(db, event.id)
+    event.status === "published" && !event.archivedAt
   ));
   if (publicEvents.length === 1) return assertPublishedRegistrationEvent(db, publicEvents[0], clock);
   throw businessError(422, "当前没有可报名赛事，请选择赛事后重试", "REGISTRATION_EVENT_REQUIRED");

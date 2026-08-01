@@ -25,11 +25,15 @@ export function selectHomeEvents(db, clock) {
   const now = at(clock);
   const profiles = new Map((db.eventPublicProfiles || []).map((profile) => [profile.eventId, profile]));
   const rows = (db.events || []).map((event) => ({ event, profile: profiles.get(event.id) }));
-  const displayable = rows.filter(({ event, profile }) =>
-    profile?.isVisible === true && event.status === "published" && !event.archivedAt
-  );
+  // 报名时间和“临时开放”决定赛事何时自动出现在官网；官网视觉资料是否
+  // 单独勾选公开，不再作为报名赛事的第二道开关。
+  const displayable = rows.filter(({ event, profile }) => profile && !event.archivedAt && (
+    event.status === "published" || event.isCurrent === true || isRegistrationOpen(event, now)
+  ));
   const active = displayable.filter(({ event }) => isRegistrationOpen(event, now)).sort(compareActive);
-  const manual = displayable.find(({ event }) => event.id === db.siteSettings?.featuredEventId);
+  const pinnedId = db.siteSettings?.featuredEventId
+    || displayable.find(({ event }) => event.isCurrent === true)?.event.id;
+  const manual = displayable.find(({ event }) => event.id === pinnedId);
 
   if (manual || active.length > 0) {
     const featured = manual || active[0];

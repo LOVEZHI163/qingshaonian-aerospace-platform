@@ -62,10 +62,10 @@ export function createEventsRouter({ store, requireAdmin, requirePasswordReady, 
     const row = setCurrentEvent(db, req.params.id, { clock });
     recordAudit(db, {
       actor: req.user,
-      action: "event.publish",
+      action: "event.feature",
       targetType: "event",
       targetId: row.id,
-      summary: `${row.name}已设为当前发布赛事`,
+      summary: `${row.name}已设为官网首页置顶赛事`,
       createdAt: clock().toISOString()
     });
     recordEventProfilePublication(db, row.id, { actor: req.user, createdAt: clock().toISOString() });

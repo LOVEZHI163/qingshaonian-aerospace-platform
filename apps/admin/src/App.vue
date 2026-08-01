@@ -47,6 +47,7 @@ const initialContentId = initialView === "siteContent" && SAFE_EVENT_ID.test(ini
 const registrationEventId = ref(initialView === "registration" ? initialEventId : "");
 const recordsEventId = ref(initialView === "registrationRecords" ? initialEventId : "");
 const certificateEventId = ref(initialView === "certificates" ? initialEventId : "");
+const certificateInitialSection = ref("");
 const managementEventId = ref(["registration", "registrationRecords"].includes(initialView) ? initialEventId : "");
 const selectedEventId = ref(initialEventId);
 const selectedRegistrationEvent = ref(null);
@@ -271,7 +272,8 @@ function commitAdminNavigation(key) {
   currentView.value = key === "registrations" ? "registration" : key;
 }
 
-function navigateAdmin(key) {
+function navigateAdmin(key, section = "") {
+  if (key === "certificates") certificateInitialSection.value = section;
   requestSiteContentLeave(() => commitAdminNavigation(key));
 }
 
@@ -405,7 +407,7 @@ onMounted(async () => {
     <SiteContentPage v-else-if="currentView === 'siteContent'" ref="siteContentPage" :initial-content-id="siteContentId" @content-id="siteContentId = $event || ''" @navigate="navigateAdmin" />
     <OrganizationManagementPage v-else-if="currentView === 'organizations'" />
     <RegistrationManagementPage :key="`registration-management:${adminEventId}`" v-else-if="currentView === 'registration'" :event-id="adminEventId" :event-archived="adminEvents.find((event) => event.id === adminEventId)?.status === 'archived'" @open-certificates="openCertificateManagement" />
-    <CertificateManagementPage :key="`certificate-management:${adminEventId}:${certificateRegistrationId}`" v-else-if="currentView === 'certificates'" :event-id="adminEventId" :initial-registration-id="certificateRegistrationId" />
+    <CertificateManagementPage :key="`certificate-management:${adminEventId}:${certificateRegistrationId}:${certificateInitialSection}`" v-else-if="currentView === 'certificates'" :event-id="adminEventId" :initial-registration-id="certificateRegistrationId" :initial-section="certificateInitialSection" />
     <UserManagementPage v-else-if="currentView === 'users'" @error="handleError" />
   </AdminShell>
 

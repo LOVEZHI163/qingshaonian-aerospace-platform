@@ -49,7 +49,7 @@ test("registration context defaults exactly one active organization and school s
   });
 });
 
-test("legacy current event without a profile is rejected explicitly once public profiles exist", async () => {
+test("registration no longer requires a second website profile switch", async () => {
   await withServer(async (baseUrl, dbPath) => {
     const ordinary = await loginAs(baseUrl, "13800000001", "123456");
     await mutateDb(dbPath, (db) => {
@@ -61,12 +61,11 @@ test("legacy current event without a profile is rejected explicitly once public 
       `${baseUrl}/api/me/registration-context?eventId=wz-aerospace-2026`,
       withSession(ordinary.cookie)
     );
-    assert.equal(response.status, 409);
-    assert.match((await json(response)).error, /未公开/);
+    assert.equal(response.status, 200);
   });
 });
 
-test("legacy current event without a profile is not an implicit candidate once public profiles exist", async () => {
+test("the only open event remains the implicit candidate without a website profile", async () => {
   await withServer(async (baseUrl, dbPath) => {
     const ordinary = await loginAs(baseUrl, "13800000001", "123456");
     await mutateDb(dbPath, (db) => {
@@ -75,8 +74,8 @@ test("legacy current event without a profile is not an implicit candidate once p
     });
 
     const response = await fetch(`${baseUrl}/api/me/registration-context`, withSession(ordinary.cookie));
-    assert.equal(response.status, 422);
-    assert.match((await json(response)).error, /没有可报名赛事|选择赛事/);
+    assert.equal(response.status, 200);
+    assert.equal((await json(response)).event.id, "wz-aerospace-2026");
   });
 });
 
@@ -137,7 +136,7 @@ test("event context requires an explicit selection when multiple published event
   });
 });
 
-test("event context rejects unknown, hidden, archived, draft and closed events", async () => {
+test("event context ignores website visibility, accepts open drafts, and rejects unknown archived and closed events", async () => {
   await withServer(async (baseUrl, dbPath) => {
     const ordinary = await loginAs(baseUrl, "13800000001", "123456");
     const request = (eventId) => fetch(
@@ -150,7 +149,7 @@ test("event context rejects unknown, hidden, archived, draft and closed events",
     await mutateDb(dbPath, (db) => {
       db.events.push({ ...structuredClone(db.events[0]), id: "UNPUBLISHED-PROFILE", isCurrent: false, registrationMode: "force_open" });
     });
-    assert.equal((await request("UNPUBLISHED-PROFILE")).status, 409);
+    assert.equal((await request("UNPUBLISHED-PROFILE")).status, 200);
     await mutateDb(dbPath, (db) => {
       db.events = db.events.filter((event) => event.id !== "UNPUBLISHED-PROFILE");
     });
@@ -159,13 +158,13 @@ test("event context rejects unknown, hidden, archived, draft and closed events",
       db.events[0].registrationMode = "force_open";
       db.eventPublicProfiles.push({ eventId: db.events[0].id, slug: "hidden-event", isVisible: false });
     });
-    assert.equal((await request("wz-aerospace-2026")).status, 409);
+    assert.equal((await request("wz-aerospace-2026")).status, 200);
 
     await mutateDb(dbPath, (db) => {
       db.eventPublicProfiles[0].isVisible = true;
       db.events[0].status = "draft";
     });
-    assert.equal((await request("wz-aerospace-2026")).status, 409);
+    assert.equal((await request("wz-aerospace-2026")).status, 200);
 
     await mutateDb(dbPath, (db) => {
       db.events[0].status = "archived";

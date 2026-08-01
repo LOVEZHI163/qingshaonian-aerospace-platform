@@ -1,4 +1,5 @@
 import { sanitizeContentHtml } from "../content/sanitize.js";
+import { isRegistrationOpen } from "../domain/registration-window.js";
 import { contentBodyMedia, contentBodyMediaIds } from "./content-body-media.js";
 import { normalizeContentInput } from "./content-publishing.js";
 import { eventProfileSlugIsLocked } from "./event-profile-publication.js";
@@ -162,7 +163,8 @@ export function upsertEventPublicProfile(db, eventId, input, { now, incrementVer
   next.slug = slug;
   if (typeof next.isVisible !== "boolean") fail(422, "公开状态必须是布尔值");
   if (!Number.isInteger(next.displayOrder)) fail(422, "排序必须是整数");
-  if (next.isVisible && !["published", "archived"].includes(event.status)) {
+  if (next.isVisible && !["published", "archived"].includes(event.status)
+    && !event.isCurrent && !isRegistrationOpen(event, new Date(now)).open) {
     fail(422, "赛事尚未发布，不能在官网公开", "EVENT_NOT_PUBLISHED");
   }
   media(db, next.heroMediaId, "赛事主视觉");

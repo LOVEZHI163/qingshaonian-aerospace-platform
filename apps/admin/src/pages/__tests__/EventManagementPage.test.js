@@ -51,7 +51,7 @@ describe("EventManagementPage", () => {
     await flushPromises();
 
     expect(wrapper.text()).toContain("2026赛事");
-    expect(wrapper.text()).toContain("当前赛事");
+    expect(wrapper.text()).toContain("官网首页置顶");
     expect(wrapper.text()).toContain("自动");
     expect(wrapper.text()).toContain("临时开放");
     expect(wrapper.text()).toContain("临时关闭");

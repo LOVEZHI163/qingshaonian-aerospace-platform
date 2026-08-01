@@ -194,7 +194,7 @@ async function copySelected() {
 }
 
 async function setCurrent() {
-  await perform(() => api(`/api/admin/events/${selectedId.value}/current`, { method: "POST" }), "已设为当前赛事");
+  await perform(() => api(`/api/admin/events/${selectedId.value}/current`, { method: "POST" }), "已设为官网首页置顶赛事");
 }
 
 async function archiveSelected() {
@@ -286,14 +286,14 @@ onMounted(() => loadEvents({ preserveSelection: false }));
             @click="selectEvent(row.id)"
           >
             <strong>{{ row.name }}</strong>
-            <span>{{ row.isCurrent ? "当前赛事" : row.status }} · {{ row.registrationMode }}</span>
+            <span>{{ row.isCurrent ? "首页置顶" : row.status }} · {{ row.registrationMode }}</span>
             <small>{{ toLocalDateTime(row.registrationStartAt) }} 至 {{ toLocalDateTime(row.registrationEndAt) }}</small>
           </button>
         </section>
 
         <div class="event-editor-stack">
           <form class="panel event-form" @submit.prevent="selectedId ? saveEvent() : createDraft()">
-            <div class="panel-title"><h3>{{ selectedId ? "编辑赛事" : "新建赛事" }}</h3><span v-if="selectedEvent?.isCurrent">当前赛事</span></div>
+            <div class="panel-title"><h3>{{ selectedId ? "编辑赛事" : "新建赛事" }}</h3><span v-if="selectedEvent?.isCurrent">官网首页置顶</span></div>
             <p v-if="selectedArchived" class="hint" data-readonly-event>赛事已归档，只可查看；不能再修改赛事或赛项。</p>
             <div class="two">
               <label>赛事名称<input v-model="eventForm.name" :disabled="selectedArchived" /><small v-if="fieldErrors.name">{{ fieldErrors.name }}</small></label>
@@ -316,7 +316,7 @@ onMounted(() => loadEvents({ preserveSelection: false }));
             <div class="form-actions">
               <button class="primary" :disabled="saving || selectedArchived">{{ selectedId ? "保存赛事" : "创建草稿" }}</button>
               <button v-if="selectedId" type="button" data-action="copy-event" :disabled="saving" @click="copySelected">复制</button>
-              <button v-if="selectedId && !selectedEvent?.isCurrent && !selectedArchived" type="button" :disabled="saving" @click="setCurrent">设为当前</button>
+              <button v-if="selectedId && !selectedEvent?.isCurrent && !selectedArchived" type="button" :disabled="saving" @click="setCurrent">置顶到官网首页</button>
               <button v-if="selectedId && selectedEvent?.status !== 'archived'" type="button" class="reject" :disabled="saving" @click="archiveSelected">归档</button>
             </div>
           </form>
@@ -333,7 +333,7 @@ onMounted(() => loadEvents({ preserveSelection: false }));
       <div v-if="events.length" class="panel project-event-picker">
         <label>管理赛事
           <select data-project-event :value="selectedId" @change="selectEvent($event.target.value)">
-            <option v-for="row in events" :key="row.id" :value="row.id">{{ row.name }}{{ row.isCurrent ? "（当前）" : "" }}</option>
+            <option v-for="row in events" :key="row.id" :value="row.id">{{ row.name }}{{ row.isCurrent ? "（首页置顶）" : "" }}</option>
           </select>
         </label>
       </div>

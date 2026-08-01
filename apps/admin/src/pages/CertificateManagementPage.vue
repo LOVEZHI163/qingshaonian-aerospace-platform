@@ -9,10 +9,13 @@ import { createBlobDownloadManager } from "../lib/download.js";
 
 const props = defineProps({
   initialRegistrationId: { type: String, default: "" },
+  initialSection: { type: String, default: "" },
   eventId: { type: String, default: "" }
 });
 
-const activeSection = ref(props.initialRegistrationId ? "manual" : "list");
+const activeSection = ref(["list", "manual", "import"].includes(props.initialSection)
+  ? props.initialSection
+  : (props.initialRegistrationId ? "manual" : "list"));
 const events = ref([]);
 const projects = ref([]);
 const metadataLoaded = ref(false);
