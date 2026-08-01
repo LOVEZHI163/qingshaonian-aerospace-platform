@@ -94,6 +94,7 @@ export async function cleanupExpiredSubmissionSessions({
         actor: null,
         action: "registration_asset_cleanup",
         eventId: session?.eventId || null,
+        organizationId: session?.organizationId || null,
         registrationId: null,
         sessionId: asset.uploadSessionId,
         asset,
@@ -225,6 +226,7 @@ export function recordSubmissionAssetAudit(db, {
   actor,
   action,
   eventId,
+  organizationId = null,
   registrationId = null,
   sessionId = null,
   asset = null,
@@ -234,11 +236,14 @@ export function recordSubmissionAssetAudit(db, {
   rangeStart = null,
   cleanupCategory = null,
   previousAsset = null,
+  previousStatus = null,
+  nextStatus = null,
   createdAt
 }) {
   const targetId = registrationId || asset?.id || sessionId;
   const summary = {
     eventId,
+    organizationId,
     registrationId,
     uploadBatchId: sessionId,
     asset: safeAuditAsset(asset),
@@ -246,7 +251,9 @@ export function recordSubmissionAssetAudit(db, {
     access,
     rangeStart,
     cleanupCategory,
-    previousAsset: safeAuditAsset(previousAsset)
+    previousAsset: safeAuditAsset(previousAsset),
+    previousStatus,
+    nextStatus
   };
   for (const [key, value] of Object.entries(summary)) if (value === null || value === undefined) delete summary[key];
   return recordAudit(db, {
@@ -489,7 +496,8 @@ export function replaceRegistrationAsset({ db, registration, kind, uploadedAsset
     cleanupReason: ""
   });
   db.registrationSubmissionAssets.splice(sourceIndex, 1);
-  if ((channel === "organization" || channel === "admin") && registration.status === "approved") {
+  const reviewWasReset = (channel === "organization" || channel === "admin") && registration.status === "approved";
+  if (reviewWasReset) {
     registration.status = "pending";
     registration.rejectReason = "";
     registration.updatedAt = timestampValue;
@@ -497,15 +505,33 @@ export function replaceRegistrationAsset({ db, registration, kind, uploadedAsset
   const auditRows = [
     recordSubmissionAssetAudit(db, {
       actor, action: "registration_asset_replace", eventId: registration.eventId, registrationId: registration.id,
+      organizationId: registration.organizationId || null,
       sessionId: uploadedAsset.uploadSessionId, asset: current, assetKind: kind, channel,
       previousAsset: previous, createdAt: timestampValue
     }),
     recordSubmissionAssetAudit(db, {
       actor, action: "registration_asset_cleanup", eventId: registration.eventId, registrationId: registration.id,
+      organizationId: registration.organizationId || null,
       sessionId: previous.uploadSessionId, asset: previous, assetKind: kind, channel,
       cleanupCategory: "registration-asset-replaced", createdAt: timestampValue
     })
   ];
+  if (reviewWasReset) {
+    auditRows.push(recordSubmissionAssetAudit(db, {
+      actor,
+      action: "registration_review_reset_after_asset_replace",
+      eventId: registration.eventId,
+      organizationId: registration.organizationId || null,
+      registrationId: registration.id,
+      sessionId: uploadedAsset.uploadSessionId,
+      asset: current,
+      assetKind: kind,
+      channel,
+      previousStatus: registrationBefore.status,
+      nextStatus: registration.status,
+      createdAt: timestampValue
+    }));
+  }
   return {
     asset: current,
     previous,

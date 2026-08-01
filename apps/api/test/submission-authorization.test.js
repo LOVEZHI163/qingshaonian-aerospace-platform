@@ -259,6 +259,19 @@ test("administrator replacement switches the registration asset, resets approval
     assert.match(audit.summary, /image\/jpeg/);
     assert.match(audit.summary, /123/);
     assert.doesNotMatch(audit.summary, /submission-assets|old\.png/);
+    const resetAudit = db.auditLogs.find((row) => row.action === "registration_review_reset_after_asset_replace" && row.targetId === "R20260627001");
+    assert.ok(resetAudit);
+    const resetSummary = JSON.parse(resetAudit.summary);
+    assert.equal(resetSummary.eventId, EVENT_ID);
+    assert.equal(resetSummary.organizationId, "O1001");
+    assert.equal(resetSummary.registrationId, "R20260627001");
+    assert.equal(resetSummary.uploadBatchId, "US-replacement");
+    assert.equal(resetSummary.asset.assetId, "SA-old");
+    assert.equal(resetSummary.asset.assetKind, "artwork_image");
+    assert.equal(resetSummary.channel, "admin");
+    assert.equal(resetSummary.previousStatus, "approved");
+    assert.equal(resetSummary.nextStatus, "pending");
+    assert.doesNotMatch(resetAudit.summary, /filePath|storedName|submission-assets/);
   }, { prefix: "submission-auth-" });
 });
 
@@ -446,6 +459,18 @@ test("organization owner may replace its approved asset but cannot replace anoth
     assert.equal(db.registrationSubmissionAssets.find((row) => row.registrationId === "R20260627002").id, "SA-org-old");
     assert.equal(db.registrationSubmissionAssets.find((row) => row.id === "SA-other-org").registrationId, null);
     await assert.doesNotReject(fs.access(replacement.filePath));
+    const replaceAudit = db.auditLogs.find((row) => row.action === "registration_asset_replace" && row.targetId === "R20260627002");
+    assert.equal(JSON.parse(replaceAudit.summary).organizationId, "O1002");
+    const resetAudit = db.auditLogs.find((row) => row.action === "registration_review_reset_after_asset_replace" && row.targetId === "R20260627002");
+    assert.ok(resetAudit);
+    assert.deepEqual(
+      {
+        organizationId: JSON.parse(resetAudit.summary).organizationId,
+        previousStatus: JSON.parse(resetAudit.summary).previousStatus,
+        nextStatus: JSON.parse(resetAudit.summary).nextStatus
+      },
+      { organizationId: "O1002", previousStatus: "approved", nextStatus: "pending" }
+    );
   }, { prefix: "submission-auth-" });
 });
 
