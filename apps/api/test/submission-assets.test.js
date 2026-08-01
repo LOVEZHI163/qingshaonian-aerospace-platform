@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
+import { AsyncLocalStorage } from "node:async_hooks";
 import fs from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import express from "express";
 
+import { createMutationAsyncRoute } from "../src/data/mutation-lock.js";
 import { createSubmissionAssetsRouter } from "../src/routes/submission-assets.js";
 import { cleanupExpiredSubmissionSessions, startSubmissionSessionExpiryCleanup } from "../src/services/submission-assets.js";
 import { replayFileCleanupJournal } from "../src/services/organizations.js";
@@ -72,13 +74,13 @@ function assetRecord(uploadRoot, id = "SA-old") {
   };
 }
 
-function submissionRouter({ db, uploadRoot, deleteFile = async () => {}, storageStatus, assertCapacity, inspectFile, writeDb, logger, makeId = (prefix) => `${prefix}-new` }) {
-  const store = {
+function submissionRouter({ db, uploadRoot, deleteFile = async () => {}, storageStatus, assertCapacity, inspectFile, writeDb, logger, makeId = (prefix) => `${prefix}-new`, store: suppliedStore, asyncRoute: suppliedAsyncRoute }) {
+  const store = suppliedStore || {
     readDb: async () => structuredClone(db),
     writeDb: writeDb || (async (next) => { Object.assign(db, structuredClone(next)); })
   };
   const pass = (req, _res, next) => { req.user = { id: "U-owner", type: "ordinary", status: "active" }; next(); };
-  const wrap = (handler) => (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
+  const wrap = suppliedAsyncRoute || ((handler) => (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next));
   return createSubmissionAssetsRouter({
     store, requireUser: pass, requireAdmin: pass, requirePasswordReady: pass, asyncRoute: wrap,
     makeId, now: () => "2026-07-31T00:00:00.000Z", uploadRoot, deleteFile, storageStatus, assertCapacity, inspectFile, logger
@@ -426,6 +428,41 @@ test("does not consult the capacity guard for an image upload", async (t) => {
     const response = await fetch(`${baseUrl}/api/upload-sessions/US-upload/artwork-image`, { method: "PUT", body: imageForm() });
     assert.equal(response.status, 201);
   });
+});
+
+test("multipart upload does not reuse a released mutation lock context", async (t) => {
+  const uploadRoot = await fs.mkdtemp(path.join(process.env.TEMP || process.env.TMP || "C:\\Temp", "submission-assets-lock-context-"));
+  t.after(() => fs.rm(uploadRoot, { recursive: true, force: true }));
+  const db = routeFixture();
+  const mutationContext = new AsyncLocalStorage();
+  let lockCalls = 0;
+  const store = {
+    readDb: async () => structuredClone(db),
+    writeDb: async (next) => { Object.assign(db, structuredClone(next)); },
+    async withMutationLock(handler) {
+      const existing = mutationContext.getStore();
+      if (existing && !existing.active) throw new Error("Mutation lock context has already been released");
+      if (existing) return handler();
+      const context = { active: true };
+      lockCalls += 1;
+      return mutationContext.run(context, async () => {
+        try { return await handler(); } finally { context.active = false; }
+      });
+    }
+  };
+  const router = submissionRouter({
+    db,
+    store,
+    asyncRoute: createMutationAsyncRoute(store),
+    uploadRoot,
+    inspectFile: async () => ({ mimeType: "image/png", sizeBytes: PNG.length, width: 1, height: 1, durationMs: null, warnings: [] })
+  });
+
+  await withRouter(router, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/upload-sessions/US-upload/artwork-image`, { method: "PUT", body: imageForm() });
+    assert.equal(response.status, 201, await response.text());
+  });
+  assert.equal(lockCalls, 1);
 });
 
 test("expires only active sessions and removes only their unbound submission files", async (t) => {

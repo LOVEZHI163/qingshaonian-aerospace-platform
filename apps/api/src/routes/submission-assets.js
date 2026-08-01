@@ -66,6 +66,10 @@ function incomingContentLength(req) {
   return Number.isFinite(value) && value >= 0 ? value : 0;
 }
 
+function unlockedAsyncRoute(handler) {
+  return (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
+}
+
 const SAFE_ASSET_COMPONENT = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 const SAFE_STORED_FILE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$/;
 
@@ -154,7 +158,7 @@ export function createSubmissionAssetsRouter({
 
   function uploadAsset(kind) {
     return [
-      asyncRoute(async (req, _res, next) => {
+      unlockedAsyncRoute(async (req, _res, next) => {
         const db = await store.readDb();
         const storedSession = db.registrationUploadSessions.find((row) => row.id === req.params.sessionId);
         const channel = sessionChannel(storedSession, req.user);
