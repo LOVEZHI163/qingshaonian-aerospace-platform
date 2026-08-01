@@ -44,6 +44,7 @@ cookie_jar="$work_dir/cookies"
 received_media_type=
 smoke_event_id=
 smoke_event_name=
+smoke_source_event_id=
 original_current_event_id=
 smoke_user_id=
 
@@ -161,6 +162,8 @@ if test -z "$event_id"; then
   echo "No published, non-archived event is available for administrator smoke coverage" >&2
   exit 1
 fi
+smoke_source_event_id="$event_id"
+original_current_event_id="$(json_path 'let input="";process.stdin.on("data",chunk=>input+=chunk).on("end",()=>{const data=JSON.parse(input);const event=(data.rows||[]).find(item=>item.status === "published" && item.isCurrent && !item.archivedAt);if(event&&event.id)process.stdout.write(encodeURIComponent(event.id));});')"
 
 assert_status "admin-organizations" 200 \
   -b "$cookie_jar" \
@@ -226,15 +229,10 @@ cleanup_submission_smoke() {
 
 submission_token="$(date +%s)-$$"
 smoke_event_name="上传冒烟-$submission_token"
-original_current_event_id="$(json_path 'let input="";process.stdin.on("data",chunk=>input+=chunk).on("end",()=>{const data=JSON.parse(input);const event=(data.rows||[]).find(item=>item.status === "published" && item.isCurrent && !item.archivedAt);if(event&&event.id)process.stdout.write(encodeURIComponent(event.id));});')"
-if test -z "$original_current_event_id"; then
-  echo "No current published event is available for submission smoke coverage" >&2
-  exit 1
-fi
 printf '{"name":"%s"}' "$smoke_event_name" | \
 assert_status "submission-event-copy" 201 \
   -b "$cookie_jar" -H 'Content-Type: application/json' --data-binary @- \
-  "$base_url/api/admin/events/$original_current_event_id/copy"
+  "$base_url/api/admin/events/$smoke_source_event_id/copy"
 assert_json_response "submission-event-copy"
 smoke_event_id="$(json_path 'let input="";process.stdin.on("data",chunk=>input+=chunk).on("end",()=>{const data=JSON.parse(input);if(data.event&&data.event.id)process.stdout.write(encodeURIComponent(data.event.id));});')"
 smoke_project_id="$(json_path 'let input="";process.stdin.on("data",chunk=>input+=chunk).on("end",()=>{const data=JSON.parse(input);const project=(data.projects||[])[0];if(project&&project.id)process.stdout.write(encodeURIComponent(project.id));});')"

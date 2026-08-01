@@ -200,6 +200,14 @@ test("remote smoke discovers public resources dynamically and checks admin autho
   assert.match(smoke, /public-event-skipped=no-public-event/);
   assert.match(smoke, /public-content-detail-skipped=no-public-content/);
   assert.match(smoke, /status === "published" && !item\.archivedAt/);
+  assert.match(smoke, /smoke_source_event_id="\$event_id"/);
+  assert.match(smoke, /\/api\/admin\/events\/\$smoke_source_event_id\/copy/);
+  assert.doesNotMatch(smoke, /No current published event is available/);
+  const eventListResponse = smoke.indexOf('assert_json_response "admin-events"');
+  const currentEventCapture = smoke.indexOf('original_current_event_id="$(json_path', eventListResponse);
+  const nextAdminRequest = smoke.indexOf('assert_status "admin-organizations"', eventListResponse);
+  assert.ok(eventListResponse >= 0 && currentEventCapture > eventListResponse && currentEventCapture < nextAdminRequest,
+    "the original current event must be captured before the shared response file is overwritten");
   assert.match(smoke, /\/api\/admin\/events\/\$\{event_id\}\/registrations/);
   assert.match(smoke, /\/api\/admin\/registrations/);
   assert.match(smoke, /work_dir="\$\(mktemp -d /);
