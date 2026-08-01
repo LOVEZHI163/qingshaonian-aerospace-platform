@@ -77,7 +77,10 @@ export function joinOrganizationEvent(db, user, eventId, now) {
     throw businessError(403, "组织资质尚未通过", "ORGANIZATION_NOT_APPROVED");
   }
   const event = db.events.find((row) => (
-    row.id === eventId && row.status === "published" && !row.archivedAt
+    row.id === eventId
+    && !row.archivedAt
+    && row.status !== "archived"
+    && (row.status === "published" || isRegistrationOpen(row, new Date(now)).open)
   ));
   if (!event) throw businessError(404, "赛事不可加入", "EVENT_NOT_AVAILABLE");
   const existing = db.organizationEventParticipations.find((row) => (

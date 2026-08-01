@@ -1,3 +1,4 @@
+import { isRegistrationOpen } from "../domain/registration-window.js";
 import { businessError } from "./events.js";
 
 export function organizationForOwner(db, userId) {
@@ -22,7 +23,7 @@ export function requireOrganizationOwner(db, user) {
   return organization;
 }
 
-export function requireWritableEvent(db, eventId, _clock) {
+export function requireWritableEvent(db, eventId, clock = () => new Date()) {
   const event = db.events.find((row) => row.id === eventId);
   if (!event) {
     throw businessError(404, "赛事不存在或尚未发布", "EVENT_NOT_AVAILABLE");
@@ -30,7 +31,8 @@ export function requireWritableEvent(db, eventId, _clock) {
   if (event.archivedAt || event.status === "archived") {
     throw businessError(409, "赛事已归档，只允许查看历史信息", "EVENT_ARCHIVED");
   }
-  if (event.status !== "published") {
+  const now = typeof clock === "function" ? clock() : clock;
+  if (event.status !== "published" && !isRegistrationOpen(event, now || new Date()).open) {
     throw businessError(404, "赛事不存在或尚未发布", "EVENT_NOT_AVAILABLE");
   }
   return event;

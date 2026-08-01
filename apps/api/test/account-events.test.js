@@ -15,7 +15,7 @@ async function addUnavailableEvents(dbPath) {
   const db = JSON.parse(await fs.readFile(dbPath, "utf8"));
   const published = db.events.find((row) => row.id === "wz-aerospace-2026");
   db.events.push(
-    { ...published, id: "draft-event", status: "draft", isCurrent: false },
+    { ...published, id: "draft-event", status: "draft", isCurrent: false, registrationMode: "force_closed" },
     { ...published, id: "archived-event", status: "archived", isCurrent: false, archivedAt: "2026-07-01T00:00:00.000Z" }
   );
   await fs.writeFile(dbPath, JSON.stringify(db));
@@ -76,6 +76,24 @@ test("approved organization joins once, becomes joined, and records one audit en
     assert.equal(db.auditLogs.filter((row) => row.action === "organization.event.join").length, 1);
     assert.equal(db.auditLogs.find((row) => row.action === "organization.event.join").targetId, "wz-aerospace-2026");
   }, { prefix: "account-events-join-" });
+});
+
+test("approved organization can join an open draft event without a separate publication step", async () => {
+  await withTestServer(async ({ baseUrl, dbPath }) => {
+    await addUnavailableEvents(dbPath);
+    const db = JSON.parse(await fs.readFile(dbPath, "utf8"));
+    db.events.find((row) => row.id === "draft-event").registrationMode = "force_open";
+    await fs.writeFile(dbPath, JSON.stringify(db));
+    const owner = await loginAs(baseUrl, "13800000011", "123456");
+
+    const response = await fetch(
+      `${baseUrl}/api/organization/events/draft-event/join`,
+      withSession(owner.cookie, { method: "POST" })
+    );
+
+    assert.equal(response.status, 201);
+    assert.equal((await response.json()).row.eventId, "draft-event");
+  }, { prefix: "account-events-open-draft-" });
 });
 
 test("an organization workspace and export are scoped to its joined event", async () => {
