@@ -242,6 +242,10 @@ if test -z "$smoke_event_id" || test -z "$smoke_project_id"; then
 fi
 assert_status "submission-event-current" 200 -b "$cookie_jar" -X POST \
   "$base_url/api/admin/events/$smoke_event_id/current"
+printf '%s' '{"registrationMode":"force_open"}' | \
+assert_status "submission-event-registration-open" 200 \
+  -b "$cookie_jar" -H 'Content-Type: application/json' --data-binary @- \
+  -X PATCH "$base_url/api/admin/events/$smoke_event_id"
 printf '%s' '{"submissionMode":"image_video"}' | \
 assert_status "submission-project-mode" 200 \
   -b "$cookie_jar" -H 'Content-Type: application/json' --data-binary @- \
