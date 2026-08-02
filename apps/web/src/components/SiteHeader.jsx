@@ -34,33 +34,35 @@ export default function SiteHeader({ routeKey }) {
 
   return (
     <header className="site-header" role="banner">
-      <a className="brand" href="/" aria-label="网站首页">
-        <img className="brand-mark" src="/brand/mark.svg" alt="" />
-        <img className="brand-wordmark" src="/brand/wordmark.svg" alt={BRAND_NAME} />
-      </a>
+      <div className="site-header-inner">
+        <a className="brand" href="/" aria-label="网站首页">
+          <img className="brand-mark" src="/brand/mark.svg" alt="" />
+          <img className="brand-wordmark" src="/brand/wordmark.svg" alt={BRAND_NAME} />
+        </a>
 
-      <button
-        ref={menuButtonRef}
-        className="menu-trigger"
-        type="button"
-        aria-label={menuOpen ? "关闭导航菜单" : "打开导航菜单"}
-        aria-expanded={menuOpen}
-        aria-controls="site-navigation"
-        onClick={() => setMenuOpen((open) => !open)}
-      >
-        <span aria-hidden="true">{menuOpen ? "×" : "☰"}</span>
-      </button>
+        <button
+          ref={menuButtonRef}
+          className="menu-trigger"
+          type="button"
+          aria-label={menuOpen ? "关闭导航菜单" : "打开导航菜单"}
+          aria-expanded={menuOpen}
+          aria-controls="site-navigation"
+          onClick={() => setMenuOpen((open) => !open)}
+        >
+          <span aria-hidden="true">{menuOpen ? "×" : "☰"}</span>
+        </button>
 
-      <div ref={navigationRef} id="site-navigation" className="site-navigation" data-open={menuOpen || undefined}>
-        <p className="mobile-brand-name">{BRAND_NAME}</p>
-        <nav aria-label="主导航">
-          {navigation.map(([label, href]) => (
-            <a href={href} aria-current={currentPath === href ? "page" : undefined} key={href}>{label}</a>
-          ))}
-        </nav>
-        <div className="header-actions">
-          <a className="login-link" href="/admin/" data-router-ignore="true">用户登录</a>
-          <a className="registration-link" href="/#registration">报名入口</a>
+        <div ref={navigationRef} id="site-navigation" className="site-navigation" data-open={menuOpen || undefined}>
+          <p className="mobile-brand-name">{BRAND_NAME}</p>
+          <nav aria-label="主导航">
+            {navigation.map(([label, href]) => (
+              <a href={href} aria-current={currentPath === href ? "page" : undefined} key={href}>{label}</a>
+            ))}
+          </nav>
+          <div className="header-actions">
+            <a className="login-link" href="/admin/" data-router-ignore="true">用户登录</a>
+            <a className="registration-link" href="/#registration">报名入口</a>
+          </div>
         </div>
       </div>
     </header>
