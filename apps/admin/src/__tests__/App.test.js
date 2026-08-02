@@ -149,6 +149,24 @@ describe("App session integration", () => {
     expect(wrapper.find('[data-testid="event-center-page"]').exists()).toBe(true);
   });
 
+  it.each(["ordinary", "organization"])("uses the hover rail and mobile drawer for %s accounts", async (type) => {
+    sessionUser.value = { id: `${type}-1`, type, name: "账户", phone: "13800000001", mustChangePassword: false };
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/public/event") return publicData();
+      if (path === "/api/me/events") return { rows: [] };
+      return { rows: [] };
+    });
+    const wrapper = mount(App);
+    await flushPromises();
+
+    expect(wrapper.get(".user-sidebar").exists()).toBe(true);
+    expect(wrapper.get(".user-brand-mark img").attributes("src")).toBe("/brand/mark.svg");
+    await wrapper.get(".user-sidebar-mobile-trigger").trigger("click");
+    expect(wrapper.get('[data-testid="user-shell"]').classes()).toContain("user-sidebar-mobile-open");
+    await wrapper.get('[data-user-nav="eventCenter"]').trigger("click");
+    expect(wrapper.get('[data-testid="user-shell"]').classes()).not.toContain("user-sidebar-mobile-open");
+  });
+
   it("keeps ordinary registration actions behind an explicit event context and clears it on return", async () => {
     sessionUser.value = { id: "U1", type: "ordinary", name: "用户", mustChangePassword: false };
     apiMock.mockImplementation(async (path) => {

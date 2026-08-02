@@ -29,6 +29,7 @@ const message = ref("");
 const releaseReady = ref(false);
 const releaseBlocked = ref(false);
 const releaseMessage = ref("");
+const userSidebarOpen = ref(false);
 const certificateRegistrationId = ref("");
 const DEEP_LINK_VIEWS = new Set(["overview", "events", "siteContent", "organizations", "registration", "registrationRecords", "records", "certificates", "users", "organization", "eventCenter", "organizationWorkspace"]);
 const SAFE_EVENT_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
@@ -278,6 +279,7 @@ function navigateAdmin(key, section = "") {
 }
 
 function navigateUser(key) {
+  userSidebarOpen.value = false;
   if (key === "eventCenter") selectEventContext("");
   if (currentUser.value?.type === "ordinary" && ["registration", "registrationRecords"].includes(key) && !selectedEventId.value) {
     currentView.value = "eventCenter";
@@ -411,15 +413,21 @@ onMounted(async () => {
     <UserManagementPage v-else-if="currentView === 'users'" @error="handleError" />
   </AdminShell>
 
-  <div v-else class="shell user-shell" data-testid="user-shell">
-    <aside>
-      <div class="logo">航</div><h1>赛事报名系统</h1>
+  <div v-else class="shell user-shell" :class="{ 'user-sidebar-mobile-open': userSidebarOpen }" data-testid="user-shell">
+    <button v-if="userSidebarOpen" type="button" class="user-sidebar-backdrop" aria-label="关闭导航" @click="userSidebarOpen = false" />
+    <aside id="user-sidebar" class="user-sidebar">
+      <div class="user-brand"><span class="user-brand-mark"><img :src="'/brand/mark.svg'" alt="温州市青少年航空航天创新比赛 Logo" /></span><h1>赛事报名系统</h1></div>
       <div class="user-card"><strong>{{ currentUser.name }}</strong><span>{{ roleText[currentUser.type] }} · {{ currentUser.phone }}</span></div>
-      <button v-for="item in userNavigation" :key="item[0]" type="button" :class="{ active: currentView === item[0] }" :data-user-nav="item[0]" @click="navigateUser(item[0])">{{ item[1] }}</button>
-      <button class="ghost" @click="logout">退出登录</button>
+      <nav aria-label="用户导航">
+        <button v-for="item in userNavigation" :key="item[0]" type="button" :class="{ active: currentView === item[0] }" :data-user-nav="item[0]" :aria-label="item[1]" :title="item[1]" @click="navigateUser(item[0])"><span class="user-nav-label">{{ item[1] }}</span></button>
+        <button class="ghost user-logout-button" aria-label="退出登录" title="退出登录" @click="logout"><span class="user-nav-label">退出登录</span></button>
+      </nav>
     </aside>
     <main>
-      <header class="topbar"><div><h2>{{ userHeaderEvent.name || "赛事报名平台" }}</h2><p>{{ userHeaderEvent.date }} · {{ userHeaderEvent.venue }} · 报名截止 {{ userHeaderEvent.registrationDeadline }}</p></div></header>
+      <header class="topbar">
+        <button type="button" class="user-sidebar-mobile-trigger" aria-controls="user-sidebar" :aria-expanded="userSidebarOpen" aria-label="打开用户导航" @click="userSidebarOpen = true">☰</button>
+        <div><h2>{{ userHeaderEvent.name || "赛事报名平台" }}</h2><p>{{ userHeaderEvent.date }} · {{ userHeaderEvent.venue }} · 报名截止 {{ userHeaderEvent.registrationDeadline }}</p></div>
+      </header>
       <p v-if="message" class="message">{{ message }}</p>
       <EventCenterPage v-if="currentView === 'eventCenter'" :account-type="currentUser.type" @open-event="openAccountEvent" />
       <RegistrationPage v-if="currentUser.type === 'ordinary' && currentView === 'registration'" :event-id="registrationEventId" :account-type="currentUser.type" :event-organizations="selectedAccountEvent?.organizations || []" :registration-state="selectedAccountEvent?.registrationState || ''" :fallback-context="{ projects: eventData.projects }" @context="useRegistrationEvent" @registered="message = '报名已提交，等待审核'" @error="handleError" />
