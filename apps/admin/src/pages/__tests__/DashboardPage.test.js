@@ -19,12 +19,13 @@ const dashboard = {
 
 describe("DashboardPage", () => {
   beforeEach(() => {
+    window.history.replaceState({}, "", "/admin/?view=overview&eventId=E1");
     apiMock.mockReset();
     apiMock.mockImplementation((path) => Promise.resolve(path.includes("submission-assets") ? { rows: [] } : dashboard));
     apiBlobMock.mockReset();
   });
 
-  it("shows operational status, counts, imports and audit logs", async () => {
+  it("shows operational status and separates detailed information into quick-switch modules", async () => {
     const wrapper = mount(DashboardPage);
     await flushPromises();
 
@@ -34,11 +35,33 @@ describe("DashboardPage", () => {
     expect(wrapper.get('[data-count="pending-registrations"]').text()).toContain("3");
     expect(wrapper.get('[data-count="pending-organizations"]').text()).toContain("2");
     expect(wrapper.get('[data-count="draft-certificates"]').text()).toContain("4");
+
+    await wrapper.get('[data-dashboard-module="certificates"]').trigger("click");
     expect(wrapper.text()).toContain("证书名单.xlsx");
+
+    await wrapper.get('[data-dashboard-module="activity"]').trigger("click");
     expect(wrapper.text()).toContain("发布 4 张证书");
-    expect(wrapper.text()).toContain("服务器存储概览");
+
+    await wrapper.get('[data-dashboard-module="storage"]').trigger("click");
+    await flushPromises();
+    expect(wrapper.text()).toContain("服务器存储");
     expect(wrapper.text()).toContain("35.0%");
     expect(wrapper.text()).toContain("图片 1 个");
+    expect(apiMock).toHaveBeenCalledWith("/api/admin/events/E1/submission-assets");
+    expect(new URLSearchParams(window.location.search).get("panel")).toBe("storage");
+  });
+
+  it("restores a valid module from the URL and ignores an unknown module", async () => {
+    window.history.replaceState({}, "", "/admin/?view=overview&eventId=E1&panel=certificates");
+    const certificateWrapper = mount(DashboardPage);
+    await flushPromises();
+    expect(certificateWrapper.get('[data-active-module="certificates"]').exists()).toBe(true);
+    certificateWrapper.unmount();
+
+    window.history.replaceState({}, "", "/admin/?view=overview&eventId=E1&panel=unknown");
+    const fallbackWrapper = mount(DashboardPage);
+    await flushPromises();
+    expect(fallbackWrapper.get('[data-active-module="operations"]').exists()).toBe(true);
   });
 
   it("emits navigation targets from review shortcuts", async () => {

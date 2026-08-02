@@ -318,7 +318,7 @@ describe("App session integration", () => {
     const wrapper = mount(App);
     await flushPromises();
 
-    expect(wrapper.get(".admin-overview").text()).toContain("管理概览");
+    expect(wrapper.get(".admin-overview").text()).toContain("赛事运营工作台");
     await wrapper.get('[data-nav="events"]').trigger("click");
     await flushPromises();
     expect(wrapper.find(".event-management").exists()).toBe(true);
