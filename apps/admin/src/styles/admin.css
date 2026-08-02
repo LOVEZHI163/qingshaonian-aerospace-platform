@@ -156,6 +156,171 @@ textarea {
 .project-form { padding-top: 18px; border-top: 1px solid var(--line); }
 .project-form h4 { margin-top: 0; }
 
+.event-directory,
+.event-detail-workspace {
+  display: grid;
+  gap: 16px;
+}
+
+.event-detail-workspace .event-section-tabs { margin-bottom: 0; }
+
+.event-directory-intro,
+.event-detail-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.event-directory-intro h3,
+.event-directory-intro p,
+.event-detail-heading h3,
+.event-detail-heading p {
+  margin: 0;
+}
+
+.event-directory-intro h3,
+.event-detail-heading h3 {
+  margin-top: 4px;
+  color: #0f2745;
+  font-size: 22px;
+}
+
+.event-directory-intro p,
+.event-detail-heading p {
+  margin-top: 6px;
+  color: var(--muted);
+}
+
+.section-eyebrow {
+  color: #1768c9;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+
+.event-directory-empty {
+  display: grid;
+  justify-items: start;
+  gap: 10px;
+  padding: 36px;
+}
+
+.event-directory-empty p { margin: 0; color: var(--muted); }
+
+.event-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(330px, 1fr));
+  gap: 16px;
+}
+
+.event-summary-card {
+  display: grid;
+  gap: 18px;
+  min-width: 0;
+  border-top: 4px solid #1a73d9;
+}
+
+.event-summary-heading,
+.event-summary-footer,
+.event-detail-heading,
+.event-summary-badges {
+  display: flex;
+  align-items: center;
+}
+
+.event-summary-heading,
+.event-summary-footer,
+.event-detail-heading {
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.event-summary-heading h3 {
+  margin: 10px 0 4px;
+  color: #0f2745;
+  font-size: 18px;
+}
+
+.event-summary-heading p { margin: 0; color: var(--muted); }
+.event-summary-badges { flex-wrap: wrap; gap: 6px; }
+
+.event-status-badge,
+.event-featured-badge,
+.context-count {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  border-radius: 999px;
+  padding: 4px 9px;
+  background: #edf2f7;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.event-status-badge.status-published { background: #e2f6ee; color: #087f5b; }
+.event-status-badge.status-draft { background: #fff4d6; color: #9a6700; }
+.event-status-badge.status-archived { background: #edf0f4; color: #526173; }
+.event-featured-badge { background: #e9f3ff; color: #0b63ce; }
+
+.event-project-count {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  min-width: 62px;
+  min-height: 62px;
+  border-radius: 14px;
+  background: #eef6ff;
+  color: #0b63ce;
+  font-size: 24px;
+}
+
+.event-project-count small { color: #47627f; font-size: 11px; }
+
+.event-summary-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin: 0;
+}
+
+.event-summary-facts div {
+  min-width: 0;
+  padding: 11px 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #f8fbff;
+}
+
+.event-summary-facts dt { color: var(--muted); font-size: 12px; }
+.event-summary-facts dd { overflow-wrap: anywhere; margin: 4px 0 0; color: #20354f; font-weight: 700; }
+
+.event-summary-footer {
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.event-summary-footer > span { color: #526173; font-size: 13px; font-weight: 700; }
+
+.event-detail-header {
+  align-items: stretch;
+  flex-direction: column;
+}
+
+.event-back-button {
+  align-self: flex-start;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: #0b63ce;
+  font-weight: 800;
+}
+
+.event-back-button:hover { text-decoration: underline; }
+.event-detail-heading { width: 100%; }
+.context-count { background: #eef6ff; color: #0b63ce; }
+
 .page-title-row,
 .event-layout,
 .form-actions,
@@ -310,6 +475,18 @@ textarea {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   }
+
+  .event-card-grid { grid-template-columns: 1fr; }
+  .event-directory-intro,
+  .event-summary-heading,
+  .event-summary-footer,
+  .event-detail-heading { align-items: flex-start; flex-direction: column; }
+}
+
+@media (max-width: 600px) {
+  .event-summary-facts { grid-template-columns: 1fr; }
+  .event-directory-intro > button,
+  .event-summary-footer > button { width: 100%; }
 }
 
 .site-content-page {

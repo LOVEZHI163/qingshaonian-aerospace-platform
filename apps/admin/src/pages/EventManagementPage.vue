@@ -15,6 +15,7 @@ const projects = ref([]);
 const registrations = ref([]);
 const selectedId = ref("");
 const activeSection = ref("event");
+const managementLevel = ref("list");
 const creating = ref(false);
 const loading = ref(true);
 const saving = ref(false);
@@ -33,6 +34,30 @@ const selectedArchived = computed(() => Boolean(
 const selectedProjects = computed(() => projects.value
   .filter((row) => row.eventId === selectedId.value)
   .sort((left, right) => left.displayOrder - right.displayOrder));
+
+const statusLabels = {
+  draft: "草稿",
+  published: "已发布",
+  archived: "已归档"
+};
+
+const registrationModeLabels = {
+  automatic: "按报名时间自动开放",
+  force_open: "管理员临时开放",
+  force_closed: "管理员临时关闭"
+};
+
+function eventStatusLabel(row) {
+  return statusLabels[row?.status] || row?.status || "未设置";
+}
+
+function registrationModeLabel(row) {
+  return registrationModeLabels[row?.registrationMode] || "未设置";
+}
+
+function projectCountForEvent(eventId) {
+  return projects.value.filter((row) => row.eventId === eventId).length;
+}
 
 function emptyEvent() {
   return {
@@ -75,6 +100,20 @@ function toIsoDateTime(value) {
   return Number.isNaN(date.getTime()) ? "" : date.toISOString();
 }
 
+function formatDateTime(value) {
+  if (!value) return "未设置";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat("zh-CN", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false
+  }).format(date);
+}
+
 function selectEvent(id) {
   creating.value = false;
   selectedId.value = id;
@@ -95,6 +134,22 @@ async function changeSelectedEvent(id) {
   } catch (error) {
     pageError.value = error.message || "赛事报名数据加载失败";
   }
+}
+
+async function openEventDetail(id, section = "event") {
+  activeSection.value = section;
+  managementLevel.value = "detail";
+  success.value = "";
+  pageError.value = "";
+  await changeSelectedEvent(id);
+}
+
+function backToEventList() {
+  managementLevel.value = "list";
+  activeSection.value = "event";
+  creating.value = false;
+  success.value = "";
+  pageError.value = "";
 }
 
 function registrationCount(projectId) {
@@ -169,6 +224,7 @@ async function saveEvent() {
 }
 
 function startCreateEvent() {
+  managementLevel.value = "detail";
   activeSection.value = "event";
   creating.value = true;
   selectedId.value = "";
@@ -229,6 +285,7 @@ async function archiveSelected() {
 async function eventDeleted() {
   selectedId.value = "";
   await loadEvents({ preserveSelection: false });
+  managementLevel.value = "list";
   success.value = "历史赛事已彻底删除";
   emit("event-changed");
 }
@@ -283,84 +340,136 @@ onMounted(() => loadEvents({ preserveSelection: false }));
 <template>
   <section class="event-management">
     <div class="page-title-row">
-      <div><h2>赛事管理</h2><p>管理多届赛事、报名开放状态、赛项及适用组别。</p></div>
+      <div>
+        <h2>{{ managementLevel === 'list' ? '赛事设置' : '赛事详情' }}</h2>
+        <p>{{ managementLevel === 'list' ? '先选择赛事，再进入该赛事维护基础信息、赛项与组别。' : '按层级维护当前赛事，避免不同赛事之间交叉操作。' }}</p>
+      </div>
+      <button v-if="managementLevel === 'list'" type="button" class="dark" data-action="start-create-event" @click="startCreateEvent">新建赛事</button>
     </div>
-    <div class="event-section-tabs" role="tablist" aria-label="赛事设置分类">
-      <button type="button" role="tab" data-section="event" :class="{ active: activeSection === 'event' }" :aria-selected="activeSection === 'event'" @click="activeSection = 'event'">赛事信息</button>
-      <button type="button" role="tab" data-section="projects" :class="{ active: activeSection === 'projects' }" :aria-selected="activeSection === 'projects'" @click="activeSection = 'projects'">赛项与组别</button>
-    </div>
+
     <p v-if="pageError" class="message danger-message">{{ pageError }}</p>
     <p v-if="success" class="message success-message">{{ success }}</p>
 
-    <div v-if="activeSection === 'event'" data-section-panel="event">
-      <section class="panel management-context-card">
-        <div class="panel-title management-card-title">
-          <div><h3>赛事信息</h3><p>选择已有赛事进行维护，或新建一届赛事草稿。</p></div>
-          <button type="button" class="dark" data-action="start-create-event" @click="startCreateEvent">新建赛事草稿</button>
+    <section v-if="managementLevel === 'list'" class="event-directory" data-management-level="list">
+      <section class="panel event-directory-intro">
+        <div>
+          <span class="section-eyebrow">赛事总览</span>
+          <h3>全部赛事</h3>
+          <p>共 {{ events.length }} 场赛事。点击赛事卡片进入详情，再管理该赛事的赛项和组别。</p>
         </div>
-        <label v-if="events.length || creating">管理赛事
-          <select data-event-picker :value="selectedId" @change="changeSelectedEvent($event.target.value)">
-            <option v-if="creating" value="">正在新建赛事草稿</option>
-            <option v-for="row in events" :key="row.id" :value="row.id">{{ row.name }}{{ row.isCurrent ? "（首页置顶）" : "" }}</option>
-          </select>
-        </label>
+        <button type="button" class="primary" data-action="start-create-event-secondary" @click="startCreateEvent">新建赛事</button>
       </section>
-      <p v-if="loading" class="panel">正在加载赛事…</p>
-      <p v-else-if="events.length === 0 && !creating" class="panel">暂无赛事，请先新建草稿。</p>
 
-      <div v-else class="event-layout">
-        <div class="event-editor-stack">
-          <form class="panel event-form" @submit.prevent="selectedId ? saveEvent() : createDraft()">
-            <div class="panel-title"><h3>{{ selectedId ? "编辑赛事" : "新建赛事" }}</h3><span v-if="selectedEvent?.isCurrent">官网首页置顶</span></div>
-            <p v-if="selectedArchived" class="hint" data-readonly-event>赛事已归档，只可查看；不能再修改赛事或赛项。</p>
-            <div class="two">
-              <label>赛事名称<input v-model="eventForm.name" :disabled="selectedArchived" /><small v-if="fieldErrors.name">{{ fieldErrors.name }}</small></label>
-              <label>主题<input v-model="eventForm.theme" :disabled="selectedArchived" /><small v-if="fieldErrors.theme">{{ fieldErrors.theme }}</small></label>
+      <p v-if="loading" class="panel">正在加载赛事…</p>
+      <section v-else-if="events.length === 0" class="panel empty-state event-directory-empty">
+        <strong>还没有赛事</strong>
+        <p>先创建赛事草稿，保存后即可继续配置赛项与组别。</p>
+        <button type="button" class="primary" data-action="start-create-event-empty" @click="startCreateEvent">创建第一场赛事</button>
+      </section>
+
+      <div v-else class="event-card-grid">
+        <article v-for="row in events" :key="row.id" class="panel event-summary-card" :data-event-card="row.id">
+          <div class="event-summary-heading">
+            <div>
+              <div class="event-summary-badges">
+                <span class="event-status-badge" :class="`status-${row.status || 'unknown'}`">{{ eventStatusLabel(row) }}</span>
+                <span v-if="row.isCurrent" class="event-featured-badge">官网首页置顶</span>
+              </div>
+              <h3>{{ row.name }}</h3>
+              <p>{{ row.theme || '未设置赛事主题' }}</p>
             </div>
-            <div class="two">
-              <label>比赛日期说明<input v-model="eventForm.dateLabel" :disabled="selectedArchived" /><small v-if="fieldErrors.dateLabel">{{ fieldErrors.dateLabel }}</small></label>
-              <label>比赛地点<input v-model="eventForm.venue" :disabled="selectedArchived" /><small v-if="fieldErrors.venue">{{ fieldErrors.venue }}</small></label>
-            </div>
-            <label>联系方式<input v-model="eventForm.contact" :disabled="selectedArchived" /><small v-if="fieldErrors.contact">{{ fieldErrors.contact }}</small></label>
-            <div class="two">
-              <label>报名开始<input v-model="eventForm.registrationStartAt" type="datetime-local" :disabled="selectedArchived" /><small v-if="fieldErrors.registrationStartAt">{{ fieldErrors.registrationStartAt }}</small></label>
-              <label>报名截止<input v-model="eventForm.registrationEndAt" type="datetime-local" :disabled="selectedArchived" /><small v-if="fieldErrors.registrationEndAt">{{ fieldErrors.registrationEndAt }}</small></label>
-            </div>
-            <div v-if="selectedId" class="registration-modes">
-              <button type="button" data-mode="automatic" :disabled="saving || selectedArchived" @click="updateMode('automatic')">自动</button>
-              <button type="button" data-mode="force_open" :disabled="saving || selectedArchived" @click="updateMode('force_open')">临时开放</button>
-              <button type="button" data-mode="force_closed" :disabled="saving || selectedArchived" @click="updateMode('force_closed')">临时关闭</button>
-            </div>
-            <div class="form-actions">
-              <button class="primary" :disabled="saving || selectedArchived">{{ selectedId ? "保存赛事" : "创建草稿" }}</button>
-              <button v-if="selectedId" type="button" data-action="copy-event" :disabled="saving" @click="copySelected">复制</button>
-              <button v-if="selectedId && !selectedEvent?.isCurrent && !selectedArchived" type="button" :disabled="saving" @click="setCurrent">置顶到官网首页</button>
-              <button v-if="selectedId && selectedEvent?.status !== 'archived'" type="button" class="reject" :disabled="saving" @click="archiveSelected">归档</button>
-            </div>
-          </form>
-          <ResourceCleanupPanel
-            v-if="selectedEvent"
-            :event="selectedEvent"
-            @deleted="eventDeleted"
-          />
+            <strong class="event-project-count">{{ projectCountForEvent(row.id) }}<small>赛项</small></strong>
+          </div>
+          <dl class="event-summary-facts">
+            <div><dt>比赛日期</dt><dd>{{ row.dateLabel || '未设置' }}</dd></div>
+            <div><dt>比赛地点</dt><dd>{{ row.venue || '未设置' }}</dd></div>
+            <div><dt>报名开始</dt><dd>{{ formatDateTime(row.registrationStartAt) }}</dd></div>
+            <div><dt>报名截止</dt><dd>{{ formatDateTime(row.registrationEndAt) }}</dd></div>
+          </dl>
+          <div class="event-summary-footer">
+            <span>{{ registrationModeLabel(row) }}</span>
+            <button type="button" class="primary" data-action="open-event" @click="openEventDetail(row.id)">查看详情</button>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <div v-else class="event-detail-workspace" data-management-level="detail">
+      <section class="panel event-detail-header">
+        <button type="button" class="event-back-button" data-action="back-to-events" @click="backToEventList">← 返回赛事列表</button>
+        <div class="event-detail-heading">
+          <div>
+            <span class="section-eyebrow">{{ creating ? '新建赛事' : '当前赛事' }}</span>
+            <h3>{{ creating ? '创建赛事草稿' : selectedEvent?.name }}</h3>
+            <p>{{ creating ? '先填写并保存赛事信息，随后即可配置赛项与组别。' : selectedEvent?.theme }}</p>
+          </div>
+          <div v-if="selectedEvent" class="event-summary-badges">
+            <span class="event-status-badge" :class="`status-${selectedEvent.status || 'unknown'}`">{{ eventStatusLabel(selectedEvent) }}</span>
+            <span v-if="selectedEvent.isCurrent" class="event-featured-badge">官网首页置顶</span>
+          </div>
+        </div>
+      </section>
+
+      <div class="event-section-tabs" role="tablist" aria-label="赛事详情分类">
+        <button type="button" role="tab" data-section="event" :class="{ active: activeSection === 'event' }" :aria-selected="activeSection === 'event'" @click="activeSection = 'event'">赛事信息</button>
+        <button v-if="selectedId" type="button" role="tab" data-section="projects" :class="{ active: activeSection === 'projects' }" :aria-selected="activeSection === 'projects'" @click="activeSection = 'projects'">赛项与组别</button>
+      </div>
+
+      <div v-if="activeSection === 'event'" data-section-panel="event">
+        <section class="panel management-context-card">
+          <div class="panel-title management-card-title">
+            <div><h3>赛事信息</h3><p>维护赛事名称、时间、地点、报名窗口和官网首页展示状态。</p></div>
+            <span v-if="selectedEvent" class="context-count">{{ projectCountForEvent(selectedEvent.id) }} 个赛项</span>
+          </div>
+        </section>
+
+        <div class="event-layout">
+          <div class="event-editor-stack">
+            <form class="panel event-form" @submit.prevent="selectedId ? saveEvent() : createDraft()">
+              <div class="panel-title"><h3>{{ selectedId ? "编辑赛事" : "新建赛事" }}</h3><span v-if="selectedEvent?.isCurrent">官网首页置顶</span></div>
+              <p v-if="selectedArchived" class="hint" data-readonly-event>赛事已归档，只可查看；不能再修改赛事或赛项。</p>
+              <div class="two">
+                <label>赛事名称<input v-model="eventForm.name" :disabled="selectedArchived" /><small v-if="fieldErrors.name">{{ fieldErrors.name }}</small></label>
+                <label>主题<input v-model="eventForm.theme" :disabled="selectedArchived" /><small v-if="fieldErrors.theme">{{ fieldErrors.theme }}</small></label>
+              </div>
+              <div class="two">
+                <label>比赛日期说明<input v-model="eventForm.dateLabel" :disabled="selectedArchived" /><small v-if="fieldErrors.dateLabel">{{ fieldErrors.dateLabel }}</small></label>
+                <label>比赛地点<input v-model="eventForm.venue" :disabled="selectedArchived" /><small v-if="fieldErrors.venue">{{ fieldErrors.venue }}</small></label>
+              </div>
+              <label>联系方式<input v-model="eventForm.contact" :disabled="selectedArchived" /><small v-if="fieldErrors.contact">{{ fieldErrors.contact }}</small></label>
+              <div class="two">
+                <label>报名开始<input v-model="eventForm.registrationStartAt" type="datetime-local" :disabled="selectedArchived" /><small v-if="fieldErrors.registrationStartAt">{{ fieldErrors.registrationStartAt }}</small></label>
+                <label>报名截止<input v-model="eventForm.registrationEndAt" type="datetime-local" :disabled="selectedArchived" /><small v-if="fieldErrors.registrationEndAt">{{ fieldErrors.registrationEndAt }}</small></label>
+              </div>
+              <div v-if="selectedId" class="registration-modes">
+                <button type="button" data-mode="automatic" :disabled="saving || selectedArchived" @click="updateMode('automatic')">自动</button>
+                <button type="button" data-mode="force_open" :disabled="saving || selectedArchived" @click="updateMode('force_open')">临时开放</button>
+                <button type="button" data-mode="force_closed" :disabled="saving || selectedArchived" @click="updateMode('force_closed')">临时关闭</button>
+              </div>
+              <div class="form-actions">
+                <button class="primary" :disabled="saving || selectedArchived">{{ selectedId ? "保存赛事" : "创建草稿" }}</button>
+                <button v-if="selectedId" type="button" data-action="copy-event" :disabled="saving" @click="copySelected">复制</button>
+                <button v-if="selectedId && !selectedEvent?.isCurrent && !selectedArchived" type="button" :disabled="saving" @click="setCurrent">置顶到官网首页</button>
+                <button v-if="selectedId && selectedEvent?.status !== 'archived'" type="button" class="reject" :disabled="saving" @click="archiveSelected">归档</button>
+              </div>
+            </form>
+            <ResourceCleanupPanel
+              v-if="selectedEvent"
+              :event="selectedEvent"
+              @deleted="eventDeleted"
+            />
+          </div>
         </div>
       </div>
-    </div>
 
-    <div v-else data-section-panel="projects" class="event-projects-section">
-      <section class="panel management-context-card">
-        <div class="panel-title management-card-title">
-          <div><h3>赛项与组别</h3><p>选择赛事后维护赛项、适用组别和作品提交方式。</p></div>
-          <button type="button" class="primary" data-action="start-create-project" :disabled="!selectedId || selectedArchived" @click="startCreateProject">新建赛项</button>
-        </div>
-        <label v-if="events.length">管理赛事
-          <select data-project-event :value="selectedId" @change="changeSelectedEvent($event.target.value)">
-            <option v-for="row in events" :key="row.id" :value="row.id">{{ row.name }}{{ row.isCurrent ? "（首页置顶）" : "" }}</option>
-          </select>
-        </label>
-      </section>
-      <p v-if="!selectedId" class="panel empty-state">请先创建或选择赛事。</p>
-      <section v-else class="panel project-panel">
+      <div v-else data-section-panel="projects" class="event-projects-section">
+        <section class="panel management-context-card">
+          <div class="panel-title management-card-title">
+            <div><h3>赛项与组别</h3><p>维护当前赛事的赛项、适用组别和作品提交方式。</p></div>
+            <button type="button" class="primary" data-action="start-create-project" :disabled="!selectedId || selectedArchived" @click="startCreateProject">新建赛项</button>
+          </div>
+        </section>
+        <section class="panel project-panel">
           <div class="panel-title"><h3>赛项列表</h3><span>{{ selectedProjects.length }} 个赛项</span></div>
           <p v-if="selectedArchived" class="hint" data-readonly-projects>赛事已归档，只可查看；赛项编辑、停用和删除均已禁用。</p>
           <div class="project-list">
@@ -388,7 +497,8 @@ onMounted(() => loadEvents({ preserveSelection: false }));
             <div class="checkbox-row"><label><input v-model="projectForm.enabled" type="checkbox" :disabled="selectedArchived" />启用</label><label><input v-model="projectForm.instructorRequired" type="checkbox" :disabled="selectedArchived" />必须填写指导老师</label></div>
             <div class="form-actions"><button class="primary" :disabled="saving || selectedArchived">保存赛项</button><button v-if="projectForm.id" type="button" @click="Object.assign(projectForm, emptyProject())">取消编辑</button></div>
           </form>
-      </section>
+        </section>
+      </div>
     </div>
   </section>
 </template>
