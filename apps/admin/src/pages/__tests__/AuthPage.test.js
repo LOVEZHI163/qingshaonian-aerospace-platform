@@ -16,7 +16,7 @@ describe("AuthPage", () => {
     const wrapper = mount(AuthPage, { props: { eventName: "测试赛事" } });
 
     expect(wrapper.get(".auth-brand-mark img").attributes("src")).toBe("/brand/mark.svg");
-    expect(wrapper.get(".auth-brand-kicker").text()).toBe("温州少航");
+    expect(wrapper.get(".auth-brand-kicker").text()).toBe("温州青少年航空");
     expect(wrapper.get("h1").text()).toBe("赛事报名系统");
     expect(wrapper.get(".auth-event-context").text()).toContain("测试赛事");
   });

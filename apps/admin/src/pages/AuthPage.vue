@@ -64,9 +64,9 @@ onMounted(async () => {
 <template>
   <div class="auth-shell">
     <header class="auth-header">
-      <a class="auth-brand" href="/" aria-label="返回温州少航官网">
+      <a class="auth-brand" href="/" aria-label="返回温州青少年航空官网">
         <span class="auth-brand-mark"><img :src="'/brand/mark.svg'" alt="" /></span>
-        <span class="auth-brand-copy"><span class="auth-brand-kicker">温州少航</span><h1>赛事报名系统</h1></span>
+        <span class="auth-brand-copy"><span class="auth-brand-kicker">温州青少年航空</span><h1>赛事报名系统</h1></span>
       </a>
       <div class="auth-event-context"><span>当前赛事</span><p>{{ props.eventName || "2026年温州市青少年航空航天创新比赛" }}</p></div>
     </header>
