@@ -1,18 +1,47 @@
 import { mount } from "@vue/test-utils";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 
 import AdminShell from "../AdminShell.vue";
 
 describe("AdminShell", () => {
+  beforeEach(() => window.localStorage.clear());
+
   it("renders one event settings navigation entry and emits events", async () => {
     const wrapper = mount(AdminShell, { props: { active: "overview" } });
 
     expect(wrapper.findAll("[data-nav]").map((item) => item.text())).toEqual([
-      "概览", "赛事设置", "官网内容", "组织用户", "报名管理", "证书管理", "普通用户管理"
+      "概览", "赛事设置", "报名管理", "证书管理", "官网内容", "组织用户", "普通用户管理"
     ]);
     expect(wrapper.find('[data-nav="projects"]').exists()).toBe(false);
 
     await wrapper.get('[data-nav="events"]').trigger("click");
     expect(wrapper.emitted("navigate")[0]).toEqual(["events"]);
+  });
+
+  it("groups navigation, uses the official logo and supports a collapsed rail", async () => {
+    const wrapper = mount(AdminShell, { props: { active: "overview" } });
+
+    expect(wrapper.findAll(".admin-nav-group-label").map((item) => item.text()))
+      .toEqual(["工作台", "赛事运营", "内容与用户"]);
+    expect(wrapper.get(".admin-brand-mark img").attributes("src")).toBe("/brand/mark.svg");
+
+    await wrapper.get(".sidebar-collapse-toggle").trigger("click");
+    expect(wrapper.get('[data-testid="admin-shell"]').classes()).toContain("sidebar-collapsed");
+    expect(window.localStorage.getItem("aerogp-admin-sidebar-collapsed")).toBe("1");
+
+    await wrapper.get(".sidebar-collapse-toggle").trigger("click");
+    expect(wrapper.get('[data-testid="admin-shell"]').classes()).not.toContain("sidebar-collapsed");
+  });
+
+  it("opens the mobile drawer and closes it after navigation", async () => {
+    const wrapper = mount(AdminShell, { props: { active: "overview" } });
+
+    await wrapper.get(".sidebar-mobile-trigger").trigger("click");
+    expect(wrapper.get('[data-testid="admin-shell"]').classes()).toContain("sidebar-mobile-open");
+    expect(wrapper.get(".sidebar-mobile-trigger").attributes("aria-expanded")).toBe("true");
+
+    await wrapper.get('[data-nav="certificates"]').trigger("click");
+    expect(wrapper.get('[data-testid="admin-shell"]').classes()).not.toContain("sidebar-mobile-open");
+    expect(wrapper.emitted("navigate")[0]).toEqual(["certificates"]);
   });
 });

@@ -73,7 +73,7 @@ describe("role based application navigation", () => {
   it("shows the website module to administrators and opens it from navigation", async () => {
     const wrapper = await mountFor({ id: "A1", type: "admin", name: "管理员", mustChangePassword: false }); mounted.push(wrapper);
     const labels = wrapper.findAll("[data-nav]").map((item) => item.text());
-    expect(labels).toEqual(["概览", "赛事设置", "官网内容", "组织用户", "报名管理", "证书管理", "普通用户管理"]);
+    expect(labels).toEqual(["概览", "赛事设置", "报名管理", "证书管理", "官网内容", "组织用户", "普通用户管理"]);
 
     await wrapper.get('[data-nav="siteContent"]').trigger("click");
     await flushPromises();

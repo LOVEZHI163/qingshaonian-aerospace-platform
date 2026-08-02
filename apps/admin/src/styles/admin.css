@@ -53,40 +53,126 @@ textarea {
   grid-template-columns: 240px minmax(0, 1fr);
   min-height: 100vh;
   background: var(--bg);
+  transition: grid-template-columns 180ms ease;
 }
+
+.admin-shell.sidebar-collapsed { grid-template-columns: 78px minmax(0, 1fr); }
 
 .admin-sidebar {
   position: sticky;
   top: 0;
   height: 100vh;
-  padding: 24px 16px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 20px 14px;
   color: #fff;
   background: #102847;
+  transition: width 180ms ease, padding 180ms ease, transform 180ms ease;
+}
+
+.admin-brand-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 22px;
 }
 
 .admin-brand {
   display: flex;
+  min-width: 0;
   align-items: center;
-  gap: 12px;
-  margin-bottom: 24px;
+  gap: 10px;
   font-size: 18px;
 }
 
-.admin-brand span {
+.admin-brand strong {
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.admin-brand-mark {
   display: grid;
-  width: 38px;
-  height: 38px;
+  flex: 0 0 42px;
+  width: 42px;
+  height: 42px;
   place-items: center;
-  border-radius: 9px;
-  background: #1797d5;
+  border: 1px solid rgba(255, 255, 255, 0.36);
+  border-radius: 11px;
+  background: linear-gradient(145deg, #ffffff, #e8f3ff);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+}
+
+.admin-brand-mark img {
+  display: block;
+  width: 31px;
+  height: 31px;
+  object-fit: contain;
+}
+
+.sidebar-collapse-toggle,
+.sidebar-mobile-trigger {
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 8px;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.08);
+  cursor: pointer;
+}
+
+.sidebar-collapse-toggle {
+  flex: 0 0 30px;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  font-size: 22px;
+}
+
+.sidebar-collapse-toggle:hover,
+.sidebar-mobile-trigger:hover { background: rgba(255, 255, 255, 0.18); }
+
+.sidebar-mobile-trigger,
+.sidebar-backdrop { display: none; }
+
+.admin-shell.sidebar-collapsed .admin-sidebar { padding-right: 10px; padding-left: 10px; }
+.admin-shell.sidebar-collapsed .admin-brand-row { flex-direction: column; }
+.admin-shell.sidebar-collapsed .admin-brand strong,
+.admin-shell.sidebar-collapsed .admin-nav-group-label,
+.admin-shell.sidebar-collapsed .admin-nav-label { display: none; }
+
+.admin-shell.sidebar-collapsed .admin-sidebar nav button {
+  justify-content: center;
+  width: 48px;
+  margin: 0 auto;
+  padding-right: 0;
+  padding-left: 0;
 }
 
 .admin-sidebar nav {
   display: grid;
-  gap: 7px;
+  gap: 16px;
+}
+
+.admin-nav-group {
+  display: grid;
+  gap: 6px;
+}
+
+.admin-nav-group-label {
+  margin: 0;
+  padding: 0 10px;
+  color: #86a3c4;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
 }
 
 .admin-sidebar nav button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
   padding: 11px 13px;
   border: 1px solid transparent;
   border-radius: 8px;
@@ -96,11 +182,37 @@ textarea {
   cursor: pointer;
 }
 
+.admin-sidebar nav button::before {
+  display: grid;
+  flex: 0 0 26px;
+  width: 26px;
+  height: 26px;
+  place-items: center;
+  border-radius: 7px;
+  color: #dbeafe;
+  background: rgba(255, 255, 255, 0.08);
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.admin-sidebar [data-nav="overview"]::before { content: "览"; }
+.admin-sidebar [data-nav="events"]::before { content: "赛"; }
+.admin-sidebar [data-nav="registrations"]::before { content: "报"; }
+.admin-sidebar [data-nav="certificates"]::before { content: "证"; }
+.admin-sidebar [data-nav="siteContent"]::before { content: "站"; }
+.admin-sidebar [data-nav="organizations"]::before { content: "组"; }
+.admin-sidebar [data-nav="users"]::before { content: "人"; }
+
 .admin-sidebar nav button:hover,
 .admin-sidebar nav button.active {
   border-color: rgba(255, 255, 255, 0.2);
   color: #fff;
   background: rgba(255, 255, 255, 0.12);
+}
+
+.admin-sidebar nav button.active::before {
+  color: #102847;
+  background: #fff;
 }
 
 .admin-workspace {
@@ -454,18 +566,31 @@ textarea {
 }
 
 @media (max-width: 900px) {
-  .admin-shell {
-    grid-template-columns: 1fr;
-  }
-
+  .admin-shell,
+  .admin-shell.sidebar-collapsed { grid-template-columns: 1fr; }
   .admin-sidebar {
-    position: static;
-    height: auto;
+    position: fixed;
+    z-index: 1001;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: min(84vw, 300px);
+    height: 100vh;
+    padding: 20px 14px;
+    transform: translateX(-105%);
   }
 
-  .admin-sidebar nav {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
+  .admin-shell.sidebar-mobile-open .admin-sidebar { transform: translateX(0); }
+  .admin-shell.sidebar-collapsed .admin-brand-row { flex-direction: row; }
+  .admin-shell.sidebar-collapsed .admin-brand strong,
+  .admin-shell.sidebar-collapsed .admin-nav-group-label,
+  .admin-shell.sidebar-collapsed .admin-nav-label { display: block; }
+  .admin-shell.sidebar-collapsed .admin-sidebar nav button { justify-content: flex-start; width: 100%; margin: 0; padding: 11px 13px; }
+  .sidebar-collapse-toggle { display: none; }
+  .sidebar-mobile-trigger { display: grid; flex: 0 0 42px; width: 42px; height: 42px; color: #102847; border-color: #cbd5e1; background: #eef4fb; }
+  .sidebar-mobile-trigger:hover { background: #dceafb; }
+  .sidebar-backdrop { position: fixed; z-index: 1000; inset: 0; display: block; border: 0; background: rgba(8, 24, 43, 0.55); }
+  .admin-sidebar nav { grid-template-columns: 1fr; }
 
   .event-layout {
     display: grid;
