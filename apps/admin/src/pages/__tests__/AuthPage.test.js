@@ -12,16 +12,31 @@ describe("AuthPage", () => {
     apiMock.mockResolvedValue({ smsPasswordResetEnabled: false });
   });
 
-  it("keeps ordinary and organization registration values independent", async () => {
+  it("shows only the selected registration path", async () => {
     const wrapper = mount(AuthPage);
     await wrapper.get('[data-auth-tab="register"]').trigger("click");
-    const ordinaryName = wrapper.get('[data-testid="ordinary-name"]');
-    const organizationName = wrapper.get('[data-testid="organization-owner-name"]');
 
-    await ordinaryName.setValue("张三家长");
-    expect(organizationName.element.value).toBe("");
-    await organizationName.setValue("李老师");
-    expect(ordinaryName.element.value).toBe("张三家长");
+    expect(wrapper.find('[data-register="ordinary"]').exists()).toBe(true);
+    expect(wrapper.find('[data-register="organization"]').exists()).toBe(false);
+    await wrapper.get('[data-register-type="organization"]').trigger("click");
+    await wrapper.vm.$nextTick();
+    expect(wrapper.get('[data-register-type="organization"]').attributes("aria-pressed")).toBe("true");
+    expect(wrapper.find('[data-register="ordinary"]').exists()).toBe(false);
+    expect(wrapper.find('[data-register="organization"]').exists()).toBe(true);
+    await wrapper.get('[data-register-type="ordinary"]').trigger("click");
+    await wrapper.vm.$nextTick();
+    expect(wrapper.find('[data-register="ordinary"]').exists()).toBe(true);
+    expect(wrapper.find('[data-register="organization"]').exists()).toBe(false);
+  });
+
+  it("renders a login error next to the password and clears it while editing", async () => {
+    const wrapper = mount(AuthPage, { props: { loginError: "手机号或密码错误" } });
+
+    expect(wrapper.get('[data-testid="login-error"]').text()).toContain("手机号或密码错误");
+    expect(wrapper.get('input[type="password"]').attributes("aria-invalid")).toBe("true");
+
+    await wrapper.get('input[type="password"]').setValue("new-password");
+    expect(wrapper.emitted("clear-message")).toHaveLength(1);
   });
 
   it("returns to login after ordinary registration without creating a session", async () => {
@@ -42,6 +57,7 @@ describe("AuthPage", () => {
   it("normalizes the organization credit code to uppercase", async () => {
     const wrapper = mount(AuthPage);
     await wrapper.get('[data-auth-tab="register"]').trigger("click");
+    await wrapper.get('[data-register-type="organization"]').trigger("click");
     await wrapper.get('[data-testid="organization-credit-code"]').setValue("91330300test000001");
     expect(wrapper.get('[data-testid="organization-credit-code"]').element.value).toBe("91330300TEST000001");
   });

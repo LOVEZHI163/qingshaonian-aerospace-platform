@@ -23,11 +23,11 @@ async function submit() {
 
 <template>
   <form class="panel auth-panel" data-register="ordinary" @submit.prevent="submit">
-    <h3>普通用户注册</h3>
+    <h3>个人账号注册</h3>
     <p class="hint">适合学生、家长、个人参赛者。注册后可以报名，也可以向组织发送加入申请。</p>
     <label>姓名<input data-testid="ordinary-name" v-model="form.name" placeholder="学生/家长/老师姓名" required /></label>
     <label>手机号<input data-testid="ordinary-phone" v-model="form.phone" placeholder="用于登录和查重" required /></label>
     <label>密码<input data-testid="ordinary-password" v-model="form.password" type="password" required /></label>
-    <button class="primary" :disabled="submitting">注册普通用户</button>
+    <button class="primary" :disabled="submitting">创建个人账号</button>
   </form>
 </template>

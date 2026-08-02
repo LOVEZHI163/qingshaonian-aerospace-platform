@@ -54,8 +54,8 @@ async function submit() {
 
 <template>
   <form class="panel auth-panel org-register" data-register="organization" @submit.prevent="submit">
-    <h3>组织用户注册</h3>
-    <p class="hint">适合学校、青少年宫、科技馆、活动中心。注册后需等待资质审核。</p>
+    <h3>组织负责人注册</h3>
+    <p class="hint">一个账号负责一个组织。提交资质后需等待平台审核，通过后即可管理本组织赛事事务。</p>
     <template v-if="!resubmission"><label>负责人姓名<input data-testid="organization-owner-name" v-model="form.name" placeholder="负责人/领队老师姓名" required /></label><label>手机号<input v-model="form.phone" placeholder="用于登录和组织联系" required /></label><label>密码<input v-model="form.password" type="password" required /></label></template>
     <label>组织名称<input v-model="form.organizationName" placeholder="学校、青少年宫或活动中心" required /></label>
     <label>统一社会信用代码<input data-testid="organization-credit-code" v-model="form.creditCode" pattern="[0-9A-Z]{18}" maxlength="18" placeholder="18 位统一社会信用代码" required @input="normalizeCreditCode" /></label>

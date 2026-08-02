@@ -84,6 +84,17 @@ describe("App session integration", () => {
     expect(ordinary.find('[data-testid="admin-shell"]').exists()).toBe(false);
   });
 
+  it("shows an invalid login message inside the login form", async () => {
+    session.login.mockRejectedValueOnce(new Error("手机号或密码错误"));
+    const wrapper = mount(App);
+    await flushPromises();
+
+    await wrapper.get('[data-auth-form="login"]').trigger("submit");
+    await flushPromises();
+
+    expect(wrapper.get('[data-testid="login-error"]').text()).toContain("手机号或密码错误");
+  });
+
   it("blocks the admin shell when production release identities differ", async () => {
     vi.stubEnv("VITE_RELEASE_SHA", "new-web");
     sessionUser.value = { id: "A1", type: "admin", name: "管理员", mustChangePassword: false };

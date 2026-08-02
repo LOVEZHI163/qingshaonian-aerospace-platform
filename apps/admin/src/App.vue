@@ -226,7 +226,7 @@ async function login(credentials) {
     await loadAdminEvents();
     currentView.value = user.mustChangePassword ? "password" : targetView(user);
   } catch (error) {
-    message.value = error.message;
+    message.value = error?.message || "登录失败，请稍后重试";
   }
 }
 
@@ -388,7 +388,7 @@ onMounted(async () => {
 
   <div v-else-if="restoring" class="app-loading">正在恢复登录状态…</div>
 
-  <AuthPage v-else-if="!currentUser" :event-name="eventData.event.name" @login="login" />
+  <AuthPage v-else-if="!currentUser" :event-name="eventData.event.name" :login-error="message" @login="login" @clear-message="message = ''" />
 
   <section v-else-if="currentUser.mustChangePassword" class="auth-shell force-password-shell">
     <form class="panel auth-panel" @submit.prevent="changePassword">
