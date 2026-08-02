@@ -63,7 +63,13 @@ onMounted(async () => {
 
 <template>
   <div class="auth-shell">
-    <header class="auth-header"><div class="logo">航</div><div><h1>赛事报名系统</h1><p>{{ props.eventName || "2026年温州市青少年航空航天创新比赛" }}</p></div></header>
+    <header class="auth-header">
+      <a class="auth-brand" href="/" aria-label="返回温州少航官网">
+        <span class="auth-brand-mark"><img :src="'/brand/mark.svg'" alt="" /></span>
+        <span class="auth-brand-copy"><span class="auth-brand-kicker">温州少航</span><h1>赛事报名系统</h1></span>
+      </a>
+      <div class="auth-event-context"><span>当前赛事</span><p>{{ props.eventName || "2026年温州市青少年航空航天创新比赛" }}</p></div>
+    </header>
     <nav class="auth-tabs"><button type="button" data-auth-tab="login" :class="{ active: currentView === 'login' }" @click="switchView('login')">登录</button><button type="button" data-auth-tab="register" :class="{ active: currentView === 'register' }" @click="switchView('register')">注册</button></nav>
     <p v-if="message" class="message">{{ message }}</p>
     <section v-if="currentView === 'login'" class="auth-grid single"><form class="panel auth-panel" data-auth-form="login" @submit.prevent="emit('login', { ...loginForm })"><h3>账号登录</h3><p class="hint">普通用户、组织负责人和赛事管理员均从这里登录。</p><label>手机号<input v-model="loginForm.phone" autocomplete="username" inputmode="tel" @input="clearLoginError" /></label><label>密码<input v-model="loginForm.password" type="password" autocomplete="current-password" :aria-invalid="Boolean(props.loginError)" :aria-describedby="props.loginError ? 'login-error' : undefined" @input="clearLoginError" /><span v-if="props.loginError" id="login-error" class="auth-field-error" data-testid="login-error" role="alert">登录失败：{{ props.loginError }}</span></label><button class="primary">登录</button><button type="button" class="link-button" @click="switchView('forgot')">忘记密码？</button><p class="hint auth-test-accounts">测试账号：普通用户 13800000001 / 123456；组织用户 13800000011 / 123456；管理员 13900000000 / admin123。</p></form></section>

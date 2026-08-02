@@ -12,6 +12,15 @@ describe("AuthPage", () => {
     apiMock.mockResolvedValue({ smsPasswordResetEnabled: false });
   });
 
+  it("uses the official brand identity and separates the current event", () => {
+    const wrapper = mount(AuthPage, { props: { eventName: "测试赛事" } });
+
+    expect(wrapper.get(".auth-brand-mark img").attributes("src")).toBe("/brand/mark.svg");
+    expect(wrapper.get(".auth-brand-kicker").text()).toBe("温州少航");
+    expect(wrapper.get("h1").text()).toBe("赛事报名系统");
+    expect(wrapper.get(".auth-event-context").text()).toContain("测试赛事");
+  });
+
   it("shows only the selected registration path", async () => {
     const wrapper = mount(AuthPage);
     await wrapper.get('[data-auth-tab="register"]').trigger("click");
