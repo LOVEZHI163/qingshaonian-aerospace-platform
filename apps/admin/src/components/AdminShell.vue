@@ -1,5 +1,5 @@
 <script setup>
-import { onMounted, ref } from "vue";
+import { ref } from "vue";
 
 import EventContextSwitcher from "./EventContextSwitcher.vue";
 
@@ -17,17 +17,7 @@ const groups = [
   { label: "内容与用户", items: [["siteContent", "官网内容"], ["organizations", "组织用户"], ["users", "普通用户管理"]] }
 ];
 
-const sidebarCollapsed = ref(false);
 const mobileSidebarOpen = ref(false);
-
-onMounted(() => {
-  sidebarCollapsed.value = window.localStorage.getItem("aerogp-admin-sidebar-collapsed") === "1";
-});
-
-function toggleSidebar() {
-  sidebarCollapsed.value = !sidebarCollapsed.value;
-  window.localStorage.setItem("aerogp-admin-sidebar-collapsed", sidebarCollapsed.value ? "1" : "0");
-}
 
 function navigate(view) {
   mobileSidebarOpen.value = false;
@@ -38,7 +28,7 @@ function navigate(view) {
 <template>
   <div
     class="admin-shell"
-    :class="{ 'sidebar-collapsed': sidebarCollapsed, 'sidebar-mobile-open': mobileSidebarOpen }"
+    :class="{ 'sidebar-mobile-open': mobileSidebarOpen }"
     data-testid="admin-shell"
   >
     <button v-if="mobileSidebarOpen" type="button" class="sidebar-backdrop" aria-label="关闭导航" @click="mobileSidebarOpen = false" />
@@ -48,13 +38,6 @@ function navigate(view) {
           <span class="admin-brand-mark"><img :src="'/brand/mark.svg'" alt="温州市青少年航空航天创新比赛 Logo" /></span>
           <strong>赛事管理平台</strong>
         </div>
-        <button
-          type="button"
-          class="sidebar-collapse-toggle"
-          :aria-label="sidebarCollapsed ? '展开导航栏' : '收起导航栏'"
-          :title="sidebarCollapsed ? '展开导航栏' : '收起导航栏'"
-          @click="toggleSidebar"
-        >{{ sidebarCollapsed ? '›' : '‹' }}</button>
       </div>
       <nav aria-label="管理员导航">
         <section v-for="group in groups" :key="group.label" class="admin-nav-group">
@@ -66,7 +49,7 @@ function navigate(view) {
             :class="{ active: active === item[0] }"
             :data-nav="item[0]"
             :aria-label="item[1]"
-            :title="sidebarCollapsed ? item[1] : undefined"
+            :title="item[1]"
             @click="navigate(item[0])"
           ><span class="admin-nav-label">{{ item[1] }}</span></button>
         </section>

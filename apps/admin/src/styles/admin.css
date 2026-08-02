@@ -50,30 +50,37 @@ textarea {
 
 .admin-shell {
   display: grid;
-  grid-template-columns: 240px minmax(0, 1fr);
+  grid-template-columns: 78px minmax(0, 1fr);
   min-height: 100vh;
   background: var(--bg);
-  transition: grid-template-columns 180ms ease;
 }
-
-.admin-shell.sidebar-collapsed { grid-template-columns: 78px minmax(0, 1fr); }
 
 .admin-sidebar {
   position: sticky;
+  z-index: 20;
   top: 0;
+  width: 78px;
   height: 100vh;
   overflow-x: hidden;
   overflow-y: auto;
-  padding: 20px 14px;
+  padding: 20px 10px;
   color: #fff;
   background: #102847;
-  transition: width 180ms ease, padding 180ms ease, transform 180ms ease;
+  transition: width 180ms ease, padding 180ms ease, transform 180ms ease, box-shadow 180ms ease;
+}
+
+.admin-sidebar:hover,
+.admin-sidebar:focus-within {
+  width: 240px;
+  padding-right: 14px;
+  padding-left: 14px;
+  box-shadow: 16px 0 28px rgba(8, 24, 43, 0.2);
 }
 
 .admin-brand-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: center;
   gap: 8px;
   margin-bottom: 22px;
 }
@@ -87,9 +94,13 @@ textarea {
 }
 
 .admin-brand strong {
+  display: none;
   overflow: hidden;
   white-space: nowrap;
 }
+
+.admin-sidebar:hover .admin-brand strong,
+.admin-sidebar:focus-within .admin-brand strong { display: block; }
 
 .admin-brand-mark {
   display: grid;
@@ -110,7 +121,6 @@ textarea {
   object-fit: contain;
 }
 
-.sidebar-collapse-toggle,
 .sidebar-mobile-trigger {
   display: grid;
   place-items: center;
@@ -121,32 +131,36 @@ textarea {
   cursor: pointer;
 }
 
-.sidebar-collapse-toggle {
-  flex: 0 0 30px;
-  width: 30px;
-  height: 30px;
-  padding: 0;
-  font-size: 22px;
-}
-
-.sidebar-collapse-toggle:hover,
 .sidebar-mobile-trigger:hover { background: rgba(255, 255, 255, 0.18); }
 
 .sidebar-mobile-trigger,
 .sidebar-backdrop { display: none; }
 
-.admin-shell.sidebar-collapsed .admin-sidebar { padding-right: 10px; padding-left: 10px; }
-.admin-shell.sidebar-collapsed .admin-brand-row { flex-direction: column; }
-.admin-shell.sidebar-collapsed .admin-brand strong,
-.admin-shell.sidebar-collapsed .admin-nav-group-label,
-.admin-shell.sidebar-collapsed .admin-nav-label { display: none; }
+.admin-nav-group-label,
+.admin-nav-label { display: none; }
 
-.admin-shell.sidebar-collapsed .admin-sidebar nav button {
+.admin-shell > .admin-sidebar nav button {
   justify-content: center;
   width: 48px;
   margin: 0 auto;
   padding-right: 0;
   padding-left: 0;
+}
+
+.admin-sidebar:hover .admin-brand-row,
+.admin-sidebar:focus-within .admin-brand-row { justify-content: flex-start; }
+
+.admin-sidebar:hover .admin-nav-group-label,
+.admin-sidebar:hover .admin-nav-label,
+.admin-sidebar:focus-within .admin-nav-group-label,
+.admin-sidebar:focus-within .admin-nav-label { display: block; }
+
+.admin-sidebar:hover nav button,
+.admin-sidebar:focus-within nav button {
+  justify-content: flex-start;
+  width: 100%;
+  margin: 0;
+  padding: 11px 13px;
 }
 
 .admin-sidebar nav {
@@ -566,9 +580,10 @@ textarea {
 }
 
 @media (max-width: 900px) {
-  .admin-shell,
-  .admin-shell.sidebar-collapsed { grid-template-columns: 1fr; }
-  .admin-sidebar {
+  .admin-shell { grid-template-columns: 1fr; }
+  .admin-sidebar,
+  .admin-sidebar:hover,
+  .admin-sidebar:focus-within {
     position: fixed;
     z-index: 1001;
     top: 0;
@@ -577,16 +592,18 @@ textarea {
     width: min(84vw, 300px);
     height: 100vh;
     padding: 20px 14px;
+    box-shadow: 16px 0 28px rgba(8, 24, 43, 0.2);
     transform: translateX(-105%);
   }
 
   .admin-shell.sidebar-mobile-open .admin-sidebar { transform: translateX(0); }
-  .admin-shell.sidebar-collapsed .admin-brand-row { flex-direction: row; }
-  .admin-shell.sidebar-collapsed .admin-brand strong,
-  .admin-shell.sidebar-collapsed .admin-nav-group-label,
-  .admin-shell.sidebar-collapsed .admin-nav-label { display: block; }
-  .admin-shell.sidebar-collapsed .admin-sidebar nav button { justify-content: flex-start; width: 100%; margin: 0; padding: 11px 13px; }
-  .sidebar-collapse-toggle { display: none; }
+  .admin-brand-row,
+  .admin-sidebar:hover .admin-brand-row,
+  .admin-sidebar:focus-within .admin-brand-row { justify-content: flex-start; }
+  .admin-brand strong,
+  .admin-nav-group-label,
+  .admin-nav-label { display: block; }
+  .admin-shell > .admin-sidebar nav button { justify-content: flex-start; width: 100%; margin: 0; padding: 11px 13px; }
   .sidebar-mobile-trigger { display: grid; flex: 0 0 42px; width: 42px; height: 42px; color: #102847; border-color: #cbd5e1; background: #eef4fb; }
   .sidebar-mobile-trigger:hover { background: #dceafb; }
   .sidebar-backdrop { position: fixed; z-index: 1000; inset: 0; display: block; border: 0; background: rgba(8, 24, 43, 0.55); }
