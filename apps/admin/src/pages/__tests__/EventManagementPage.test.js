@@ -78,7 +78,7 @@ describe("EventManagementPage", () => {
     await wrapper.get("form.project-form").findAll("input")[0].setValue("未保存赛项");
 
     await wrapper.get('[data-section="event"]').trigger("click");
-    expect(wrapper.get(".event-list-item.selected").text()).toContain("2026赛事");
+    expect(wrapper.get('[data-event-picker]').element.value).toBe("E1");
     expect(wrapper.get("form.event-form").findAll("input")[1].element.value).toBe("未保存主题");
     await wrapper.get('[data-section="projects"]').trigger("click");
     expect(wrapper.get("form.project-form").findAll("input")[0].element.value).toBe("未保存赛项");
@@ -113,7 +113,7 @@ describe("EventManagementPage", () => {
 
     expect(wrapper.get('[data-section-panel="projects"]').text()).toContain("无人机竞速");
     await wrapper.get('[data-section="event"]').trigger("click");
-    expect(wrapper.get(".event-list-item.selected").text()).toContain("2027赛事");
+    expect(wrapper.get('[data-event-picker]').element.value).toBe("E2");
   });
 
   it("updates the registration mode, reloads and announces the event change", async () => {
@@ -232,7 +232,7 @@ describe("EventManagementPage", () => {
     const wrapper = mount(EventManagementPage);
     await flushPromises();
 
-    const createButton = wrapper.findAll("button").find((button) => button.text().includes("新建赛事草稿"));
+    const createButton = wrapper.get('[data-action="start-create-event"]');
     await createButton.trigger("click");
     const form = wrapper.get("form.event-form");
     const inputs = form.findAll("input");
@@ -248,6 +248,24 @@ describe("EventManagementPage", () => {
 
     expect(apiMock).toHaveBeenCalledWith("/api/admin/events", expect.objectContaining({ method: "POST" }));
     expect(wrapper.text()).toContain("赛事草稿已创建");
+  });
+
+  it("uses matching module headers and opens a blank project form from the top shortcut", async () => {
+    mockLoads();
+    const wrapper = mount(EventManagementPage);
+    await flushPromises();
+
+    expect(wrapper.get('[data-section-panel="event"] .management-context-card').text()).toContain("赛事信息");
+    expect(wrapper.get('[data-action="start-create-event"]').text()).toBe("新建赛事草稿");
+
+    await wrapper.get('[data-section="projects"]').trigger("click");
+    await wrapper.get('[data-action="edit-project"]').trigger("click");
+    expect(wrapper.get("form.project-form").findAll("input")[0].element.value).toBe("纸飞机");
+
+    await wrapper.get('[data-action="start-create-project"]').trigger("click");
+    expect(wrapper.get('[data-section-panel="projects"] .management-context-card').text()).toContain("赛项与组别");
+    expect(wrapper.get("form.project-form").findAll("input")[0].element.value).toBe("");
+    expect(wrapper.get("form.project-form button.primary").text()).toBe("保存赛项");
   });
 
   it("requires two confirmations before archiving an event", async () => {

@@ -144,8 +144,17 @@ textarea {
 .event-section-tabs { display: flex; gap: 8px; margin-bottom: 16px; }
 .event-section-tabs button { border: 1px solid #cbd5e1; background: #fff; color: #334155; border-radius: 8px; padding: 9px 16px; font-weight: 700; }
 .event-section-tabs button.active { border-color: #1677ff; background: #eaf3ff; color: #0b63ce; }
-.event-projects-section { display: grid; gap: 14px; }
-.project-event-picker label { display: grid; gap: 6px; max-width: 520px; }
+.event-projects-section,
+[data-section-panel="event"] { display: grid; gap: 14px; }
+.management-context-card { display: grid; gap: 16px; }
+.management-card-title { align-items: flex-start; }
+.management-card-title h3,
+.management-card-title p { margin: 0; }
+.management-card-title p { margin-top: 5px; color: var(--muted); font-size: 13px; }
+.management-context-card > label { display: grid; gap: 6px; max-width: 520px; color: #475569; font-weight: 700; }
+.management-context-card > label select { font-weight: 600; }
+.project-form { padding-top: 18px; border-top: 1px solid var(--line); }
+.project-form h4 { margin-top: 0; }
 
 .page-title-row,
 .event-layout,
