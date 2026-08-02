@@ -46,7 +46,15 @@ async function loadCertificates(eventId = props.eventId, { reload = false } = {}
       certificates.value = (await api(`/api/me/events/${encodeURIComponent(eventId)}/certificates`)).rows || [];
     }
   } catch (error) {
-    emit("error", error.message);
+    if ([403, 404].includes(error.status)) {
+      lastLoadedEventId.value = null;
+      queryMessage.value = error.status === 404
+        ? "未找到该赛事，已清除失效的赛事链接。请检查赛事 ID 后重试。"
+        : "当前账号无权查询该赛事证书，请更换赛事 ID。";
+      emit("event-id", "");
+    } else {
+      emit("error", error.message || "证书加载失败，请稍后重试");
+    }
   } finally {
     loading.value = false;
   }

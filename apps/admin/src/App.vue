@@ -36,6 +36,7 @@ const SAFE_EVENT_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 const initialParams = new URLSearchParams(window.location.search);
 const requestedView = DEEP_LINK_VIEWS.has(initialParams.get("view")) ? initialParams.get("view") : "";
 const initialView = requestedView === "records" ? "registrationRecords" : requestedView;
+let initialRoutePending = Boolean(initialView);
 const initialEventContext = initialView && SAFE_EVENT_ID.test(initialParams.get("eventId") || initialParams.get("eventSlug") || "")
   ? initialParams.get("eventId") || initialParams.get("eventSlug")
   : "";
@@ -74,14 +75,18 @@ const userNavigation = computed(() => {
     return navigation;
   }
   if (!approvedOrganization.value) return [["eventCenter", "赛事中心"], ["organization", "审核进度"]];
-  return [["eventCenter", "赛事中心"], ["organizationWorkspace", "赛事工作台"], ["organization", "组织与成员"], ["certificates", "历史证书"]];
+  const navigation = [["eventCenter", "赛事中心"]];
+  if (selectedEventId.value) navigation.push(["organizationWorkspace", "赛事工作台"]);
+  navigation.push(["organization", "组织与成员"], ["certificates", "证书查询"]);
+  return navigation;
 });
 const userHeaderEvent = computed(() => {
   if (currentView.value === "eventCenter") return { name: "赛事中心", date: "", venue: "", registrationDeadline: "" };
-  if (currentUser.value?.type === "ordinary" && currentView.value === "certificates" && certificateEventId.value && certificateEventId.value !== selectedEventId.value) {
+  if (currentView.value === "organization") return { name: "组织与成员", date: "", venue: "", registrationDeadline: "" };
+  if (currentView.value === "certificates" && (!certificateEventId.value || certificateEventId.value !== selectedEventId.value)) {
     return { name: "历史赛事证书查询", date: "", venue: "", registrationDeadline: "" };
   }
-  if (currentUser.value?.type === "ordinary" && selectedAccountEvent.value?.event) {
+  if (selectedAccountEvent.value?.event) {
     const event = selectedAccountEvent.value.event;
     return {
       ...event,
@@ -173,30 +178,32 @@ function setAdminEventId(eventId) {
 }
 
 function targetView(user = currentUser.value) {
-  if (!user || !initialView) return defaultView(user);
-  if (user.type === "organization" && initialView === "organizationWorkspace") {
+  const routeView = initialRoutePending ? initialView : "";
+  initialRoutePending = false;
+  if (!user || !routeView) return defaultView(user);
+  if (user.type === "organization" && routeView === "organizationWorkspace") {
     if (!initialEventId) return "eventCenter";
     selectEventContext(initialEventId);
     return "organizationWorkspace";
   }
-  if (user.type === "ordinary" && initialView === "certificates") {
+  if (user.type === "ordinary" && routeView === "certificates") {
     restoreCertificateEventContext();
     return "certificates";
   }
-  if (user.type !== "admin" && ["registration", "registrationRecords", "organizationWorkspace"].includes(initialView) && !restoreAccountEventContext()) {
+  if (user.type !== "admin" && ["registration", "registrationRecords", "organizationWorkspace"].includes(routeView) && !restoreAccountEventContext()) {
     message.value = "赛事链接无效或暂无访问权限";
     return "eventCenter";
   }
-  if (user.type === "admin" && initialView === "registrationRecords") return "registration";
+  if (user.type === "admin" && routeView === "registrationRecords") return "registration";
   const allowed = user.type === "admin"
     ? new Set(["overview", "events", "siteContent", "organizations", "registration", "certificates", "users"])
     : user.type === "organization"
       ? new Set(["eventCenter", "organizationWorkspace", "certificates", "organization"])
       : new Set(["eventCenter", "registration", "registrationRecords", "certificates"]);
-  if (user.type === "organization") return new Set(["eventCenter", "organizationWorkspace", "certificates", "organization"]).has(initialView)
-    ? initialView
+  if (user.type === "organization") return new Set(["eventCenter", "organizationWorkspace", "certificates", "organization"]).has(routeView)
+    ? routeView
     : defaultView(user);
-  return allowed.has(initialView) ? initialView : defaultView(user);
+  return allowed.has(routeView) ? routeView : defaultView(user);
 }
 
 async function loadEvent() {
@@ -247,8 +254,13 @@ async function changePassword() {
 
 async function performLogout() {
   await session.logout();
+  initialRoutePending = false;
+  selectEventContext("");
   currentView.value = "login";
   message.value = "";
+  const url = new URL(window.location.href);
+  ["view", "eventId", "eventSlug", "contentId", "panel"].forEach((key) => url.searchParams.delete(key));
+  window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
 }
 
 function requestSiteContentLeave(callback) {
@@ -280,8 +292,13 @@ function navigateAdmin(key, section = "") {
 
 function navigateUser(key) {
   userSidebarOpen.value = false;
+  message.value = "";
   if (key === "eventCenter") selectEventContext("");
   if (currentUser.value?.type === "ordinary" && ["registration", "registrationRecords"].includes(key) && !selectedEventId.value) {
+    currentView.value = "eventCenter";
+    return;
+  }
+  if (currentUser.value?.type === "organization" && key === "organizationWorkspace" && !selectedEventId.value) {
     currentView.value = "eventCenter";
     return;
   }
@@ -289,7 +306,11 @@ function navigateUser(key) {
 }
 
 function setCertificateEventId(eventId) {
-  if (!SAFE_EVENT_ID.test(eventId || "")) return;
+  if (!eventId) {
+    certificateEventId.value = "";
+    return;
+  }
+  if (!SAFE_EVENT_ID.test(eventId)) return;
   if (certificateEventId.value === eventId && !selectedEventId.value) return;
   if (eventId !== selectedEventId.value) {
     selectedEventId.value = "";
@@ -300,7 +321,16 @@ function setCertificateEventId(eventId) {
 }
 
 function openAccountEvent({ eventId, mode }) {
-  selectEventContext(eventId);
+  const resolvedEventId = resolveAccountEventId(eventId);
+  const expectedMode = currentUser.value?.type === "organization" ? "organizationWorkspace" : "registration";
+  if (!resolvedEventId || mode !== expectedMode) {
+    selectEventContext("");
+    currentView.value = "eventCenter";
+    message.value = "赛事链接无效或暂无访问权限";
+    return;
+  }
+  message.value = "";
+  selectEventContext(resolvedEventId);
   currentView.value = mode;
 }
 
@@ -327,10 +357,6 @@ function useRegistrationEvent(event) {
   selectedRegistrationEvent.value = event || null;
 }
 
-watch(() => currentUser.value?.type, () => {
-  if (currentUser.value && !currentUser.value.mustChangePassword) currentView.value = targetView();
-});
-
 watch(approvedOrganization, (organization) => {
   if (currentUser.value?.type !== "organization") return;
   if (!organization && currentView.value !== "eventCenter") currentView.value = "organization";
@@ -349,10 +375,14 @@ watch([currentView, selectedEventId, certificateEventId, siteContentId, adminEve
     else url.searchParams.delete("contentId");
     if (["overview", "registration", "certificates"].includes(view) && adminEventId.value) url.searchParams.set("eventId", adminEventId.value);
     else url.searchParams.delete("eventId");
+    if (view !== "overview") url.searchParams.delete("panel");
   } else {
     url.searchParams.delete("contentId");
     url.searchParams.delete("eventSlug");
-    const visibleEventId = view === "certificates" ? certificateId : eventId;
+    url.searchParams.delete("panel");
+    const visibleEventId = view === "certificates"
+      ? certificateId
+      : ["registration", "registrationRecords", "organizationWorkspace"].includes(view) ? eventId : "";
     if (visibleEventId) url.searchParams.set("eventId", visibleEventId);
     else url.searchParams.delete("eventId");
   }

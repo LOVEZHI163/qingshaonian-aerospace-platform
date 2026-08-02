@@ -1,5 +1,5 @@
-import { flushPromises, mount } from "@vue/test-utils";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { enableAutoUnmount, flushPromises, mount } from "@vue/test-utils";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const { apiMock, apiBlobMock, MockApiError } = vi.hoisted(() => ({
   apiMock: vi.fn(),
   apiBlobMock: vi.fn(),
@@ -34,6 +34,8 @@ import { testSession as session } from "../state/session.js";
 
 const sessionUser = session.user;
 const restoring = session.restoring;
+
+enableAutoUnmount(afterEach);
 
 function publicData() {
   return { event: { name: "测试赛事" }, projects: [], grades: [] };
@@ -252,6 +254,82 @@ describe("App session integration", () => {
     expect(wrapper.find('[data-testid="my-certificates-page"]').exists()).toBe(true);
     expect(apiMock).toHaveBeenCalledWith("/api/me/events/E-ARCHIVED/certificates");
     expect(new URLSearchParams(window.location.search).get("eventId")).toBe("E-ARCHIVED");
+  });
+
+  it("clears a missing certificate deep link instead of leaving the account on a broken event", async () => {
+    window.history.replaceState({}, "", "/admin/?view=certificates&panel=certificates&eventId=E-MISSING");
+    sessionUser.value = { id: "U1", type: "ordinary", name: "用户", mustChangePassword: false };
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/public/event") return publicData();
+      if (path === "/api/me/events") return { rows: [{ event: { id: "E1", name: "当前赛事" }, registrationState: "open" }] };
+      if (path === "/api/me/events/E-MISSING/certificates") throw Object.assign(new Error("赛事不存在"), { status: 404 });
+      return { rows: [] };
+    });
+    const wrapper = mount(App);
+    await flushPromises();
+
+    expect(wrapper.find('[data-testid="my-certificates-page"]').exists()).toBe(true);
+    expect(wrapper.text()).toContain("已清除失效的赛事链接");
+    expect(wrapper.text()).not.toContain("赛事不存在");
+    expect(new URLSearchParams(window.location.search).has("eventId")).toBe(false);
+    expect(new URLSearchParams(window.location.search).has("panel")).toBe(false);
+  });
+
+  it("does not reuse a consumed deep link after logout and another account login", async () => {
+    window.history.replaceState({}, "", "/admin/?view=certificates&eventId=E-ARCHIVED");
+    sessionUser.value = { id: "U1", type: "ordinary", name: "原账号", mustChangePassword: false };
+    session.logout.mockImplementationOnce(async () => { sessionUser.value = null; });
+    session.login.mockImplementationOnce(async () => {
+      const user = { id: "U2", type: "ordinary", name: "新账号", mustChangePassword: false };
+      sessionUser.value = user;
+      return user;
+    });
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/public/event") return publicData();
+      if (path === "/api/me/events") return { rows: [{ event: { id: "E1", name: "当前赛事" }, registrationState: "open" }] };
+      if (path === "/api/me/events/E-ARCHIVED/certificates") return { rows: [] };
+      return { rows: [] };
+    });
+    const wrapper = mount(App);
+    await flushPromises();
+    expect(apiMock.mock.calls.filter(([path]) => path === "/api/me/events/E-ARCHIVED/certificates")).toHaveLength(1);
+
+    await wrapper.get(".user-logout-button").trigger("click");
+    await flushPromises();
+    expect(wrapper.find('[data-auth-form="login"]').exists()).toBe(true);
+    expect(new URLSearchParams(window.location.search).has("view")).toBe(false);
+
+    await wrapper.get('[data-auth-form="login"]').trigger("submit");
+    await flushPromises();
+    expect(wrapper.find('[data-testid="event-center-page"]').exists()).toBe(true);
+    expect(apiMock.mock.calls.filter(([path]) => path === "/api/me/events/E-ARCHIVED/certificates")).toHaveLength(1);
+  });
+
+  it("shows the organization workspace only after an event is selected and scopes its URL", async () => {
+    sessionUser.value = { id: "O1U", type: "organization", name: "负责人", mustChangePassword: false };
+    session.organizations.value = [{ id: "O1", ownerUserId: "O1U", name: "实验学校", status: "active", reviewStatus: "approved" }];
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/public/event") return publicData();
+      if (path === "/api/me/events") return { rows: [{ event: { id: "E2", name: "春季赛" }, participationState: "joined" }] };
+      if (path === "/api/organization/events/E2/workspace") return { event: { id: "E2", name: "春季赛" }, summary: {}, projects: [], registrations: [] };
+      if (path === "/api/organization/events/E2/registrations") return { rows: [] };
+      if (path === "/api/me/organizations") return { rows: session.organizations.value };
+      if (path === "/api/organizations/O1/members") return { rows: [] };
+      return { rows: [] };
+    });
+    const wrapper = mount(App);
+    await flushPromises();
+
+    expect(wrapper.find('[data-user-nav="organizationWorkspace"]').exists()).toBe(false);
+    await wrapper.get('[data-event-card="E2"] [data-action="open-workspace"]').trigger("click");
+    await flushPromises();
+    expect(wrapper.find('[data-user-nav="organizationWorkspace"]').exists()).toBe(true);
+    expect(new URLSearchParams(window.location.search).get("eventId")).toBe("E2");
+
+    await wrapper.get('[data-user-nav="organization"]').trigger("click");
+    await flushPromises();
+    expect(wrapper.find('[data-testid="organization-console-page"]').exists()).toBe(true);
+    expect(new URLSearchParams(window.location.search).has("eventId")).toBe(false);
   });
 
   it("switches an active event certificate view to one historical event without retaining the active context", async () => {
