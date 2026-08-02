@@ -54,6 +54,9 @@ function navigate(view) {
           ><span class="admin-nav-label">{{ item[1] }}</span></button>
         </section>
       </nav>
+      <div class="admin-sidebar-footer">
+        <slot name="sidebar-footer" />
+      </div>
     </aside>
     <div class="admin-workspace">
       <header class="admin-header">

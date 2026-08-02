@@ -36,4 +36,16 @@ describe("AdminShell", () => {
     expect(wrapper.get('[data-testid="admin-shell"]').classes()).not.toContain("sidebar-mobile-open");
     expect(wrapper.emitted("navigate")[0]).toEqual(["certificates"]);
   });
+
+  it("renders account actions in the sidebar footer instead of the header", () => {
+    const wrapper = mount(AdminShell, {
+      props: { active: "overview" },
+      slots: {
+        "sidebar-footer": '<button data-action="logout">退出登录</button>'
+      }
+    });
+
+    expect(wrapper.get('.admin-sidebar-footer [data-action="logout"]').text()).toBe("退出登录");
+    expect(wrapper.find('.admin-header [data-action="logout"]').exists()).toBe(false);
+  });
 });

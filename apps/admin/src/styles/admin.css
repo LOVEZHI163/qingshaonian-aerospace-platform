@@ -56,6 +56,8 @@ textarea {
 }
 
 .admin-sidebar {
+  display: flex;
+  flex-direction: column;
   position: sticky;
   z-index: 20;
   top: 0;
@@ -166,6 +168,56 @@ textarea {
 .admin-sidebar nav {
   display: grid;
   gap: 16px;
+}
+
+.admin-sidebar-footer {
+  margin-top: auto;
+  padding-top: 18px;
+}
+
+.admin-sidebar-footer button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 48px;
+  min-height: 48px;
+  margin: 0 auto;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: #ffd7d2;
+  text-align: left;
+  background: transparent;
+  cursor: pointer;
+}
+
+.admin-sidebar-footer button::before {
+  display: grid;
+  flex: 0 0 26px;
+  width: 26px;
+  height: 26px;
+  place-items: center;
+  border-radius: 7px;
+  color: #ffd7d2;
+  background: rgba(255, 255, 255, 0.08);
+  font-size: 13px;
+  font-weight: 900;
+  content: "退";
+}
+
+.admin-sidebar:hover .admin-sidebar-footer button,
+.admin-sidebar:focus-within .admin-sidebar-footer button {
+  justify-content: flex-start;
+  width: 100%;
+  margin: 0;
+  padding: 11px 13px;
+}
+
+.admin-sidebar-footer button:hover {
+  border-color: rgba(255, 125, 110, 0.38);
+  color: #fff;
+  background: rgba(220, 58, 45, 0.2);
 }
 
 .admin-nav-group {
@@ -604,6 +656,7 @@ textarea {
   .admin-nav-group-label,
   .admin-nav-label { display: block; }
   .admin-shell > .admin-sidebar nav button { justify-content: flex-start; width: 100%; margin: 0; padding: 11px 13px; }
+  .admin-sidebar-footer button { justify-content: flex-start; width: 100%; margin: 0; padding: 11px 13px; }
   .sidebar-mobile-trigger { display: grid; flex: 0 0 42px; width: 42px; height: 42px; color: #102847; border-color: #cbd5e1; background: #eef4fb; }
   .sidebar-mobile-trigger:hover { background: #dceafb; }
   .sidebar-backdrop { position: fixed; z-index: 1000; inset: 0; display: block; border: 0; background: rgba(8, 24, 43, 0.55); }
@@ -1835,6 +1888,8 @@ em.invited {
 }
 
 .user-sidebar {
+  display: flex;
+  flex-direction: column;
   position: sticky;
   z-index: 20;
   top: 0;
@@ -1884,7 +1939,7 @@ em.invited {
 
 .user-brand-mark img { display: block; width: 31px; height: 31px; object-fit: contain; }
 .user-sidebar .user-card { display: none; }
-.user-sidebar nav { display: grid; gap: 8px; }
+.user-sidebar nav { display: flex; flex: 1; flex-direction: column; gap: 8px; }
 .user-nav-label { display: none; }
 
 .user-shell > .user-sidebar nav button {
@@ -1918,6 +1973,7 @@ em.invited {
 .user-sidebar [data-user-nav="organizationWorkspace"]::before { content: "台"; }
 .user-sidebar [data-user-nav="organization"]::before { content: "组"; }
 .user-sidebar .user-logout-button::before { content: "退"; }
+.user-shell > .user-sidebar nav .user-logout-button { margin-top: auto; }
 
 .user-sidebar nav button.active::before {
   color: #10233f;

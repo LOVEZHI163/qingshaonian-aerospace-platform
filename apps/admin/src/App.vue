@@ -402,7 +402,8 @@ onMounted(async () => {
   </section>
 
   <AdminShell v-else-if="currentUser.type === 'admin'" :active="adminActive" :events="adminEvents" :event-id="adminEventId" @update:event-id="setAdminEventId" @navigate="navigateAdmin">
-    <template #header><div><strong>{{ currentUser.name }}</strong><span>{{ eventData.event.name || "赛事管理平台" }}</span></div><button type="button" class="ghost" data-action="logout" @click="logout">退出登录</button></template>
+    <template #header><div><strong>{{ currentUser.name }}</strong><span>{{ eventData.event.name || "赛事管理平台" }}</span></div></template>
+    <template #sidebar-footer><button type="button" class="ghost admin-logout-button" data-action="logout" aria-label="退出登录" title="退出登录" @click="logout"><span class="admin-nav-label">退出登录</span></button></template>
     <p v-if="message" class="message">{{ message }}</p>
     <DashboardPage v-if="currentView === 'overview'" :event-id="adminEventId" @navigate="navigateAdmin" />
     <EventManagementPage v-else-if="currentView === 'events'" @event-changed="loadEvent" />
