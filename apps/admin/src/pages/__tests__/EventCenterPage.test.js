@@ -22,6 +22,7 @@ describe("EventCenterPage", () => {
 
     expect(apiMock).toHaveBeenCalledWith("/api/me/events");
     expect(wrapper.findAll("[data-event-card]")).toHaveLength(3);
+    expect(wrapper.text()).not.toContain("当前报名");
     expect(wrapper.text()).toContain("报名中");
     expect(wrapper.text()).toContain("未开始");
     expect(wrapper.text()).toContain("已截止");

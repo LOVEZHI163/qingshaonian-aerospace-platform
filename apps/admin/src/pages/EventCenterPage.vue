@@ -58,7 +58,6 @@ onMounted(loadEvents);
       <article v-for="row in rows" :key="row.event.id" class="panel event-center-card" :data-event-card="row.event.id">
         <div class="panel-title"><h3>{{ row.event.name }}</h3><em :class="`event-state-${row.registrationState}`">{{ registrationStateText[row.registrationState] || "报名状态待定" }}</em></div>
         <p class="hint" v-if="row.event.date || row.event.dateLabel">{{ row.event.date || row.event.dateLabel }}<span v-if="row.event.venue"> · {{ row.event.venue }}</span></p>
-        <p v-if="accountType === 'ordinary'" class="hint">当前报名 {{ row.registrationCount || 0 }} 条</p>
         <template v-else-if="accountType === 'organization'">
           <p class="hint">{{ participationStateText[row.participationState] || "资质不可用" }}</p>
           <p v-if="row.summary" class="hint">报名 {{ row.summary.registrationCount || 0 }} 人 · 待审核 {{ row.summary.pendingRegistrationCount || 0 }} 人 · 证书 {{ row.summary.certificateCount || 0 }} 份</p>
