@@ -73,10 +73,7 @@ const userNavigation = computed(() => {
     return [["eventCenter", "赛事中心"], ["registrationRecords", "报名记录"], ["certificates", "证书查询"]];
   }
   if (!approvedOrganization.value) return [["eventCenter", "赛事中心"], ["organization", "审核进度"]];
-  const navigation = [["eventCenter", "赛事中心"]];
-  if (selectedEventId.value) navigation.push(["organizationWorkspace", "赛事工作台"]);
-  navigation.push(["organization", "组织与成员"], ["certificates", "证书查询"]);
-  return navigation;
+  return [["eventCenter", "赛事中心"], ["organizationWorkspace", "赛事工作台"], ["organization", "组织与成员"], ["certificates", "证书查询"]];
 });
 const userHeaderEvent = computed(() => {
   if (currentView.value === "eventCenter") return { name: "赛事中心", date: "", venue: "", registrationDeadline: "" };
@@ -299,6 +296,7 @@ function navigateUser(key) {
   }
   if (currentUser.value?.type === "organization" && key === "organizationWorkspace" && !selectedEventId.value) {
     currentView.value = "eventCenter";
+    message.value = "请先在赛事中心选择赛事";
     return;
   }
   currentView.value = key;

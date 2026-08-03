@@ -312,7 +312,7 @@ describe("App session integration", () => {
     expect(apiMock.mock.calls.filter(([path]) => path === "/api/me/events/E-ARCHIVED/certificates")).toHaveLength(1);
   });
 
-  it("shows the organization workspace only after an event is selected and scopes its URL", async () => {
+  it("keeps approved organization navigation stable and scopes the selected event URL", async () => {
     sessionUser.value = { id: "O1U", type: "organization", name: "负责人", mustChangePassword: false };
     session.organizations.value = [{ id: "O1", ownerUserId: "O1U", name: "实验学校", status: "active", reviewStatus: "approved" }];
     apiMock.mockImplementation(async (path) => {
@@ -327,7 +327,11 @@ describe("App session integration", () => {
     const wrapper = mount(App);
     await flushPromises();
 
-    expect(wrapper.find('[data-user-nav="organizationWorkspace"]').exists()).toBe(false);
+    expect(wrapper.find('[data-user-nav="organizationWorkspace"]').exists()).toBe(true);
+    await wrapper.get('[data-user-nav="organizationWorkspace"]').trigger("click");
+    expect(wrapper.find('[data-testid="event-center-page"]').exists()).toBe(true);
+    expect(wrapper.text()).toContain("请先在赛事中心选择赛事");
+
     await wrapper.get('[data-event-card="E2"] [data-action="open-workspace"]').trigger("click");
     await flushPromises();
     expect(wrapper.find('[data-user-nav="organizationWorkspace"]').exists()).toBe(true);
@@ -337,6 +341,7 @@ describe("App session integration", () => {
     await flushPromises();
     expect(wrapper.find('[data-testid="organization-console-page"]').exists()).toBe(true);
     expect(new URLSearchParams(window.location.search).has("eventId")).toBe(false);
+    expect(wrapper.find('[data-user-nav="organizationWorkspace"]').exists()).toBe(true);
   });
 
   it("switches an active event certificate view to one historical event without retaining the active context", async () => {
