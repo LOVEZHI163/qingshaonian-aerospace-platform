@@ -67,9 +67,10 @@ const approvedOrganization = computed(() => (session.organizations.value || []).
   && organization.ownerUserId === currentUser.value?.id
 )));
 const adminActive = computed(() => currentView.value === "registration" ? "registrations" : currentView.value);
+const userActive = computed(() => currentUser.value?.type === "ordinary" && currentView.value === "registration" ? "eventCenter" : currentView.value);
 const userNavigation = computed(() => {
   if (currentUser.value?.type === "ordinary") {
-    return [["eventCenter", "赛事中心"], ["registration", "报名"], ["registrationRecords", "当前报名"], ["certificates", "证书查询"]];
+    return [["eventCenter", "赛事中心"], ["registrationRecords", "报名记录"], ["certificates", "证书查询"]];
   }
   if (!approvedOrganization.value) return [["eventCenter", "赛事中心"], ["organization", "审核进度"]];
   const navigation = [["eventCenter", "赛事中心"]];
@@ -448,7 +449,7 @@ onMounted(async () => {
       <div class="user-brand"><span class="user-brand-mark"><img :src="'/brand/mark.svg'" alt="温州市青少年航空航天创新比赛 Logo" /></span><h1>赛事报名系统</h1></div>
       <div class="user-card"><strong>{{ currentUser.name }}</strong><span>{{ roleText[currentUser.type] }} · {{ currentUser.phone }}</span></div>
       <nav aria-label="用户导航">
-        <button v-for="item in userNavigation" :key="item[0]" type="button" :class="{ active: currentView === item[0] }" :data-user-nav="item[0]" :aria-label="item[1]" :title="item[1]" @click="navigateUser(item[0])"><span class="user-nav-label">{{ item[1] }}</span></button>
+        <button v-for="item in userNavigation" :key="item[0]" type="button" :class="{ active: userActive === item[0] }" :data-user-nav="item[0]" :aria-label="item[1]" :title="item[1]" @click="navigateUser(item[0])"><span class="user-nav-label">{{ item[1] }}</span></button>
         <button class="ghost user-logout-button" aria-label="退出登录" title="退出登录" @click="logout"><span class="user-nav-label">退出登录</span></button>
       </nav>
     </aside>

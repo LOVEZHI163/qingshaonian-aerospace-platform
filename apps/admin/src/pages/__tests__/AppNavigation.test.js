@@ -217,7 +217,7 @@ describe("role based application navigation", () => {
   it("includes the event center before ordinary-user business navigation", async () => {
     const wrapper = await mountFor({ id: "U1", type: "ordinary", name: "普通用户", phone: "13800000001", mustChangePassword: false }); mounted.push(wrapper);
     const labels = wrapper.findAll("[data-user-nav]").map((item) => item.text());
-    expect(labels).toEqual(["赛事中心", "报名", "当前报名", "证书查询"]);
+    expect(labels).toEqual(["赛事中心", "报名记录", "证书查询"]);
     expect(wrapper.text()).not.toContain("普通用户管理");
     expect(apiMock.mock.calls.some(([path]) => path === "/api/users" || path.startsWith("/api/admin/"))).toBe(false);
   });

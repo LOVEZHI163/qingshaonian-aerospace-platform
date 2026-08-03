@@ -191,8 +191,9 @@ describe("App session integration", () => {
     const wrapper = mount(App);
     await flushPromises();
 
-    expect(wrapper.find('[data-user-nav="registration"]').exists()).toBe(true);
+    expect(wrapper.find('[data-user-nav="registration"]').exists()).toBe(false);
     expect(wrapper.find('[data-user-nav="registrationRecords"]').exists()).toBe(true);
+    expect(wrapper.get('[data-user-nav="registrationRecords"]').text()).toContain("报名记录");
 
     await wrapper.get('[data-user-nav="registrationRecords"]').trigger("click");
     expect(wrapper.find('[data-testid="event-center-page"]').exists()).toBe(true);
@@ -200,13 +201,14 @@ describe("App session integration", () => {
 
     await wrapper.get('[data-event-card="E2"] [data-action="open"]').trigger("click");
     await flushPromises();
-    expect(wrapper.find('[data-user-nav="registration"]').exists()).toBe(true);
+    expect(wrapper.find('[data-user-nav="registration"]').exists()).toBe(false);
+    expect(wrapper.get('[data-user-nav="eventCenter"]').classes()).toContain("active");
     expect(new URLSearchParams(window.location.search).get("eventId")).toBe("E2");
 
     await wrapper.get('[data-user-nav="eventCenter"]').trigger("click");
     await flushPromises();
     expect(new URLSearchParams(window.location.search).has("eventId")).toBe(false);
-    expect(wrapper.find('[data-user-nav="registration"]').exists()).toBe(true);
+    expect(wrapper.find('[data-user-nav="registration"]').exists()).toBe(false);
     expect(wrapper.find('[data-user-nav="registrationRecords"]').exists()).toBe(true);
   });
 
@@ -367,7 +369,7 @@ describe("App session integration", () => {
     await wrapper.get('[data-user-nav="eventCenter"]').trigger("click");
     await flushPromises();
     expect(new URLSearchParams(window.location.search).has("eventId")).toBe(false);
-    expect(wrapper.find('[data-user-nav="registration"]').exists()).toBe(true);
+    expect(wrapper.find('[data-user-nav="registration"]').exists()).toBe(false);
     expect(wrapper.find('[data-user-nav="registrationRecords"]').exists()).toBe(true);
   });
 
