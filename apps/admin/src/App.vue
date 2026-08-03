@@ -69,10 +69,7 @@ const approvedOrganization = computed(() => (session.organizations.value || []).
 const adminActive = computed(() => currentView.value === "registration" ? "registrations" : currentView.value);
 const userNavigation = computed(() => {
   if (currentUser.value?.type === "ordinary") {
-    const navigation = [["eventCenter", "赛事中心"]];
-    if (selectedEventId.value) navigation.push(["registration", "报名"], ["registrationRecords", "当前报名"]);
-    navigation.push(["certificates", "证书查询"]);
-    return navigation;
+    return [["eventCenter", "赛事中心"], ["registration", "报名"], ["registrationRecords", "当前报名"], ["certificates", "证书查询"]];
   }
   if (!approvedOrganization.value) return [["eventCenter", "赛事中心"], ["organization", "审核进度"]];
   const navigation = [["eventCenter", "赛事中心"]];
@@ -296,6 +293,7 @@ function navigateUser(key) {
   if (key === "eventCenter") selectEventContext("");
   if (currentUser.value?.type === "ordinary" && ["registration", "registrationRecords"].includes(key) && !selectedEventId.value) {
     currentView.value = "eventCenter";
+    message.value = "请先在赛事中心选择赛事";
     return;
   }
   if (currentUser.value?.type === "organization" && key === "organizationWorkspace" && !selectedEventId.value) {

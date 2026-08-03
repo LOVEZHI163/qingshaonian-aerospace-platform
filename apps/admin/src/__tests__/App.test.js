@@ -180,7 +180,7 @@ describe("App session integration", () => {
     expect(wrapper.get('[data-testid="user-shell"]').classes()).not.toContain("user-sidebar-mobile-open");
   });
 
-  it("keeps ordinary registration actions behind an explicit event context and clears it on return", async () => {
+  it("keeps ordinary navigation stable while requiring an explicit event context", async () => {
     sessionUser.value = { id: "U1", type: "ordinary", name: "用户", mustChangePassword: false };
     apiMock.mockImplementation(async (path) => {
       if (path === "/api/public/event") return publicData();
@@ -191,8 +191,12 @@ describe("App session integration", () => {
     const wrapper = mount(App);
     await flushPromises();
 
-    expect(wrapper.find('[data-user-nav="registration"]').exists()).toBe(false);
-    expect(wrapper.find('[data-user-nav="registrationRecords"]').exists()).toBe(false);
+    expect(wrapper.find('[data-user-nav="registration"]').exists()).toBe(true);
+    expect(wrapper.find('[data-user-nav="registrationRecords"]').exists()).toBe(true);
+
+    await wrapper.get('[data-user-nav="registrationRecords"]').trigger("click");
+    expect(wrapper.find('[data-testid="event-center-page"]').exists()).toBe(true);
+    expect(wrapper.text()).toContain("请先在赛事中心选择赛事");
 
     await wrapper.get('[data-event-card="E2"] [data-action="open"]').trigger("click");
     await flushPromises();
@@ -202,7 +206,8 @@ describe("App session integration", () => {
     await wrapper.get('[data-user-nav="eventCenter"]').trigger("click");
     await flushPromises();
     expect(new URLSearchParams(window.location.search).has("eventId")).toBe(false);
-    expect(wrapper.find('[data-user-nav="registration"]').exists()).toBe(false);
+    expect(wrapper.find('[data-user-nav="registration"]').exists()).toBe(true);
+    expect(wrapper.find('[data-user-nav="registrationRecords"]').exists()).toBe(true);
   });
 
   it("restores an authorized event slug as its canonical event id", async () => {
@@ -362,7 +367,8 @@ describe("App session integration", () => {
     await wrapper.get('[data-user-nav="eventCenter"]').trigger("click");
     await flushPromises();
     expect(new URLSearchParams(window.location.search).has("eventId")).toBe(false);
-    expect(wrapper.find('[data-user-nav="registration"]').exists()).toBe(false);
+    expect(wrapper.find('[data-user-nav="registration"]').exists()).toBe(true);
+    expect(wrapper.find('[data-user-nav="registrationRecords"]').exists()).toBe(true);
   });
 
   it("continues to reject an archived registration deep link outside active event rows", async () => {
