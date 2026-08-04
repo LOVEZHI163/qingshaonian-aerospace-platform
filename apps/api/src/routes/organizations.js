@@ -69,7 +69,9 @@ function participationSummary(db, participation) {
 function organizationWithDocuments(db, organization, membershipRole = null) {
   return {
     ...publicOrganization(organization),
-    memberCount: db.memberships.filter((membership) => membership.organizationId === organization.id).length,
+    memberCount: db.memberships.filter((membership) => membership.organizationId === organization.id
+      && membership.status === "active" && membership.role === "member"
+      && db.users.some((user) => user.id === membership.userId && user.type === "ordinary")).length,
     ...(membershipRole ? { membershipRole } : {}),
     documents: db.organizationDocuments
       .filter((document) => document.organizationId === organization.id && !document.cleanedAt)

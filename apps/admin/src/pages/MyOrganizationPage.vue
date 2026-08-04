@@ -66,7 +66,7 @@ async function requestOrganization(organization) {
     message.value = "已提交加入申请，等待组织审核。";
     emit("organization-changed");
   } catch (error) {
-    if (error?.code === "MEMBERSHIP_ACTIVE_CONFLICT") void loadRelations();
+    if (["MEMBERSHIP_ACTIVE_CONFLICT", "MEMBERSHIP_TRANSITION_INVALID"].includes(error?.code)) void loadRelations();
     reportError(error, mutated ? "操作已成功，但刷新组织关系失败" : "组织加入申请失败");
   } finally {
     busyAction.value = "";
@@ -85,7 +85,7 @@ async function updateRelation(row, action) {
     await loadRelations({ rethrow: true });
     emit("organization-changed");
   } catch (error) {
-    if (error?.code === "MEMBERSHIP_ACTIVE_CONFLICT") void loadRelations();
+    if (["MEMBERSHIP_ACTIVE_CONFLICT", "MEMBERSHIP_TRANSITION_INVALID"].includes(error?.code)) void loadRelations();
     reportError(error, mutated ? "操作已成功，但刷新组织关系失败" : "组织关系操作失败");
   } finally {
     busyAction.value = "";

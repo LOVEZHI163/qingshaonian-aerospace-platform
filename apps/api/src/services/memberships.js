@@ -92,7 +92,7 @@ function requireTransition(row, action, transitions) {
   return transition;
 }
 
-function ensureNoOtherActiveMembership(db, userId, membershipId) {
+function ensureNoOtherActiveMembership(db, userId, membershipId, actorUserId = null) {
   const active = db.memberships.find((row) => (
     row.userId === userId && row.id !== membershipId && row.status === "active"
   ));
@@ -100,7 +100,7 @@ function ensureNoOtherActiveMembership(db, userId, membershipId) {
     const organization = db.organizations.find((row) => row.id === active.organizationId);
     throw Object.assign(
       businessError(409, "该用户已加入其他组织，不能加入多个组织", "MEMBERSHIP_ACTIVE_CONFLICT"),
-      { relation: relationWithOrganization(active, organization) }
+      actorUserId === userId ? { relation: relationWithOrganization(active, organization) } : {}
     );
   }
 }
@@ -143,7 +143,7 @@ export function requestMembership(db, user, input, makeId, now) {
     throw businessError(403, "仅有效普通用户可以申请加入组织", "ORDINARY_USER_REQUIRED");
   }
   const organization = requireOperationalOrganization(db, String(input?.organizationId || "").trim());
-  ensureNoOtherActiveMembership(db, user.id, db.memberships.find((row) => row.userId === user.id && row.organizationId === organization.id)?.id);
+  ensureNoOtherActiveMembership(db, user.id, db.memberships.find((row) => row.userId === user.id && row.organizationId === organization.id)?.id, user.id);
   return mutation(organization, upsertPending(db, {
     user, organization, direction: "user_request", note: input?.note, makeId, now
   }));
@@ -176,13 +176,18 @@ export function actAsPersonalUser(db, user, membershipId, action, now) {
   }
   const row = requireMembership(db, membershipId);
   if (row.userId !== user.id) throw businessError(403, "无权操作该成员关系", "MEMBERSHIP_FORBIDDEN");
-  const transition = requireTransition(row, action, PERSONAL_ACTIONS);
   const organization = db.organizations.find((item) => item.id === row.organizationId);
   if (!organization) throw businessError(404, "组织不存在", "ORGANIZATION_NOT_FOUND");
+  let transition;
+  try { transition = requireTransition(row, action, PERSONAL_ACTIONS); }
+  catch (error) {
+    if (error.code === "MEMBERSHIP_TRANSITION_INVALID") error.relation = relationWithOrganization(row, organization);
+    throw error;
+  }
   if (transition.to === "active") {
     requireOperationalOrganization(db, row.organizationId);
     requireActiveOrdinaryMember(db, row.userId);
-    ensureNoOtherActiveMembership(db, row.userId, row.id);
+    ensureNoOtherActiveMembership(db, row.userId, row.id, user.id);
   }
   row.status = transition.to;
   row.updatedAt = now();
@@ -201,7 +206,12 @@ export function actAsOrganizationOwner(db, owner, membershipId, action, now) {
   if (row.role !== "member" || !row.userId) {
     throw businessError(403, "历史组织关系不可由负责人操作", "MEMBERSHIP_FORBIDDEN");
   }
-  const transition = requireTransition(row, action, OWNER_ACTIONS);
+  let transition;
+  try { transition = requireTransition(row, action, OWNER_ACTIONS); }
+  catch (error) {
+    if (error.code === "MEMBERSHIP_TRANSITION_INVALID") error.relation = relationWithOrganization(row, organization);
+    throw error;
+  }
   if (transition.to === "active") {
     requireActiveOrdinaryMember(db, row.userId);
     ensureNoOtherActiveMembership(db, row.userId, row.id);

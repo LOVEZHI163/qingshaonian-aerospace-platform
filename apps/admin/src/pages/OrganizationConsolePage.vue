@@ -119,7 +119,7 @@ async function updateMembership(row, action) {
     await loadMemberships();
     message.value = `${ownerActions[action]}成功。`;
   } catch (error) {
-    if (error?.code === "MEMBERSHIP_ACTIVE_CONFLICT") void loadMemberships();
+    if (["MEMBERSHIP_ACTIVE_CONFLICT", "MEMBERSHIP_TRANSITION_INVALID"].includes(error?.code)) void loadMemberships();
     reportError(error, mutated ? "操作已成功，但刷新成员关系失败" : "成员关系操作失败");
   } finally {
     busyAction.value = "";

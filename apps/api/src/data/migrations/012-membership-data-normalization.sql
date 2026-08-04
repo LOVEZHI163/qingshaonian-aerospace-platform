@@ -14,7 +14,7 @@ WHERE status = 'active'
 
 UPDATE memberships
 SET status = 'rejected'
-WHERE status = 'pending'
+WHERE status IN ('pending', 'invited')
   AND user_id IS NULL
   AND direction IN ('organization_invite', 'org_invite', 'invited');
 
