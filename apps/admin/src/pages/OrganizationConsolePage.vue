@@ -23,11 +23,12 @@ const ownerActions = {
   cancel: "撤销邀请",
   remove: "移除成员"
 };
-const ownedOrganization = computed(() => organizations.value.find((item) => item.ownerUserId === session.user.value?.id) || null);
+const ownedOrganizations = computed(() => organizations.value.filter((item) => item.ownerUserId === session.user.value?.id));
+const ownedOrganization = computed(() => ownedOrganizations.value.length === 1 ? ownedOrganizations.value[0] : null);
 const operational = computed(() => ownedOrganization.value?.status === "active" && ownedOrganization.value?.reviewStatus === "approved");
 const requests = computed(() => memberships.value.filter((row) => row.status === "pending" && row.direction === "user_request"));
 const invitations = computed(() => memberships.value.filter((row) => row.status === "pending" && row.direction === "organization_invite"));
-const activeMembers = computed(() => memberships.value.filter((row) => row.status === "active"));
+const activeMembers = computed(() => memberships.value.filter((row) => row.status === "active" && row.role === "member" && row.user?.id));
 const history = computed(() => memberships.value.filter((row) => row.status === "rejected" || row.status === "removed"));
 
 function reportError(error, fallback) {
@@ -123,7 +124,8 @@ async function updateMembership(row, action) {
 }
 
 function removeMember(row) {
-  if (!window.confirm(`确认移除成员 ${row.user.name}？历史报名和证书不会删除。`)) return;
+  const name = row.user?.name || "未知用户";
+  if (!window.confirm(`确认移除成员 ${name}？历史报名和证书不会删除。`)) return;
   void updateMembership(row, "remove");
 }
 

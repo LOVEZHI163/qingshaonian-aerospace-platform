@@ -198,4 +198,47 @@ describe("OrganizationConsolePage", () => {
     expect(wrapper.text()).toContain("驳回原因：资料不清晰");
     expect(apiMock).not.toHaveBeenCalledWith("/api/organization/memberships");
   });
+
+  it.each([
+    ["approved first", [organization, { ...organization, id: "O2", name: "待审核组织", reviewStatus: "pending" }]],
+    ["pending first", [{ ...organization, id: "O2", name: "待审核组织", reviewStatus: "pending" }, organization]]
+  ])("hides member tools when the owner has multiple organizations (%s)", async (_order, ownedOrganizations) => {
+    session.organizations.value = ownedOrganizations;
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/me/organizations") return { rows: ownedOrganizations };
+      if (path === "/api/organization/memberships") return membershipsPayload();
+      return { rows: [] };
+    });
+    const wrapper = mount(OrganizationConsolePage);
+    await flushPromises();
+
+    expect(wrapper.find('[data-field="member-phone"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="organization-console-page"]').exists()).toBe(false);
+    expect(apiMock).not.toHaveBeenCalledWith("/api/organization/memberships");
+  });
+
+  it("does not offer removal for active rows without a manageable member user", async () => {
+    const activeRows = [
+      membership("M-active", "正式成员", "active", "user_request"),
+      { ...membership("M-unbound", "无绑定用户", "active", "user_request"), user: null },
+      { ...membership("M-owner", "组织负责人", "active", "user_request"), role: "owner" },
+      { ...membership("M-system", "系统账号", "active", "organization_invite"), role: "system" }
+    ];
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/me/organizations") return { rows: [organization] };
+      if (path === "/api/organization/memberships") {
+        return { organization, summary: { total: 4, pending: 0, active: 4 }, rows: activeRows };
+      }
+      return { rows: [] };
+    });
+    const wrapper = mount(OrganizationConsolePage);
+    await flushPromises();
+
+    expect(wrapper.get('[data-action="remove-M-active"]').exists()).toBe(true);
+    expect(wrapper.find('[data-action="remove-M-unbound"]').exists()).toBe(false);
+    expect(wrapper.find('[data-action="remove-M-owner"]').exists()).toBe(false);
+    expect(wrapper.find('[data-action="remove-M-system"]').exists()).toBe(false);
+    expect(wrapper.get('[aria-label="正式成员"]').text()).not.toContain("组织负责人");
+    expect(wrapper.get('[aria-label="正式成员"]').text()).not.toContain("系统账号");
+  });
 });
