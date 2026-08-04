@@ -2,6 +2,8 @@
 
 基线：`4b8ed19e986`
 
+代码修复提交 SHA：`a8f3b5050877c5a92be76b5d476f6f6f0dfcab16`
+
 ## RED / GREEN
 
 - RED：已存在 active 组织关系的用户仍可创建跨组织申请/邀请；GREEN：创建阶段返回 `MEMBERSHIP_ACTIVE_CONFLICT`。
