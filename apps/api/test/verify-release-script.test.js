@@ -23,10 +23,40 @@ test("remote smoke keeps organization records scoped and validates the organizat
   assert.match(smoke, /\/admin\/\?view=organizationRecords/);
   assert.match(smoke, /\/api\/organization\/registrations/);
   assert.match(smoke, /foreign_registration_id/);
+  assert.match(smoke, /smoke_organization_user_id=/);
+  assert.match(smoke, /smoke_foreign_organization_user_id=/);
+  assert.match(smoke, /data\.user\.id/);
+  assert.match(smoke, /data\.user\.phone/);
+  assert.match(smoke, /data\.organization\.name/);
+  assert.match(smoke, /registered_organization_name.*smoke_organization_name/);
+  assert.match(smoke, /registered_foreign_organization_name.*smoke_foreign_organization_name/);
   assert.match(smoke, /data\.organization\.id/);
   assert.match(smoke, /data\.grades/);
   assert.match(smoke, /smoke_organization_token=/);
   assert.match(smoke, /credential-cleanup/);
+  assert.match(smoke, /DELETE "\$base_url\/api\/admin\/users\/\$organization_user_id"/);
+  assert.match(smoke, /recover_organization_smoke_ids\(\)/);
+  assert.match(smoke, /organization_expected_grades=/);
+  assert.match(smoke, /\["一年级","二年级","三年级","四年级","五年级","六年级","初一","初二","初三","高一","高二","高三","职高一年级","职高二年级","职高三年级"\]/);
+  assert.match(smoke, /-F "password=<\$smoke_organization_password_file"/);
+  assert.match(smoke, /-F "password=<\$smoke_foreign_organization_password_file"/);
+  assert.doesNotMatch(smoke, /-F "password=\$smoke_(?:foreign_)?organization_password"/);
+  const cleanupBody = smoke.match(/cleanup\(\) \{([\s\S]*?)\n\}/)?.[1] || "";
+  assert.ok(cleanupBody.indexOf("cleanup_submission_smoke") < cleanupBody.indexOf("cleanup_organization_smoke"));
+  assert.doesNotMatch(cleanupBody, /\|\| true/);
+  assert.match(smoke, /trap 'handle_exit' 0/);
+  assert.match(smoke, /cleanup failed after exit status/);
+  assert.match(smoke, /if \[ "\$status" -eq 0 \]; then\s*status=1/);
+  for (const [label, created] of [
+    ["organization-owner-register", "smoke_organization_created=1"],
+    ["organization-foreign-register", "smoke_foreign_organization_created=1"]
+  ]) {
+    const status = smoke.indexOf(`assert_status "${label}" 201`);
+    const createdAt = smoke.indexOf(created, status);
+    const json = smoke.indexOf(`assert_json_response "${label}"`, status);
+    assert.ok(status >= 0 && createdAt > status && createdAt < json,
+      `${label} must be recoverable before JSON parsing can abort`);
+  }
   assert.doesNotMatch(smoke, /echo[^\r\n]*(?:password|token|cookie)/i);
 });
 

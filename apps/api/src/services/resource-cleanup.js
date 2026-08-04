@@ -230,6 +230,7 @@ export async function deleteArchivedEvent({ store, eventId, confirmName, actor, 
   ));
   db.registrationUploadSessions = (db.registrationUploadSessions || []).filter((row) => row.eventId !== eventId);
   db.registrations = db.registrations.filter((row) => row.eventId !== eventId);
+  db.organizationEventParticipations = (db.organizationEventParticipations || []).filter((row) => row.eventId !== eventId);
   db.projectGroups = db.projectGroups.filter((row) => !projectIds.has(row.projectId));
   db.projects = db.projects.filter((row) => row.eventId !== eventId);
   db.certificateImportBatches = db.certificateImportBatches.filter((row) => row.eventId !== eventId);

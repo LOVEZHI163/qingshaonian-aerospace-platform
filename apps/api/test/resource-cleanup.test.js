@@ -62,6 +62,10 @@ async function writeFixture(dbPath, tempDir) {
     { projectId: "P-OLD", groupName: "小学低段" },
     { projectId: "P-OTHER", groupName: "小学低段" }
   );
+  db.organizationEventParticipations.push(
+    { organizationId: "O1002", eventId: "E-OLD", joinedByUserId: "U2002", joinedAt: "2026-01-01T00:00:00.000Z" },
+    { organizationId: "O1002", eventId: "E-OTHER", joinedByUserId: "U2002", joinedAt: "2026-01-01T00:00:00.000Z" }
+  );
   db.registrations.push(
     { id: "R-OLD", eventId: "E-OLD", projectId: "P-OLD", userId: "U1001", organizationId: "O1002", athlete: { name: "旧赛事选手" } },
     { id: "R-OTHER", eventId: "E-OTHER", projectId: "P-OTHER", userId: "U1001", organizationId: "O1002", athlete: { name: "其他赛事选手" } }
@@ -234,6 +238,8 @@ test("resource cleanup thoroughly deletes only a confirmed non-current archived 
     assert.equal(persisted.eventPublicProfiles.some((row) => row.eventId === "E-OLD"), false);
     assert.equal(persisted.projects.some((row) => row.eventId === "E-OLD"), false);
     assert.equal(persisted.projectGroups.some((row) => row.projectId === "P-OLD"), false);
+    assert.equal(persisted.organizationEventParticipations.some((row) => row.eventId === "E-OLD"), false);
+    assert.equal(persisted.organizationEventParticipations.some((row) => row.eventId === "E-OTHER"), true);
     assert.equal(persisted.registrations.some((row) => row.eventId === "E-OLD"), false);
     assert.equal(persisted.certificates.some((row) => row.id === "C-OLD"), false);
     assert.equal(persisted.certificateImportBatches.some((row) => row.eventId === "E-OLD"), false);
