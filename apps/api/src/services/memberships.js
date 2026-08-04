@@ -97,7 +97,11 @@ function ensureNoOtherActiveMembership(db, userId, membershipId) {
     row.userId === userId && row.id !== membershipId && row.status === "active"
   ));
   if (active) {
-    throw businessError(409, "该用户已加入其他组织，不能加入多个组织", "MEMBERSHIP_ACTIVE_CONFLICT");
+    const organization = db.organizations.find((row) => row.id === active.organizationId);
+    throw Object.assign(
+      businessError(409, "该用户已加入其他组织，不能加入多个组织", "MEMBERSHIP_ACTIVE_CONFLICT"),
+      { relation: relationWithOrganization(active, organization) }
+    );
   }
 }
 

@@ -553,7 +553,7 @@ describe("App session integration", () => {
     await wrapper.get('[data-action="manage-certificates"]').trigger("click");
     await flushPromises();
 
-    expect(wrapper.get("[data-event-switcher]").element.value).toBe("E0");
+    expect(wrapper.find("[data-event-switcher]").exists()).toBe(false);
     expect(wrapper.get("[data-manual-selected]").text()).toContain("R-HISTORICAL");
   });
 

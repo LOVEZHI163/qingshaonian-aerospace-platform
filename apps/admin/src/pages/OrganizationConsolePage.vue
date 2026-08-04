@@ -109,15 +109,18 @@ async function inviteMember() {
 async function updateMembership(row, action) {
   busyAction.value = `${row.id}:${action}`;
   message.value = "";
+  let mutated = false;
   try {
     await api(`/api/organization/memberships/${encodeURIComponent(row.id)}`, {
       method: "PATCH",
       body: JSON.stringify({ action })
     });
+    mutated = true;
     await loadMemberships();
     message.value = `${ownerActions[action]}成功。`;
   } catch (error) {
-    reportError(error, "成员关系操作失败");
+    if (error?.code === "MEMBERSHIP_ACTIVE_CONFLICT") void loadMemberships();
+    reportError(error, mutated ? "操作已成功，但刷新成员关系失败" : "成员关系操作失败");
   } finally {
     busyAction.value = "";
   }

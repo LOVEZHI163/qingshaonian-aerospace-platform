@@ -550,7 +550,8 @@ app.use((error, req, res, next) => {
   }
   res.status(status).json({
     error: status === 500 ? "服务器内部错误" : error.message,
-    ...(error.code ? { code: error.code } : {})
+    ...(error.code ? { code: error.code } : {}),
+    ...(error.relation ? { relation: error.relation } : {})
   });
 });
 

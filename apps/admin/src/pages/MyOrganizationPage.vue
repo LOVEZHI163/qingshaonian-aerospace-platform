@@ -55,16 +55,19 @@ async function searchOrganizations() {
 async function requestOrganization(organization) {
   busyAction.value = `request:${organization.id}`;
   message.value = "";
+  let mutated = false;
   try {
     await api("/api/me/organization-requests", {
       method: "POST",
       body: JSON.stringify({ organizationId: organization.id, note: note.value.trim() })
     });
+    mutated = true;
     await loadRelations({ rethrow: true });
     message.value = "已提交加入申请，等待组织审核。";
     emit("organization-changed");
   } catch (error) {
-    reportError(error, "组织加入申请失败");
+    if (error?.code === "MEMBERSHIP_ACTIVE_CONFLICT") void loadRelations();
+    reportError(error, mutated ? "操作已成功，但刷新组织关系失败" : "组织加入申请失败");
   } finally {
     busyAction.value = "";
   }
@@ -72,15 +75,18 @@ async function requestOrganization(organization) {
 
 async function updateRelation(row, action) {
   busyAction.value = `${row.id}:${action}`;
+  let mutated = false;
   try {
     await api(`/api/me/organization-relations/${encodeURIComponent(row.id)}`, {
       method: "PATCH",
       body: JSON.stringify({ action })
     });
+    mutated = true;
     await loadRelations({ rethrow: true });
     emit("organization-changed");
   } catch (error) {
-    reportError(error, "组织关系操作失败");
+    if (error?.code === "MEMBERSHIP_ACTIVE_CONFLICT") void loadRelations();
+    reportError(error, mutated ? "操作已成功，但刷新组织关系失败" : "组织关系操作失败");
   } finally {
     busyAction.value = "";
   }
