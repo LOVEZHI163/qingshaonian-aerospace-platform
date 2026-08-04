@@ -303,6 +303,13 @@ if test -z "$submission_registration_id"; then
   echo "Submission smoke registration binding returned no registration" >&2
   exit 1
 fi
+assert_status "submission-account-registration-history" 200 \
+  -b "$smoke_cookie_jar" "$base_url/api/me/registrations"
+assert_json_response "submission-account-registration-history"
+json_path 'let input="";process.stdin.on("data",chunk=>input+=chunk).on("end",()=>{const rows=JSON.parse(input).rows||[];if(!rows.some(row=>row.id&&row.eventId))process.exit(2);});' >/dev/null
+assert_status "submission-account-certificate-history" 200 \
+  -b "$smoke_cookie_jar" "$base_url/api/me/certificates"
+assert_json_response "submission-account-certificate-history"
 assert_status "submission-admin-summary" 200 \
   -b "$cookie_jar" "$base_url/api/admin/events/$smoke_event_id/registrations"
 assert_json_response "submission-admin-summary"

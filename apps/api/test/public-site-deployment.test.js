@@ -186,6 +186,8 @@ test("remote smoke discovers public resources dynamically and checks admin autho
     "submission-image-upload",
     "submission-video-upload",
     "submission-registration-bind",
+    "submission-account-registration-history",
+    "submission-account-certificate-history",
     "submission-admin-summary",
     "submission-private-unauthorized"
   ];

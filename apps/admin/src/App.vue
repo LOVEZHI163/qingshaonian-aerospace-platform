@@ -78,9 +78,8 @@ const userNavigation = computed(() => {
 const userHeaderEvent = computed(() => {
   if (currentView.value === "eventCenter") return { name: "赛事中心", date: "", venue: "", registrationDeadline: "" };
   if (currentView.value === "organization") return { name: "组织与成员", date: "", venue: "", registrationDeadline: "" };
-  if (currentView.value === "certificates" && (!certificateEventId.value || certificateEventId.value !== selectedEventId.value)) {
-    return { name: "历史赛事证书查询", date: "", venue: "", registrationDeadline: "" };
-  }
+  if (currentView.value === "registrationRecords" && !recordsEventId.value) return { name: "报名记录", date: "", venue: "", registrationDeadline: "" };
+  if (currentView.value === "certificates" && !certificateEventId.value) return { name: "我的证书", date: "", venue: "", registrationDeadline: "" };
   if (selectedAccountEvent.value?.event) {
     const event = selectedAccountEvent.value.event;
     return {
@@ -289,7 +288,8 @@ function navigateUser(key) {
   userSidebarOpen.value = false;
   message.value = "";
   if (key === "eventCenter") selectEventContext("");
-  if (currentUser.value?.type === "ordinary" && ["registration", "registrationRecords"].includes(key) && !selectedEventId.value) {
+  if (currentUser.value?.type === "ordinary" && ["registrationRecords", "certificates"].includes(key)) selectEventContext("");
+  if (currentUser.value?.type === "ordinary" && key === "registration" && !selectedEventId.value) {
     currentView.value = "eventCenter";
     message.value = "请先在赛事中心选择赛事";
     return;
@@ -460,7 +460,7 @@ onMounted(async () => {
       <EventCenterPage v-if="currentView === 'eventCenter'" :account-type="currentUser.type" @open-event="openAccountEvent" />
       <RegistrationPage v-if="currentUser.type === 'ordinary' && currentView === 'registration'" :event-id="registrationEventId" :account-type="currentUser.type" :event-organizations="selectedAccountEvent?.organizations || []" :registration-state="selectedAccountEvent?.registrationState || ''" :fallback-context="{ projects: eventData.projects }" @context="useRegistrationEvent" @registered="message = '报名已提交，等待审核'" @error="handleError" />
       <RegistrationRecordsPage :key="`records:${recordsEventId}`" v-else-if="currentView === 'registrationRecords'" :event-id="recordsEventId" @error="handleError" />
-      <MyCertificatesPage v-else-if="currentView === 'certificates'" :event-id="certificateEventId" @event-id="setCertificateEventId" @error="handleError" />
+      <MyCertificatesPage :key="`certificates:${certificateEventId}`" v-else-if="currentView === 'certificates'" :event-id="certificateEventId" @event-id="setCertificateEventId" @error="handleError" />
       <OrganizationEventWorkspacePage v-else-if="currentView === 'organizationWorkspace'" :event-id="selectedEventId" @context="useRegistrationEvent" @access-denied="handleWorkspaceAccessDenied" @error="handleError" />
       <OrganizationConsolePage v-else-if="currentView === 'organization'" @error="handleError" />
     </main>

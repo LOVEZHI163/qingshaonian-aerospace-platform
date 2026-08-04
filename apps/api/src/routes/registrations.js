@@ -97,6 +97,25 @@ export function createRegistrationsRouter({
     }
   }
 
+  function withEventSummary(db, row) {
+    const event = db.events.find((item) => item.id === row.eventId);
+    return {
+      ...withRegistrationSubmission(db, row),
+      eventId: row.eventId,
+      eventName: event?.name || row.eventId,
+      eventStatus: event?.status || ""
+    };
+  }
+
+  router.get("/me/registrations", ...user, asyncRoute(async (req, res) => {
+    requireOrdinaryUser(req.user);
+    const db = await store.readDb();
+    const rows = db.registrations
+      .filter((row) => row.personalUserId === req.user.id)
+      .map((row) => withEventSummary(db, row));
+    res.json({ rows });
+  }));
+
   router.get("/me/events/:eventId/registrations", ...user, asyncRoute(async (req, res) => {
     requireOrdinaryUser(req.user);
     const db = await store.readDb();

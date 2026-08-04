@@ -222,6 +222,17 @@ describe("role based application navigation", () => {
     expect(apiMock.mock.calls.some(([path]) => path === "/api/users" || path.startsWith("/api/admin/"))).toBe(false);
   });
 
+  it("opens registration history directly when no event is selected", async () => {
+    const wrapper = await mountFor({ id: "U1", type: "ordinary", name: "普通用户", phone: "13800000001", mustChangePassword: false }); mounted.push(wrapper);
+
+    await wrapper.get('[data-user-nav="registrationRecords"]').trigger("click");
+    await flushPromises();
+
+    expect(wrapper.find('[data-testid="registration-records-page"]').exists()).toBe(true);
+    expect(apiMock).toHaveBeenCalledWith("/api/me/registrations");
+    expect(wrapper.text()).not.toContain("请先在赛事中心选择赛事");
+  });
+
   it("restores a whitelisted registration deep link with its event id", async () => {
     window.history.replaceState({}, "", "/admin/?view=registration&eventId=E2");
     session.user.value = { id: "U1", type: "ordinary", name: "普通用户", phone: "13800000001", mustChangePassword: false };
@@ -348,14 +359,15 @@ describe("role based application navigation", () => {
   });
 
   it.each([
-    ["records", "registrationRecords", "/api/me/events/E2/registrations"],
-    ["certificates", "certificates", "/api/me/events/E2/certificates"]
-  ])("keeps the selected event when navigating to %s from a deep link", async (view, navigation, eventPath) => {
+    ["records", "registrationRecords", "/api/me/events/E2/registrations", "/api/me/registrations"],
+    ["certificates", "certificates", "/api/me/events/E2/certificates", "/api/me/certificates"]
+  ])("opens all-event history when navigating to %s from an event deep link", async (view, navigation, eventPath, historyPath) => {
     window.history.replaceState({}, "", `/admin/?view=${view}&eventId=E2`);
     session.user.value = { id: "U1", type: "ordinary", name: "普通用户", phone: "13800000001", mustChangePassword: false };
     apiMock.mockImplementation(async (path) => {
       if (path === "/api/public/event") return { event: { id: "E1", name: "当前赛事 E1" }, projects: [], grades: [] };
       if (path === eventPath) return { rows: [] };
+      if (path === historyPath) return { rows: [] };
       return { rows: [] };
     });
 
@@ -365,8 +377,9 @@ describe("role based application navigation", () => {
 
     await wrapper.get(`[data-user-nav="${navigation}"]`).trigger("click");
     await flushPromises();
-    expect(new URLSearchParams(window.location.search).get("eventId")).toBe("E2");
+    expect(new URLSearchParams(window.location.search).get("eventId")).toBe(null);
     expect(apiMock.mock.calls.filter(([path]) => path === eventPath)).toHaveLength(1);
+    expect(apiMock).toHaveBeenCalledWith(historyPath);
   });
 
   it("does not expose the organization console to a pending organization from a registration deep link", async () => {

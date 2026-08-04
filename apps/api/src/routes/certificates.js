@@ -381,6 +381,30 @@ export function createCertificatesRouter({
     res.json({ ...page, rows });
   }));
 
+  router.get("/me/certificates", ...user, asyncRoute(async (req, res) => {
+    const db = await store.readDb();
+    if (req.user.type !== "ordinary") throw new CertificateError(403, "Ordinary user required");
+    const registrationsById = new Map(db.registrations.map((registration) => [registration.id, registration]));
+    const eventsById = new Map(db.events.map((event) => [event.id, event]));
+    const rows = db.certificates
+      .filter((certificate) => {
+        if (certificate.status !== "published") return false;
+        const registration = registrationsById.get(certificate.registrationId);
+        return registration?.personalUserId === req.user.id;
+      })
+      .map((certificate) => {
+        const registration = registrationsById.get(certificate.registrationId);
+        const event = eventsById.get(registration?.eventId);
+        return {
+          ...certificatePayload(certificate, registration),
+          eventId: registration?.eventId || "",
+          eventName: event?.name || registration?.eventId || "",
+          eventStatus: event?.status || ""
+        };
+      });
+    res.json({ rows });
+  }));
+
   router.get("/me/events/:eventId/certificates", ...user, asyncRoute(async (req, res) => {
     const db = await store.readDb();
     if (req.user.type !== "ordinary") throw new CertificateError(403, "Ordinary user required");

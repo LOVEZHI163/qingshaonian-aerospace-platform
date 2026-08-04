@@ -180,11 +180,12 @@ describe("App session integration", () => {
     expect(wrapper.get('[data-testid="user-shell"]').classes()).not.toContain("user-sidebar-mobile-open");
   });
 
-  it("keeps ordinary navigation stable while requiring an explicit event context", async () => {
+  it("keeps ordinary history navigation available without an explicit event context", async () => {
     sessionUser.value = { id: "U1", type: "ordinary", name: "用户", mustChangePassword: false };
     apiMock.mockImplementation(async (path) => {
       if (path === "/api/public/event") return publicData();
       if (path === "/api/me/events") return { rows: [{ event: { id: "E2", name: "春季赛" }, registrationState: "open", registrationCount: 0, organizations: [] }] };
+      if (path === "/api/me/registrations") return { rows: [] };
       if (path === "/api/me/registration-context?eventId=E2") return { event: { id: "E2", name: "春季赛" }, organizations: [], projects: [], grades: [] };
       return { rows: [] };
     });
@@ -196,8 +197,12 @@ describe("App session integration", () => {
     expect(wrapper.get('[data-user-nav="registrationRecords"]').text()).toContain("报名记录");
 
     await wrapper.get('[data-user-nav="registrationRecords"]').trigger("click");
-    expect(wrapper.find('[data-testid="event-center-page"]').exists()).toBe(true);
-    expect(wrapper.text()).toContain("请先在赛事中心选择赛事");
+    await flushPromises();
+    expect(wrapper.find('[data-testid="registration-records-page"]').exists()).toBe(true);
+    expect(wrapper.text()).not.toContain("请先在赛事中心选择赛事");
+
+    await wrapper.get('[data-user-nav="eventCenter"]').trigger("click");
+    await flushPromises();
 
     await wrapper.get('[data-event-card="E2"] [data-action="open"]').trigger("click");
     await flushPromises();
@@ -344,14 +349,16 @@ describe("App session integration", () => {
     expect(wrapper.find('[data-user-nav="organizationWorkspace"]').exists()).toBe(true);
   });
 
-  it("switches an active event certificate view to one historical event without retaining the active context", async () => {
+  it("filters all certificate history without retaining an active event context", async () => {
     sessionUser.value = { id: "U1", type: "ordinary", name: "用户", mustChangePassword: false };
     apiMock.mockImplementation(async (path) => {
       if (path === "/api/public/event") return publicData();
       if (path === "/api/me/events") return { rows: [{ event: { id: "E1", name: "当前赛事" }, registrationState: "open", organizations: [] }] };
       if (path === "/api/me/registration-context?eventId=E1") return { event: { id: "E1", name: "当前赛事" }, organizations: [], projects: [], grades: [] };
-      if (path === "/api/me/events/E1/certificates") return { rows: [] };
-      if (path === "/api/me/events/E-ARCHIVED/certificates") return { rows: [{ id: "C1", title: "历史证书" }] };
+      if (path === "/api/me/certificates") return { rows: [
+        { id: "C0", eventId: "E1", eventName: "当前赛事", title: "当前证书" },
+        { id: "C1", eventId: "E-ARCHIVED", eventName: "历史赛事", title: "历史证书" }
+      ] };
       return { rows: [] };
     });
     const wrapper = mount(App);
@@ -360,16 +367,14 @@ describe("App session integration", () => {
     await flushPromises();
     await wrapper.get('[data-user-nav="certificates"]').trigger("click");
     await flushPromises();
-    apiMock.mockClear();
-
-    await wrapper.get('[data-field="certificate-event-id"]').setValue("E-ARCHIVED");
-    await wrapper.get('[data-action="query-certificates"]').trigger("submit");
+    await wrapper.get('[data-field="certificate-history-event"]').setValue("E-ARCHIVED");
     await flushPromises();
 
-    expect(new URLSearchParams(window.location.search).get("eventId")).toBe("E-ARCHIVED");
-    expect(wrapper.get(".topbar").text()).toContain("历史赛事证书查询");
+    expect(new URLSearchParams(window.location.search).has("eventId")).toBe(false);
+    expect(wrapper.get(".topbar").text()).toContain("我的证书");
     expect(wrapper.text()).toContain("历史证书");
-    expect(apiMock.mock.calls.filter(([path]) => path === "/api/me/events/E-ARCHIVED/certificates").map(([path]) => path)).toEqual(["/api/me/events/E-ARCHIVED/certificates"]);
+    expect(wrapper.text()).not.toContain("当前证书");
+    expect(apiMock.mock.calls.filter(([path]) => path === "/api/me/certificates")).toHaveLength(1);
 
     await wrapper.get('[data-user-nav="eventCenter"]').trigger("click");
     await flushPromises();
@@ -588,8 +593,8 @@ describe("App session integration", () => {
       if (path === "/api/organizations") return { rows: [], memberships: [] };
       if (path === "/api/me/U1") return { memberships: [] };
       if (path === "/api/me/events") return { rows: [{ event: { id: "E1", name: "测试赛事" }, registrationState: "open", organizations: [] }] };
-      if (path === "/api/me/events/E1/certificates") return { rows: [{
-        id: "C1", userId: "U1", title: "飞行之星", status: "published", fileName: "star.pdf",
+      if (path === "/api/me/certificates") return { rows: [{
+        id: "C1", eventId: "E1", eventName: "测试赛事", userId: "U1", title: "飞行之星", status: "published", fileName: "star.pdf",
         downloadUrl: "/returned/user-certificate", athlete: { name: "用户" }
       }] };
       return { rows: [] };

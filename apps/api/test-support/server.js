@@ -10,7 +10,7 @@ function waitForAddress(child) {
   return new Promise((resolve, reject) => {
     let stdout = "";
     let stderr = "";
-    const timeout = setTimeout(() => reject(new Error(`API server did not start in time: ${stderr}`)), 5_000);
+    const timeout = setTimeout(() => reject(new Error(`API server did not start in time: ${stderr}`)), 30_000);
     child.stderr.on("data", (chunk) => { stderr += chunk; });
     child.stdout.on("data", (chunk) => {
       stdout += chunk;

@@ -89,6 +89,58 @@ describe("ordinary user event workflow", () => {
     certificates.unmount();
   });
 
+  it("loads all registration and certificate history without requiring an event selection", async () => {
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/me/registrations") return { rows: [
+        { id: "R1", eventId: "E1", eventName: "本届赛事", athlete: { name: "张三" }, projectName: "纸飞机", status: "approved" },
+        { id: "R2", eventId: "E-ARCHIVED", eventName: "往届赛事", athlete: { name: "张三" }, projectName: "航空绘画", status: "approved" }
+      ] };
+      if (path === "/api/me/certificates") return { rows: [
+        { id: "C1", eventId: "E-ARCHIVED", eventName: "往届赛事", title: "一等奖", status: "published", athlete: { name: "张三" } }
+      ] };
+      throw new Error(`unexpected API path ${path}`);
+    });
+
+    const records = mount(RegistrationRecordsPage);
+    const certificates = mount(MyCertificatesPage);
+    await flushPromises();
+
+    expect(apiMock).toHaveBeenCalledWith("/api/me/registrations");
+    expect(apiMock).toHaveBeenCalledWith("/api/me/certificates");
+    expect(records.text()).toContain("本届赛事");
+    expect(records.text()).toContain("往届赛事");
+    expect(certificates.text()).toContain("往届赛事");
+    expect(certificates.text()).toContain("一等奖");
+    records.unmount();
+    certificates.unmount();
+  });
+
+  it("filters all-event registration and certificate history by event", async () => {
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/me/registrations") return { rows: [
+        { id: "R1", eventId: "E1", eventName: "本届赛事", athlete: { name: "本届选手" }, projectName: "纸飞机", status: "approved" },
+        { id: "R2", eventId: "E2", eventName: "往届赛事", athlete: { name: "往届选手" }, projectName: "航空绘画", status: "approved" }
+      ] };
+      if (path === "/api/me/certificates") return { rows: [
+        { id: "C1", eventId: "E1", eventName: "本届赛事", title: "本届证书", status: "published" },
+        { id: "C2", eventId: "E2", eventName: "往届赛事", title: "往届证书", status: "published" }
+      ] };
+      throw new Error(`unexpected API path ${path}`);
+    });
+    const records = mount(RegistrationRecordsPage);
+    const certificates = mount(MyCertificatesPage);
+    await flushPromises();
+
+    await records.get('[data-field="registration-history-event"]').setValue("E2");
+    await certificates.get('[data-field="certificate-history-event"]').setValue("E2");
+    expect(records.text()).toContain("往届选手");
+    expect(records.text()).not.toContain("本届选手");
+    expect(certificates.text()).toContain("往届证书");
+    expect(certificates.text()).not.toContain("本届证书");
+    records.unmount();
+    certificates.unmount();
+  });
+
   it("shows private material availability and replacement only for pending or rejected registrations", async () => {
     const assetRows = [
       {
@@ -202,18 +254,16 @@ describe("ordinary user event workflow", () => {
     expect(wrapper.text()).not.toContain("作品材料已替换");
   });
 
-  it("queries a historical certificate event id without an active event", async () => {
+  it("loads a historical certificate automatically without an active event", async () => {
     apiMock.mockImplementation(async (path) => {
-      if (path === "/api/me/events/E-ARCHIVED/certificates") return { rows: [{ id: "C1", title: "历史证书" }] };
+      if (path === "/api/me/certificates") return { rows: [{ id: "C1", eventId: "E-ARCHIVED", eventName: "往届赛事", title: "历史证书" }] };
       throw new Error(`unexpected API path ${path}`);
     });
     const wrapper = mount(MyCertificatesPage);
     await flushPromises();
 
-    await wrapper.get('[data-field="certificate-event-id"]').setValue("E-ARCHIVED");
-    await wrapper.get('[data-action="query-certificates"]').trigger("submit");
-    expect(wrapper.emitted("event-id")?.[0]).toEqual(["E-ARCHIVED"]);
-    await flushPromises();
-    expect(apiMock).toHaveBeenCalledWith("/api/me/events/E-ARCHIVED/certificates");
+    expect(apiMock).toHaveBeenCalledWith("/api/me/certificates");
+    expect(wrapper.text()).toContain("往届赛事");
+    expect(wrapper.text()).toContain("历史证书");
   });
 });

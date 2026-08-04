@@ -44,10 +44,12 @@ test("personal registration reads retain an explicit event-scoped ownership cont
   }, { prefix: "aerogp-event-scoped-user-data-" });
 });
 
-test("legacy personal registration read cannot bypass the event-scoped ownership endpoint", async () => {
+test("account registration history remains owned even when a query tries to select an event", async () => {
   await withTestServer(async ({ baseUrl }) => {
     const ordinary = await loginAs(baseUrl, "13800000001", "123456");
     const response = await fetch(`${baseUrl}/api/me/registrations?eventId=wz-aerospace-2026`, withSession(ordinary.cookie));
-    assert.equal(response.status, 404);
+    assert.equal(response.status, 200);
+    const payload = await response.json();
+    assert.deepEqual(payload.rows.map((row) => row.id), ["R20260627001"]);
   });
 });

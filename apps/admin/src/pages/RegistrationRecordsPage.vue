@@ -9,7 +9,14 @@ import { useSession } from "../state/session.js";
 const props = defineProps({ eventId: { type: String, default: "" } });
 const emit = defineEmits(["error"]);
 const session = useSession();
-const rows = ref([]);
+const allRows = ref([]);
+const eventFilter = ref(props.eventId || "all");
+const eventOptions = computed(() => [...new Map(allRows.value.map((row) => [row.eventId, row.eventName || row.eventId])).entries()]
+  .filter(([eventId]) => eventId)
+  .map(([id, name]) => ({ id, name })));
+const rows = computed(() => eventFilter.value === "all"
+  ? allRows.value
+  : allRows.value.filter((row) => row.eventId === eventFilter.value));
 const loading = ref(true);
 const replacingRegistration = ref(null);
 const replacementSession = ref(null);
@@ -31,7 +38,7 @@ const partialReplacementMessage = computed(() => {
 });
 
 function submissionAssetPath(row, kind) {
-  return `/api/me/events/${encodeURIComponent(props.eventId)}/registrations/${encodeURIComponent(row.id)}/assets/${kind}`;
+  return `/api/me/events/${encodeURIComponent(row.eventId || props.eventId)}/registrations/${encodeURIComponent(row.id)}/assets/${kind}`;
 }
 
 function assetAvailable(asset) {
@@ -65,10 +72,16 @@ function cancelReplacement({ keepResult = false } = {}) {
 }
 
 async function loadRegistrations({ isCurrent = () => true } = {}) {
-  if (!props.eventId) return;
-  const payload = await api(`/api/me/events/${encodeURIComponent(props.eventId)}/registrations`);
+  const path = props.eventId
+    ? `/api/me/events/${encodeURIComponent(props.eventId)}/registrations`
+    : "/api/me/registrations";
+  const payload = await api(path);
   if (!isCurrent()) return false;
-  rows.value = payload.rows || [];
+  allRows.value = (payload.rows || []).map((row) => ({
+    ...row,
+    eventId: row.eventId || props.eventId,
+    eventName: row.eventName || row.event?.name || props.eventId
+  }));
   return true;
 }
 
@@ -84,7 +97,7 @@ async function createReplacementSession(row) {
   replacementResult.value = "";
   replacementLoading.value = true;
   try {
-    const payload = await api(`/api/me/events/${encodeURIComponent(props.eventId)}/projects/${encodeURIComponent(row.projectId)}/upload-sessions`, { method: "POST" });
+    const payload = await api(`/api/me/events/${encodeURIComponent(row.eventId || props.eventId)}/projects/${encodeURIComponent(row.projectId)}/upload-sessions`, { method: "POST" });
     if (request !== replacementRequest || replacingRegistration.value?.id !== row.id) return;
     const session = payload?.row || payload;
     if (!session?.id) throw new Error("invalid upload session");
@@ -123,7 +136,7 @@ async function confirmReplacement() {
       if (!currentReplacement()) return;
       updated = payload?.registration || updated;
       replacementCompletedKinds.value = new Set([...replacementCompletedKinds.value, kind]);
-      if (updated?.id) rows.value = rows.value.map((item) => item.id === updated.id ? updated : item);
+      if (updated?.id) allRows.value = allRows.value.map((item) => item.id === updated.id ? { ...updated, eventId: item.eventId, eventName: item.eventName } : item);
       await loadRegistrations({ isCurrent: currentReplacement });
       if (!currentReplacement()) return;
     }
@@ -141,8 +154,6 @@ onMounted(async () => {
   try {
     if (session.user.value?.type === "organization") {
       emit("error", "请在赛事工作台中查看组织报名记录。");
-    } else if (!props.eventId) {
-      emit("error", "请先从赛事中心选择赛事后查看当前报名");
     } else {
       await loadRegistrations();
     }
@@ -159,7 +170,10 @@ onBeforeUnmount(() => downloads.dispose());
 <template>
   <section class="panel registration-records-page" data-testid="registration-records-page">
     <div class="panel-title"><h3>报名记录</h3><span>{{ rows.length }} 条</span></div>
-    <p class="hint">仅显示当前赛事中本人的报名记录。</p>
+    <p class="hint">显示本人参加过的赛事报名记录，可按赛事筛选。</p>
+    <div v-if="!props.eventId && eventOptions.length" class="certificate-event-query history-event-filter"><label>赛事筛选
+      <select v-model="eventFilter" data-field="registration-history-event"><option value="all">全部赛事</option><option v-for="event in eventOptions" :key="event.id" :value="event.id">{{ event.name }}</option></select>
+    </label></div>
     <p v-if="loading" class="hint">正在加载报名记录…</p>
     <section v-if="replacingRegistration" class="registration-submission personal-material-replacement" aria-label="替换作品材料">
       <h4>替换 {{ replacingRegistration.athlete?.name }} 的作品材料</h4>
@@ -174,8 +188,8 @@ onBeforeUnmount(() => downloads.dispose());
       <p v-else class="message" role="alert">{{ replacementError || "作品上传会话不可用" }} <button type="button" class="mini" @click="retryReplacementSession">重试</button></p>
     </section>
     <p v-if="replacementResult" class="message" role="status">{{ replacementResult }}</p>
-    <div v-if="!loading" class="table-wrap"><table class="registration-record-table"><thead><tr><th>编号</th><th>姓名</th><th>学校/年级</th><th>组织</th><th>赛项</th><th>作品材料</th><th>指导老师</th><th>审核状态</th><th>成绩/奖项</th></tr></thead><tbody>
-      <tr v-for="row in rows" :key="row.id"><td>{{ row.id }}</td><td>{{ row.athlete?.name }}</td><td>{{ row.athlete?.school }}<br /><span>{{ row.athlete?.grade }}</span></td><td>{{ row.organization || row.organizationName || "个人报名" }}</td><td>{{ row.projectName }}<br /><span>{{ row.projectType === "team" ? "团体赛" : "个人赛" }}</span></td><td><template v-if="row.submission?.required"><p v-for="kind in ['artwork_image', 'creation_video']" :key="kind"><span>{{ materialLabel(row.submission.assets?.[kind], kind === 'artwork_image' ? '作品图片' : '作画视频') }}</span><template v-if="assetAvailable(row.submission.assets?.[kind])"> <img v-if="kind === 'artwork_image'" class="submission-artwork-preview" :src="apiUrl(submissionAssetPath(row, kind))" :alt="`${row.submission.assets[kind].originalName} 预览`" /><video v-else class="submission-video-preview" :src="apiUrl(submissionAssetPath(row, kind))" controls preload="metadata"></video> <button type="button" class="mini" @click="downloadSubmissionAsset(row, kind, row.submission.assets[kind])">下载</button></template></p><p v-if="row.status === 'approved'" class="hint">已通过报名的作品材料仅可查看。</p><button v-if="canReplaceMaterials(row)" type="button" class="mini" :data-action="`replace-personal-materials-${row.id}`" @click="createReplacementSession(row)">替换作品材料</button></template><span v-else>无需作品材料</span></td><td>{{ row.instructor || "-" }}</td><td><em :class="row.status">{{ statusText[row.status] || row.status }}</em><p v-if="row.rejectReason" class="hint">驳回原因：{{ row.rejectReason }}</p></td><td>{{ row.awardName || "未录入" }}<br /><span>名次 {{ row.rank || "-" }} · 成绩 {{ row.score || "-" }}</span></td></tr>
+    <div v-if="!loading" class="table-wrap"><table class="registration-record-table"><thead><tr><th>赛事</th><th>编号</th><th>姓名</th><th>学校/年级</th><th>组织</th><th>赛项</th><th>作品材料</th><th>指导老师</th><th>审核状态</th><th>成绩/奖项</th></tr></thead><tbody>
+      <tr v-for="row in rows" :key="row.id"><td>{{ row.eventName || row.eventId || "-" }}</td><td>{{ row.id }}</td><td>{{ row.athlete?.name }}</td><td>{{ row.athlete?.school }}<br /><span>{{ row.athlete?.grade }}</span></td><td>{{ row.organization || row.organizationName || "个人报名" }}</td><td>{{ row.projectName }}<br /><span>{{ row.projectType === "team" ? "团体赛" : "个人赛" }}</span></td><td><template v-if="row.submission?.required"><p v-for="kind in ['artwork_image', 'creation_video']" :key="kind"><span>{{ materialLabel(row.submission.assets?.[kind], kind === 'artwork_image' ? '作品图片' : '作画视频') }}</span><template v-if="assetAvailable(row.submission.assets?.[kind])"> <img v-if="kind === 'artwork_image'" class="submission-artwork-preview" :src="apiUrl(submissionAssetPath(row, kind))" :alt="`${row.submission.assets[kind].originalName} 预览`" /><video v-else class="submission-video-preview" :src="apiUrl(submissionAssetPath(row, kind))" controls preload="metadata"></video> <button type="button" class="mini" @click="downloadSubmissionAsset(row, kind, row.submission.assets[kind])">下载</button></template></p><p v-if="row.status === 'approved'" class="hint">已通过报名的作品材料仅可查看。</p><button v-if="canReplaceMaterials(row)" type="button" class="mini" :data-action="`replace-personal-materials-${row.id}`" @click="createReplacementSession(row)">替换作品材料</button></template><span v-else>无需作品材料</span></td><td>{{ row.instructor || "-" }}</td><td><em :class="row.status">{{ statusText[row.status] || row.status }}</em><p v-if="row.rejectReason" class="hint">驳回原因：{{ row.rejectReason }}</p></td><td>{{ row.awardName || "未录入" }}<br /><span>名次 {{ row.rank || "-" }} · 成绩 {{ row.score || "-" }}</span></td></tr>
     </tbody></table><p v-if="rows.length === 0" class="hint empty-state">暂无报名记录。</p></div>
   </section>
 </template>
