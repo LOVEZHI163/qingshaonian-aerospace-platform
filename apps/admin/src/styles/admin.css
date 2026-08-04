@@ -2118,6 +2118,13 @@ em.invited {
 .submission-asset-review button:focus-visible { outline: 3px solid rgba(23, 104, 201, 0.28); outline-offset: 2px; }
 .submission-upload-progress { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center; margin-top: 12px; font-size: 13px; color: #475467; }
 .submission-upload-progress progress { width: 100%; accent-color: #1768c9; }
+.organization-registration-record-editor,
+.organization-registration-material-replacement { margin: 18px 0; padding: 16px; border: 1px solid #b9d5f5; border-radius: 14px; background: #f8fbff; }
+.organization-record-materials { min-width: 220px; }
+.organization-record-materials > div { display: grid; gap: 6px; margin-bottom: 10px; }
+.organization-record-materials .submission-artwork-preview,
+.organization-record-materials .submission-video-preview { display: block; width: min(100%, 240px); max-height: 180px; object-fit: contain; background: #0f172a; }
+.organization-record-materials > .mini { margin-top: 4px; }
 .submission-asset-details { display: grid; gap: 4px; margin-top: 12px; color: #475467; font-size: 13px; }
 .submission-asset-details p { margin: 0; overflow-wrap: anywhere; }
 .submission-artwork-preview,

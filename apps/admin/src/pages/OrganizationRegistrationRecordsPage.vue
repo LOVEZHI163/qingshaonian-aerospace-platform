@@ -1,7 +1,10 @@
 <script setup>
-import { onMounted, reactive, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from "vue";
 
-import { api } from "../lib/api.js";
+import OrganizationAthleteRegistrationForm from "../components/OrganizationAthleteRegistrationForm.vue";
+import SubmissionAssetUploader from "../components/SubmissionAssetUploader.vue";
+import { api, apiBlob, apiUrl } from "../lib/api.js";
+import { createBlobDownloadManager } from "../lib/download.js";
 
 const filters = reactive({ q: "", eventId: "", projectId: "", status: "", page: 1, pageSize: 25 });
 const rows = ref([]);
@@ -9,8 +12,25 @@ const total = ref(0);
 const filterOptions = reactive({ events: [], projects: [] });
 const loading = ref(false);
 const error = ref("");
+const editingRegistration = ref(null);
+const editingWorkspace = ref(null);
+const editingLoading = ref(false);
+const editingError = ref("");
+const replacingRegistration = ref(null);
+const replacementSession = ref(null);
+const replacementLoading = ref(false);
+const replacementComplete = ref(false);
+const replacementCompletedKinds = ref(new Set());
+const replacementError = ref("");
+const replacementResult = ref("");
+const downloads = createBlobDownloadManager();
 const statusText = { pending: "待审核", approved: "已通过", rejected: "已驳回", cancelled: "已取消" };
+const materialKinds = ["artwork_image", "creation_video"];
+const materialLabels = { artwork_image: "作品图片", creation_video: "作画视频" };
+const remainingReplacementKinds = computed(() => materialKinds.filter((kind) => !replacementCompletedKinds.value.has(kind)));
 let requestId = 0;
+let editRequestId = 0;
+let replacementRequestId = 0;
 
 function requestPath() {
   const params = new URLSearchParams();
@@ -20,6 +40,38 @@ function requestPath() {
   params.set("page", String(filters.page));
   params.set("pageSize", String(filters.pageSize));
   return `/api/organization/registrations?${params.toString()}`;
+}
+
+function safeMessage(error, fallback) {
+  const message = String(typeof error === "string" ? error : error?.message || "").trim();
+  if (!message || /<html|<!doctype|cannot get/i.test(message)) return fallback;
+  return message;
+}
+
+function recordsErrorMessage(error) {
+  if ([403, 404].includes(error?.status)) return "无法访问报名记录，请返回赛事工作台后重试";
+  return safeMessage(error, "报名记录加载失败，请重试");
+}
+
+function workspaceErrorMessage(error) {
+  if ([403, 404].includes(error?.status)) return "无法访问该赛事工作台，请返回报名记录后重试";
+  return safeMessage(error, "赛事工作台加载失败，请重试");
+}
+
+function organizationAssetPath(row, kind) {
+  return `/api/organization/events/${encodeURIComponent(row.eventId)}/registrations/${encodeURIComponent(row.id)}/assets/${kind}`;
+}
+
+function isArchived(row) {
+  return Boolean(row?.archivedAt || row?.eventStatus === "archived" || row?.event?.archivedAt || row?.event?.status === "archived");
+}
+
+function assetAvailable(asset) {
+  return Boolean(asset && !asset.cleanedAt);
+}
+
+function canReplaceMaterials(row) {
+  return !isArchived(row) && row.submission?.required && ["pending", "rejected"].includes(row.status);
 }
 
 async function loadRecords() {
@@ -35,11 +87,11 @@ async function loadRecords() {
     filters.pageSize = Number(payload.pageSize) || filters.pageSize;
     filterOptions.events = payload.filterOptions?.events || [];
     filterOptions.projects = payload.filterOptions?.projects || [];
-  } catch (_error) {
+  } catch (requestError) {
     if (currentRequest !== requestId) return;
     rows.value = [];
     total.value = 0;
-    error.value = "报名记录加载失败，请重试";
+    error.value = recordsErrorMessage(requestError);
   } finally {
     if (currentRequest === requestId) loading.value = false;
   }
@@ -47,22 +99,153 @@ async function loadRecords() {
 
 function resetAndLoad() {
   filters.page = 1;
-  loadRecords();
+  void loadRecords();
 }
 
 function previousPage() {
   if (filters.page <= 1) return;
   filters.page -= 1;
-  loadRecords();
+  void loadRecords();
 }
 
 function nextPage() {
   if (filters.page * filters.pageSize >= total.value) return;
   filters.page += 1;
-  loadRecords();
+  void loadRecords();
 }
 
-onMounted(loadRecords);
+function returnToRecords() {
+  error.value = "";
+  cancelEditing();
+  cancelReplacement();
+}
+
+async function downloadSubmissionAsset(row, kind, asset) {
+  if (!assetAvailable(asset)) return;
+  try {
+    const blob = await apiBlob(organizationAssetPath(row, kind));
+    downloads.save(blob, blob.fileName || asset.originalName);
+  } catch (downloadError) {
+    replacementError.value = safeMessage(downloadError, "作品材料下载失败，请重试");
+  }
+}
+
+function cancelEditing() {
+  editRequestId += 1;
+  editingRegistration.value = null;
+  editingWorkspace.value = null;
+  editingLoading.value = false;
+  editingError.value = "";
+}
+
+async function editRegistration(row) {
+  if (isArchived(row)) return;
+  const currentRequest = ++editRequestId;
+  editingRegistration.value = row;
+  editingWorkspace.value = null;
+  editingError.value = "";
+  editingLoading.value = true;
+  try {
+    const workspace = await api(`/api/organization/events/${encodeURIComponent(row.eventId)}/workspace`);
+    if (currentRequest !== editRequestId || editingRegistration.value?.id !== row.id) return;
+    if (workspace?.event?.status === "archived" || workspace?.event?.archivedAt) {
+      editingError.value = "该赛事已归档，不能编辑报名记录";
+      return;
+    }
+    editingWorkspace.value = workspace || {};
+  } catch (workspaceError) {
+    if (currentRequest !== editRequestId || editingRegistration.value?.id !== row.id) return;
+    editingError.value = workspaceErrorMessage(workspaceError);
+  } finally {
+    if (currentRequest === editRequestId) editingLoading.value = false;
+  }
+}
+
+async function savedRegistration() {
+  const registrationId = editingRegistration.value?.id;
+  const currentRequest = editRequestId;
+  await loadRecords();
+  if (currentRequest === editRequestId && editingRegistration.value?.id === registrationId) cancelEditing();
+}
+
+function cancelReplacement({ keepResult = false } = {}) {
+  replacementRequestId += 1;
+  replacingRegistration.value = null;
+  replacementSession.value = null;
+  replacementLoading.value = false;
+  replacementComplete.value = false;
+  replacementCompletedKinds.value = new Set();
+  replacementError.value = "";
+  if (!keepResult) replacementResult.value = "";
+}
+
+async function createReplacementSession(row) {
+  if (!canReplaceMaterials(row)) return;
+  const currentRequest = ++replacementRequestId;
+  replacingRegistration.value = row;
+  replacementSession.value = null;
+  replacementComplete.value = false;
+  replacementCompletedKinds.value = new Set();
+  replacementError.value = "";
+  replacementResult.value = "";
+  replacementLoading.value = true;
+  try {
+    const payload = await api(`/api/organization/events/${encodeURIComponent(row.eventId)}/projects/${encodeURIComponent(row.projectId)}/upload-sessions`, { method: "POST" });
+    if (currentRequest !== replacementRequestId || replacingRegistration.value?.id !== row.id) return;
+    const session = payload?.row || payload;
+    if (!session?.id) throw new Error("invalid upload session");
+    replacementSession.value = session;
+  } catch (sessionError) {
+    if (currentRequest !== replacementRequestId || replacingRegistration.value?.id !== row.id) return;
+    replacementError.value = safeMessage(sessionError, "无法创建作品上传会话，请重试");
+  } finally {
+    if (currentRequest === replacementRequestId) replacementLoading.value = false;
+  }
+}
+
+function retryReplacement() {
+  if (replacementSession.value?.id) void confirmReplacement();
+  else if (replacingRegistration.value) void createReplacementSession(replacingRegistration.value);
+}
+
+async function confirmReplacement() {
+  const row = replacingRegistration.value;
+  const sessionId = replacementSession.value?.id;
+  const registrationId = row?.id;
+  const generation = replacementRequestId;
+  const currentReplacement = () => (
+    generation === replacementRequestId
+    && replacingRegistration.value?.id === registrationId
+    && replacementSession.value?.id === sessionId
+  );
+  if (!row || !sessionId || !replacementComplete.value || replacementLoading.value || !currentReplacement()) return;
+  replacementLoading.value = true;
+  replacementError.value = "";
+  try {
+    for (const kind of remainingReplacementKinds.value) {
+      if (!currentReplacement()) return;
+      await api(organizationAssetPath(row, kind), { method: "PUT", body: JSON.stringify({ uploadSessionId: sessionId }) });
+      if (!currentReplacement()) return;
+      replacementCompletedKinds.value = new Set([...replacementCompletedKinds.value, kind]);
+    }
+    if (!currentReplacement()) return;
+    await loadRecords();
+    if (!currentReplacement()) return;
+    replacementResult.value = "作品材料已替换，报名已恢复待审核";
+    cancelReplacement({ keepResult: true });
+  } catch (replaceError) {
+    if (currentReplacement()) replacementError.value = safeMessage(replaceError, "作品材料替换失败，请重试");
+  } finally {
+    if (currentReplacement()) replacementLoading.value = false;
+  }
+}
+
+onMounted(() => void loadRecords());
+onBeforeUnmount(() => {
+  editRequestId += 1;
+  replacementRequestId += 1;
+  downloads.dispose();
+});
 </script>
 
 <template>
@@ -78,9 +261,29 @@ onMounted(loadRecords);
     </div>
 
     <p v-if="loading" class="hint">正在加载报名记录…</p>
-    <p v-else-if="error" class="message" role="alert">{{ error }} <button type="button" class="mini" data-action="retry-organization-records" @click="loadRecords">重试</button></p>
-    <div v-else class="table-wrap"><table class="registration-record-table"><thead><tr><th>赛事</th><th>编号</th><th>姓名</th><th>学校/年级</th><th>赛项</th><th>审核状态</th><th>成绩/奖项</th></tr></thead><tbody>
-      <tr v-for="row in rows" :key="row.id"><td>{{ row.eventName || row.eventId || "-" }}</td><td>{{ row.id }}</td><td>{{ row.athlete?.name || "-" }}</td><td>{{ row.athlete?.school || "-" }}<br /><span>{{ row.athlete?.grade || "-" }}</span></td><td>{{ row.projectName || "-" }}</td><td><em :class="row.status">{{ statusText[row.status] || row.status || "-" }}</em></td><td>{{ row.awardName || "未录入" }}<br /><span>名次 {{ row.rank || "-" }} · 成绩 {{ row.score || "-" }}</span></td></tr>
+    <p v-else-if="error" class="message" role="alert">{{ error }} <button type="button" class="mini" data-action="retry-organization-records" @click="loadRecords">重试</button> <button type="button" class="mini" data-action="return-organization-records" @click="returnToRecords">返回报名记录</button></p>
+
+    <section v-if="editingRegistration" class="organization-registration-record-editor" aria-label="编辑组织报名">
+      <div class="panel-title"><h4>编辑 {{ editingRegistration.athlete?.name || "报名记录" }}</h4><button type="button" class="mini" data-action="return-organization-records" @click="cancelEditing">返回报名记录</button></div>
+      <p v-if="editingLoading" class="hint">正在加载赛事工作台…</p>
+      <p v-else-if="editingError" class="message" role="alert">{{ editingError }} <button type="button" class="mini" :data-action="`retry-organization-edit-${editingRegistration.id}`" @click="editRegistration(editingRegistration)">重试</button> <button type="button" class="mini" data-action="return-organization-records" @click="cancelEditing">返回报名记录</button></p>
+      <OrganizationAthleteRegistrationForm v-else-if="editingWorkspace" :event-id="editingRegistration.eventId" :projects="editingWorkspace.projects || []" :grades="editingWorkspace.grades || []" :default-school="editingWorkspace.organization?.name || ''" :registration="editingRegistration" @registered="savedRegistration" @error="editingError = safeMessage($event, '报名记录保存失败，请重试')" />
+    </section>
+
+    <section v-if="replacingRegistration" class="organization-registration-material-replacement" aria-label="替换作品材料">
+      <div class="panel-title"><h4>替换 {{ replacingRegistration.athlete?.name || "报名记录" }} 的作品材料</h4><button type="button" class="mini" data-action="return-organization-records" @click="cancelReplacement">返回报名记录</button></div>
+      <p v-if="replacementLoading && !replacementSession" class="hint">正在创建作品上传会话…</p>
+      <template v-else-if="replacementSession?.id">
+        <SubmissionAssetUploader :key="replacementSession.id" :session-id="replacementSession.id" mode="image_video" :assets="replacementSession.assets || {}" @complete="replacementComplete = $event" @error="replacementError = '作品材料上传失败，请重试'" />
+        <p v-if="replacementError" class="message" role="alert">{{ replacementError }} <button type="button" class="mini" :data-action="`retry-organization-material-replacement-${replacingRegistration.id}`" :disabled="replacementLoading" @click="retryReplacement">重试</button></p>
+        <button type="button" class="primary" :data-action="`confirm-organization-material-replacement-${replacingRegistration.id}`" :disabled="replacementLoading || !replacementComplete || !remainingReplacementKinds.length" @click="confirmReplacement">{{ replacementLoading ? "正在替换…" : "确认替换作品材料" }}</button>
+      </template>
+      <p v-else class="message" role="alert">{{ replacementError || "作品上传会话不可用" }} <button type="button" class="mini" :data-action="`retry-organization-material-replacement-${replacingRegistration.id}`" @click="retryReplacement">重试</button></p>
+    </section>
+    <p v-if="replacementResult" class="message" role="status">{{ replacementResult }}</p>
+
+    <div v-if="!loading && !error" class="table-wrap"><table class="registration-record-table"><thead><tr><th>赛事</th><th>编号</th><th>姓名</th><th>学校/年级</th><th>赛项</th><th>作品材料</th><th>审核状态</th><th>成绩/奖项</th><th>操作</th></tr></thead><tbody>
+      <tr v-for="row in rows" :key="row.id"><td>{{ row.eventName || row.eventId || "-" }}</td><td>{{ row.id }}</td><td>{{ row.athlete?.name || "-" }}</td><td>{{ row.athlete?.school || "-" }}<br /><span>{{ row.athlete?.grade || "-" }}</span></td><td>{{ row.projectName || "-" }}</td><td class="organization-record-materials"><template v-if="row.submission?.required"><div v-for="kind in materialKinds" :key="kind" :data-asset-kind="kind"><span>{{ materialLabels[kind] }}</span><template v-if="assetAvailable(row.submission.assets?.[kind])"><img v-if="kind === 'artwork_image'" class="submission-artwork-preview" :src="apiUrl(organizationAssetPath(row, kind))" :alt="`${row.submission.assets[kind].originalName} 预览`" /><video v-else class="submission-video-preview" :src="apiUrl(organizationAssetPath(row, kind))" controls preload="metadata"></video><button type="button" class="mini" :data-action="`download-organization-${kind}-${row.id}`" @click="downloadSubmissionAsset(row, kind, row.submission.assets[kind])">下载</button></template><span v-else class="hint">不可用</span></div><button v-if="canReplaceMaterials(row)" type="button" class="mini" :data-action="`replace-organization-materials-${row.id}`" @click="createReplacementSession(row)">替换材料</button></template><span v-else>无需作品材料</span></td><td><em :class="row.status">{{ statusText[row.status] || row.status || "-" }}</em></td><td>{{ row.awardName || "未录入" }}<br /><span>名次 {{ row.rank || "-" }} · 成绩 {{ row.score || "-" }}</span></td><td><button v-if="!isArchived(row)" type="button" class="mini" :data-action="`edit-organization-registration-${row.id}`" @click="editRegistration(row)">编辑</button></td></tr>
     </tbody></table><p v-if="rows.length === 0" class="hint empty-state">暂无报名记录。</p></div>
 
     <div class="pagination"><button type="button" class="mini" data-action="organization-records-previous" :disabled="loading || filters.page <= 1" @click="previousPage">上一页</button><span>第 {{ filters.page }} 页</span><button type="button" class="mini" data-action="organization-records-next" :disabled="loading || filters.page * filters.pageSize >= total" @click="nextPage">下一页</button></div>
