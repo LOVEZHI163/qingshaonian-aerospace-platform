@@ -232,6 +232,21 @@ test("remote smoke discovers public resources dynamically and checks admin autho
   assert.match(smoke, /base64 -d/);
   assert.match(smoke, /docker compose exec -T api ffmpeg/);
   assert.match(smoke, /cleanup_submission_smoke\(\)/);
-  assert.match(smoke, /smoke_password="Smoke-\$\{submission_token\}/);
+  assert.match(smoke, /submission_token="\$\(date \+%s\)-\$\$"/);
+  assert.match(smoke, /smoke_user_name="上传冒烟用户-\$submission_token"/);
+  assert.match(smoke, /smoke_user_cleanup_pending=1/);
+  assert.match(smoke, /cleanup_submission_user_smoke\(\)/);
+  assert.match(smoke, /recover_submission_smoke_user_id\(\)/);
+  assert.match(smoke, /verify_submission_smoke_user_target\(\)/);
+  assert.match(smoke, /smoke_user_password_file="\$work_dir\/submission-user-password"/);
+  assert.match(smoke, /SMOKE_PASSWORD_FILE="\$smoke_user_password_file" docker compose exec/);
+  assert.match(smoke, /< "\$smoke_user_password_file" \|/);
+  assert.doesNotMatch(smoke, /\bsmoke_password=/);
+  const submissionCleanup = smoke.match(/cleanup_submission_smoke\(\) \{([\s\S]*?)\n\}/)?.[1] || "";
+  assert.ok(
+    submissionCleanup.indexOf("cleanup_submission_event_smoke")
+      < submissionCleanup.indexOf("cleanup_submission_user_smoke"),
+    "ordinary-user cleanup must still run after event cleanup"
+  );
   assert.doesNotMatch(smoke, /SmokeSubmission!2026/);
 });
