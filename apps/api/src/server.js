@@ -526,10 +526,10 @@ app.get("/api/me/:userId", requireUser, requirePasswordReady, asyncRoute(async (
     memberships: db.memberships
       .filter((item) => item.userId === user.id || item.invitedPhone === user.phone)
       .map((item) => ({ id: item.id, userId: item.userId, organizationId: item.organizationId, role: item.role, status: item.status, direction: item.direction, note: item.note, createdAt: item.createdAt, updatedAt: item.updatedAt })),
-    registrations: req.user.type === "admin"
-      ? db.registrations.filter((item) => item.createdByUserId === user.id || item.personalUserId === user.id)
+    ...(req.user.type === "admin" ? {
+      registrations: db.registrations.filter((item) => item.createdByUserId === user.id || item.personalUserId === user.id)
         .map((item) => ({ id: item.id, eventId: item.eventId, organizationId: item.organizationId, status: item.status, athlete: { name: item.athlete?.name, school: item.athlete?.school, grade: item.athlete?.grade }, group: item.group, projectId: item.projectId, createdAt: item.createdAt }))
-      : []
+    } : {})
   });
 }));
 

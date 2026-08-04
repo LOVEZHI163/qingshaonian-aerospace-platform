@@ -157,11 +157,14 @@ test("profile and legacy admin endpoints cannot bypass event-scoped registration
   await withTestServer(async ({ baseUrl }) => {
     const ordinary = await loginAs(baseUrl, "13800000001", "123456");
     const admin = await loginAs(baseUrl, "13900000000", "admin123");
-    for (const cookie of [ordinary.cookie, admin.cookie]) {
-      const profile = await fetch(`${baseUrl}/api/me/U1001`, withSession(cookie));
-      assert.equal(profile.status, cookie === ordinary.cookie ? 200 : 200);
-      assert.equal("registrations" in await profile.json(), false);
-    }
+    const ordinaryProfile = await fetch(`${baseUrl}/api/me/U1001`, withSession(ordinary.cookie));
+    assert.equal(ordinaryProfile.status, 200);
+    assert.equal("registrations" in await ordinaryProfile.json(), false);
+    const adminProfile = await fetch(`${baseUrl}/api/me/U1001`, withSession(admin.cookie));
+    assert.equal(adminProfile.status, 200);
+    const profile = await adminProfile.json();
+    assert.equal(profile.registrations.some((row) => row.eventId === "wz-aerospace-2026"), true);
+    assert.equal(profile.registrations.every((row) => !Object.hasOwn(row, "internalOnly") && !Object.hasOwn(row, "createdByUserId")), true);
     assert.equal((await fetch(`${baseUrl}/api/admin/registrations`, withSession(admin.cookie))).status, 404);
     assert.equal((await fetch(`${baseUrl}/api/admin/registrations/R20260627001`, withSession(admin.cookie, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: "{}" }))).status, 404);
   });
