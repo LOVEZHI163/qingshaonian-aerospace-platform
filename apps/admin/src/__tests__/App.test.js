@@ -385,7 +385,7 @@ describe("App session integration", () => {
     const wrapper = mount(App);
     await flushPromises();
 
-    expect(wrapper.findAll("[data-user-nav]").map((item) => item.text())).toEqual(["赛事工作台", "组织与成员", "证书查询"]);
+    expect(wrapper.findAll("[data-user-nav]").map((item) => item.attributes("data-user-nav"))).toEqual(["eventCenter", "organizationRecords", "organization", "certificates"]);
     expect(wrapper.find('[data-user-nav="organizationWorkspace"]').exists()).toBe(false);
 
     await wrapper.get('[data-event-card="E2"]').trigger("click");
@@ -393,6 +393,11 @@ describe("App session integration", () => {
     expect(wrapper.find('[data-testid="organization-event-workspace"]').exists()).toBe(true);
     expect(wrapper.get('[data-user-nav="eventCenter"]').classes()).toContain("active");
     expect(new URLSearchParams(window.location.search).get("eventId")).toBe("E2");
+
+    await wrapper.get('[data-action="back-to-events"]').trigger("click");
+    await flushPromises();
+    expect(wrapper.find('[data-testid="event-center-page"]').exists()).toBe(true);
+    expect(new URLSearchParams(window.location.search).get("eventId")).toBeNull();
 
     await wrapper.get('[data-user-nav="organization"]').trigger("click");
     await flushPromises();

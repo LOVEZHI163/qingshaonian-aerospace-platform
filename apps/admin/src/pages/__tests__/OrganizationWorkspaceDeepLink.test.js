@@ -43,7 +43,7 @@ describe("organization workspace historical deep links", () => {
       if (path === "/api/public/event") return { event: { name: "当前赛事" }, projects: [], grades: [] };
       if (path === "/api/me/events") return { rows: [] };
       if (path === "/api/organization/events/E-ARCHIVED/workspace") return { event: archivedEvent, summary: {}, projects: [], registrations: [archivedRegistration] };
-      if (path === "/api/organization/events/E-ARCHIVED/registrations") return { rows: [archivedRegistration] };
+      if (path === "/api/organization/registrations?page=1&pageSize=25") return { rows: [{ ...archivedRegistration, eventId: "E-ARCHIVED", eventName: "历史赛事" }], total: 1, page: 1, pageSize: 25, filterOptions: { events: [archivedEvent], projects: [] } };
       return { rows: [] };
     });
     const wrapper = await mountAt("/admin/?view=organizationWorkspace&eventId=E-ARCHIVED");
@@ -51,10 +51,19 @@ describe("organization workspace historical deep links", () => {
     expect(apiMock).toHaveBeenCalledWith("/api/organization/events/E-ARCHIVED/workspace");
     expect(wrapper.get('[data-testid="organization-event-workspace"]').exists()).toBe(true);
     expect(wrapper.get(".topbar").text()).toContain("历史赛事");
-    await wrapper.get('[data-workspace-tab="records"]').trigger("click");
-    expect(wrapper.text()).toContain("张三");
-    expect(wrapper.find('[data-action="edit-organization-registration-R1"]').exists()).toBe(false);
+    expect(wrapper.findAll(".organization-event-summary-card")).toHaveLength(1);
+    expect(wrapper.findAll(".organization-registration-guide")).toHaveLength(1);
+    expect(wrapper.findAll(".organization-registration-card")).toHaveLength(1);
+    expect(wrapper.find('[data-testid="organization-registration-form"]').exists()).toBe(false);
+    expect(wrapper.findAll("[data-workspace-tab]")).toHaveLength(0);
     expect(new URLSearchParams(window.location.search).get("eventId")).toBe("E-ARCHIVED");
+
+    await wrapper.get('[data-user-nav="organizationRecords"]').trigger("click");
+    await flushPromises();
+
+    expect(wrapper.find('[data-testid="organization-registration-records-page"]').exists()).toBe(true);
+    expect(apiMock).toHaveBeenCalledWith("/api/organization/registrations?page=1&pageSize=25");
+    expect(new URLSearchParams(window.location.search).get("eventId")).toBeNull();
   });
 
   it("returns an unauthorized organization workspace deep link to the event center", async () => {
