@@ -449,15 +449,33 @@ describe("role based application navigation", () => {
     const wrapper = await mountFor({ id: "O1U", type: "organization", name: "负责人", phone: "13800000002", mustChangePassword: false }, organization); mounted.push(wrapper);
     expect(wrapper.find('[data-testid="event-center-page"]').exists()).toBe(true);
     expect(wrapper.text()).not.toContain("邀请成员");
-    expect(wrapper.findAll("[data-user-nav]").map((item) => item.text())).toEqual(["赛事工作台", "审核进度"]);
+    expect(wrapper.findAll("[data-user-nav]").map((item) => item.text())).toEqual(["赛事工作台", "报名记录", "组织与成员", "证书查询"]);
+    expect(wrapper.text()).not.toContain("审核进度");
     expect(wrapper.find('[data-user-nav="myOrganization"]').exists()).toBe(false);
     expect(apiMock.mock.calls.some(([path]) => path.includes("/registrations") || path.includes("/certificates"))).toBe(false);
+  });
+
+  it.each(["pending", "approved"])("keeps organization navigation stable and opens cross-event records for a %s organization", async (reviewStatus) => {
+    const organization = { id: "O1", ownerUserId: "O1U", name: "组织学校", reviewStatus, status: "active", membershipRole: "owner" };
+    const wrapper = await mountFor({ id: "O1U", type: "organization", name: "负责人", phone: "13800000002", mustChangePassword: false }, organization); mounted.push(wrapper);
+
+    expect(wrapper.findAll("[data-user-nav]").map((item) => item.text())).toEqual([
+      "赛事工作台", "报名记录", "组织与成员", "证书查询"
+    ]);
+    expect(wrapper.text()).not.toContain("审核进度");
+
+    await wrapper.get('[data-user-nav="organizationRecords"]').trigger("click");
+    await flushPromises();
+
+    expect(wrapper.find('[data-testid="organization-registration-records-page"]').exists()).toBe(true);
+    expect(new URLSearchParams(window.location.search).get("view")).toBe("organizationRecords");
+    expect(new URLSearchParams(window.location.search).has("eventId")).toBe(false);
   });
 
   it("opens the organization console for an approved owner", async () => {
     const organization = { id: "O1", ownerUserId: "O1U", name: "实验学校", reviewStatus: "approved", status: "active", membershipRole: "owner" };
     const wrapper = await mountFor({ id: "O1U", type: "organization", name: "负责人", phone: "13800000002", mustChangePassword: false }, organization); mounted.push(wrapper);
-    expect(wrapper.findAll("[data-user-nav]").map((item) => item.text())).toEqual(["赛事工作台", "组织与成员", "证书查询"]);
+    expect(wrapper.findAll("[data-user-nav]").map((item) => item.text())).toEqual(["赛事工作台", "报名记录", "组织与成员", "证书查询"]);
     expect(wrapper.find('[data-user-nav="myOrganization"]').exists()).toBe(false);
     expect(wrapper.find('[data-testid="event-center-page"]').exists()).toBe(true);
   });

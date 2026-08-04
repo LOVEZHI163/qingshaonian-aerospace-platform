@@ -14,6 +14,7 @@ import MyOrganizationPage from "./pages/MyOrganizationPage.vue";
 import OrganizationConsolePage from "./pages/OrganizationConsolePage.vue";
 import OrganizationEventWorkspacePage from "./pages/OrganizationEventWorkspacePage.vue";
 import OrganizationManagementPage from "./pages/OrganizationManagementPage.vue";
+import OrganizationRegistrationRecordsPage from "./pages/OrganizationRegistrationRecordsPage.vue";
 import RegistrationManagementPage from "./pages/RegistrationManagementPage.vue";
 import RegistrationPage from "./pages/RegistrationPage.vue";
 import RegistrationRecordsPage from "./pages/RegistrationRecordsPage.vue";
@@ -32,7 +33,7 @@ const releaseBlocked = ref(false);
 const releaseMessage = ref("");
 const userSidebarOpen = ref(false);
 const certificateRegistrationId = ref("");
-const DEEP_LINK_VIEWS = new Set(["overview", "events", "siteContent", "organizations", "registration", "registrationRecords", "records", "certificates", "users", "organization", "eventCenter", "organizationWorkspace", "myOrganization"]);
+const DEEP_LINK_VIEWS = new Set(["overview", "events", "siteContent", "organizations", "registration", "registrationRecords", "organizationRecords", "records", "certificates", "users", "organization", "eventCenter", "organizationWorkspace", "myOrganization"]);
 const SAFE_EVENT_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 const initialParams = new URLSearchParams(window.location.search);
 const requestedView = DEEP_LINK_VIEWS.has(initialParams.get("view")) ? initialParams.get("view") : "";
@@ -77,13 +78,13 @@ const userNavigation = computed(() => {
   if (currentUser.value?.type === "ordinary") {
     return [["eventCenter", "赛事中心"], ["myOrganization", "我的组织"], ["registrationRecords", "报名记录"], ["certificates", "证书查询"]];
   }
-  if (!approvedOrganization.value) return [["eventCenter", "赛事工作台"], ["organization", "审核进度"]];
-  return [["eventCenter", "赛事工作台"], ["organization", "组织与成员"], ["certificates", "证书查询"]];
+  return [["eventCenter", "赛事工作台"], ["organizationRecords", "报名记录"], ["organization", "组织与成员"], ["certificates", "证书查询"]];
 });
 const userHeaderEvent = computed(() => {
   if (currentView.value === "eventCenter") return { name: currentUser.value?.type === "organization" ? "赛事工作台" : "赛事中心", date: "", venue: "", registrationDeadline: "" };
   if (currentView.value === "myOrganization") return { name: "我的组织", date: "", venue: "", registrationDeadline: "" };
   if (currentView.value === "organization") return { name: "组织与成员", date: "", venue: "", registrationDeadline: "" };
+  if (currentView.value === "organizationRecords") return { name: "报名记录", date: "", venue: "", registrationDeadline: "" };
   if (currentView.value === "registrationRecords" && !recordsEventId.value) return { name: "报名记录", date: "", venue: "", registrationDeadline: "" };
   if (currentView.value === "certificates" && !certificateEventId.value) return { name: "我的证书", date: "", venue: "", registrationDeadline: "" };
   if (selectedAccountEvent.value?.event) {
@@ -198,9 +199,9 @@ function targetView(user = currentUser.value) {
   const allowed = user.type === "admin"
     ? new Set(["overview", "events", "siteContent", "organizations", "registration", "certificates", "users"])
     : user.type === "organization"
-      ? new Set(["eventCenter", "organizationWorkspace", "certificates", "organization"])
+      ? new Set(["eventCenter", "organizationWorkspace", "organizationRecords", "certificates", "organization"])
       : new Set(["eventCenter", "registration", "registrationRecords", "certificates", "myOrganization"]);
-  if (user.type === "organization") return new Set(["eventCenter", "organizationWorkspace", "certificates", "organization"]).has(routeView)
+  if (user.type === "organization") return new Set(["eventCenter", "organizationWorkspace", "organizationRecords", "certificates", "organization"]).has(routeView)
     ? routeView
     : defaultView(user);
   return allowed.has(routeView) ? routeView : defaultView(user);
@@ -469,6 +470,7 @@ onMounted(async () => {
       <RegistrationRecordsPage :key="`records:${recordsEventId}`" v-else-if="currentView === 'registrationRecords'" :event-id="recordsEventId" @error="handleError" />
       <MyCertificatesPage :key="`certificates:${certificateEventId}`" v-else-if="currentView === 'certificates'" :event-id="certificateEventId" @event-id="setCertificateEventId" @error="handleError" />
       <OrganizationEventWorkspacePage v-else-if="currentView === 'organizationWorkspace'" :event-id="selectedEventId" @context="useRegistrationEvent" @access-denied="handleWorkspaceAccessDenied" @error="handleError" />
+      <OrganizationRegistrationRecordsPage v-else-if="currentView === 'organizationRecords'" />
       <OrganizationConsolePage v-else-if="currentView === 'organization'" @error="handleError" />
     </main>
   </div>
