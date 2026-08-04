@@ -14,4 +14,6 @@ test("remote smoke covers organization membership authentication boundaries", as
   assert.match(script, /admin-users/);
   assert.match(script, /admin-organization-credential/);
   assert.match(script, /012-membership-data-normalization\.sql/);
+  assert.match(script, /docker compose exec -T postgres psql/);
+  assert.doesNotMatch(script, /docker compose exec -T db psql/);
 });

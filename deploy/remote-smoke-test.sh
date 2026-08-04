@@ -195,7 +195,7 @@ else
   echo "admin-organization-credential-skipped=no-current-credential"
 fi
 
-if ! docker compose exec -T db psql -U "${POSTGRES_USER:-postgres}" -d "${POSTGRES_DB:-aerogp}" -tAc "SELECT 1 FROM schema_migrations WHERE name = '012-membership-data-normalization.sql'" | grep -qx 1; then
+if ! docker compose exec -T postgres psql -U "${POSTGRES_USER:-postgres}" -d "${POSTGRES_DB:-aerogp}" -tAc "SELECT 1 FROM schema_migrations WHERE name = '012-membership-data-normalization.sql'" | grep -qx 1; then
   echo "membership migration 012 is not recorded" >&2
   exit 1
 fi
