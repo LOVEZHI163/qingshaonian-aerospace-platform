@@ -1548,6 +1548,114 @@ select:focus {
   gap: 12px;
 }
 
+.organization-event-workspace {
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+.organization-event-workspace-layout {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.organization-event-summary-card,
+.organization-registration-guide,
+.organization-registration-card {
+  min-width: 0;
+}
+
+.organization-event-summary-card {
+  grid-column: 1 / -1;
+}
+
+.organization-event-summary-title {
+  align-items: flex-start;
+}
+
+.organization-event-summary-title h2,
+.organization-registration-guide h3 {
+  margin: 0;
+}
+
+.organization-event-summary-title p {
+  margin: 6px 0 0;
+}
+
+.organization-event-summary-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin: 0;
+}
+
+.organization-event-summary-facts div {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid #cfe0f2;
+  border-radius: 8px;
+  background: #f2f8ff;
+}
+
+.organization-event-summary-facts dt {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.organization-event-summary-facts dd {
+  min-width: 0;
+  margin: 5px 0 0;
+  overflow-wrap: anywhere;
+}
+
+.organization-event-summary-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.organization-event-summary-counts span {
+  padding: 6px 10px;
+  border-radius: 999px;
+  color: var(--blue);
+  background: #eef6ff;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.organization-registration-guide {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+}
+
+.organization-registration-guide p {
+  margin: 0;
+}
+
+.organization-registration-card .organization-athlete-registration-form {
+  min-width: 0;
+  margin: 0;
+}
+
+.organization-event-workspace .table-wrap {
+  max-width: 100%;
+  overscroll-behavior-inline: contain;
+}
+
+@media (max-width: 768px) {
+  .organization-event-workspace-layout,
+  .organization-event-summary-facts {
+    grid-template-columns: 1fr;
+  }
+
+  .organization-event-summary-card {
+    grid-column: auto;
+  }
+}
+
 .inline-form {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));

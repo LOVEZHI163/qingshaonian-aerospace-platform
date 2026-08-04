@@ -1,371 +1,58 @@
 import { flushPromises, mount } from "@vue/test-utils";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { apiMock, apiBlobMock } = vi.hoisted(() => ({ apiMock: vi.fn(), apiBlobMock: vi.fn() }));
-vi.mock("../../lib/api.js", () => ({ api: apiMock, apiBlob: apiBlobMock, apiUrl: (path) => path }));
-vi.mock("../../components/SubmissionAssetUploader.vue", () => ({
-  default: {
-    props: ["sessionId", "mode", "assets"],
-    emits: ["complete"],
-    template: '<button type="button" data-testid="submission-uploader" @click="$emit(\'complete\', true)">素材已完成</button>'
-  }
-}));
+const { apiMock } = vi.hoisted(() => ({ apiMock: vi.fn() }));
+vi.mock("../../lib/api.js", () => ({ api: apiMock }));
 
-import EventCenterPage from "../EventCenterPage.vue";
-import OrganizationAthleteRegistrationForm from "../../components/OrganizationAthleteRegistrationForm.vue";
 import OrganizationEventWorkspacePage from "../OrganizationEventWorkspacePage.vue";
 
-const event = { id: "E2", name: "赛事二", status: "published" };
-const grades = [
-  { id: "primary_lower", name: "小学低段", grades: ["一年级", "二年级", "三年级"] },
-  { id: "primary_upper", name: "小学高段", grades: ["四年级", "五年级", "六年级"] },
-  { id: "middle_school", name: "中学组", grades: ["初一", "初二", "初三"] },
-  { id: "high_vocational", name: "职高/高中组", grades: ["高一", "高二", "高三", "职高一年级", "职高二年级", "职高三年级"] }
-];
-const gradeValues = ["一年级", "二年级", "三年级", "四年级", "五年级", "六年级", "初一", "初二", "初三", "高一", "高二", "高三", "职高一年级", "职高二年级", "职高三年级"];
-const registration = {
-  id: "R1", athlete: { name: "张三", school: "航空学校", grade: "五年级", phone: "13800000000" },
-  projectId: "P1", projectName: "无人机", status: "approved", awardName: "一等奖", rank: "1", score: "95"
+const workspace = {
+  event: {
+    id: "E2",
+    name: "Event E2",
+    dateLabel: "2026-08-20",
+    venue: "Airport Hall",
+    registrationEndAt: "2026-08-10T18:00:00.000Z",
+    status: "published"
+  },
+  organization: { id: "O1", name: "Aviation School" },
+  summary: { registrationCount: 1, pendingRegistrationCount: 0, certificateCount: 1 },
+  projects: [{ id: "P1", name: "Drone" }],
+  grades: [],
+  registrations: []
 };
 
 describe("OrganizationEventWorkspacePage", () => {
   beforeEach(() => {
     apiMock.mockReset();
-    apiBlobMock.mockReset();
     apiMock.mockImplementation(async (path) => {
-      if (path === "/api/organization/events/E2/workspace") return {
-        event,
-        organization: { id: "O1", name: "温州市实验小学" },
-        summary: { registrationCount: 1, pendingRegistrationCount: 0, certificateCount: 1 },
-        projects: [{ id: "P1", name: "无人机" }],
-        grades,
-        registrations: [registration]
-      };
-      if (path === "/api/organization/events/E2/registrations") return { rows: [registration] };
-      if (path === "/api/organization/events/E2/certificates") return { rows: [] };
+      if (path === "/api/organization/events/E2/workspace") return workspace;
+      if (path === "/api/organization/events/E2/registrations") return { rows: [] };
       return { rows: [] };
     });
   });
 
-  it("loads the selected event workspace through its explicit event endpoint", async () => {
+  it("renders the single-event overview, guidance, and registration cards without local workspace tabs", async () => {
     const wrapper = mount(OrganizationEventWorkspacePage, { props: { eventId: "E2" } });
     await flushPromises();
 
-    expect(apiMock).toHaveBeenCalledWith("/api/organization/events/E2/workspace");
-    expect(apiMock).toHaveBeenCalledWith("/api/organization/events/E2/registrations");
-    expect(wrapper.text()).toContain("赛事二");
-    await wrapper.get('[data-workspace-tab="records"]').trigger("click");
-    expect(wrapper.text()).toContain("张三");
+    expect(wrapper.text()).toContain("Event E2");
+    expect(wrapper.text()).toContain("2026-08-20");
+    expect(wrapper.text()).toContain("Airport Hall");
+    expect(wrapper.findAll(".organization-event-summary-card")).toHaveLength(1);
+    expect(wrapper.findAll(".organization-registration-guide")).toHaveLength(1);
+    expect(wrapper.findAll(".organization-registration-card")).toHaveLength(1);
+    expect(wrapper.find('[data-testid="organization-registration-form"]').exists()).toBe(true);
+    expect(wrapper.findAll("[data-workspace-tab]")).toHaveLength(0);
+    expect(wrapper.find("[data-action=export-organization-registrations]").exists()).toBe(false);
   });
 
-  it("submits organization athletes only to the explicit event endpoint and reports a merge", async () => {
-    apiMock.mockResolvedValueOnce({ merged: true, row: registration });
-    const wrapper = mount(OrganizationAthleteRegistrationForm, {
-      props: { eventId: "E2", projects: [{ id: "P1", name: "无人机" }], grades }
-    });
-    await wrapper.get('[data-field="athlete-name"]').setValue("张三");
-    await wrapper.get('input[placeholder="输入或选择学校"]').setValue("航空学校");
-    await wrapper.get('[data-field="athlete-grade"]').setValue("五年级");
-    await wrapper.get('[data-field="athlete-phone"]').setValue("13800000000");
-    await wrapper.get("form").trigger("submit");
-    await flushPromises();
-
-    expect(apiMock).toHaveBeenCalledWith("/api/organization/events/E2/registrations", expect.objectContaining({
-      method: "POST",
-      body: JSON.stringify({ athlete: { name: "张三", school: "航空学校", grade: "五年级", phone: "13800000000" }, projectId: "P1", instructor: "" })
-    }));
-    expect(wrapper.text()).toContain("已与现有个人报名合并，未重复创建");
-    expect(wrapper.find("select[data-field=organization]").exists()).toBe(false);
-  });
-
-  it("renders exactly the workspace grade values as select options", async () => {
-    const wrapper = mount(OrganizationAthleteRegistrationForm, {
-      props: { eventId: "E2", projects: [{ id: "P1", name: "无人机" }], grades }
-    });
-
-    expect(wrapper.get('[data-field="athlete-grade"]').findAll("option").slice(1).map((option) => option.element.value)).toEqual(gradeValues);
-  });
-
-  it("defaults a new athlete school to its organization, allows an edit, and restores the default after creation", async () => {
-    apiMock.mockResolvedValueOnce({ row: registration });
-    const wrapper = mount(OrganizationAthleteRegistrationForm, {
-      props: { eventId: "E2", projects: [{ id: "P1", name: "无人机" }], grades, defaultSchool: "温州市实验小学" }
-    });
-    const school = wrapper.get('input[placeholder="输入或选择学校"]');
-    expect(school.element.value).toBe("温州市实验小学");
-    await school.setValue("自定义学校");
-    await wrapper.get('[data-field="athlete-name"]').setValue("张三");
-    await wrapper.get('[data-field="athlete-grade"]').setValue("五年级");
-    await wrapper.get('[data-field="athlete-phone"]').setValue("13800000000");
-    await wrapper.get("form").trigger("submit");
-    await flushPromises();
-
-    expect(apiMock).toHaveBeenCalledWith("/api/organization/events/E2/registrations", expect.objectContaining({
-      body: JSON.stringify({ athlete: { name: "张三", school: "自定义学校", grade: "五年级", phone: "13800000000" }, projectId: "P1", instructor: "" })
-    }));
-    expect(school.element.value).toBe("温州市实验小学");
-  });
-
-  it("retains the saved school when editing an organization registration", async () => {
-    const wrapper = mount(OrganizationAthleteRegistrationForm, {
-      props: {
-        eventId: "E2", projects: [{ id: "P1", name: "无人机" }], grades, defaultSchool: "温州市实验小学",
-        registration: { ...registration, athlete: { ...registration.athlete, school: "保存的学校" } }
-      }
-    });
-
-    expect(wrapper.get('input[placeholder="输入或选择学校"]').element.value).toBe("保存的学校");
-  });
-
-  it("creates organization-owned material sessions and includes the completed session without exposing an editable organization id", async () => {
-    apiMock.mockImplementation(async (path) => {
-      if (path === "/api/organization/events/E2/projects/P-IMAGE/upload-sessions") return { row: { id: "US-ORG", assets: {} } };
-      if (path === "/api/organization/events/E2/registrations") return { row: registration };
-      if (path.startsWith("/api/schools")) return { rows: [] };
-      throw new Error(`unexpected API path ${path}`);
-    });
-    const wrapper = mount(OrganizationAthleteRegistrationForm, {
-      props: { eventId: "E2", projects: [{ id: "P-IMAGE", name: "绘画", submissionMode: "image_video" }], grades }
-    });
-    await flushPromises();
-    await wrapper.get('[data-field="athlete-name"]').setValue("张三");
-    await wrapper.get('input[placeholder="输入或选择学校"]').setValue("航空学校");
-    await wrapper.get('[data-field="athlete-grade"]').setValue("五年级");
-    await wrapper.get('[data-field="athlete-phone"]').setValue("13800000000");
-    await flushPromises();
-
-    expect(apiMock).toHaveBeenCalledWith("/api/organization/events/E2/projects/P-IMAGE/upload-sessions", { method: "POST" });
-    expect(wrapper.get("button.primary").attributes("disabled")).toBeDefined();
-    expect(wrapper.find('[data-field="organization"]').exists()).toBe(false);
-
-    await wrapper.get('[data-testid="submission-uploader"]').trigger("click");
-    await wrapper.get("form").trigger("submit");
-    await flushPromises();
-
-    expect(apiMock).toHaveBeenCalledWith("/api/organization/events/E2/registrations", expect.objectContaining({
-      method: "POST",
-      body: JSON.stringify({ athlete: { name: "张三", school: "航空学校", grade: "五年级", phone: "13800000000" }, projectId: "P-IMAGE", instructor: "", uploadSessionId: "US-ORG" })
-    }));
-  });
-
-  it("allows the organization owner to replace approved materials and immediately reports the restored pending review", async () => {
-    const withSubmission = {
-      ...registration,
-      submission: {
-        required: true,
-        complete: true,
-        assets: {
-          artwork_image: { kind: "artwork_image", originalName: "work.png", mimeType: "image/png", sizeBytes: 1024 },
-          creation_video: { kind: "creation_video", originalName: "making.mp4", mimeType: "video/mp4", sizeBytes: 2048 }
-        }
-      }
-    };
-    apiMock.mockImplementation(async (path, options) => {
-      if (path === "/api/organization/events/E2/workspace") return { event, summary: {}, projects: [{ id: "P1", name: "无人机", submissionMode: "image_video" }], registrations: [withSubmission] };
-      if (path === "/api/organization/events/E2/registrations" && !options?.method) return { rows: [withSubmission] };
-      if (path === "/api/organization/events/E2/projects/P1/upload-sessions") return { row: { id: "US-REPLACE", assets: {} } };
-      if (path.includes("/assets/artwork_image") || path.includes("/assets/creation_video")) return { registration: { ...withSubmission, status: "pending" } };
-      return { rows: [] };
-    });
+  it("emits back-to-events when the return control is used", async () => {
     const wrapper = mount(OrganizationEventWorkspacePage, { props: { eventId: "E2" } });
     await flushPromises();
-    await wrapper.get('[data-workspace-tab="records"]').trigger("click");
-    await wrapper.get('[data-action="replace-organization-materials-R1"]').trigger("click");
-    await flushPromises();
-    await wrapper.get('[data-testid="submission-uploader"]').trigger("click");
-    await wrapper.get('[data-action="confirm-organization-material-replacement-R1"]').trigger("click");
-    await flushPromises();
 
-    expect(apiMock).toHaveBeenCalledWith("/api/organization/events/E2/registrations/R1/assets/artwork_image", expect.objectContaining({ method: "PUT", body: JSON.stringify({ uploadSessionId: "US-REPLACE" }) }));
-    expect(apiMock).toHaveBeenCalledWith("/api/organization/events/E2/registrations/R1/assets/creation_video", expect.objectContaining({ method: "PUT", body: JSON.stringify({ uploadSessionId: "US-REPLACE" }) }));
-    expect(wrapper.text()).toContain("已恢复待审核");
-  });
+    await wrapper.get("[data-action=back-to-events]").trigger("click");
 
-  it("resumes an organization material replacement from the failed video without replaying the consumed image", async () => {
-    const withSubmission = {
-      ...registration,
-      submission: {
-        required: true,
-        complete: true,
-        assets: {
-          artwork_image: { kind: "artwork_image", originalName: "work.png", mimeType: "image/png", sizeBytes: 1024 },
-          creation_video: { kind: "creation_video", originalName: "making.mp4", mimeType: "video/mp4", sizeBytes: 2048 }
-        }
-      }
-    };
-    let status = "approved";
-    let videoAttempts = 0;
-    apiMock.mockImplementation(async (path, options) => {
-      if (path === "/api/organization/events/E2/workspace") return { event, summary: {}, projects: [{ id: "P1", name: "无人机", submissionMode: "image_video" }], registrations: [{ ...withSubmission, status }] };
-      if (path === "/api/organization/events/E2/registrations" && !options?.method) return { rows: [{ ...withSubmission, status }] };
-      if (path === "/api/organization/events/E2/projects/P1/upload-sessions") return { row: { id: "US-RESUME", assets: {} } };
-      if (path.endsWith("/assets/artwork_image")) {
-        status = "pending";
-        return { registration: { ...withSubmission, status } };
-      }
-      if (path.endsWith("/assets/creation_video")) {
-        videoAttempts += 1;
-        if (videoAttempts === 1) throw new Error("video replacement failed");
-        return { registration: { ...withSubmission, status } };
-      }
-      return { rows: [] };
-    });
-    const wrapper = mount(OrganizationEventWorkspacePage, { props: { eventId: "E2" } });
-    await flushPromises();
-    await wrapper.get('[data-workspace-tab="records"]').trigger("click");
-    await wrapper.get('[data-action="replace-organization-materials-R1"]').trigger("click");
-    await flushPromises();
-    await wrapper.get('[data-testid="submission-uploader"]').trigger("click");
-    await wrapper.get('[data-action="confirm-organization-material-replacement-R1"]').trigger("click");
-    await flushPromises();
-
-    expect(wrapper.text()).toContain("作品图片已替换，作画视频仍待替换");
-    expect(apiMock.mock.calls.filter(([path, options]) => options?.method === "PUT").map(([path]) => path)).toEqual([
-      "/api/organization/events/E2/registrations/R1/assets/artwork_image",
-      "/api/organization/events/E2/registrations/R1/assets/creation_video"
-    ]);
-
-    await wrapper.get('[data-action="retry-organization-material-replacement-R1"]').trigger("click");
-    await flushPromises();
-
-    expect(apiMock.mock.calls.filter(([path, options]) => options?.method === "PUT").map(([path]) => path)).toEqual([
-      "/api/organization/events/E2/registrations/R1/assets/artwork_image",
-      "/api/organization/events/E2/registrations/R1/assets/creation_video",
-      "/api/organization/events/E2/registrations/R1/assets/creation_video"
-    ]);
-    expect(wrapper.text()).toContain("已恢复待审核");
-  });
-
-  it("does not let a late organization replacement mutate a newer registration session", async () => {
-    const first = {
-      ...registration,
-      id: "R-OLD",
-      projectId: "P1",
-      submission: { required: true, complete: true, assets: { artwork_image: { kind: "artwork_image", originalName: "old.png" }, creation_video: { kind: "creation_video", originalName: "old.mp4" } } }
-    };
-    const second = {
-      ...registration,
-      id: "R-NEW",
-      athlete: { name: "李四", school: "第二学校", grade: "六年级", phone: "13900000000" },
-      projectId: "P2",
-      submission: { required: true, complete: true, assets: { artwork_image: { kind: "artwork_image", originalName: "new.png" }, creation_video: { kind: "creation_video", originalName: "new.mp4" } } }
-    };
-    let resolveOldImage;
-    const delayedOldImage = new Promise((resolve) => { resolveOldImage = resolve; });
-    apiMock.mockImplementation(async (path, options) => {
-      if (path === "/api/organization/events/E2/workspace") return { event, summary: {}, projects: [{ id: "P1", name: "无人机", submissionMode: "image_video" }, { id: "P2", name: "火箭", submissionMode: "image_video" }], registrations: [first, second] };
-      if (path === "/api/organization/events/E2/registrations" && !options?.method) return { rows: [first, second] };
-      if (path === "/api/organization/events/E2/projects/P1/upload-sessions") return { row: { id: "US-OLD", assets: {} } };
-      if (path === "/api/organization/events/E2/projects/P2/upload-sessions") return { row: { id: "US-NEW", assets: {} } };
-      if (path === "/api/organization/events/E2/registrations/R-OLD/assets/artwork_image") return delayedOldImage;
-      if (path.includes("/registrations/R-OLD/assets/creation_video")) return { registration: first };
-      throw new Error(`unexpected API path ${path}`);
-    });
-    const wrapper = mount(OrganizationEventWorkspacePage, { props: { eventId: "E2" } });
-    await flushPromises();
-    await wrapper.get('[data-workspace-tab="records"]').trigger("click");
-    await wrapper.get('[data-action="replace-organization-materials-R-OLD"]').trigger("click");
-    await flushPromises();
-    await wrapper.get('[data-testid="submission-uploader"]').trigger("click");
-    await wrapper.get('[data-action="confirm-organization-material-replacement-R-OLD"]').trigger("click");
-    await wrapper.get('[data-action="replace-organization-materials-R-NEW"]').trigger("click");
-    await flushPromises();
-    resolveOldImage({ registration: first });
-    await flushPromises();
-
-    expect(wrapper.text()).toContain("替换 李四 的作品材料");
-    expect(wrapper.text()).not.toContain("作品图片已替换，作画视频仍待替换");
-    expect(apiMock.mock.calls.filter(([path, options]) => options?.method === "PUT").map(([path]) => path)).toEqual([
-      "/api/organization/events/E2/registrations/R-OLD/assets/artwork_image"
-    ]);
-  });
-
-  it("joins an available event idempotently and opens its workspace", async () => {
-    apiMock.mockImplementation(async (path, options) => {
-      if (path === "/api/me/events") return { rows: [{ event, participationState: "available", registrationState: "open" }] };
-      if (path === "/api/organization/events/E2/join" && options?.method === "POST") return { row: { organizationId: "O1", eventId: "E2" } };
-      return { rows: [] };
-    });
-    const wrapper = mount(EventCenterPage, { props: { accountType: "organization" } });
-    await flushPromises();
-    await wrapper.get('[data-action="join-event"]').trigger("click");
-    await flushPromises();
-
-    expect(apiMock).toHaveBeenCalledWith("/api/organization/events/E2/join", { method: "POST" });
-    expect(wrapper.emitted("open-event")[0][0]).toEqual({ eventId: "E2", mode: "organizationWorkspace" });
-  });
-
-  it("edits an active organization registration through its event-scoped endpoint", async () => {
-    apiMock.mockImplementation(async (path, options) => {
-      if (path === "/api/organization/events/E2/workspace") return { event, summary: {}, projects: [{ id: "P1", name: "无人机" }], registrations: [registration] };
-      if (path === "/api/organization/events/E2/registrations" && !options?.method) return { rows: [registration] };
-      if (path === "/api/organization/events/E2/registrations/R1" && options?.method === "PATCH") return { row: { ...registration, instructor: "王老师" } };
-      return { rows: [] };
-    });
-    const wrapper = mount(OrganizationEventWorkspacePage, { props: { eventId: "E2" } });
-    await flushPromises();
-    await wrapper.get('[data-workspace-tab="records"]').trigger("click");
-    await wrapper.get('[data-action="edit-organization-registration-R1"]').trigger("click");
-    await wrapper.get('input[data-field="instructor"]').setValue("王老师");
-    await wrapper.get('[data-testid="organization-registration-editor"]').trigger("submit");
-    await flushPromises();
-
-    expect(apiMock).toHaveBeenCalledWith("/api/organization/events/E2/registrations/R1", expect.objectContaining({
-      method: "PATCH",
-      body: JSON.stringify({ athlete: registration.athlete, projectId: "P1", instructor: "王老师" })
-    }));
-  });
-
-  it("resets the editor when switching registrations so it saves only the second athlete", async () => {
-    const first = { ...registration, id: "R-A", instructor: "A老师" };
-    const second = {
-      ...registration,
-      id: "R-B",
-      athlete: { name: "李四", school: "第二学校", grade: "六年级", phone: "13900000000" },
-      projectId: "P2",
-      instructor: "B老师"
-    };
-    apiMock.mockResolvedValue({ row: second });
-    const wrapper = mount(OrganizationAthleteRegistrationForm, {
-      props: { eventId: "E2", projects: [{ id: "P1", name: "无人机" }, { id: "P2", name: "火箭" }], grades, registration: first }
-    });
-    await wrapper.get('[data-field="instructor"]').setValue("A的旧编辑值");
-    await wrapper.setProps({ registration: second });
-    await flushPromises();
-
-    expect(wrapper.get('[data-field="athlete-name"]').element.value).toBe("李四");
-    expect(wrapper.get('input[placeholder="输入或选择学校"]').element.value).toBe("第二学校");
-    expect(wrapper.get('[data-field="athlete-grade"]').element.value).toBe("六年级");
-    expect(wrapper.get('[data-field="instructor"]').element.value).toBe("B老师");
-    expect(wrapper.findAll("select")[1].element.value).toBe("P2");
-    expect(wrapper.findAll("select")[1].attributes("disabled")).toBeDefined();
-    expect(wrapper.text()).toContain("赛项在报名创建后不可修改");
-
-    await wrapper.get('[data-field="instructor"]').setValue("B的新编辑值");
-    await wrapper.get('[data-testid="organization-registration-editor"]').trigger("submit");
-    await flushPromises();
-    expect(apiMock).toHaveBeenCalledWith("/api/organization/events/E2/registrations/R-B", expect.objectContaining({
-      method: "PATCH",
-      body: JSON.stringify({ athlete: second.athlete, projectId: "P2", instructor: "B的新编辑值" })
-    }));
-  });
-
-  it("keeps archived workspaces read-only while retaining results and certificates", async () => {
-    apiMock.mockImplementation(async (path) => {
-      if (path === "/api/organization/events/E2/workspace") return { event: { ...event, archivedAt: "2026-01-01" }, summary: {}, registrations: [registration] };
-      if (path === "/api/organization/events/E2/registrations") return { rows: [registration] };
-      if (path === "/api/organization/events/E2/certificates") return { rows: [{ id: "C1", athlete: registration.athlete, projectName: "无人机", title: "获奖证书" }] };
-      return { rows: [] };
-    });
-    const wrapper = mount(OrganizationEventWorkspacePage, { props: { eventId: "E2" } });
-    await flushPromises();
-    expect(wrapper.find('[data-testid="organization-registration-form"]').exists()).toBe(false);
-    await wrapper.get('[data-workspace-tab="results"]').trigger("click");
-    expect(wrapper.text()).toContain("一等奖");
-    await wrapper.get('[data-workspace-tab="records"]').trigger("click");
-    expect(wrapper.find('[data-action="edit-organization-registration-R1"]').exists()).toBe(false);
-    await wrapper.get('[data-workspace-tab="certificates"]').trigger("click");
-    await flushPromises();
-    expect(wrapper.text()).toContain("获奖证书");
+    expect(wrapper.emitted("back-to-events")).toEqual([[]]);
   });
 });
