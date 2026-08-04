@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import http from "node:http";
 import path from "node:path";
 import { spawn } from "node:child_process";
@@ -7,6 +8,27 @@ import test from "node:test";
 
 const root = path.resolve(import.meta.dirname, "../../..");
 const expectedRelease = "3ad0feb535269b67d3d88b6ed3eaadd29dfe3672";
+
+test("remote smoke keeps organization records scoped and validates the organization workspace release contract", async () => {
+  const smoke = await readFile(path.join(root, "deploy/remote-smoke-test.sh"), "utf8");
+
+  for (const label of [
+    "organization-records-shell",
+    "organization-records",
+    "organization-records-foreign-isolated",
+    "organization-workspace"
+  ]) {
+    assert.match(smoke, new RegExp(`assert_status \\\"${label}\\\" 200`));
+  }
+  assert.match(smoke, /\/admin\/\?view=organizationRecords/);
+  assert.match(smoke, /\/api\/organization\/registrations/);
+  assert.match(smoke, /foreign_registration_id/);
+  assert.match(smoke, /data\.organization\.id/);
+  assert.match(smoke, /data\.grades/);
+  assert.match(smoke, /smoke_organization_token=/);
+  assert.match(smoke, /credential-cleanup/);
+  assert.doesNotMatch(smoke, /echo[^\r\n]*(?:password|token|cookie)/i);
+});
 
 function shellCommand() {
   if (process.platform !== "win32") return "sh";

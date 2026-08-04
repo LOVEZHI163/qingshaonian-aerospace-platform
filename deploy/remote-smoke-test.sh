@@ -10,6 +10,9 @@ cleanup() {
   if command -v cleanup_submission_smoke >/dev/null 2>&1; then
     cleanup_submission_smoke || true
   fi
+  if command -v cleanup_organization_smoke >/dev/null 2>&1; then
+    cleanup_organization_smoke || true
+  fi
   if [ -n "$work_dir" ]; then
     rm -rf "$work_dir"
   fi
@@ -47,6 +50,10 @@ smoke_event_name=
 smoke_source_event_id=
 original_current_event_id=
 smoke_user_id=
+smoke_organization_id=
+smoke_organization_name=
+smoke_foreign_organization_id=
+smoke_foreign_organization_name=
 
 assert_status() {
   label="$1"
@@ -162,6 +169,10 @@ assert_status "organization-memberships-admin-forbidden" 403 \
   -X GET \
   "$base_url/api/organization/memberships"
 
+assert_status "organization-records-shell" 200 \
+  -b "$cookie_jar" \
+  "$base_url/admin/?view=organizationRecords"
+
 assert_status "admin-events" 200 \
   -b "$cookie_jar" \
   "$base_url/api/admin/events"
@@ -261,6 +272,29 @@ cleanup_submission_smoke() {
   echo "submission-smoke-cleanup=ok"
 }
 
+cleanup_organization_smoke() {
+  cleanup_failed=0
+  for organization in "$smoke_organization_id:$smoke_organization_name" "$smoke_foreign_organization_id:$smoke_foreign_organization_name"; do
+    organization_id="${organization%%:*}"
+    organization_name="${organization#*:}"
+    test -n "$organization_id" || continue
+    printf '%s' '{"status":"disabled"}' | curl -sS -f -o /dev/null -b "$cookie_jar" \
+      -H 'Content-Type: application/json' --data-binary @- \
+      -X PATCH "$base_url/api/admin/organizations/$organization_id/status" || cleanup_failed=1
+    cleanup_payload="{\"confirmName\":\"$organization_name\"}"
+    printf '%s' "$cleanup_payload" | curl -sS -f -o /dev/null -b "$cookie_jar" \
+      -H 'Content-Type: application/json' --data-binary @- \
+      -X POST "$base_url/api/admin/organizations/$organization_id/credential-cleanup" || cleanup_failed=1
+  done
+  if test "$cleanup_failed" -ne 0; then
+    echo "organization-smoke-cleanup=failed" >&2
+    return 1
+  fi
+  smoke_organization_id=
+  smoke_foreign_organization_id=
+  echo "organization-smoke-cleanup=ok"
+}
+
 submission_token="$(date +%s)-$$"
 smoke_event_name="上传冒烟-$submission_token"
 printf '{"name":"%s"}' "$smoke_event_name" | \
@@ -280,6 +314,127 @@ printf '%s' '{"registrationMode":"force_open"}' | \
 assert_status "submission-event-registration-open" 200 \
   -b "$cookie_jar" -H 'Content-Type: application/json' --data-binary @- \
   -X PATCH "$base_url/api/admin/events/$smoke_event_id"
+
+smoke_organization_token="$(date +%s)-$$"
+smoke_organization_name="组织冒烟-$smoke_organization_token"
+smoke_foreign_organization_name="外部组织冒烟-$smoke_organization_token"
+smoke_organization_phone="1$(printf '%s' "owner-$smoke_organization_token" | cksum | awk '{printf "%010d", $1}')"
+smoke_foreign_organization_phone="1$(printf '%s' "foreign-$smoke_organization_token" | cksum | awk '{printf "%010d", $1}')"
+smoke_organization_credit_code="91330300$(printf '%s' "owner-$smoke_organization_token" | cksum | awk '{printf "%010d", $1}')"
+smoke_foreign_organization_credit_code="91330300$(printf '%s' "foreign-$smoke_organization_token" | cksum | awk '{printf "%010d", $1}')"
+smoke_organization_password="Smoke-${smoke_organization_token}!o"
+smoke_foreign_organization_password="Smoke-${smoke_organization_token}!f"
+organization_credential_file="$work_dir/organization-credential.pdf"
+printf '%s' '%PDF-1.7
+1 0 obj
+<<>>
+endobj
+%%EOF
+' > "$organization_credential_file"
+
+assert_status "organization-owner-register" 201 \
+  -F "name=组织冒烟负责人" \
+  -F "phone=$smoke_organization_phone" \
+  -F "password=$smoke_organization_password" \
+  -F "organizationName=$smoke_organization_name" \
+  -F "creditCode=$smoke_organization_credit_code" \
+  -F 'documentType=business_license' \
+  -F "credential=@$organization_credential_file;type=application/pdf" \
+  "$base_url/api/auth/register/organization"
+assert_json_response "organization-owner-register"
+smoke_organization_id="$(json_path 'let input="";process.stdin.on("data",chunk=>input+=chunk).on("end",()=>{const data=JSON.parse(input);if(data.organization&&data.organization.id)process.stdout.write(encodeURIComponent(data.organization.id));});')"
+if test -z "$smoke_organization_id"; then
+  echo "Organization smoke registration returned no organization id" >&2
+  exit 1
+fi
+printf '%s' '{"status":"approved","reason":""}' | \
+assert_status "organization-owner-review" 200 \
+  -b "$cookie_jar" -H 'Content-Type: application/json' --data-binary @- \
+  -X PATCH "$base_url/api/admin/organizations/$smoke_organization_id/review"
+smoke_organization_cookie_jar="$work_dir/organization-owner.cookies"
+printf '{"phone":"%s","password":"%s"}' "$smoke_organization_phone" "$smoke_organization_password" | \
+assert_status "organization-owner-login" 200 \
+  -c "$smoke_organization_cookie_jar" -H 'Content-Type: application/json' --data-binary @- \
+  "$base_url/api/auth/login"
+unset smoke_organization_password
+assert_status "organization-event-join" 201 \
+  -b "$smoke_organization_cookie_jar" -X POST \
+  "$base_url/api/organization/events/$smoke_event_id/join"
+assert_status "organization-workspace" 200 \
+  -b "$smoke_organization_cookie_jar" \
+  "$base_url/api/organization/events/$smoke_event_id/workspace"
+assert_json_response "organization-workspace"
+if ! json_path 'let input="";process.stdin.on("data",chunk=>input+=chunk).on("end",()=>{const data=JSON.parse(input);const grades=(data.grades||[]).flatMap(group=>group.grades||[]);if(!data.organization||!data.organization.id||!data.organization.name||grades.length!==15)process.exit(2);});' >/dev/null; then
+  echo "organization-workspace did not return its organization identity and fifteen grades" >&2
+  exit 1
+fi
+printf '{"projectId":"%s","athlete":{"name":"组织冒烟选手","school":"%s","grade":"三年级","phone":"%s"}}' \
+  "$smoke_project_id" "$smoke_organization_name" "$smoke_organization_phone" | \
+assert_status "organization-registration-create" 201 \
+  -b "$smoke_organization_cookie_jar" -H 'Content-Type: application/json' --data-binary @- \
+  "$base_url/api/organization/events/$smoke_event_id/registrations"
+assert_json_response "organization-registration-create"
+organization_registration_id="$(json_path 'let input="";process.stdin.on("data",chunk=>input+=chunk).on("end",()=>{const data=JSON.parse(input);if(data.row&&data.row.id)process.stdout.write(encodeURIComponent(data.row.id));});')"
+if test -z "$organization_registration_id"; then
+  echo "Organization smoke registration returned no registration id" >&2
+  exit 1
+fi
+
+assert_status "organization-foreign-register" 201 \
+  -F "name=外部组织负责人" \
+  -F "phone=$smoke_foreign_organization_phone" \
+  -F "password=$smoke_foreign_organization_password" \
+  -F "organizationName=$smoke_foreign_organization_name" \
+  -F "creditCode=$smoke_foreign_organization_credit_code" \
+  -F 'documentType=business_license' \
+  -F "credential=@$organization_credential_file;type=application/pdf" \
+  "$base_url/api/auth/register/organization"
+assert_json_response "organization-foreign-register"
+smoke_foreign_organization_id="$(json_path 'let input="";process.stdin.on("data",chunk=>input+=chunk).on("end",()=>{const data=JSON.parse(input);if(data.organization&&data.organization.id)process.stdout.write(encodeURIComponent(data.organization.id));});')"
+if test -z "$smoke_foreign_organization_id"; then
+  echo "Foreign organization smoke registration returned no organization id" >&2
+  exit 1
+fi
+printf '%s' '{"status":"approved","reason":""}' | \
+assert_status "organization-foreign-review" 200 \
+  -b "$cookie_jar" -H 'Content-Type: application/json' --data-binary @- \
+  -X PATCH "$base_url/api/admin/organizations/$smoke_foreign_organization_id/review"
+smoke_foreign_organization_cookie_jar="$work_dir/organization-foreign.cookies"
+printf '{"phone":"%s","password":"%s"}' "$smoke_foreign_organization_phone" "$smoke_foreign_organization_password" | \
+assert_status "organization-foreign-login" 200 \
+  -c "$smoke_foreign_organization_cookie_jar" -H 'Content-Type: application/json' --data-binary @- \
+  "$base_url/api/auth/login"
+unset smoke_foreign_organization_password
+assert_status "organization-foreign-event-join" 201 \
+  -b "$smoke_foreign_organization_cookie_jar" -X POST \
+  "$base_url/api/organization/events/$smoke_event_id/join"
+printf '{"projectId":"%s","athlete":{"name":"外部组织选手","school":"%s","grade":"三年级","phone":"%s"}}' \
+  "$smoke_project_id" "$smoke_foreign_organization_name" "$smoke_foreign_organization_phone" | \
+assert_status "organization-foreign-registration-create" 201 \
+  -b "$smoke_foreign_organization_cookie_jar" -H 'Content-Type: application/json' --data-binary @- \
+  "$base_url/api/organization/events/$smoke_event_id/registrations"
+assert_json_response "organization-foreign-registration-create"
+foreign_registration_id="$(json_path 'let input="";process.stdin.on("data",chunk=>input+=chunk).on("end",()=>{const data=JSON.parse(input);if(data.row&&data.row.id)process.stdout.write(encodeURIComponent(data.row.id));});')"
+if test -z "$foreign_registration_id"; then
+  echo "Foreign organization smoke registration returned no registration id" >&2
+  exit 1
+fi
+assert_status "organization-records" 200 \
+  -b "$smoke_organization_cookie_jar" \
+  "$base_url/api/organization/registrations"
+assert_json_response "organization-records"
+if ! EXPECTED_ID="$organization_registration_id" docker compose exec -T -e EXPECTED_ID api node -e 'let input="";process.stdin.on("data",chunk=>input+=chunk).on("end",()=>{const rows=JSON.parse(input).rows||[];if(!rows.some(row=>row.id===process.env.EXPECTED_ID))process.exit(2);});' < "$response_file" >/dev/null; then
+  echo "organization-records did not include the owner fixture" >&2
+  exit 1
+fi
+assert_status "organization-records-foreign-isolated" 200 \
+  -b "$smoke_organization_cookie_jar" \
+  "$base_url/api/organization/registrations"
+if ! EXPECTED_ID="$foreign_registration_id" docker compose exec -T -e EXPECTED_ID api node -e 'let input="";process.stdin.on("data",chunk=>input+=chunk).on("end",()=>{const rows=JSON.parse(input).rows||[];if(rows.some(row=>row.id===process.env.EXPECTED_ID))process.exit(2);});' < "$response_file" >/dev/null; then
+  echo "organization-records exposed the foreign fixture" >&2
+  exit 1
+fi
+
 printf '%s' '{"submissionMode":"image_video"}' | \
 assert_status "submission-project-mode" 200 \
   -b "$cookie_jar" -H 'Content-Type: application/json' --data-binary @- \
