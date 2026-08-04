@@ -332,21 +332,20 @@ describe("App session integration", () => {
     const wrapper = mount(App);
     await flushPromises();
 
-    expect(wrapper.find('[data-user-nav="organizationWorkspace"]').exists()).toBe(true);
-    await wrapper.get('[data-user-nav="organizationWorkspace"]').trigger("click");
-    expect(wrapper.find('[data-testid="event-center-page"]').exists()).toBe(true);
-    expect(wrapper.text()).toContain("请先在赛事中心选择赛事");
+    expect(wrapper.findAll("[data-user-nav]").map((item) => item.text())).toEqual(["赛事工作台", "组织与成员", "证书查询"]);
+    expect(wrapper.find('[data-user-nav="organizationWorkspace"]').exists()).toBe(false);
 
-    await wrapper.get('[data-event-card="E2"] [data-action="open-workspace"]').trigger("click");
+    await wrapper.get('[data-event-card="E2"]').trigger("click");
     await flushPromises();
-    expect(wrapper.find('[data-user-nav="organizationWorkspace"]').exists()).toBe(true);
+    expect(wrapper.find('[data-testid="organization-event-workspace"]').exists()).toBe(true);
+    expect(wrapper.get('[data-user-nav="eventCenter"]').classes()).toContain("active");
     expect(new URLSearchParams(window.location.search).get("eventId")).toBe("E2");
 
     await wrapper.get('[data-user-nav="organization"]').trigger("click");
     await flushPromises();
     expect(wrapper.find('[data-testid="organization-console-page"]').exists()).toBe(true);
     expect(new URLSearchParams(window.location.search).has("eventId")).toBe(false);
-    expect(wrapper.find('[data-user-nav="organizationWorkspace"]').exists()).toBe(true);
+    expect(wrapper.find('[data-user-nav="organizationWorkspace"]').exists()).toBe(false);
   });
 
   it("filters all certificate history without retaining an active event context", async () => {

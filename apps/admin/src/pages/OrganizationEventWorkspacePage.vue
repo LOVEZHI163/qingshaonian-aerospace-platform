@@ -208,7 +208,7 @@ onBeforeUnmount(() => downloads.dispose());
 <template>
   <section class="organization-event-workspace" data-testid="organization-event-workspace">
     <p v-if="loading" class="hint">正在加载赛事工作台…</p>
-    <div v-else-if="!workspace" class="panel event-context-empty"><h3>未找到赛事工作台</h3><p class="hint">请从赛事中心选择已加入的赛事。</p></div>
+    <div v-else-if="!workspace" class="panel event-context-empty"><h3>未找到赛事工作台</h3><p class="hint">请从赛事工作台选择已加入的赛事。</p></div>
     <template v-else>
       <header class="panel organization-workspace-header"><div><h2>{{ event.name || "组织赛事工作台" }}</h2><p class="hint">{{ archived ? "该赛事已归档，报名记录仅可查看，证书仍可下载。" : "当前组织仅管理本赛事内的报名、成绩和证书。" }}</p></div><div class="workspace-summary"><span>报名 {{ summary.registrationCount || registrations.length }}</span><span>待审核 {{ summary.pendingRegistrationCount || 0 }}</span><span>证书 {{ summary.certificateCount || 0 }}</span></div></header>
       <nav class="workspace-tabs" aria-label="赛事工作台">

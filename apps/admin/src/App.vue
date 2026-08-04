@@ -67,16 +67,20 @@ const approvedOrganization = computed(() => (session.organizations.value || []).
   && organization.ownerUserId === currentUser.value?.id
 )));
 const adminActive = computed(() => currentView.value === "registration" ? "registrations" : currentView.value);
-const userActive = computed(() => currentUser.value?.type === "ordinary" && currentView.value === "registration" ? "eventCenter" : currentView.value);
+const userActive = computed(() => {
+  if (currentUser.value?.type === "ordinary" && currentView.value === "registration") return "eventCenter";
+  if (currentUser.value?.type === "organization" && currentView.value === "organizationWorkspace") return "eventCenter";
+  return currentView.value;
+});
 const userNavigation = computed(() => {
   if (currentUser.value?.type === "ordinary") {
     return [["eventCenter", "赛事中心"], ["registrationRecords", "报名记录"], ["certificates", "证书查询"]];
   }
-  if (!approvedOrganization.value) return [["eventCenter", "赛事中心"], ["organization", "审核进度"]];
-  return [["eventCenter", "赛事中心"], ["organizationWorkspace", "赛事工作台"], ["organization", "组织与成员"], ["certificates", "证书查询"]];
+  if (!approvedOrganization.value) return [["eventCenter", "赛事工作台"], ["organization", "审核进度"]];
+  return [["eventCenter", "赛事工作台"], ["organization", "组织与成员"], ["certificates", "证书查询"]];
 });
 const userHeaderEvent = computed(() => {
-  if (currentView.value === "eventCenter") return { name: "赛事中心", date: "", venue: "", registrationDeadline: "" };
+  if (currentView.value === "eventCenter") return { name: currentUser.value?.type === "organization" ? "赛事工作台" : "赛事中心", date: "", venue: "", registrationDeadline: "" };
   if (currentView.value === "organization") return { name: "组织与成员", date: "", venue: "", registrationDeadline: "" };
   if (currentView.value === "registrationRecords" && !recordsEventId.value) return { name: "报名记录", date: "", venue: "", registrationDeadline: "" };
   if (currentView.value === "certificates" && !certificateEventId.value) return { name: "我的证书", date: "", venue: "", registrationDeadline: "" };
@@ -290,11 +294,6 @@ function navigateUser(key) {
   if (key === "eventCenter") selectEventContext("");
   if (currentUser.value?.type === "ordinary" && ["registrationRecords", "certificates"].includes(key)) selectEventContext("");
   if (currentUser.value?.type === "ordinary" && key === "registration" && !selectedEventId.value) {
-    currentView.value = "eventCenter";
-    message.value = "请先在赛事中心选择赛事";
-    return;
-  }
-  if (currentUser.value?.type === "organization" && key === "organizationWorkspace" && !selectedEventId.value) {
     currentView.value = "eventCenter";
     message.value = "请先在赛事中心选择赛事";
     return;
