@@ -34,6 +34,7 @@ test("remote smoke keeps organization records scoped and validates the organizat
   assert.match(smoke, /data\.grades/);
   assert.match(smoke, /smoke_organization_token=/);
   assert.match(smoke, /smoke_event_cleanup_pending=0/);
+  assert.match(smoke, /smoke_user_cleanup_pending=0/);
   assert.match(smoke, /smoke_organization_cleanup_pending=0/);
   assert.match(smoke, /smoke_foreign_organization_cleanup_pending=0/);
   assert.match(smoke, /credential-cleanup/);
@@ -67,6 +68,7 @@ test("remote smoke keeps organization records scoped and validates the organizat
     "event-copy must lock cleanup intent before its request can create a fixture");
   assert.match(smoke, /recover_submission_smoke_event_id\(\)/);
   assert.match(smoke, /verify_submission_smoke_event_target\(\)/);
+  assert.match(smoke, /project\.eventId !== event\.id/);
   assert.match(smoke, /cleanup-events\.json/);
   assert.match(smoke, /event\.name === expectedName/);
   assert.match(smoke, /event\.name\.includes\(expectedToken\)/);
@@ -76,7 +78,7 @@ test("remote smoke keeps organization records scoped and validates the organizat
   assert.match(smoke, /if test -z "\$recovered_event_id"; then\s*smoke_event_cleanup_pending=0/);
   assert.match(smoke, /2\) smoke_organization_cleanup_pending=0/);
   assert.match(smoke, /2\) smoke_foreign_organization_cleanup_pending=0/);
-  const submissionCleanup = smoke.match(/cleanup_submission_smoke\(\) \{([\s\S]*?)\n\}/)?.[1] || "";
+  const submissionCleanup = smoke.match(/cleanup_submission_event_smoke\(\) \{([\s\S]*?)\n\}/)?.[1] || "";
   const archive = submissionCleanup.indexOf('/archive"');
   const deletion = submissionCleanup.indexOf('-X DELETE "$base_url/api/admin/events/$smoke_event_id"');
   assert.ok(
@@ -89,6 +91,28 @@ test("remote smoke keeps organization records scoped and validates the organizat
     organizationCleanup.split('verify_organization_cleanup_target').length - 1 >= 3,
     "organization cleanup must refresh and verify identity before each destructive request"
   );
+  const copiedFixtureVerification = smoke.indexOf('verify_submission_smoke_event_target "$smoke_event_id" 0', eventJson);
+  const copiedFixtureRefresh = smoke.lastIndexOf('refresh_submission_cleanup_events', copiedFixtureVerification);
+  const firstCopiedFixtureWrite = smoke.indexOf('assert_status "submission-event-current" 200', eventJson);
+  assert.ok(
+    copiedFixtureRefresh > eventJson && copiedFixtureVerification > copiedFixtureRefresh
+      && copiedFixtureVerification < firstCopiedFixtureWrite,
+    "copied event and project must be refreshed and verified before the first fixture write"
+  );
+  const userCreate = smoke.indexOf('assert_status "submission-user-create" 201');
+  const userPending = smoke.lastIndexOf('smoke_user_cleanup_pending=1', userCreate);
+  assert.ok(userPending >= 0 && userPending < userCreate,
+    "ordinary user cleanup intent must be locked before creating the user");
+  assert.match(smoke, /recover_submission_smoke_user_id\(\)/);
+  assert.match(smoke, /verify_submission_smoke_user_target\(\)/);
+  const userCleanup = smoke.match(/cleanup_submission_user_smoke\(\) \{([\s\S]*?)\n\}/)?.[1] || "";
+  assert.ok(
+    userCleanup.indexOf('verify_submission_smoke_user_target')
+      < userCleanup.indexOf('-X DELETE'),
+    "ordinary user cleanup must verify its exact identity before deletion"
+  );
+  assert.doesNotMatch(smoke, /\bsmoke_password=/);
+  assert.match(smoke, /SMOKE_PASSWORD_FILE=.*docker compose exec/);
   assert.doesNotMatch(smoke, /echo[^\r\n]*(?:password|token|cookie)/i);
 });
 

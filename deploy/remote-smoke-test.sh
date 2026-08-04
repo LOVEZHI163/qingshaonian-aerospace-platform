@@ -57,6 +57,9 @@ smoke_source_event_id=
 smoke_event_cleanup_pending=0
 original_current_event_id=
 smoke_user_id=
+smoke_user_name=
+smoke_user_phone=
+smoke_user_cleanup_pending=0
 smoke_organization_id=
 smoke_organization_name=
 smoke_organization_user_id=
@@ -284,11 +287,38 @@ recover_submission_smoke_event_id() {
 verify_submission_smoke_event_target() {
   event_id="$1"
   require_archived="$2"
+  require_project="$3"
   test -n "$event_id" && test -n "$smoke_event_name" && test -n "$submission_token" && test -n "$smoke_source_event_id" || return 1
-  EXPECTED_ID="$event_id" EXPECTED_NAME="$smoke_event_name" EXPECTED_TOKEN="$submission_token" SOURCE_EVENT_ID="$smoke_source_event_id" REQUIRE_ARCHIVED="$require_archived" docker compose exec -T -e EXPECTED_ID -e EXPECTED_NAME -e EXPECTED_TOKEN -e SOURCE_EVENT_ID -e REQUIRE_ARCHIVED api node -e 'let input="";process.stdin.on("data",chunk=>input+=chunk).on("end",()=>{const rows=JSON.parse(input).rows||[];const sourceEventId=process.env.SOURCE_EVENT_ID;const event=rows.find(row=>row.id===process.env.EXPECTED_ID);if(!event||event.name !== process.env.EXPECTED_NAME||!event.name.includes(process.env.EXPECTED_TOKEN)||event.id === sourceEventId)process.exit(2);if(process.env.REQUIRE_ARCHIVED === "1"&&(!event.archivedAt||event.isCurrent))process.exit(2);});' < "$cleanup_events_response" >/dev/null
+  if test "$require_project" -eq 1; then test -n "$smoke_project_id" || return 1; fi
+  EXPECTED_ID="$event_id" EXPECTED_PROJECT_ID="$smoke_project_id" EXPECTED_NAME="$smoke_event_name" EXPECTED_TOKEN="$submission_token" SOURCE_EVENT_ID="$smoke_source_event_id" REQUIRE_ARCHIVED="$require_archived" REQUIRE_PROJECT="$require_project" docker compose exec -T -e EXPECTED_ID -e EXPECTED_PROJECT_ID -e EXPECTED_NAME -e EXPECTED_TOKEN -e SOURCE_EVENT_ID -e REQUIRE_ARCHIVED -e REQUIRE_PROJECT api node -e 'let input="";process.stdin.on("data",chunk=>input+=chunk).on("end",()=>{const data=JSON.parse(input);const rows=data.rows||[];const sourceEventId=process.env.SOURCE_EVENT_ID;const event=rows.find(row=>row.id===process.env.EXPECTED_ID);const project=(data.projects||[]).find(row=>row.id===process.env.EXPECTED_PROJECT_ID);if(!event||event.name !== process.env.EXPECTED_NAME||!event.name.includes(process.env.EXPECTED_TOKEN)||event.id === sourceEventId||(process.env.REQUIRE_PROJECT === "1"&&(!project||project.eventId !== event.id)))process.exit(2);if(process.env.REQUIRE_ARCHIVED === "1"&&(!event.archivedAt||event.isCurrent))process.exit(2);});' < "$cleanup_events_response" >/dev/null
 }
 
-cleanup_submission_smoke() {
+refresh_submission_cleanup_users() {
+  cleanup_submission_users_response="$work_dir/cleanup-submission-users.json"
+  curl -sS -f -o "$cleanup_submission_users_response" -b "$cookie_jar" "$base_url/api/users"
+}
+
+recover_submission_smoke_user_id() {
+  test "$smoke_user_cleanup_pending" -eq 1 || return 0
+  refresh_submission_cleanup_users || return 1
+  recovered_user_id="$(EXPECTED_NAME="$smoke_user_name" EXPECTED_PHONE="$smoke_user_phone" EXPECTED_TOKEN="$submission_token" docker compose exec -T -e EXPECTED_NAME -e EXPECTED_PHONE -e EXPECTED_TOKEN api node -e 'let input="";process.stdin.on("data",chunk=>input+=chunk).on("end",()=>{const rows=JSON.parse(input).rows||[];const matches=rows.filter(user=>user.type==="ordinary"&&user.name===process.env.EXPECTED_NAME&&user.name.includes(process.env.EXPECTED_TOKEN)&&user.phone===process.env.EXPECTED_PHONE);if(matches.length>1)process.exit(2);if(matches[0])process.stdout.write(encodeURIComponent(matches[0].id));});' < "$cleanup_submission_users_response")" || return 1
+  if test -z "$recovered_user_id"; then
+    smoke_user_cleanup_pending=0
+    smoke_user_id=
+    return 0
+  fi
+  if test -n "$smoke_user_id" && test "$smoke_user_id" != "$recovered_user_id"; then
+    return 1
+  fi
+  smoke_user_id="$recovered_user_id"
+}
+
+verify_submission_smoke_user_target() {
+  test -n "$smoke_user_id" && test -n "$smoke_user_name" && test -n "$smoke_user_phone" && test -n "$submission_token" || return 1
+  EXPECTED_ID="$smoke_user_id" EXPECTED_NAME="$smoke_user_name" EXPECTED_PHONE="$smoke_user_phone" EXPECTED_TOKEN="$submission_token" docker compose exec -T -e EXPECTED_ID -e EXPECTED_NAME -e EXPECTED_PHONE -e EXPECTED_TOKEN api node -e 'let input="";process.stdin.on("data",chunk=>input+=chunk).on("end",()=>{const rows=JSON.parse(input).rows||[];const matches=rows.filter(user=>user.id===process.env.EXPECTED_ID&&user.type==="ordinary"&&user.name===process.env.EXPECTED_NAME&&user.name.includes(process.env.EXPECTED_TOKEN)&&user.phone===process.env.EXPECTED_PHONE);if(matches.length!==1)process.exit(2);});' < "$cleanup_submission_users_response" >/dev/null
+}
+
+cleanup_submission_event_smoke() {
   test "$smoke_event_cleanup_pending" -eq 1 || return 0
   recover_submission_smoke_event_id || {
     echo "submission-smoke-cleanup could not recover the exact temporary event" >&2
@@ -296,28 +326,45 @@ cleanup_submission_smoke() {
   }
   test "$smoke_event_cleanup_pending" -eq 1 || return 0
   refresh_submission_cleanup_events || return 1
-  verify_submission_smoke_event_target "$smoke_event_id" 0 || return 1
+  verify_submission_smoke_event_target "$smoke_event_id" 0 0 || return 1
   if test -n "$original_current_event_id"; then
     curl -sS -f -o /dev/null -b "$cookie_jar" -X POST \
       "$base_url/api/admin/events/$original_current_event_id/current" || return 1
   fi
   refresh_submission_cleanup_events || return 1
-  verify_submission_smoke_event_target "$smoke_event_id" 0 || return 1
+  verify_submission_smoke_event_target "$smoke_event_id" 0 0 || return 1
   curl -sS -f -o /dev/null -b "$cookie_jar" -X POST \
     "$base_url/api/admin/events/$smoke_event_id/archive" || return 1
   refresh_submission_cleanup_events || return 1
-  verify_submission_smoke_event_target "$smoke_event_id" 1 || return 1
+  verify_submission_smoke_event_target "$smoke_event_id" 1 0 || return 1
   cleanup_payload="{\"confirmName\":\"$smoke_event_name\"}"
   printf '%s' "$cleanup_payload" | curl -sS -f -o /dev/null -b "$cookie_jar" \
     -H 'Content-Type: application/json' --data-binary @- \
     -X DELETE "$base_url/api/admin/events/$smoke_event_id" || return 1
-  if test -n "$smoke_user_id"; then
-    curl -sS -f -o /dev/null -b "$cookie_jar" -X DELETE \
-      "$base_url/api/admin/users/$smoke_user_id" || return 1
-  fi
   smoke_event_cleanup_pending=0
   smoke_event_id=
+}
+
+cleanup_submission_user_smoke() {
+  test "$smoke_user_cleanup_pending" -eq 1 || return 0
+  recover_submission_smoke_user_id || return 1
+  test "$smoke_user_cleanup_pending" -eq 1 || return 0
+  refresh_submission_cleanup_users || return 1
+  verify_submission_smoke_user_target || return 1
+  curl -sS -f -o /dev/null -b "$cookie_jar" -X DELETE \
+    "$base_url/api/admin/users/$smoke_user_id" || return 1
+  smoke_user_cleanup_pending=0
   smoke_user_id=
+}
+
+cleanup_submission_smoke() {
+  cleanup_failed=0
+  cleanup_submission_event_smoke || cleanup_failed=1
+  cleanup_submission_user_smoke || cleanup_failed=1
+  if test "$cleanup_failed" -ne 0; then
+    echo "submission-smoke-cleanup=failed" >&2
+    return 1
+  fi
   echo "submission-smoke-cleanup=ok"
 }
 
@@ -446,6 +493,11 @@ smoke_event_id="$(json_path 'let input="";process.stdin.on("data",chunk=>input+=
 smoke_project_id="$(json_path 'let input="";process.stdin.on("data",chunk=>input+=chunk).on("end",()=>{const data=JSON.parse(input);const project=(data.projects||[])[0];if(project&&project.id)process.stdout.write(encodeURIComponent(project.id));});')"
 if test -z "$smoke_event_id" || test -z "$smoke_project_id"; then
   echo "Submission smoke fixture creation returned no event or project" >&2
+  exit 1
+fi
+refresh_submission_cleanup_events
+if ! verify_submission_smoke_event_target "$smoke_event_id" 0 1; then
+  echo "Submission smoke fixture did not match the copied event and project" >&2
   exit 1
 fi
 assert_status "submission-event-current" 200 -b "$cookie_jar" -X POST \
@@ -592,20 +644,27 @@ assert_status "submission-project-mode" 200 \
   -b "$cookie_jar" -H 'Content-Type: application/json' --data-binary @- \
   -X PATCH "$base_url/api/admin/projects/$smoke_project_id"
 
-smoke_phone="1$(date +%s)"
-smoke_password="Smoke-${submission_token}!a"
-printf '{"name":"上传冒烟用户","phone":"%s","password":"%s","type":"ordinary"}' "$smoke_phone" "$smoke_password" | \
+smoke_user_phone="1$(date +%s)"
+smoke_phone="$smoke_user_phone"
+smoke_user_name="上传冒烟用户-$submission_token"
+smoke_user_password_file="$work_dir/submission-user-password"
+printf 'Smoke-%s!a' "$submission_token" > "$smoke_user_password_file"
+smoke_user_cleanup_pending=1
+SMOKE_USER_NAME="$smoke_user_name" SMOKE_PHONE="$smoke_user_phone" SMOKE_PASSWORD_FILE="$smoke_user_password_file" docker compose exec -T -e SMOKE_USER_NAME -e SMOKE_PHONE -e SMOKE_PASSWORD_FILE api node -e 'let password="";process.stdin.on("data",chunk=>password+=chunk).on("end",()=>process.stdout.write(JSON.stringify({name:process.env.SMOKE_USER_NAME,phone:process.env.SMOKE_PHONE,password,type:"ordinary"})));' < "$smoke_user_password_file" | \
 assert_status "submission-user-create" 201 \
   -b "$cookie_jar" -H 'Content-Type: application/json' --data-binary @- \
   "$base_url/api/admin/users"
 assert_json_response "submission-user-create"
 smoke_user_id="$(json_path 'let input="";process.stdin.on("data",chunk=>input+=chunk).on("end",()=>{const data=JSON.parse(input);if(data.row&&data.row.id)process.stdout.write(encodeURIComponent(data.row.id));});')"
+if ! recover_submission_smoke_user_id || test "$smoke_user_cleanup_pending" -ne 1; then
+  echo "Submission smoke user did not match the exact temporary identity" >&2
+  exit 1
+fi
 smoke_cookie_jar="$work_dir/submission-user.cookies"
-printf '{"phone":"%s","password":"%s"}' "$smoke_phone" "$smoke_password" | \
+SMOKE_PHONE="$smoke_user_phone" SMOKE_PASSWORD_FILE="$smoke_user_password_file" docker compose exec -T -e SMOKE_PHONE -e SMOKE_PASSWORD_FILE api node -e 'let password="";process.stdin.on("data",chunk=>password+=chunk).on("end",()=>process.stdout.write(JSON.stringify({phone:process.env.SMOKE_PHONE,password})));' < "$smoke_user_password_file" | \
 assert_status "submission-user-login" 200 \
   -c "$smoke_cookie_jar" -H 'Content-Type: application/json' --data-binary @- \
   "$base_url/api/auth/login"
-unset smoke_password
 
 png_file="$work_dir/submission-work.png"
 video_file="$work_dir/submission-work.mp4"
