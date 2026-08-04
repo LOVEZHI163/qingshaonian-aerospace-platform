@@ -145,6 +145,24 @@ test("ordinary request is approved by its owner and compatibility URLs use the s
   }, { prefix: "membership-request-" });
 });
 
+test("concurrent personal accepts leave exactly one active relation and audit the winner", async () => {
+  await withTestServer(async ({ baseUrl, dbPath }) => {
+    const owner = await loginAs(baseUrl, "13800000011", "123456");
+    const otherOwner = await loginAs(baseUrl, "13800000012", "123456");
+    const ordinary = await registerAndLoginOrdinary(baseUrl, { name: "并发成员", phone: "13700000101", password: "Member101" });
+    const first = await responseJson(await fetch(`${baseUrl}/api/organization/invitations`, jsonOptions("POST", { phone: "13700000101" }, owner.cookie)));
+    const second = await responseJson(await fetch(`${baseUrl}/api/organization/invitations`, jsonOptions("POST", { phone: "13700000101" }, otherOwner.cookie)));
+    const responses = await Promise.all([first, second].map((relation) => fetch(
+      `${baseUrl}/api/me/organization-relations/${relation.row.id}`,
+      jsonOptions("PATCH", { action: "accept" }, ordinary.cookie)
+    )));
+    assert.deepEqual(responses.map((response) => response.status).sort(), [200, 409]);
+    const db = JSON.parse(await fs.readFile(dbPath, "utf8"));
+    assert.equal(db.memberships.filter((row) => row.userId === ordinary.user.id && row.status === "active").length, 1);
+    assert.equal(db.auditLogs.filter((row) => row.actorUserId === ordinary.user.id && row.action === "membership.personal.accept").length, 1);
+  }, { prefix: "membership-concurrent-accept-" });
+});
+
 test("legacy membership PATCH derives a personal leave from the authenticated member", async () => {
   await withTestServer(async ({ baseUrl }) => {
     const ordinary = await loginAs(baseUrl, "13800000001", "123456");

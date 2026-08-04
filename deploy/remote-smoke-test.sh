@@ -179,6 +179,28 @@ assert_status "admin-organizations" 200 \
   "$base_url/api/admin/organizations"
 assert_json_response "admin-organizations"
 
+assert_status "admin-users" 200 \
+  -b "$cookie_jar" \
+  "$base_url/api/users"
+assert_json_response "admin-users"
+if ! json_path 'let input="";process.stdin.on("data",chunk=>input+=chunk).on("end",()=>{const rows=JSON.parse(input).rows||[];if(rows.some(row=>"password" in row||"sessionVersion" in row))process.exit(2);});' >/dev/null; then
+  echo "admin-users leaked a sensitive DTO field" >&2
+  exit 1
+fi
+
+credential_path="$(json_path 'let input="";process.stdin.on("data",chunk=>input+=chunk).on("end",()=>{const row=(JSON.parse(input).rows||[]).find(item=>(item.documents||[]).some(document=>document.isCurrent));const doc=row&&(row.documents||[]).find(document=>document.isCurrent);if(row&&doc)process.stdout.write("/api/organizations/"+encodeURIComponent(row.id)+"/credential/"+encodeURIComponent(doc.id));});')"
+if test -n "$credential_path"; then
+  assert_status "admin-organization-credential" 200 -b "$cookie_jar" "$base_url$credential_path"
+else
+  echo "admin-organization-credential-skipped=no-current-credential"
+fi
+
+if ! docker compose exec -T db psql -U "${POSTGRES_USER:-postgres}" -d "${POSTGRES_DB:-aerogp}" -tAc "SELECT 1 FROM schema_migrations WHERE name = '012-membership-data-normalization.sql'" | grep -qx 1; then
+  echo "membership migration 012 is not recorded" >&2
+  exit 1
+fi
+echo "membership-migration-012=applied"
+
 assert_status "admin-event-error" 404 \
   -b "$cookie_jar" \
   "$base_url/api/admin/events/__smoke_missing_event__/registrations"
