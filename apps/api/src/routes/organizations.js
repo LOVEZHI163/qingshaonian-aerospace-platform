@@ -21,7 +21,22 @@ function publicDocument(document, currentDocumentId = null) {
 
 function publicOrganization(organization) {
   if (!organization) return null;
-  return { ...organization };
+  return {
+    id: organization.id,
+    name: organization.name,
+    code: organization.code,
+    creditCode: organization.creditCode,
+    ownerUserId: organization.ownerUserId,
+    contactName: organization.contactName,
+    contactPhone: organization.contactPhone,
+    status: organization.status,
+    reviewStatus: organization.reviewStatus,
+    rejectReason: organization.rejectReason,
+    reviewedBy: organization.reviewedBy,
+    reviewedAt: organization.reviewedAt,
+    currentDocumentId: organization.currentDocumentId,
+    createdAt: organization.createdAt
+  };
 }
 
 function participationSummary(db, participation) {
@@ -190,7 +205,8 @@ export function createOrganizationsRouter({ store, requireUser, requireAdmin, re
     if (!document) return res.status(404).json({ error: "资质文件不存在" });
     const isOwner = req.user.type === "organization"
       && db.organizations.some((organization) => organization.id === req.params.id && organization.status === "active" && organization.ownerUserId === req.user.id);
-    if (!isOwner) return res.status(403).json({ error: "无权下载该组织资质" });
+    const isAdmin = req.user.type === "admin";
+    if (!isOwner && !isAdmin) return res.status(403).json({ error: "无权下载该组织资质" });
     res.type(document.mimeType).attachment(document.originalName).sendFile(document.filePath);
   }));
 

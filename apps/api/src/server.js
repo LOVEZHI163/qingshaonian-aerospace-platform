@@ -79,8 +79,15 @@ function athleteKey(athlete) {
 
 function publicUser(user) {
   if (!user) return null;
-  const { password, sessionVersion, ...safe } = user;
-  return safe;
+  return {
+    id: user.id,
+    name: user.name,
+    phone: user.phone,
+    type: user.type,
+    status: user.status,
+    mustChangePassword: Boolean(user.mustChangePassword),
+    createdAt: user.createdAt
+  };
 }
 
 function isOrganizationOperational(db, organizationId) {

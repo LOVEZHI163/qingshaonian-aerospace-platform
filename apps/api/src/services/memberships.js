@@ -139,6 +139,7 @@ export function requestMembership(db, user, input, makeId, now) {
     throw businessError(403, "仅有效普通用户可以申请加入组织", "ORDINARY_USER_REQUIRED");
   }
   const organization = requireOperationalOrganization(db, String(input?.organizationId || "").trim());
+  ensureNoOtherActiveMembership(db, user.id, db.memberships.find((row) => row.userId === user.id && row.organizationId === organization.id)?.id);
   return mutation(organization, upsertPending(db, {
     user, organization, direction: "user_request", note: input?.note, makeId, now
   }));
@@ -159,6 +160,7 @@ export function inviteMembership(db, owner, input, makeId, now) {
   const organization = requireOwnerOrganization(db, owner);
   const candidate = findInvitationCandidate(db, owner, input?.phone);
   const user = db.users.find((row) => row.id === candidate.id);
+  ensureNoOtherActiveMembership(db, user.id, db.memberships.find((row) => row.userId === user.id && row.organizationId === organization.id)?.id);
   return mutation(organization, upsertPending(db, {
     user, organization, direction: "organization_invite", note: input?.note, makeId, now
   }));
@@ -171,8 +173,10 @@ export function actAsPersonalUser(db, user, membershipId, action, now) {
   const row = requireMembership(db, membershipId);
   if (row.userId !== user.id) throw businessError(403, "无权操作该成员关系", "MEMBERSHIP_FORBIDDEN");
   const transition = requireTransition(row, action, PERSONAL_ACTIONS);
-  const organization = requireOperationalOrganization(db, row.organizationId);
+  const organization = db.organizations.find((item) => item.id === row.organizationId);
+  if (!organization) throw businessError(404, "组织不存在", "ORGANIZATION_NOT_FOUND");
   if (transition.to === "active") {
+    requireOperationalOrganization(db, row.organizationId);
     requireActiveOrdinaryMember(db, row.userId);
     ensureNoOtherActiveMembership(db, row.userId, row.id);
   }
@@ -207,7 +211,7 @@ export function listPersonalRelations(db, user) {
   const relations = db.memberships.flatMap((row) => {
     if (row.userId !== user?.id) return [];
     const organization = db.organizations.find((item) => item.id === row.organizationId);
-    if (!organization || organization.status !== "active" || organization.reviewStatus !== "approved") return [];
+    if (!organization) return [];
     return [relationWithOrganization(row, organization)];
   });
   return {

@@ -10,6 +10,24 @@ async function withServer(fn) {
 
 const asJson = (res) => res.json();
 
+test("admin global user and organization DTOs never expose storage or session internals", async () => {
+  await withServer(async (baseUrl, { dbPath }) => {
+    const db = JSON.parse(await fs.readFile(dbPath, "utf8"));
+    db.users.find((user) => user.id === "U1001").privateAuditToken = "do-not-leak";
+    db.organizations[0].privateStorageMarker = "do-not-leak";
+    await fs.writeFile(dbPath, JSON.stringify(db), "utf8");
+
+    const admin = await loginAs(baseUrl, "13900000000", "admin123");
+    const users = (await asJson(await fetch(`${baseUrl}/api/users`, withSession(admin.cookie)))).rows;
+    const organizations = (await asJson(await fetch(`${baseUrl}/api/admin/organizations?eventId=wz-aerospace-2026`, withSession(admin.cookie)))).rows;
+
+    assert.equal(Object.hasOwn(users.find((user) => user.id === "U1001"), "privateAuditToken"), false);
+    assert.equal(Object.hasOwn(users.find((user) => user.id === "U1001"), "password"), false);
+    assert.equal(Object.hasOwn(organizations[0], "privateStorageMarker"), false);
+    assert.equal(Object.hasOwn(organizations[0], "filePath"), false);
+  });
+});
+
 test("admin can create, update, and delete an ordinary user", async () => {
   await withServer(async (baseUrl) => {
     const admin = await loginAs(baseUrl, "13900000000", "admin123");

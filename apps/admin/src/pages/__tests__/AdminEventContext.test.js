@@ -41,13 +41,14 @@ describe("administrator event context", () => {
     expect(apiMock.mock.calls.some(([path]) => /\/api\/admin\/(dashboard|events\/[^/]+\/(registrations|certificates))/.test(path))).toBe(false);
 
     await wrapper.get("[data-event-switcher]").setValue("E2");
+    expect(new URLSearchParams(window.location.search).get("eventId")).toBe("E2");
     await wrapper.get('[data-nav="registrations"]').trigger("click");
     await flushPromises();
     expect(apiMock.mock.calls.some(([path]) => path.startsWith("/api/admin/events/E2/registrations?"))).toBe(true);
 
     await wrapper.get('[data-action="manage-certificates"]').trigger("click");
     await flushPromises();
-    expect(wrapper.get("[data-event-switcher]").element.value).toBe("E2");
+    expect(wrapper.find("[data-event-switcher]").exists()).toBe(false);
     expect(new URLSearchParams(window.location.search).get("eventId")).toBe("E2");
   });
 });

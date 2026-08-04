@@ -3,9 +3,10 @@ import { computed, onBeforeUnmount, ref, watch } from "vue";
 
 import { api, apiBlob } from "../lib/api.js";
 import { createBlobDownloadManager } from "../lib/download.js";
+import EventContextSwitcher from "../components/EventContextSwitcher.vue";
 
-defineEmits(["navigate"]);
-const props = defineProps({ eventId: { type: String, default: "" } });
+const emit = defineEmits(["navigate", "update:eventId"]);
+const props = defineProps({ eventId: { type: String, default: "" }, events: { type: Array, default: () => [] } });
 
 const moduleOptions = [
   { id: "operations", label: "运营总览", description: "核心数据与常用操作" },
@@ -184,6 +185,7 @@ onBeforeUnmount(() => downloads.dispose());
         <h3>赛事运营工作台</h3>
         <p>{{ data.event.name || "请选择赛事" }}</p>
       </div>
+      <EventContextSwitcher :events="events" :model-value="eventId" include-archived @update:model-value="emit('update:eventId', $event)" />
     </div>
 
     <p v-if="!eventId" class="hint">请先从顶部选择赛事。</p>

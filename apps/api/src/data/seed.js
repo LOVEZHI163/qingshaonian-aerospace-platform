@@ -222,6 +222,22 @@ export function ensureDbShape(db) {
   }
   for (const marker of db.fileCleanupJournal) marker.lastAttemptAt ||= marker.createdAt;
   db.memberships ||= [];
+  const userById = new Map(db.users.map((user) => [user.id, user]));
+  for (const membership of db.memberships) {
+    const member = userById.get(membership.userId);
+    const isOrdinaryMember = member?.type === "ordinary";
+    const isLegacyOwnerOrSystem = membership.role === "owner" || membership.role === "system";
+    const isUnboundInvitation = membership.direction === "organization_invite" && !membership.userId;
+    if ((isLegacyOwnerOrSystem || !isOrdinaryMember) && membership.status === "active") {
+      membership.status = "removed";
+    }
+    if (isUnboundInvitation && membership.status === "pending") {
+      membership.status = "rejected";
+    }
+    membership.role ||= "member";
+    membership.direction ||= "user_request";
+    membership.updatedAt ||= membership.createdAt || new Date(0).toISOString();
+  }
   db.events ||= structuredClone([EVENT]);
   db.projects ||= structuredClone(PROJECTS);
   for (const project of db.projects) project.submissionMode ||= "none";

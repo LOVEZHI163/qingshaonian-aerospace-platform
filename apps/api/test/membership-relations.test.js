@@ -145,6 +145,18 @@ test("ordinary request is approved by its owner and compatibility URLs use the s
   }, { prefix: "membership-request-" });
 });
 
+test("legacy membership PATCH derives a personal leave from the authenticated member", async () => {
+  await withTestServer(async ({ baseUrl }) => {
+    const ordinary = await loginAs(baseUrl, "13800000001", "123456");
+    const response = await fetch(
+      `${baseUrl}/api/memberships/M1002`,
+      jsonOptions("PATCH", { status: "removed" }, ordinary.cookie)
+    );
+    assert.equal(response.status, 200);
+    assert.equal((await responseJson(response)).row.status, "removed");
+  }, { prefix: "membership-legacy-personal-" });
+});
+
 test("owner approval audits every other pending relation it automatically rejects", async () => {
   await withTestServer(async ({ baseUrl, dbPath }) => {
     const owner = await loginAs(baseUrl, "13800000011", "123456");
@@ -345,14 +357,8 @@ test("accepting one organization rejects and audits other pending relations whil
     const renewedResponse = await fetch(`${baseUrl}/api/organization/invitations`, jsonOptions(
       "POST", { phone: "13700000024" }, otherOwner.cookie
     ));
-    assert.equal(renewedResponse.status, 201);
-    const renewed = await responseJson(renewedResponse);
-    const conflict = await fetch(
-      `${baseUrl}/api/me/organization-relations/${renewed.row.id}`,
-      jsonOptions("PATCH", { action: "accept" }, ordinary.cookie)
-    );
-    assert.equal(conflict.status, 409);
-    assert.equal((await responseJson(conflict)).code, "MEMBERSHIP_ACTIVE_CONFLICT");
+    assert.equal(renewedResponse.status, 409);
+    assert.equal((await responseJson(renewedResponse)).code, "MEMBERSHIP_ACTIVE_CONFLICT");
 
     const stored = JSON.parse(await fs.readFile(dbPath, "utf8"));
     const automaticAudits = stored.auditLogs.filter((row) => row.action === "membership.auto-reject");

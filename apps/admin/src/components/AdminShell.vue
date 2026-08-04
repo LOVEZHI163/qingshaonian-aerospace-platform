@@ -1,15 +1,11 @@
 <script setup>
 import { ref } from "vue";
 
-import EventContextSwitcher from "./EventContextSwitcher.vue";
-
 defineProps({
-  active: { type: String, default: "overview" },
-  events: { type: Array, default: () => [] },
-  eventId: { type: String, default: "" }
+  active: { type: String, default: "overview" }
 });
 
-const emit = defineEmits(["navigate", "update:eventId"]);
+const emit = defineEmits(["navigate"]);
 
 const groups = [
   { label: "工作台", items: [["overview", "概览"]] },
@@ -69,7 +65,6 @@ function navigate(view) {
           @click="mobileSidebarOpen = true"
         >☰</button>
         <slot name="header" />
-        <EventContextSwitcher :events="events" :model-value="eventId" include-archived @update:model-value="$emit('update:eventId', $event)" />
       </header>
       <main class="admin-main"><slot /></main>
     </div>

@@ -17,7 +17,7 @@ function reportError(error, fallback) {
   emit("error", message.value);
 }
 
-async function loadRelations() {
+async function loadRelations({ rethrow = false } = {}) {
   loading.value = true;
   try {
     const payload = await api("/api/me/organization-relations");
@@ -27,6 +27,7 @@ async function loadRelations() {
       invitations: Array.isArray(payload.invitations) ? payload.invitations : []
     };
   } catch (error) {
+    if (rethrow) throw error;
     reportError(error, "组织关系加载失败");
   } finally {
     loading.value = false;
@@ -59,7 +60,7 @@ async function requestOrganization(organization) {
       method: "POST",
       body: JSON.stringify({ organizationId: organization.id, note: note.value.trim() })
     });
-    await loadRelations();
+    await loadRelations({ rethrow: true });
     message.value = "已提交加入申请，等待组织审核。";
     emit("organization-changed");
   } catch (error) {
@@ -76,7 +77,7 @@ async function updateRelation(row, action) {
       method: "PATCH",
       body: JSON.stringify({ action })
     });
-    await loadRelations();
+    await loadRelations({ rethrow: true });
     emit("organization-changed");
   } catch (error) {
     reportError(error, "组织关系操作失败");

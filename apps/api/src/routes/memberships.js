@@ -40,6 +40,15 @@ function legacyOwnerAction(db, membershipId, status) {
   return row.direction === "organization_invite" ? "cancel" : "reject";
 }
 
+function legacyPersonalAction(row, status) {
+  if (!LEGACY_STATUSES.has(status)) {
+    throw routeError(422, "状态不合法", "MEMBERSHIP_ACTION_INVALID");
+  }
+  if (status === "active") return "accept";
+  if (status === "removed") return "leave";
+  return row.direction === "user_request" ? "withdraw" : "reject";
+}
+
 function legacyMembershipDto(row) {
   return {
     id: row.id,
@@ -161,12 +170,18 @@ export function createMembershipsRouter({
 
   router.patch("/memberships/:id", ...authenticated, mutationAsyncRoute(async (req, res) => {
     const db = await store.readDb();
-    const action = legacyOwnerAction(db, req.params.id, req.body?.status);
-    const result = actAsOrganizationOwner(db, req.user, req.params.id, action, now);
-    auditMutation(db, req.user, `membership.organization.${action}`, result, now());
+    const row = db.memberships.find((item) => item.id === req.params.id);
+    const isPersonalActor = req.user.type === "ordinary" && row?.userId === req.user.id;
+    const action = isPersonalActor
+      ? legacyPersonalAction(row, req.body?.status)
+      : legacyOwnerAction(db, req.params.id, req.body?.status);
+    const result = isPersonalActor
+      ? actAsPersonalUser(db, req.user, req.params.id, action, now)
+      : actAsOrganizationOwner(db, req.user, req.params.id, action, now);
+    auditMutation(db, req.user, `membership.${isPersonalActor ? "personal" : "organization"}.${action}`, result, now());
     await store.writeDb(db);
-    const row = db.memberships.find((item) => item.id === result.row.id);
-    res.json({ row: legacyMembershipDto(row) });
+    const responseRow = db.memberships.find((item) => item.id === result.row.id);
+    res.json({ row: legacyMembershipDto(responseRow) });
   }));
 
   return router;

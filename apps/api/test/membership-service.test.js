@@ -57,6 +57,26 @@ test("ordinary request and owner invitation create pending member relations", ()
   assert.equal(request.changed, true);
 });
 
+test("creation rejects a user who already has an active relation in another organization", () => {
+  const db = fixture();
+  db.memberships.push({ id: "M-ACTIVE", userId: "U1", organizationId: "O1", role: "member", status: "active", direction: "user_request", note: "", createdAt: now(), updatedAt: now() });
+  assert.throws(() => requestMembership(db, db.users[0], { organizationId: "O2" }, makeId, now), { code: "MEMBERSHIP_ACTIVE_CONFLICT" });
+  assert.throws(() => inviteMembership(db, db.users[2], { phone: "13700000001" }, makeId, now), { code: "MEMBERSHIP_ACTIVE_CONFLICT" });
+  assert.equal(db.memberships.filter((row) => row.status === "pending").length, 0);
+});
+
+test("disabled organization relations remain visible and can be left or withdrawn", () => {
+  const db = fixture();
+  db.organizations[0].status = "disabled";
+  db.memberships.push(
+    { id: "M-ACTIVE", userId: "U1", organizationId: "O1", role: "member", status: "active", direction: "user_request", note: "", createdAt: now(), updatedAt: now() },
+    { id: "M-PENDING", userId: "U1", organizationId: "O2", role: "member", status: "pending", direction: "user_request", note: "", createdAt: now(), updatedAt: now() }
+  );
+  assert.equal(listPersonalRelations(db, db.users[0]).active[0].id, "M-ACTIVE");
+  assert.equal(actAsPersonalUser(db, db.users[0], "M-ACTIVE", "leave", now).row.status, "removed");
+  assert.equal(actAsPersonalUser(db, db.users[0], "M-PENDING", "withdraw", now).row.status, "rejected");
+});
+
 test("membership creation only accepts operational organizations and active ordinary candidates", () => {
   const db = fixture();
   db.organizations[0].reviewStatus = "pending";

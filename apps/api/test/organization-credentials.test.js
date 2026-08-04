@@ -116,7 +116,8 @@ test("organization registration review keeps pending organizations outside organ
     assert.equal(Object.hasOwn(reviewedOrganization.documents[0], "filePath"), false);
 
     const adminCredential = await fetch(`${baseUrl}/api/organizations/${payload.organization.id}/credential/${payload.document.id}`, withSession(admin.cookie));
-    assert.equal(adminCredential.status, 403);
+    assert.equal(adminCredential.status, 200);
+    assert.deepEqual(Buffer.from(await adminCredential.arrayBuffer()), pdfBuffer);
     const credential = await fetch(`${baseUrl}/api/organizations/${payload.organization.id}/credential/${payload.document.id}`, withSession(owner.cookie));
     assert.equal(credential.status, 200);
     assert.deepEqual(Buffer.from(await credential.arrayBuffer()), pdfBuffer);
@@ -717,6 +718,21 @@ test("legacy file snapshots migrate to approved while new organizations remain p
   assert.equal(newOrganization.creditCode, "PENDING-new-org");
   assert.equal(secondNewOrganization.creditCode, "PENDING-new-org-two");
   assert.notEqual(newOrganization.creditCode, secondNewOrganization.creditCode);
+});
+
+test("legacy owner and unbound invitation memberships are normalized out of actionable summaries", () => {
+  const db = ensureDbShape({
+    users: [{ id: "U1", type: "organization" }, { id: "U2", type: "ordinary" }],
+    organizations: [{ id: "O1", createdAt: "2026-01-01T00:00:00.000Z" }],
+    memberships: [
+      { id: "M-owner", userId: "U1", organizationId: "O1", role: "owner", status: "active" },
+      { id: "M-unbound", userId: null, organizationId: "O1", direction: "organization_invite", status: "pending" },
+      { id: "M-member", userId: "U2", organizationId: "O1", role: "member", status: "active" }
+    ]
+  });
+  assert.equal(db.memberships.find((row) => row.id === "M-owner").status, "removed");
+  assert.equal(db.memberships.find((row) => row.id === "M-unbound").status, "rejected");
+  assert.equal(db.memberships.find((row) => row.id === "M-member").status, "active");
 });
 
 test("file snapshots deterministically migrate currentDocumentId by uploadedAt and then id", () => {
