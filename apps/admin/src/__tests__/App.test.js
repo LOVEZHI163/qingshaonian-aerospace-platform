@@ -217,6 +217,59 @@ describe("App session integration", () => {
     expect(wrapper.find('[data-user-nav="registrationRecords"]').exists()).toBe(true);
   });
 
+  it("refreshes the session and account events after an organization relation changes", async () => {
+    window.history.replaceState({}, "", "/admin/?view=registration&eventId=E2");
+    sessionUser.value = { id: "U1", type: "ordinary", name: "用户", mustChangePassword: false };
+    let membershipActive = false;
+    apiMock.mockImplementation(async (path, options = {}) => {
+      if (path === "/api/public/event") return publicData();
+      if (path === "/api/me/events") return {
+        rows: [{
+          event: { id: "E2", name: "春季赛" },
+          registrationState: "open",
+          organizations: [{ organization: { id: "O1", name: "实验学校" }, organizationJoined: membershipActive }]
+        }]
+      };
+      if (path === "/api/me/registration-context?eventId=E2") return {
+        event: { id: "E2", name: "春季赛" },
+        organizations: [{ id: "O1", name: "实验学校" }],
+        defaultOrganizationId: "O1",
+        projects: [],
+        grades: []
+      };
+      if (path === "/api/me/organization-relations") return membershipActive
+        ? { active: [{ id: "M1", organization: { id: "O1", name: "实验学校" } }], requests: [], invitations: [] }
+        : { active: [], requests: [], invitations: [{ id: "M1", organization: { id: "O1", name: "实验学校" } }] };
+      if (path === "/api/me/organization-relations/M1" && options.method === "PATCH") {
+        membershipActive = true;
+        return { ok: true };
+      }
+      return { rows: [] };
+    });
+    const wrapper = mount(App);
+    await flushPromises();
+
+    await wrapper.get('[data-user-nav="myOrganization"]').trigger("click");
+    await flushPromises();
+    const registrationContextCalls = apiMock.mock.calls.filter(([path]) => path === "/api/me/registration-context?eventId=E2").length;
+
+    await wrapper.get('[data-action="accept-organization-invitation-M1"]').trigger("click");
+    await flushPromises();
+
+    expect(session.restore).toHaveBeenCalledTimes(2);
+    expect(session.loadAccountEvents).toHaveBeenCalledTimes(2);
+    expect(apiMock.mock.calls.filter(([path]) => path === "/api/me/registration-context?eventId=E2")).toHaveLength(registrationContextCalls);
+
+    await wrapper.get('[data-user-nav="eventCenter"]').trigger("click");
+    await flushPromises();
+    await wrapper.get('[data-event-card="E2"]').trigger("click");
+    await flushPromises();
+
+    const organizationOption = wrapper.get('select option[value="O1"]');
+    expect(organizationOption.attributes("disabled")).toBeUndefined();
+    expect(wrapper.get("select").element.value).toBe("O1");
+  });
+
   it("restores an authorized event slug as its canonical event id", async () => {
     window.history.replaceState({}, "", "/admin/?view=registration&eventSlug=spring-cup");
     sessionUser.value = { id: "U1", type: "ordinary", name: "用户", mustChangePassword: false };

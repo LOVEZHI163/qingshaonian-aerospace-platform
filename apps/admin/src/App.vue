@@ -10,6 +10,7 @@ import DashboardPage from "./pages/DashboardPage.vue";
 import EventCenterPage from "./pages/EventCenterPage.vue";
 import EventManagementPage from "./pages/EventManagementPage.vue";
 import MyCertificatesPage from "./pages/MyCertificatesPage.vue";
+import MyOrganizationPage from "./pages/MyOrganizationPage.vue";
 import OrganizationConsolePage from "./pages/OrganizationConsolePage.vue";
 import OrganizationEventWorkspacePage from "./pages/OrganizationEventWorkspacePage.vue";
 import OrganizationManagementPage from "./pages/OrganizationManagementPage.vue";
@@ -31,7 +32,7 @@ const releaseBlocked = ref(false);
 const releaseMessage = ref("");
 const userSidebarOpen = ref(false);
 const certificateRegistrationId = ref("");
-const DEEP_LINK_VIEWS = new Set(["overview", "events", "siteContent", "organizations", "registration", "registrationRecords", "records", "certificates", "users", "organization", "eventCenter", "organizationWorkspace"]);
+const DEEP_LINK_VIEWS = new Set(["overview", "events", "siteContent", "organizations", "registration", "registrationRecords", "records", "certificates", "users", "organization", "eventCenter", "organizationWorkspace", "myOrganization"]);
 const SAFE_EVENT_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 const initialParams = new URLSearchParams(window.location.search);
 const requestedView = DEEP_LINK_VIEWS.has(initialParams.get("view")) ? initialParams.get("view") : "";
@@ -74,13 +75,14 @@ const userActive = computed(() => {
 });
 const userNavigation = computed(() => {
   if (currentUser.value?.type === "ordinary") {
-    return [["eventCenter", "赛事中心"], ["registrationRecords", "报名记录"], ["certificates", "证书查询"]];
+    return [["eventCenter", "赛事中心"], ["myOrganization", "我的组织"], ["registrationRecords", "报名记录"], ["certificates", "证书查询"]];
   }
   if (!approvedOrganization.value) return [["eventCenter", "赛事工作台"], ["organization", "审核进度"]];
   return [["eventCenter", "赛事工作台"], ["organization", "组织与成员"], ["certificates", "证书查询"]];
 });
 const userHeaderEvent = computed(() => {
   if (currentView.value === "eventCenter") return { name: currentUser.value?.type === "organization" ? "赛事工作台" : "赛事中心", date: "", venue: "", registrationDeadline: "" };
+  if (currentView.value === "myOrganization") return { name: "我的组织", date: "", venue: "", registrationDeadline: "" };
   if (currentView.value === "organization") return { name: "组织与成员", date: "", venue: "", registrationDeadline: "" };
   if (currentView.value === "registrationRecords" && !recordsEventId.value) return { name: "报名记录", date: "", venue: "", registrationDeadline: "" };
   if (currentView.value === "certificates" && !certificateEventId.value) return { name: "我的证书", date: "", venue: "", registrationDeadline: "" };
@@ -197,7 +199,7 @@ function targetView(user = currentUser.value) {
     ? new Set(["overview", "events", "siteContent", "organizations", "registration", "certificates", "users"])
     : user.type === "organization"
       ? new Set(["eventCenter", "organizationWorkspace", "certificates", "organization"])
-      : new Set(["eventCenter", "registration", "registrationRecords", "certificates"]);
+      : new Set(["eventCenter", "registration", "registrationRecords", "certificates", "myOrganization"]);
   if (user.type === "organization") return new Set(["eventCenter", "organizationWorkspace", "certificates", "organization"]).has(routeView)
     ? routeView
     : defaultView(user);
@@ -343,6 +345,11 @@ function handleError(error) {
   message.value = String(error || "操作失败，请稍后重试");
 }
 
+async function refreshPersonalOrganization() {
+  await session.restore();
+  await loadAccountEvents();
+}
+
 function handleWorkspaceAccessDenied(error) {
   selectEventContext("");
   currentView.value = "eventCenter";
@@ -457,7 +464,8 @@ onMounted(async () => {
       </header>
       <p v-if="message" class="message">{{ message }}</p>
       <EventCenterPage v-if="currentView === 'eventCenter'" :account-type="currentUser.type" @open-event="openAccountEvent" />
-      <RegistrationPage v-if="currentUser.type === 'ordinary' && currentView === 'registration'" :event-id="registrationEventId" :account-type="currentUser.type" :event-organizations="selectedAccountEvent?.organizations || []" :registration-state="selectedAccountEvent?.registrationState || ''" :fallback-context="{ projects: eventData.projects }" @context="useRegistrationEvent" @registered="message = '报名已提交，等待审核'" @error="handleError" />
+      <RegistrationPage v-else-if="currentUser.type === 'ordinary' && currentView === 'registration'" :event-id="registrationEventId" :account-type="currentUser.type" :event-organizations="selectedAccountEvent?.organizations || []" :registration-state="selectedAccountEvent?.registrationState || ''" :fallback-context="{ projects: eventData.projects }" @context="useRegistrationEvent" @registered="message = '报名已提交，等待审核'" @error="handleError" />
+      <MyOrganizationPage v-else-if="currentView === 'myOrganization'" @organization-changed="refreshPersonalOrganization" @error="handleError" />
       <RegistrationRecordsPage :key="`records:${recordsEventId}`" v-else-if="currentView === 'registrationRecords'" :event-id="recordsEventId" @error="handleError" />
       <MyCertificatesPage :key="`certificates:${certificateEventId}`" v-else-if="currentView === 'certificates'" :event-id="certificateEventId" @event-id="setCertificateEventId" @error="handleError" />
       <OrganizationEventWorkspacePage v-else-if="currentView === 'organizationWorkspace'" :event-id="selectedEventId" @context="useRegistrationEvent" @access-denied="handleWorkspaceAccessDenied" @error="handleError" />
