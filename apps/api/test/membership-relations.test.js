@@ -25,6 +25,11 @@ async function responseJson(response) {
   return body;
 }
 
+const LEGACY_INVITATION_FIELDS = [
+  "createdAt", "direction", "id", "invitedName", "invitedPhone", "note",
+  "organizationId", "role", "status", "updatedAt", "userId"
+];
+
 test("organization invitation requires personal acceptance and repeated invitation is idempotent and audited", async () => {
   await withTestServer(async ({ baseUrl, dbPath }) => {
     const owner = await loginAs(baseUrl, "13800000011", "123456");
@@ -140,6 +145,116 @@ test("ordinary request is approved by its owner and compatibility URLs use the s
   }, { prefix: "membership-request-" });
 });
 
+test("owner approval audits every other pending relation it automatically rejects", async () => {
+  await withTestServer(async ({ baseUrl, dbPath }) => {
+    const owner = await loginAs(baseUrl, "13800000011", "123456");
+    const otherOwner = await loginAs(baseUrl, "13800000012", "123456");
+    const ordinary = await registerAndLoginOrdinary(baseUrl, {
+      name: "审批审计用户", phone: "13700000026", password: "Member26"
+    });
+
+    const invitationResponse = await fetch(`${baseUrl}/api/organization/invitations`, jsonOptions(
+      "POST", { phone: "13700000026" }, otherOwner.cookie
+    ));
+    assert.equal(invitationResponse.status, 201);
+    const invitation = (await responseJson(invitationResponse)).row;
+    const requestResponse = await fetch(`${baseUrl}/api/me/organization-requests`, jsonOptions(
+      "POST", { organizationId: "O1001" }, ordinary.cookie
+    ));
+    assert.equal(requestResponse.status, 201);
+    const request = (await responseJson(requestResponse)).row;
+
+    const approval = await fetch(
+      `${baseUrl}/api/organization/memberships/${request.id}`,
+      jsonOptions("PATCH", { action: "approve" }, owner.cookie)
+    );
+    assert.equal(approval.status, 200);
+    assert.deepEqual((await responseJson(approval)).cancelled, [{
+      id: invitation.id, organizationId: "O1002"
+    }]);
+
+    const stored = JSON.parse(await fs.readFile(dbPath, "utf8"));
+    const automaticAudits = stored.auditLogs.filter((row) => row.action === "membership.auto-reject");
+    assert.deepEqual(automaticAudits.map((row) => ({
+      actorUserId: row.actorUserId,
+      targetType: row.targetType,
+      targetId: row.targetId,
+      action: row.action
+    })), [{
+      actorUserId: owner.user.id,
+      targetType: "membership",
+      targetId: invitation.id,
+      action: "membership.auto-reject"
+    }]);
+    assert.equal(automaticAudits[0].summary.includes("13700000026"), false);
+    assert.equal(automaticAudits[0].summary.includes("审批审计用户"), false);
+  }, { prefix: "membership-owner-auto-audit-" });
+});
+
+test("legacy membership GET preserves its rows-only envelope and explicit invitation fields", async () => {
+  await withTestServer(async ({ baseUrl }) => {
+    const owner = await loginAs(baseUrl, "13800000011", "123456");
+    const ordinary = await registerAndLoginOrdinary(baseUrl, {
+      name: "旧查询用户", phone: "13700000027", password: "Member27"
+    });
+    const invitationResponse = await fetch(`${baseUrl}/api/organization/invitations`, jsonOptions(
+      "POST", { phone: "13700000027", note: "旧查询兼容" }, owner.cookie
+    ));
+    assert.equal(invitationResponse.status, 201);
+    const invitation = (await responseJson(invitationResponse)).row;
+
+    const legacyResponse = await fetch(
+      `${baseUrl}/api/organizations/O1001/members`, withSession(owner.cookie)
+    );
+    assert.equal(legacyResponse.status, 200);
+    const payload = await responseJson(legacyResponse);
+    assert.deepEqual(Object.keys(payload), ["rows"]);
+    const row = payload.rows.find((item) => item.id === invitation.id);
+    assert.deepEqual(Object.keys(row).sort(), [...LEGACY_INVITATION_FIELDS].sort());
+    assert.equal(row.userId, ordinary.user.id);
+    assert.equal(row.invitedPhone, "13700000027");
+    assert.equal(row.invitedName, "旧查询用户");
+    assert.equal(row.organizationId, "O1001");
+    assert.equal(row.status, "pending");
+    assert.equal(row.direction, "organization_invite");
+    assert.equal(row.note, "旧查询兼容");
+    assert.equal("user" in row, false);
+  }, { prefix: "membership-legacy-get-" });
+});
+
+test("legacy membership PATCH preserves its row-only envelope and explicit invitation fields", async () => {
+  await withTestServer(async ({ baseUrl }) => {
+    const owner = await loginAs(baseUrl, "13800000011", "123456");
+    const ordinary = await registerAndLoginOrdinary(baseUrl, {
+      name: "旧更新用户", phone: "13700000028", password: "Member28"
+    });
+    const invitationResponse = await fetch(`${baseUrl}/api/organization/invitations`, jsonOptions(
+      "POST", { phone: "13700000028", note: "旧更新兼容" }, owner.cookie
+    ));
+    assert.equal(invitationResponse.status, 201);
+    const invitation = (await responseJson(invitationResponse)).row;
+
+    const legacyResponse = await fetch(
+      `${baseUrl}/api/memberships/${invitation.id}`,
+      jsonOptions("PATCH", { status: "rejected", role: "manager" }, owner.cookie)
+    );
+    assert.equal(legacyResponse.status, 200);
+    const payload = await responseJson(legacyResponse);
+    assert.deepEqual(Object.keys(payload), ["row"]);
+    assert.deepEqual(Object.keys(payload.row).sort(), [...LEGACY_INVITATION_FIELDS].sort());
+    assert.equal(payload.row.userId, ordinary.user.id);
+    assert.equal(payload.row.invitedPhone, "13700000028");
+    assert.equal(payload.row.invitedName, "旧更新用户");
+    assert.equal(payload.row.organizationId, "O1001");
+    assert.equal(payload.row.status, "rejected");
+    assert.equal(payload.row.direction, "organization_invite");
+    assert.equal(payload.row.note, "旧更新兼容");
+    assert.equal("organization" in payload, false);
+    assert.equal("cancelled" in payload, false);
+    assert.equal("changed" in payload, false);
+  }, { prefix: "membership-legacy-patch-" });
+});
+
 test("both sides can reject or end only the transitions assigned to them", async () => {
   await withTestServer(async ({ baseUrl }) => {
     const owner = await loginAs(baseUrl, "13800000011", "123456");
@@ -190,8 +305,8 @@ test("both sides can reject or end only the transitions assigned to them", async
   }, { prefix: "membership-actions-" });
 });
 
-test("accepting one organization rejects other pending relations and a second activation conflicts", async () => {
-  await withTestServer(async ({ baseUrl }) => {
+test("accepting one organization rejects and audits other pending relations while a second activation conflicts", async () => {
+  await withTestServer(async ({ baseUrl, dbPath }) => {
     const owner = await loginAs(baseUrl, "13800000011", "123456");
     const otherOwner = await loginAs(baseUrl, "13800000012", "123456");
     const ordinary = await registerAndLoginOrdinary(baseUrl, {
@@ -238,6 +353,22 @@ test("accepting one organization rejects other pending relations and a second ac
     );
     assert.equal(conflict.status, 409);
     assert.equal((await responseJson(conflict)).code, "MEMBERSHIP_ACTIVE_CONFLICT");
+
+    const stored = JSON.parse(await fs.readFile(dbPath, "utf8"));
+    const automaticAudits = stored.auditLogs.filter((row) => row.action === "membership.auto-reject");
+    assert.deepEqual(automaticAudits.map((row) => ({
+      actorUserId: row.actorUserId,
+      targetType: row.targetType,
+      targetId: row.targetId,
+      action: row.action
+    })), [{
+      actorUserId: ordinary.user.id,
+      targetType: "membership",
+      targetId: second.row.id,
+      action: "membership.auto-reject"
+    }]);
+    assert.equal(automaticAudits[0].summary.includes("13700000024"), false);
+    assert.equal(automaticAudits[0].summary.includes("单组织用户"), false);
   }, { prefix: "membership-conflict-" });
 });
 

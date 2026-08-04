@@ -40,6 +40,22 @@ function legacyOwnerAction(db, membershipId, status) {
   return row.direction === "organization_invite" ? "cancel" : "reject";
 }
 
+function legacyMembershipDto(row) {
+  return {
+    id: row.id,
+    userId: row.userId,
+    ...(row.invitedPhone ? { invitedPhone: row.invitedPhone } : {}),
+    ...(row.invitedName ? { invitedName: row.invitedName } : {}),
+    organizationId: row.organizationId,
+    role: row.role,
+    status: row.status,
+    direction: row.direction,
+    note: row.note,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt
+  };
+}
+
 function auditMutation(db, actor, action, result, createdAt) {
   recordAudit(db, {
     actor,
@@ -49,6 +65,16 @@ function auditMutation(db, actor, action, result, createdAt) {
     summary: `成员关系 ${result.row.id} 执行 ${action}${result.changed === false ? "（重复请求）" : ""}`,
     createdAt
   });
+  for (const cancelled of result.cancelled || []) {
+    recordAudit(db, {
+      actor,
+      action: "membership.auto-reject",
+      targetType: "membership",
+      targetId: cancelled.id,
+      summary: `成员关系 ${cancelled.id} 因 ${result.row.id} 激活而自动拒绝`,
+      createdAt
+    });
+  }
 }
 
 export function createMembershipsRouter({
@@ -90,7 +116,11 @@ export function createMembershipsRouter({
     if (result.organization.id !== req.params.id) {
       throw routeError(403, "无权查看该组织成员", "MEMBERSHIP_FORBIDDEN");
     }
-    res.json(result);
+    res.json({
+      rows: db.memberships
+        .filter((row) => row.organizationId === result.organization.id)
+        .map(legacyMembershipDto)
+    });
   }));
 
   const createRequest = mutationAsyncRoute(async (req, res) => {
@@ -135,7 +165,8 @@ export function createMembershipsRouter({
     const result = actAsOrganizationOwner(db, req.user, req.params.id, action, now);
     auditMutation(db, req.user, `membership.organization.${action}`, result, now());
     await store.writeDb(db);
-    res.json(result);
+    const row = db.memberships.find((item) => item.id === result.row.id);
+    res.json({ row: legacyMembershipDto(row) });
   }));
 
   return router;
