@@ -134,6 +134,10 @@ assert_status "brand-wordmark" 200 "$base_url/brand/wordmark.svg"
 assert_status "system-version" 200 \
   -H 'Cache-Control: no-cache' \
   "$base_url/api/system/version"
+# Successful boundary check emits: organization-relations-unauthenticated=401
+assert_status "organization-relations-unauthenticated" 401 \
+  -X GET \
+  "$base_url/api/me/organization-relations"
 
 admin_password="${ADMIN_TEST_PASSWORD:?ADMIN_TEST_PASSWORD is required}"
 if printf '%s' "$admin_phone$admin_password" | LC_ALL=C grep -q '[[:cntrl:]]'; then
@@ -152,6 +156,11 @@ assert_status "login" 200 \
     "$base_url/api/auth/login"
 
 unset admin_password escaped_password login_payload
+
+assert_status "organization-memberships-admin-forbidden" 403 \
+  -b "$cookie_jar" \
+  -X GET \
+  "$base_url/api/organization/memberships"
 
 assert_status "admin-events" 200 \
   -b "$cookie_jar" \
