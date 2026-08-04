@@ -50,6 +50,23 @@ test("PostgreSQL store creates normalized tables and seeds an empty database", a
   });
 });
 
+test("PostgreSQL permits pending relations but enforces one active organization per user", async () => {
+  await withStore(async (_store, pool) => {
+    await pool.query(`INSERT INTO users (id, name, phone, password, type, status, created_at)
+      VALUES ('UMEMBER', '成员', '13700009999', 'hash', 'ordinary', 'active', NOW())`);
+    await pool.query(`INSERT INTO memberships
+      (id, user_id, organization_id, role, status, direction, created_at, updated_at)
+      VALUES
+      ('MP1', 'UMEMBER', 'O1001', 'member', 'pending', 'user_request', NOW(), NOW()),
+      ('MP2', 'UMEMBER', 'O1002', 'member', 'pending', 'organization_invite', NOW(), NOW())`);
+    await pool.query("UPDATE memberships SET status = 'active' WHERE id = 'MP1'");
+    await assert.rejects(
+      pool.query("UPDATE memberships SET status = 'active' WHERE id = 'MP2'"),
+      /memberships_single_active_user_idx|memberships_pkey/
+    );
+  });
+});
+
 test("PostgreSQL store round-trips submission modes and private upload assets", async () => {
   await withStore(async (store) => {
     const db = await store.readDb();
