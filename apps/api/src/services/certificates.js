@@ -77,10 +77,7 @@ export function canReadCertificate(db, user, certificate) {
   if (user?.type === "ordinary") return registration.personalUserId === user.id;
   if (user?.type !== "organization") return false;
   const organization = db.organizations.find((row) => row.ownerUserId === user.id);
-  const participation = organization && db.organizationEventParticipations.some((row) =>
-    row.organizationId === organization.id && row.eventId === registration.eventId
-  );
-  return Boolean(organization && participation && registration.organizationId === organization.id);
+  return Boolean(organization && registration.organizationId === organization.id);
 }
 
 export function updateCertificateMetadata(db, { certificateId, title, awardName, rank, score, now }) {

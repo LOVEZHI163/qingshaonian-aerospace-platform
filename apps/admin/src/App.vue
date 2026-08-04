@@ -12,6 +12,7 @@ import EventManagementPage from "./pages/EventManagementPage.vue";
 import MyCertificatesPage from "./pages/MyCertificatesPage.vue";
 import MyOrganizationPage from "./pages/MyOrganizationPage.vue";
 import OrganizationConsolePage from "./pages/OrganizationConsolePage.vue";
+import OrganizationCertificatesPage from "./pages/OrganizationCertificatesPage.vue";
 import OrganizationEventWorkspacePage from "./pages/OrganizationEventWorkspacePage.vue";
 import OrganizationManagementPage from "./pages/OrganizationManagementPage.vue";
 import OrganizationRegistrationRecordsPage from "./pages/OrganizationRegistrationRecordsPage.vue";
@@ -187,6 +188,10 @@ function targetView(user = currentUser.value) {
     selectEventContext(initialEventId);
     return "organizationWorkspace";
   }
+  if (user.type === "organization" && routeView === "certificates") {
+    selectEventContext("");
+    return "certificates";
+  }
   if (user.type === "ordinary" && routeView === "certificates") {
     restoreCertificateEventContext();
     return "certificates";
@@ -295,7 +300,8 @@ function navigateUser(key) {
   userSidebarOpen.value = false;
   message.value = "";
   if (key === "eventCenter") selectEventContext("");
-  if (currentUser.value?.type === "ordinary" && ["registrationRecords", "certificates"].includes(key)) selectEventContext("");
+  if ((currentUser.value?.type === "ordinary" && ["registrationRecords", "certificates"].includes(key))
+    || (currentUser.value?.type === "organization" && key === "certificates")) selectEventContext("");
   if (currentUser.value?.type === "ordinary" && key === "registration" && !selectedEventId.value) {
     currentView.value = "eventCenter";
     message.value = "请先在赛事中心选择赛事";
@@ -468,9 +474,10 @@ onMounted(async () => {
       <RegistrationPage v-else-if="currentUser.type === 'ordinary' && currentView === 'registration'" :event-id="registrationEventId" :account-type="currentUser.type" :event-organizations="selectedAccountEvent?.organizations || []" :registration-state="selectedAccountEvent?.registrationState || ''" :fallback-context="{ projects: eventData.projects }" @context="useRegistrationEvent" @registered="message = '报名已提交，等待审核'" @error="handleError" />
       <MyOrganizationPage v-else-if="currentView === 'myOrganization'" @organization-changed="refreshPersonalOrganization" @error="handleError" />
       <RegistrationRecordsPage :key="`records:${recordsEventId}`" v-else-if="currentView === 'registrationRecords'" :event-id="recordsEventId" @error="handleError" />
+      <OrganizationCertificatesPage v-else-if="currentUser.type === 'organization' && currentView === 'certificates'" />
       <MyCertificatesPage :key="`certificates:${certificateEventId}`" v-else-if="currentView === 'certificates'" :event-id="certificateEventId" @event-id="setCertificateEventId" @error="handleError" />
       <OrganizationEventWorkspacePage v-else-if="currentView === 'organizationWorkspace'" :event-id="selectedEventId" @back-to-events="navigateUser('eventCenter')" @context="useRegistrationEvent" @access-denied="handleWorkspaceAccessDenied" @error="handleError" />
-      <OrganizationRegistrationRecordsPage v-else-if="currentView === 'organizationRecords'" />
+      <OrganizationRegistrationRecordsPage v-else-if="currentView === 'organizationRecords'" @back-to-events="navigateUser('eventCenter')" />
       <OrganizationConsolePage v-else-if="currentView === 'organization'" @error="handleError" />
     </main>
   </div>

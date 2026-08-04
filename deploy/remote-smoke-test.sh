@@ -55,7 +55,6 @@ smoke_event_id=
 smoke_event_name=
 smoke_source_event_id=
 smoke_event_cleanup_pending=0
-original_current_event_id=
 smoke_user_id=
 smoke_user_name=
 smoke_user_phone=
@@ -202,7 +201,6 @@ if test -z "$event_id"; then
   exit 1
 fi
 smoke_source_event_id="$event_id"
-original_current_event_id="$(json_path 'let input="";process.stdin.on("data",chunk=>input+=chunk).on("end",()=>{const data=JSON.parse(input);const event=(data.rows||[]).find(item=>item.status === "published" && item.isCurrent && !item.archivedAt);if(event&&event.id)process.stdout.write(encodeURIComponent(event.id));});')"
 
 assert_status "admin-organizations" 200 \
   -b "$cookie_jar" \
@@ -327,10 +325,6 @@ cleanup_submission_event_smoke() {
   test "$smoke_event_cleanup_pending" -eq 1 || return 0
   refresh_submission_cleanup_events || return 1
   verify_submission_smoke_event_target "$smoke_event_id" 0 0 || return 1
-  if test -n "$original_current_event_id"; then
-    curl -sS -f -o /dev/null -b "$cookie_jar" -X POST \
-      "$base_url/api/admin/events/$original_current_event_id/current" || return 1
-  fi
   refresh_submission_cleanup_events || return 1
   verify_submission_smoke_event_target "$smoke_event_id" 0 0 || return 1
   curl -sS -f -o /dev/null -b "$cookie_jar" -X POST \
@@ -500,8 +494,6 @@ if ! verify_submission_smoke_event_target "$smoke_event_id" 0 1; then
   echo "Submission smoke fixture did not match the copied event and project" >&2
   exit 1
 fi
-assert_status "submission-event-current" 200 -b "$cookie_jar" -X POST \
-  "$base_url/api/admin/events/$smoke_event_id/current"
 printf '%s' '{"registrationMode":"force_open"}' | \
 assert_status "submission-event-registration-open" 200 \
   -b "$cookie_jar" -H 'Content-Type: application/json' --data-binary @- \

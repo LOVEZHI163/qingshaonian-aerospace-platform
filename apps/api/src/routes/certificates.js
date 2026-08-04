@@ -13,7 +13,7 @@ import {
   upsertCertificate
 } from "../services/certificates.js";
 import { recordAudit } from "../services/audit.js";
-import { requireOrganizationEventParticipation, requireWritableEvent } from "../services/access-control.js";
+import { requireOrganizationEventParticipation, requireOrganizationOwner, requireWritableEvent } from "../services/access-control.js";
 import { requireEventId } from "../services/registrations.js";
 
 export const defaultCertificateStorage = {
@@ -416,6 +416,31 @@ export function createCertificatesRouter({
         return registration?.personalUserId === req.user.id && registration.eventId === eventId;
       })
       .map((certificate) => certificatePayload(certificate, db.registrations.find((row) => row.id === certificate.registrationId)));
+    res.json({ rows });
+  }));
+
+  router.get("/organization/certificates", ...user, asyncRoute(async (req, res) => {
+    const db = await store.readDb();
+    const organization = requireOrganizationOwner(db, req.user);
+    const registrationsById = new Map(db.registrations.map((registration) => [registration.id, registration]));
+    const eventsById = new Map(db.events.map((event) => [event.id, event]));
+    const rows = db.certificates
+      .filter((certificate) => {
+        if (certificate.status !== "published") return false;
+        return registrationsById.get(certificate.registrationId)?.organizationId === organization.id;
+      })
+      .map((certificate) => {
+        const registration = registrationsById.get(certificate.registrationId);
+        const event = eventsById.get(registration?.eventId);
+        return {
+          ...certificatePayload(certificate, registration),
+          eventId: registration?.eventId || "",
+          eventName: event?.name || registration?.eventId || "",
+          eventStatus: event?.status || ""
+        };
+      })
+      .sort((left, right) => String(right.publishedAt || "").localeCompare(String(left.publishedAt || ""))
+        || String(left.id).localeCompare(String(right.id)));
     res.json({ rows });
   }));
 

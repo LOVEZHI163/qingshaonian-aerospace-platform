@@ -90,6 +90,33 @@ describe("OrganizationEventWorkspacePage", () => {
     }));
   });
 
+  it("renders the exact grade dropdown and keeps the organization school editable", async () => {
+    const exactGrades = ["一年级", "二年级", "三年级", "四年级", "五年级", "六年级", "初一", "初二", "初三", "高一", "高二", "高三", "职高一年级", "职高二年级", "职高三年级"];
+    const exactWorkspace = {
+      ...workspace,
+      organization: { id: "O1", name: "默认组织学校" },
+      grades: [
+        { id: "primary", grades: exactGrades.slice(0, 6) },
+        { id: "middle", grades: exactGrades.slice(6, 9) },
+        { id: "high", grades: exactGrades.slice(9, 12) },
+        { id: "vocational", grades: exactGrades.slice(12) }
+      ]
+    };
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/organization/events/E2/workspace") return exactWorkspace;
+      if (path.startsWith("/api/schools")) return { rows: [] };
+      return { rows: [] };
+    });
+    const wrapper = mount(OrganizationEventWorkspacePage, { props: { eventId: "E2" } });
+    await flushPromises();
+
+    expect(wrapper.get('[data-field="athlete-grade"]').findAll("option").slice(1).map((option) => option.text())).toEqual(exactGrades);
+    const school = wrapper.get('.organization-athlete-registration-form input[list="school-options"]');
+    expect(school.element.value).toBe("默认组织学校");
+    await school.setValue("参赛学生实际学校");
+    expect(school.element.value).toBe("参赛学生实际学校");
+  });
+
   it("keeps archived workspaces read-only while allowing a return to events", async () => {
     apiMock.mockImplementation(async (path) => {
       if (path === "/api/organization/events/E2/workspace") return { ...workspace, event: { ...workspace.event, status: "archived", archivedAt: "2026-01-01" } };

@@ -162,7 +162,7 @@ Click `[data-user-nav="organizationRecords"]`; assert the page exists and URL ha
 
 - [ ] **Step 2: Verify failure**
 
-Run: `npm test -w apps/admin -- --run apps/admin/src/pages/__tests__/AppNavigation.test.js`
+Run: `npm test -w apps/admin -- --run src/pages/__tests__/AppNavigation.test.js`
 
 Expected: FAIL because menus differ and the view is absent.
 
@@ -187,7 +187,7 @@ Mock `/api/organization/registrations?page=1&pageSize=25` with two events; asser
 
 - [ ] **Step 5: Verify failure**
 
-Run: `npm test -w apps/admin -- --run apps/admin/src/pages/__tests__/OrganizationRegistrationRecordsPage.test.js`
+Run: `npm test -w apps/admin -- --run src/pages/__tests__/OrganizationRegistrationRecordsPage.test.js`
 
 Expected: FAIL because the page is absent.
 
@@ -206,7 +206,7 @@ Build `URLSearchParams` from non-empty filters and paging. Search/select changes
 
 - [ ] **Step 7: Run tests**
 
-Run: `npm test -w apps/admin -- --run apps/admin/src/pages/__tests__/OrganizationRegistrationRecordsPage.test.js apps/admin/src/pages/__tests__/AppNavigation.test.js`
+Run: `npm test -w apps/admin -- --run src/pages/__tests__/OrganizationRegistrationRecordsPage.test.js src/pages/__tests__/AppNavigation.test.js`
 
 Expected: all PASS.
 
@@ -250,7 +250,7 @@ Assert new school defaults to organization, accepts edits, resets after create, 
 
 Run: `node --test apps/api/test/account-events.test.js`
 
-Run: `npm test -w apps/admin -- --run apps/admin/src/pages/__tests__/OrganizationEventWorkspacePage.test.js`
+Run: `npm test -w apps/admin -- --run src/pages/__tests__/OrganizationEventWorkspacePage.test.js`
 
 Expected: FAIL because organization is absent and grade is free text.
 
@@ -284,7 +284,7 @@ Keep `SchoolCombobox` editable. Pass workspace grades and organization name.
 
 Run: `node --test apps/api/test/account-events.test.js apps/api/test/registration-management.test.js`
 
-Run: `npm test -w apps/admin -- --run apps/admin/src/pages/__tests__/OrganizationEventWorkspacePage.test.js apps/admin/src/components/__tests__/SchoolCombobox.test.js`
+Run: `npm test -w apps/admin -- --run src/pages/__tests__/OrganizationEventWorkspacePage.test.js src/components/__tests__/SchoolCombobox.test.js`
 
 Expected: all PASS.
 
@@ -315,7 +315,7 @@ Assert no `[data-workspace-tab]`, no old results/certificate tabs, return button
 
 - [ ] **Step 2: Verify failure**
 
-Run: `npm test -w apps/admin -- --run apps/admin/src/pages/__tests__/OrganizationEventWorkspacePage.test.js`
+Run: `npm test -w apps/admin -- --run src/pages/__tests__/OrganizationEventWorkspacePage.test.js`
 
 Expected: FAIL because four tabs remain.
 
@@ -333,7 +333,7 @@ Use existing blue/white palette. Above 768px keep two-column rows; at or below 7
 
 - [ ] **Step 6: Run tests**
 
-Run: `npm test -w apps/admin -- --run apps/admin/src/pages/__tests__/OrganizationEventWorkspacePage.test.js apps/admin/src/pages/__tests__/EventCenterPage.test.js apps/admin/src/pages/__tests__/AppNavigation.test.js`
+Run: `npm test -w apps/admin -- --run src/pages/__tests__/OrganizationEventWorkspacePage.test.js src/pages/__tests__/EventCenterPage.test.js src/pages/__tests__/AppNavigation.test.js`
 
 Expected: all PASS.
 
@@ -363,7 +363,7 @@ For image/video rows, assert preview/download paths use organization endpoints. 
 
 - [ ] **Step 2: Verify failure**
 
-Run: `npm test -w apps/admin -- --run apps/admin/src/pages/__tests__/OrganizationRegistrationRecordsPage.test.js`
+Run: `npm test -w apps/admin -- --run src/pages/__tests__/OrganizationRegistrationRecordsPage.test.js`
 
 Expected: FAIL because actions are incomplete.
 
@@ -387,7 +387,7 @@ Use fallback when a message contains `<html`, `<!doctype` or `Cannot GET`; prese
 
 - [ ] **Step 6: Run tests**
 
-Run: `npm test -w apps/admin -- --run apps/admin/src/pages/__tests__/OrganizationRegistrationRecordsPage.test.js apps/admin/src/pages/__tests__/OrganizationEventWorkspacePage.test.js`
+Run: `npm test -w apps/admin -- --run src/pages/__tests__/OrganizationRegistrationRecordsPage.test.js src/pages/__tests__/OrganizationEventWorkspacePage.test.js`
 
 Run: `node --test apps/api/test/submission-authorization.test.js apps/api/test/submission-assets.test.js apps/api/test/organization-registration-history.test.js`
 
@@ -464,4 +464,3 @@ Verify stable menus, no “审核进度”, own cross-event history only, no wor
 - [ ] **Step 8: Record release evidence**
 
 Append runtime SHA, backups, rollback tags, test counts, smoke, health and disk usage to `docs/deployment/aliyun-test.md`. Commit documentation. If documentation changes HEAD after runtime deployment, record runtime and documentation SHA separately; `.release` must equal runtime source.
-

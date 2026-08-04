@@ -28,7 +28,7 @@ const payload = {
   rows: [
     {
       id: "R1", eventId: "E1", eventName: "春季航空赛", projectId: "P1", projectName: "纸飞机",
-      athlete: { name: "张三", school: "实验小学", grade: "五年级" }, status: "pending", score: "98", awardName: "一等奖",
+      athlete: { name: "张三", school: "实验小学", grade: "五年级" }, instructor: "林老师", status: "pending", score: "98", awardName: "一等奖",
       submission: { required: true, complete: true, assets: {
         artwork_image: { originalName: "作品.png", sizeBytes: 100 },
         creation_video: { originalName: "作画.mp4", sizeBytes: 200 }
@@ -36,7 +36,7 @@ const payload = {
     },
     {
       id: "R2", eventId: "E2", eventName: "夏季无人机赛", projectId: "P2", projectName: "无人机",
-      athlete: { name: "李四", school: "航空学校", grade: "六年级" }, status: "pending", score: "", awardName: ""
+      athlete: { name: "李四", school: "航空学校", grade: "六年级" }, instructor: "", status: "pending", score: "", awardName: ""
     }
   ],
   total: 27,
@@ -93,6 +93,34 @@ describe("OrganizationRegistrationRecordsPage", () => {
     expect(wrapper.get(".empty-state").text()).toContain("暂无报名记录");
     expect(wrapper.get('[data-action="organization-records-previous"]').attributes("disabled")).toBeDefined();
     expect(wrapper.get('[data-action="organization-records-next"]').attributes("disabled")).toBeDefined();
+  });
+
+  it("shows the instructor column with a dash for an empty instructor", async () => {
+    apiMock.mockResolvedValue(payload);
+    const wrapper = mount(OrganizationRegistrationRecordsPage);
+    await flushPromises();
+
+    expect(wrapper.findAll("thead th").map((cell) => cell.text())).toContain("指导老师");
+    const rows = wrapper.findAll("tbody tr");
+    expect(rows[0].text()).toContain("林老师");
+    expect(rows[1].text()).toContain("-");
+  });
+
+  it("allows a non-archived approved submission to enter the replacement flow", async () => {
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/organization/registrations?page=1&pageSize=25") {
+        return { ...payload, rows: [{ ...payload.rows[0], status: "approved" }] };
+      }
+      if (path === "/api/organization/events/E1/projects/P1/upload-sessions") return { row: { id: "US-APPROVED", assets: {} } };
+      throw new Error(`unexpected ${path}`);
+    });
+    const wrapper = mount(OrganizationRegistrationRecordsPage);
+    await flushPromises();
+
+    expect(wrapper.find('[data-action="replace-organization-materials-R1"]').exists()).toBe(true);
+    await wrapper.get('[data-action="replace-organization-materials-R1"]').trigger("click");
+    await flushPromises();
+    expect(apiMock).toHaveBeenCalledWith("/api/organization/events/E1/projects/P1/upload-sessions", { method: "POST" });
   });
 
   it("shows a safe loading error and retries without rendering server HTML", async () => {
@@ -312,6 +340,7 @@ describe("OrganizationRegistrationRecordsPage", () => {
     expect(wrapper.get('[role="alert"]').text()).toContain("无法访问报名记录，请返回赛事工作台后重试");
     expect(wrapper.text()).not.toContain("Cannot GET");
     expect(wrapper.find('[data-action="retry-organization-records"]').exists()).toBe(true);
-    expect(wrapper.find('[data-action="return-organization-records"]').exists()).toBe(true);
+    await wrapper.get('[data-action="return-organization-workspace"]').trigger("click");
+    expect(wrapper.emitted("back-to-events")).toEqual([[]]);
   });
 });

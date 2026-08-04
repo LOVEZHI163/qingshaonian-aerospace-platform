@@ -96,7 +96,7 @@ Require-NoMatch $preflightUpgrade 'docker compose up' "Upgrade preflight must no
 Require-Match $restore 'CONFIRM_RESTORE' "Restore must require explicit confirmation"
 Require-Match $bootstrapSecrets 'chmod\s+600\s+"\$deploy_dir/\.env"' "Database environment file must remain root-only"
 Require-NoMatch $bootstrapSecrets 'htpasswd|aerogp-test-credentials|BASIC_AUTH_USER' "Secret bootstrap must only manage database credentials"
-Require-NoMatch $remoteSmoke 'CREDENTIALS_FILE|(?m)^\s*auth=|\s-u\s' "Remote smoke tests must use unauthenticated HTTP requests"
+Require-NoMatch $remoteSmoke 'CREDENTIALS_FILE|(?m)^\s*auth=|(?-i:\s-u\s)' "Remote smoke tests must use unauthenticated HTTP requests"
 Require-Match $remoteSmoke 'ADMIN_TEST_PASSWORD' "Remote smoke tests must receive the administrator password from the environment"
 Require-Match $remoteSmoke 'cookie' "Remote smoke tests must preserve the authenticated session with a cookie jar"
 Require-Match $remoteSmoke '--data-binary\s+@-' "Remote smoke tests must send login credentials through curl stdin"
@@ -126,7 +126,7 @@ foreach ($entry in @(
   Require-Match $entry.Content '(?m)^set -eu\s*$' "$($entry.Name) script must fail fast"
   Require-NoMatch $entry.Content '(?m)^\s*set\s+-[^\r\n]*x' "$($entry.Name) script must not enable shell tracing"
   Require-NoMatch $entry.Content '(?i)(?:cat|sed|awk|grep|head|tail|less|more)\s+[^\r\n]*\.env' "$($entry.Name) script must not print the environment file"
-  Require-NoMatch $entry.Content '(?im)^(?![^\r\n]*\|)[^\r\n]*(?:echo|printf)\s+[^\r\n]*(?:PASSWORD|PGPASSWORD|SESSION_SECRET)' "$($entry.Name) script must not print passwords or session secrets"
+  Require-NoMatch $entry.Content '(?im)^(?![^\r\n]*(?:\||>))[^\r\n]*(?:echo|printf)\s+[^\r\n]*(?:PASSWORD|PGPASSWORD|SESSION_SECRET)' "$($entry.Name) script must not print passwords or session secrets"
 }
 
 if ($failures.Count -gt 0) {

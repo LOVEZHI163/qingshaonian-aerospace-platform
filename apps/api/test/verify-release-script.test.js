@@ -93,7 +93,7 @@ test("remote smoke keeps organization records scoped and validates the organizat
   );
   const copiedFixtureVerification = smoke.indexOf('verify_submission_smoke_event_target "$smoke_event_id" 0', eventJson);
   const copiedFixtureRefresh = smoke.lastIndexOf('refresh_submission_cleanup_events', copiedFixtureVerification);
-  const firstCopiedFixtureWrite = smoke.indexOf('assert_status "submission-event-current" 200', eventJson);
+  const firstCopiedFixtureWrite = smoke.indexOf('assert_status "submission-event-registration-open" 200', eventJson);
   assert.ok(
     copiedFixtureRefresh > eventJson && copiedFixtureVerification > copiedFixtureRefresh
       && copiedFixtureVerification < firstCopiedFixtureWrite,
@@ -114,6 +114,10 @@ test("remote smoke keeps organization records scoped and validates the organizat
   assert.doesNotMatch(smoke, /\bsmoke_password=/);
   assert.match(smoke, /SMOKE_PASSWORD_FILE=.*docker compose exec/);
   assert.doesNotMatch(smoke, /echo[^\r\n]*(?:password|token|cookie)/i);
+  assert.doesNotMatch(smoke, /\/api\/admin\/events\/\$smoke_event_id\/current/);
+  assert.doesNotMatch(smoke, /\/api\/admin\/events\/\$original_current_event_id\/current/);
+  assert.doesNotMatch(smoke, /submission-event-current/);
+  assert.match(smoke, /"registrationMode":"force_open"/);
 });
 
 function shellCommand() {

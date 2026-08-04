@@ -73,6 +73,9 @@ test("certificate reads derive merged ownership from its registration", () => {
   assert.equal(canReadCertificate(db, { id: "OWNER1", type: "organization" }, certificate), true);
   assert.equal(canReadCertificate(db, { id: "U2", type: "ordinary" }, certificate), false);
   assert.equal(canReadCertificate(db, { id: "MANAGER1", type: "organization" }, certificate), false);
+
+  db.organizationEventParticipations = [];
+  assert.equal(canReadCertificate(db, { id: "OWNER1", type: "organization" }, certificate), true);
 });
 
 test("certificate service upserts the two slots and resets replacements to draft", () => {

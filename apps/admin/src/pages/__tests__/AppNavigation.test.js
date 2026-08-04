@@ -472,6 +472,26 @@ describe("role based application navigation", () => {
     expect(new URLSearchParams(window.location.search).has("eventId")).toBe(false);
   });
 
+  it("opens organization certificate history without retaining a stale event deep-link", async () => {
+    window.history.replaceState({}, "", "/admin/?view=certificates&eventId=E-OLD");
+    const organization = { id: "O1", ownerUserId: "O1U", name: "组织学校", reviewStatus: "approved", status: "active", membershipRole: "owner" };
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/public/event") return { event: { name: "测试赛事" }, projects: [], grades: [] };
+      if (path === "/api/organization/certificates") return { rows: [] };
+      if (path === "/api/me/events") return { rows: [] };
+      return { rows: [] };
+    });
+    session.user.value = { id: "O1U", type: "organization", name: "负责人", phone: "13800000002", mustChangePassword: false };
+    session.organizations.value = [organization];
+    const wrapper = mount(App); mounted.push(wrapper);
+    await flushPromises();
+
+    expect(wrapper.find('[data-testid="organization-certificates-page"]').exists()).toBe(true);
+    expect(apiMock).toHaveBeenCalledWith("/api/organization/certificates");
+    expect(apiMock.mock.calls.some(([path]) => path.includes("/api/organization/events/E-OLD/certificates"))).toBe(false);
+    expect(new URLSearchParams(window.location.search).has("eventId")).toBe(false);
+  });
+
   it("opens the organization console for an approved owner", async () => {
     const organization = { id: "O1", ownerUserId: "O1U", name: "实验学校", reviewStatus: "approved", status: "active", membershipRole: "owner" };
     const wrapper = await mountFor({ id: "O1U", type: "organization", name: "负责人", phone: "13800000002", mustChangePassword: false }, organization); mounted.push(wrapper);
@@ -484,6 +504,7 @@ describe("role based application navigation", () => {
     expect(appSource).toContain("UserManagementPage");
     expect(appSource).toContain("RegistrationRecordsPage");
     expect(appSource).toContain("MyCertificatesPage");
+    expect(appSource).toContain("OrganizationCertificatesPage");
     expect(appSource).toContain("OrganizationConsolePage");
     expect(appSource).not.toContain("certificate-table");
     expect(appSource).not.toContain("用户列表");
