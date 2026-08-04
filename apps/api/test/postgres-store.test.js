@@ -50,6 +50,33 @@ test("PostgreSQL store creates normalized tables and seeds an empty database", a
   });
 });
 
+test("012 migration normalizes legacy member rows and restores the active-member constraint", async () => {
+  await withStore(async (store, pool) => {
+    await pool.query("DROP INDEX memberships_single_active_user_idx");
+    await pool.query(`INSERT INTO memberships
+      (id, user_id, organization_id, role, status, direction, created_at, updated_at)
+      VALUES
+      ('MZZ-duplicate', 'U1001', 'O1002', 'member', 'active', 'user_request', '2026-07-01T00:00:00.000Z', '2026-07-01T00:00:00.000Z'),
+      ('M-owner-legacy', 'U2001', 'O1001', 'owner', 'active', 'user_request', '2026-07-02T00:00:00.000Z', '2026-07-02T00:00:00.000Z'),
+      ('M-unbound-invite', NULL, 'O1002', 'member', 'pending', 'invited', '2026-07-02T00:00:00.000Z', '2026-07-02T00:00:00.000Z')`);
+    await pool.query("DELETE FROM schema_migrations WHERE name = '012-membership-data-normalization.sql'");
+
+    await store.initialize();
+
+    const rows = await pool.query("SELECT id, status FROM memberships WHERE id IN ('M1002', 'MZZ-duplicate', 'M-owner-legacy', 'M-unbound-invite') ORDER BY id");
+    assert.deepEqual(rows.rows, [
+      { id: 'M-owner-legacy', status: 'removed' },
+      { id: 'M-unbound-invite', status: 'rejected' },
+      { id: 'M1002', status: 'active' },
+      { id: 'MZZ-duplicate', status: 'removed' }
+    ]);
+    await assert.rejects(pool.query(`INSERT INTO memberships
+      (id, user_id, organization_id, role, status, direction, created_at, updated_at)
+      VALUES ('M-conflict', 'U1001', 'O1002', 'member', 'active', 'user_request', NOW(), NOW())`));
+    assert.equal((await pool.query("SELECT 1 FROM schema_migrations WHERE name = '012-membership-data-normalization.sql'")).rowCount, 1);
+  });
+});
+
 test("PostgreSQL permits pending relations but enforces one active organization per user", async () => {
   await withStore(async (_store, pool) => {
     await pool.query(`INSERT INTO users (id, name, phone, password, type, status, created_at)

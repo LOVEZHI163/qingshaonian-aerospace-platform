@@ -116,15 +116,16 @@ function userOrganizations(db, userId) {
   const user = db.users.find((item) => item.id === userId);
   if (user?.type === "organization") {
     const organization = organizationForOwner(db, userId);
-    return organization ? [organization] : [];
+    return organization ? [{ id: organization.id, name: organization.name, code: organization.code, status: organization.status, reviewStatus: organization.reviewStatus }] : [];
   }
   if (user?.type !== "ordinary") return [];
   const memberships = db.memberships.filter((item) => item.userId === userId && item.status === "active");
   return memberships
-    .map((membership) => ({
-      ...db.organizations.find((organization) => organization.id === membership.organizationId),
-      membershipRole: membership.role
-    }))
+    .filter((membership) => membership.role === "member")
+    .map((membership) => {
+      const organization = db.organizations.find((item) => item.id === membership.organizationId);
+      return organization && { id: organization.id, name: organization.name, code: organization.code, status: organization.status, membershipRole: "member" };
+    })
     .filter(Boolean);
 }
 
@@ -522,7 +523,13 @@ app.get("/api/me/:userId", requireUser, requirePasswordReady, asyncRoute(async (
   res.json({
     user: publicUser(user),
     organizations: userOrganizations(db, user.id),
-    memberships: db.memberships.filter((item) => item.userId === user.id || item.invitedPhone === user.phone)
+    memberships: db.memberships
+      .filter((item) => item.userId === user.id || item.invitedPhone === user.phone)
+      .map((item) => ({ id: item.id, userId: item.userId, organizationId: item.organizationId, role: item.role, status: item.status, direction: item.direction, note: item.note, createdAt: item.createdAt, updatedAt: item.updatedAt })),
+    registrations: req.user.type === "admin"
+      ? db.registrations.filter((item) => item.createdByUserId === user.id || item.personalUserId === user.id)
+        .map((item) => ({ id: item.id, eventId: item.eventId, organizationId: item.organizationId, status: item.status, athlete: { name: item.athlete?.name, school: item.athlete?.school, grade: item.athlete?.grade }, group: item.group, projectId: item.projectId, createdAt: item.createdAt }))
+      : []
   });
 }));
 

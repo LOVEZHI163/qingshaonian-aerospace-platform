@@ -57,6 +57,18 @@ test("ordinary request and owner invitation create pending member relations", ()
   assert.equal(request.changed, true);
 });
 
+test("owned membership summaries exclude legacy rows and owners cannot mutate them", () => {
+  const db = fixture();
+  db.memberships.push(
+    { id: "M-member", userId: "U1", organizationId: "O1", role: "member", status: "active", direction: "user_request" },
+    { id: "M-owner", userId: "UO1", organizationId: "O1", role: "owner", status: "active", direction: "user_request" },
+    { id: "M-null", userId: null, organizationId: "O1", role: "member", status: "pending", direction: "organization_invite" }
+  );
+  const listed = listOwnedMemberships(db, db.users[1]);
+  assert.equal(listed.summary.total, 1);
+  assert.throws(() => actAsOrganizationOwner(db, db.users[1], "M-owner", "remove", now), (error) => error.code === "MEMBERSHIP_FORBIDDEN");
+});
+
 test("creation rejects a user who already has an active relation in another organization", () => {
   const db = fixture();
   db.memberships.push({ id: "M-ACTIVE", userId: "U1", organizationId: "O1", role: "member", status: "active", direction: "user_request", note: "", createdAt: now(), updatedAt: now() });

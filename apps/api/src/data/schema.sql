@@ -253,9 +253,6 @@ CREATE INDEX IF NOT EXISTS audit_logs_target_idx ON audit_logs(target_type, targ
 CREATE INDEX IF NOT EXISTS registrations_personal_user_id_idx ON registrations(personal_user_id);
 CREATE INDEX IF NOT EXISTS registrations_organization_id_idx ON registrations(organization_id);
 CREATE INDEX IF NOT EXISTS memberships_organization_id_idx ON memberships(organization_id);
-CREATE UNIQUE INDEX IF NOT EXISTS memberships_single_active_user_idx
-ON memberships(user_id)
-WHERE user_id IS NOT NULL AND status = 'active';
 CREATE INDEX IF NOT EXISTS organization_event_participations_event_id_idx ON organization_event_participations(event_id);
 CREATE INDEX IF NOT EXISTS registration_upload_sessions_owner_expires_at_idx ON registration_upload_sessions(owner_user_id, expires_at);
 CREATE INDEX IF NOT EXISTS registration_submission_assets_registration_id_idx ON registration_submission_assets(registration_id);

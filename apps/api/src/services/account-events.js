@@ -25,10 +25,11 @@ export function organizationEventSummary(db, organizationId, eventId) {
 function ordinaryOrganizations(db, userId, eventId) {
   return db.memberships
     .filter((membership) => membership.userId === userId && membership.status === "active")
+    .filter((membership) => membership.role === "member")
     .map((membership) => db.organizations.find((organization) => organization.id === membership.organizationId))
     .filter(Boolean)
     .map((organization) => ({
-      organization,
+      organization: { id: organization.id, name: organization.name, code: organization.code, status: organization.status },
       organizationJoined: db.organizationEventParticipations.some((participation) => (
         participation.organizationId === organization.id && participation.eventId === eventId
       ))

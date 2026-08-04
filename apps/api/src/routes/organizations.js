@@ -39,6 +39,18 @@ function publicOrganization(organization) {
   };
 }
 
+function memberOrganization(organization, membershipRole) {
+  return {
+    id: organization.id,
+    name: organization.name,
+    code: organization.code,
+    contactName: organization.contactName,
+    contactPhone: organization.contactPhone,
+    status: organization.status,
+    ...(membershipRole ? { membershipRole } : {})
+  };
+}
+
 function participationSummary(db, participation) {
   const registrations = db.registrations.filter((row) => (
     row.eventId === participation.eventId && row.organizationId === participation.organizationId
@@ -110,7 +122,7 @@ export function createOrganizationsRouter({ store, requireUser, requireAdmin, re
         .filter((membership) => membership.userId === req.user.id && membership.status === "active")
         .map((membership) => {
           const organization = db.organizations.find((row) => row.id === membership.organizationId);
-          return organization && organizationWithDocuments(db, organization, "member");
+          return organization && membership.role === "member" && memberOrganization(organization, "member");
         })
         .filter(Boolean)
       : [];

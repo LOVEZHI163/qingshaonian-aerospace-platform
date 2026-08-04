@@ -194,6 +194,9 @@ export function actAsOrganizationOwner(db, owner, membershipId, action, now) {
   if (row.organizationId !== organization.id) {
     throw businessError(403, "无权操作该成员关系", "MEMBERSHIP_FORBIDDEN");
   }
+  if (row.role !== "member" || !row.userId) {
+    throw businessError(403, "历史组织关系不可由负责人操作", "MEMBERSHIP_FORBIDDEN");
+  }
   const transition = requireTransition(row, action, OWNER_ACTIONS);
   if (transition.to === "active") {
     requireActiveOrdinaryMember(db, row.userId);
@@ -233,7 +236,10 @@ export function searchOperationalOrganizations(db, query = "") {
 export function listOwnedMemberships(db, owner) {
   const organization = requireOwnerOrganization(db, owner);
   const rows = db.memberships
-    .filter((row) => row.organizationId === organization.id)
+    .filter((row) => {
+      const user = db.users.find((item) => item.id === row.userId);
+      return row.organizationId === organization.id && row.role === "member" && user?.type === "ordinary";
+    })
     .map((row) => {
       const user = db.users.find((item) => item.id === row.userId);
       return { ...membershipDto(row), user: user ? userSummary(user) : null };
