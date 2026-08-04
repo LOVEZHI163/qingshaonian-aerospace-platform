@@ -49,6 +49,12 @@ const payload = {
   }
 };
 
+function deferred() {
+  let resolve;
+  const promise = new Promise((next) => { resolve = next; });
+  return { promise, resolve };
+}
+
 describe("OrganizationRegistrationRecordsPage", () => {
   beforeEach(() => {
     apiMock.mockReset();
@@ -136,6 +142,23 @@ describe("OrganizationRegistrationRecordsPage", () => {
     expect(apiMock.mock.calls.flat()).not.toContain(expect.stringMatching(/\/api\/me\/events/));
   });
 
+  it("shows a safe material download error and retries the same row asset", async () => {
+    apiMock.mockResolvedValue(payload);
+    apiBlobMock.mockRejectedValueOnce(Object.assign(new Error("Cannot GET /asset"), { status: 403 }));
+    const wrapper = mount(OrganizationRegistrationRecordsPage);
+    await flushPromises();
+
+    await wrapper.get('[data-action="download-organization-artwork_image-R1"]').trigger("click");
+    await flushPromises();
+
+    expect(wrapper.get('[role="alert"]').text()).toContain("无法下载作品材料，请返回报名记录后重试");
+    expect(wrapper.text()).not.toContain("Cannot GET");
+    apiBlobMock.mockResolvedValueOnce(new Blob(["image"]));
+    await wrapper.get('[data-action="retry-organization-material-download"]').trigger("click");
+    await flushPromises();
+    expect(apiBlobMock).toHaveBeenLastCalledWith("/api/organization/events/E1/registrations/R1/assets/artwork_image");
+  });
+
   it("loads the row event workspace before editing and closes after saving a refreshed list", async () => {
     const workspace = {
       event: { id: "E1", name: "春季航空赛", status: "published" },
@@ -161,6 +184,112 @@ describe("OrganizationRegistrationRecordsPage", () => {
     await flushPromises();
     expect(wrapper.find('[data-testid="organization-registration-editor"]').exists()).toBe(false);
     expect(apiMock.mock.calls.filter(([path]) => path === "/api/organization/registrations?page=1&pageSize=25")).toHaveLength(2);
+  });
+
+  it.each([
+    [Object.assign(new Error("Cannot GET /workspace"), { status: 403 }), "无法访问该赛事工作台，请返回报名记录后重试"],
+    [Object.assign(new Error("not found"), { status: 404 }), "无法访问该赛事工作台，请返回报名记录后重试"],
+    [new Error("<!DOCTYPE html><html>gateway</html>"), "赛事工作台加载失败，请重试"]
+  ])("shows safe workspace error and retries it", async (workspaceError, message) => {
+    const workspace = { event: { id: "E1", status: "published" }, organization: { name: "航空学校" }, projects: [], grades: [] };
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/organization/registrations?page=1&pageSize=25") return payload;
+      if (path === "/api/organization/events/E1/workspace") throw workspaceError;
+      throw new Error(`unexpected ${path}`);
+    });
+    const wrapper = mount(OrganizationRegistrationRecordsPage);
+    await flushPromises();
+    await wrapper.get('[data-action="edit-organization-registration-R1"]').trigger("click");
+    await flushPromises();
+
+    expect(wrapper.get('.organization-registration-record-editor [role="alert"]').text()).toContain(message);
+    expect(wrapper.text()).not.toContain("Cannot GET");
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/organization/registrations?page=1&pageSize=25") return payload;
+      if (path === "/api/organization/events/E1/workspace") return workspace;
+      throw new Error(`unexpected ${path}`);
+    });
+    await wrapper.get('[data-action="retry-organization-edit-R1"]').trigger("click");
+    await flushPromises();
+    expect(wrapper.find('[data-testid="organization-registration-editor"]').exists()).toBe(true);
+  });
+
+  it("sanitizes replacement failures and retries only the unfinished asset", async () => {
+    let sessionAttempts = 0;
+    let videoAttempts = 0;
+    apiMock.mockImplementation(async (path, options) => {
+      if (path === "/api/organization/registrations?page=1&pageSize=25") return payload;
+      if (path === "/api/organization/events/E1/projects/P1/upload-sessions") {
+        sessionAttempts += 1;
+        if (sessionAttempts === 1) throw new Error("<html>upload proxy failure</html>");
+        return { row: { id: "US1", assets: {} } };
+      }
+      if (path.endsWith("/assets/artwork_image") && options?.method === "PUT") return { registration: payload.rows[0] };
+      if (path.endsWith("/assets/creation_video") && options?.method === "PUT") {
+        videoAttempts += 1;
+        if (videoAttempts === 1) throw new Error("Cannot GET /video");
+        return { registration: payload.rows[0] };
+      }
+      throw new Error(`unexpected ${path}`);
+    });
+    const wrapper = mount(OrganizationRegistrationRecordsPage);
+    await flushPromises();
+    await wrapper.get('[data-action="replace-organization-materials-R1"]').trigger("click");
+    await flushPromises();
+    expect(wrapper.get('.organization-registration-material-replacement [role="alert"]').text()).toContain("无法创建作品上传会话，请重试");
+    expect(wrapper.text()).not.toContain("upload proxy failure");
+
+    await wrapper.get('[data-action="retry-organization-material-replacement-R1"]').trigger("click");
+    await flushPromises();
+    await wrapper.get('[data-testid="submission-uploader"]').trigger("click");
+    await wrapper.get('[data-action="confirm-organization-material-replacement-R1"]').trigger("click");
+    await flushPromises();
+    expect(wrapper.get('.organization-registration-material-replacement [role="alert"]').text()).toContain("作品材料替换失败，请重试");
+    expect(wrapper.text()).not.toContain("Cannot GET");
+
+    await wrapper.get('[data-action="retry-organization-material-replacement-R1"]').trigger("click");
+    await flushPromises();
+    expect(apiMock.mock.calls.filter(([, options]) => options?.method === "PUT").map(([path]) => path)).toEqual([
+      "/api/organization/events/E1/registrations/R1/assets/artwork_image",
+      "/api/organization/events/E1/registrations/R1/assets/creation_video",
+      "/api/organization/events/E1/registrations/R1/assets/creation_video"
+    ]);
+  });
+
+  it.each([403, 404])("shows a safe Chinese replacement-session error for status %s", async (status) => {
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/organization/registrations?page=1&pageSize=25") return payload;
+      if (path === "/api/organization/events/E1/projects/P1/upload-sessions") throw Object.assign(new Error("permission denied"), { status });
+      throw new Error(`unexpected ${path}`);
+    });
+    const wrapper = mount(OrganizationRegistrationRecordsPage);
+    await flushPromises();
+    await wrapper.get('[data-action="replace-organization-materials-R1"]').trigger("click");
+    await flushPromises();
+
+    const replacement = wrapper.get('.organization-registration-material-replacement [role="alert"]');
+    expect(replacement.text()).toContain("无法创建作品上传会话，请返回报名记录后重试");
+    expect(replacement.text()).not.toContain("permission denied");
+    expect(wrapper.find('[data-action="retry-organization-material-replacement-R1"]').exists()).toBe(true);
+    expect(wrapper.find('[data-action="return-organization-records"]').exists()).toBe(true);
+  });
+
+  it("ignores a replacement session response after the action is cancelled", async () => {
+    const session = deferred();
+    apiMock.mockImplementation((path) => {
+      if (path === "/api/organization/registrations?page=1&pageSize=25") return Promise.resolve(payload);
+      if (path === "/api/organization/events/E1/projects/P1/upload-sessions") return session.promise;
+      throw new Error(`unexpected ${path}`);
+    });
+    const wrapper = mount(OrganizationRegistrationRecordsPage);
+    await flushPromises();
+    await wrapper.get('[data-action="replace-organization-materials-R1"]').trigger("click");
+    await wrapper.get('[data-action="return-organization-records"]').trigger("click");
+    session.resolve({ row: { id: "OLD-SESSION", assets: {} } });
+    await flushPromises();
+
+    expect(wrapper.find('[data-testid="submission-uploader"]').exists()).toBe(false);
+    expect(wrapper.find('[data-action="confirm-organization-material-replacement-R1"]').exists()).toBe(false);
   });
 
   it("hides edit and replacement actions for archived events", async () => {

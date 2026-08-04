@@ -23,6 +23,8 @@ const replacementComplete = ref(false);
 const replacementCompletedKinds = ref(new Set());
 const replacementError = ref("");
 const replacementResult = ref("");
+const materialError = ref("");
+const lastDownload = ref(null);
 const downloads = createBlobDownloadManager();
 const statusText = { pending: "待审核", approved: "已通过", rejected: "已驳回", cancelled: "已取消" };
 const materialKinds = ["artwork_image", "creation_video"];
@@ -56,6 +58,21 @@ function recordsErrorMessage(error) {
 function workspaceErrorMessage(error) {
   if ([403, 404].includes(error?.status)) return "无法访问该赛事工作台，请返回报名记录后重试";
   return safeMessage(error, "赛事工作台加载失败，请重试");
+}
+
+function materialErrorMessage(error) {
+  if ([403, 404].includes(error?.status)) return "无法下载作品材料，请返回报名记录后重试";
+  return safeMessage(error, "作品材料下载失败，请重试");
+}
+
+function replacementSessionErrorMessage(error) {
+  if ([403, 404].includes(error?.status)) return "无法创建作品上传会话，请返回报名记录后重试";
+  return safeMessage(error, "无法创建作品上传会话，请重试");
+}
+
+function replacementAssetErrorMessage(error) {
+  if ([403, 404].includes(error?.status)) return "无法替换作品材料，请返回报名记录后重试";
+  return safeMessage(error, "作品材料替换失败，请重试");
 }
 
 function organizationAssetPath(row, kind) {
@@ -116,18 +133,31 @@ function nextPage() {
 
 function returnToRecords() {
   error.value = "";
+  dismissMaterialError();
   cancelEditing();
   cancelReplacement();
 }
 
 async function downloadSubmissionAsset(row, kind, asset) {
   if (!assetAvailable(asset)) return;
+  materialError.value = "";
   try {
     const blob = await apiBlob(organizationAssetPath(row, kind));
     downloads.save(blob, blob.fileName || asset.originalName);
   } catch (downloadError) {
-    replacementError.value = safeMessage(downloadError, "作品材料下载失败，请重试");
+    lastDownload.value = { row, kind, asset };
+    materialError.value = materialErrorMessage(downloadError);
   }
+}
+
+function retryDownload() {
+  const failed = lastDownload.value;
+  if (failed) void downloadSubmissionAsset(failed.row, failed.kind, failed.asset);
+}
+
+function dismissMaterialError() {
+  materialError.value = "";
+  lastDownload.value = null;
 }
 
 function cancelEditing() {
@@ -197,7 +227,7 @@ async function createReplacementSession(row) {
     replacementSession.value = session;
   } catch (sessionError) {
     if (currentRequest !== replacementRequestId || replacingRegistration.value?.id !== row.id) return;
-    replacementError.value = safeMessage(sessionError, "无法创建作品上传会话，请重试");
+    replacementError.value = replacementSessionErrorMessage(sessionError);
   } finally {
     if (currentRequest === replacementRequestId) replacementLoading.value = false;
   }
@@ -234,7 +264,7 @@ async function confirmReplacement() {
     replacementResult.value = "作品材料已替换，报名已恢复待审核";
     cancelReplacement({ keepResult: true });
   } catch (replaceError) {
-    if (currentReplacement()) replacementError.value = safeMessage(replaceError, "作品材料替换失败，请重试");
+    if (currentReplacement()) replacementError.value = replacementAssetErrorMessage(replaceError);
   } finally {
     if (currentReplacement()) replacementLoading.value = false;
   }
@@ -262,6 +292,7 @@ onBeforeUnmount(() => {
 
     <p v-if="loading" class="hint">正在加载报名记录…</p>
     <p v-else-if="error" class="message" role="alert">{{ error }} <button type="button" class="mini" data-action="retry-organization-records" @click="loadRecords">重试</button> <button type="button" class="mini" data-action="return-organization-records" @click="returnToRecords">返回报名记录</button></p>
+    <p v-if="materialError" class="message" role="alert">{{ materialError }} <button type="button" class="mini" data-action="retry-organization-material-download" @click="retryDownload">重试</button> <button type="button" class="mini" data-action="dismiss-organization-material-error" @click="dismissMaterialError">关闭</button></p>
 
     <section v-if="editingRegistration" class="organization-registration-record-editor" aria-label="编辑组织报名">
       <div class="panel-title"><h4>编辑 {{ editingRegistration.athlete?.name || "报名记录" }}</h4><button type="button" class="mini" data-action="return-organization-records" @click="cancelEditing">返回报名记录</button></div>

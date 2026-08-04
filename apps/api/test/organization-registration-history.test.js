@@ -15,7 +15,7 @@ async function seedOrganizationHistory(dbPath) {
   await mutateDb(dbPath, (db) => {
     db.events = [
       { ...db.events[0], id: "E1", name: "第一届航空赛", isCurrent: true },
-      { ...db.events[0], id: "E2", name: "第二届航空赛", isCurrent: false }
+      { ...db.events[0], id: "E2", name: "第二届航空赛", isCurrent: false, status: "archived", archivedAt: "2026-08-01T00:00:00.000Z" }
     ];
     db.organizations = [
       { ...db.organizations.find((row) => row.id === "O1001"), id: "O1001", ownerUserId: "U2001" },
@@ -47,6 +47,12 @@ test("organization registration history is based on stored organization ownershi
     const payload = await response.json();
     assert.deepEqual(payload.rows.map((row) => row.id), ["R-OWN-ORG", "R-OWN-MEMBER"]);
     assert.equal(payload.rows.every((row) => row.organizationId === "O1001"), true);
+    assert.deepEqual(payload.rows.map((row) => ({
+      id: row.id, eventStatus: row.eventStatus, archivedAt: row.archivedAt, event: row.event
+    })), [
+      { id: "R-OWN-ORG", eventStatus: "published", archivedAt: null, event: undefined },
+      { id: "R-OWN-MEMBER", eventStatus: "archived", archivedAt: "2026-08-01T00:00:00.000Z", event: undefined }
+    ]);
     assert.deepEqual(payload.filterOptions.events.map((event) => event.id).sort(), ["E1", "E2"]);
     assert.deepEqual(payload.filterOptions.projects.map((project) => project.id).sort(), ["P1", "P2"]);
 

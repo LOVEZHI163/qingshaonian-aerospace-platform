@@ -273,7 +273,12 @@ export function listOrganizationRegistrations(db, organizationId, query = {}, cl
   }).sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")) || b.id.localeCompare(a.id));
   const rows = filtered.slice((page - 1) * pageSize, page * pageSize).map((row) => {
     const event = db.events.find((item) => item.id === row.eventId);
-    return { ...withRegistrationSubmission(db, row), eventName: event?.name || row.eventId };
+    return {
+      ...withRegistrationSubmission(db, row),
+      eventName: event?.name || row.eventId,
+      eventStatus: event?.status || "",
+      archivedAt: event?.archivedAt || null
+    };
   });
   const events = [...new Map(owned.map((row) => {
     const event = db.events.find((item) => item.id === row.eventId);
