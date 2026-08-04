@@ -124,6 +124,60 @@
   opacity: 0.55;
 }
 
+.my-organization-page {
+  display: grid;
+  gap: 16px;
+}
+
+.organization-search-form,
+.organization-relation-grid,
+.relation-status-list,
+.organization-result-list,
+.organization-active-card {
+  display: grid;
+  gap: 12px;
+}
+
+.organization-search-form {
+  grid-template-columns: minmax(180px, 1fr) minmax(180px, 1fr) auto;
+  align-items: end;
+}
+
+.organization-relation-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.organization-result-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #f8fafc;
+}
+
+.organization-result-card strong { color: var(--navy); }
+.organization-result-card p { margin: 5px 0 0; color: var(--muted); }
+.relation-card-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
+.relation-status-list h4,
+.organization-active-card h4 { margin: 0; }
+
+@media (max-width: 760px) {
+  .organization-search-form,
+  .organization-relation-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .organization-result-card {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .relation-card-actions { justify-content: flex-start; }
+}
+
 @media (max-width: 760px) {
   .user-filter-grid {
     grid-template-columns: 1fr;
