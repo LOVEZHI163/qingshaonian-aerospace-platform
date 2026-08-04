@@ -257,6 +257,32 @@ export function listAdminRegistrations(db, query, clock = () => new Date()) {
   return { rows, total, page, pageSize, refreshedAt: clock().toISOString() };
 }
 
+export function listOrganizationRegistrations(db, organizationId, query = {}, clock = () => new Date()) {
+  const page = Math.max(1, Number.parseInt(query.page, 10) || 1);
+  const requestedSize = Number.parseInt(query.pageSize, 10);
+  const pageSize = Math.min(100, Math.max(10, requestedSize || 25));
+  const q = normalizeText(query.q);
+  const owned = db.registrations.filter((row) => row.organizationId === organizationId);
+  const filtered = owned.filter((row) => {
+    if (query.eventId && row.eventId !== query.eventId) return false;
+    if (query.projectId && row.projectId !== query.projectId) return false;
+    if (query.status && row.status !== query.status) return false;
+    if (!q) return true;
+    return [row.id, row.athlete?.name, row.athlete?.phone, row.projectName]
+      .some((value) => normalizeText(value).includes(q));
+  }).sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")) || b.id.localeCompare(a.id));
+  const rows = filtered.slice((page - 1) * pageSize, page * pageSize).map((row) => {
+    const event = db.events.find((item) => item.id === row.eventId);
+    return { ...withRegistrationSubmission(db, row), eventName: event?.name || row.eventId };
+  });
+  const events = [...new Map(owned.map((row) => {
+    const event = db.events.find((item) => item.id === row.eventId);
+    return [row.eventId, { id: row.eventId, name: event?.name || row.eventId }];
+  })).values()];
+  const projects = [...new Map(owned.map((row) => [row.projectId, { id: row.projectId, name: row.projectName || row.projectId }])).values()];
+  return { rows, total: filtered.length, page, pageSize, refreshedAt: clock().toISOString(), filterOptions: { events, projects } };
+}
+
 export function findRegistrationIdentity(db, eventId, projectId, key) {
   return db.registrations.find((row) => (
     row.eventId === eventId

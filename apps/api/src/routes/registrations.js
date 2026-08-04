@@ -10,6 +10,7 @@ import {
   findSchools,
   filterAdminRegistrations,
   listAdminRegistrations,
+  listOrganizationRegistrations,
   prepareAdminRegistrationUpdate,
   prepareOrdinaryRegistrationUpdate,
   requireEventId,
@@ -17,7 +18,7 @@ import {
   registrationContextPayload,
   updateRegistrationStatus
 } from "../services/registrations.js";
-import { requireOrganizationEventParticipation, requireOrdinaryUser, requireWritableEvent } from "../services/access-control.js";
+import { requireOrganizationEventParticipation, requireOrganizationOwner, requireOrdinaryUser, requireWritableEvent } from "../services/access-control.js";
 import { recordAudit } from "../services/audit.js";
 import {
   commitUploadSession,
@@ -44,6 +45,12 @@ export function createRegistrationsRouter({
   router.get("/me/registration-context", ...user, asyncRoute(async (req, res) => {
     const db = await store.readDb();
     res.json(registrationContextPayload(db, req.user.id, req.query, clock));
+  }));
+
+  router.get("/organization/registrations", ...user, asyncRoute(async (req, res) => {
+    const db = await store.readDb();
+    const organization = requireOrganizationOwner(db, req.user);
+    res.json(listOrganizationRegistrations(db, organization.id, req.query, clock));
   }));
 
   function eventScopedInput(req) {
