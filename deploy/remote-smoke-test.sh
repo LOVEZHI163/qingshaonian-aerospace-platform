@@ -54,6 +54,7 @@ received_media_type=
 smoke_event_id=
 smoke_event_name=
 smoke_source_event_id=
+smoke_event_cleanup_pending=0
 original_current_event_id=
 smoke_user_id=
 smoke_organization_id=
@@ -67,8 +68,8 @@ smoke_foreign_organization_phone=
 smoke_organization_token=
 smoke_organization_cleaned=0
 smoke_foreign_organization_cleaned=0
-smoke_organization_created=0
-smoke_foreign_organization_created=0
+smoke_organization_cleanup_pending=0
+smoke_foreign_organization_cleanup_pending=0
 
 assert_status() {
   label="$1"
@@ -261,49 +262,120 @@ assert_status "authenticated-site-content" 200 \
 assert_status "unauthenticated-site-settings" 401 \
   "$base_url/api/admin/site-settings"
 
+refresh_submission_cleanup_events() {
+  cleanup_events_response="$work_dir/cleanup-events.json"
+  curl -sS -f -o "$cleanup_events_response" -b "$cookie_jar" "$base_url/api/admin/events"
+}
+
+recover_submission_smoke_event_id() {
+  test "$smoke_event_cleanup_pending" -eq 1 || return 0
+  refresh_submission_cleanup_events || return 1
+  recovered_event_id="$(EXPECTED_NAME="$smoke_event_name" EXPECTED_TOKEN="$submission_token" SOURCE_EVENT_ID="$smoke_source_event_id" docker compose exec -T -e EXPECTED_NAME -e EXPECTED_TOKEN -e SOURCE_EVENT_ID api node -e 'let input="";process.stdin.on("data",chunk=>input+=chunk).on("end",()=>{const rows=JSON.parse(input).rows||[];const expectedName=process.env.EXPECTED_NAME;const expectedToken=process.env.EXPECTED_TOKEN;const sourceEventId=process.env.SOURCE_EVENT_ID;const matches=rows.filter(event=>event.name === expectedName&&event.name.includes(expectedToken)&&event.id !== sourceEventId);if(matches.length>1)process.exit(2);if(matches[0])process.stdout.write(encodeURIComponent(matches[0].id));});' < "$cleanup_events_response")" || return 1
+  if test -z "$recovered_event_id"; then
+    smoke_event_cleanup_pending=0
+    return 0
+  fi
+  if test -n "$smoke_event_id" && test "$smoke_event_id" != "$recovered_event_id"; then
+    return 1
+  fi
+  smoke_event_id="$recovered_event_id"
+}
+
+verify_submission_smoke_event_target() {
+  event_id="$1"
+  require_archived="$2"
+  test -n "$event_id" && test -n "$smoke_event_name" && test -n "$submission_token" && test -n "$smoke_source_event_id" || return 1
+  EXPECTED_ID="$event_id" EXPECTED_NAME="$smoke_event_name" EXPECTED_TOKEN="$submission_token" SOURCE_EVENT_ID="$smoke_source_event_id" REQUIRE_ARCHIVED="$require_archived" docker compose exec -T -e EXPECTED_ID -e EXPECTED_NAME -e EXPECTED_TOKEN -e SOURCE_EVENT_ID -e REQUIRE_ARCHIVED api node -e 'let input="";process.stdin.on("data",chunk=>input+=chunk).on("end",()=>{const rows=JSON.parse(input).rows||[];const sourceEventId=process.env.SOURCE_EVENT_ID;const event=rows.find(row=>row.id===process.env.EXPECTED_ID);if(!event||event.name !== process.env.EXPECTED_NAME||!event.name.includes(process.env.EXPECTED_TOKEN)||event.id === sourceEventId)process.exit(2);if(process.env.REQUIRE_ARCHIVED === "1"&&(!event.archivedAt||event.isCurrent))process.exit(2);});' < "$cleanup_events_response" >/dev/null
+}
+
 cleanup_submission_smoke() {
-  test -n "$smoke_event_id" || return 0
-  cleanup_failed=0
+  test "$smoke_event_cleanup_pending" -eq 1 || return 0
+  recover_submission_smoke_event_id || {
+    echo "submission-smoke-cleanup could not recover the exact temporary event" >&2
+    return 1
+  }
+  test "$smoke_event_cleanup_pending" -eq 1 || return 0
+  refresh_submission_cleanup_events || return 1
+  verify_submission_smoke_event_target "$smoke_event_id" 0 || return 1
   if test -n "$original_current_event_id"; then
     curl -sS -f -o /dev/null -b "$cookie_jar" -X POST \
-      "$base_url/api/admin/events/$original_current_event_id/current" || cleanup_failed=1
+      "$base_url/api/admin/events/$original_current_event_id/current" || return 1
   fi
+  refresh_submission_cleanup_events || return 1
+  verify_submission_smoke_event_target "$smoke_event_id" 0 || return 1
   curl -sS -f -o /dev/null -b "$cookie_jar" -X POST \
-    "$base_url/api/admin/events/$smoke_event_id/archive" || cleanup_failed=1
+    "$base_url/api/admin/events/$smoke_event_id/archive" || return 1
+  refresh_submission_cleanup_events || return 1
+  verify_submission_smoke_event_target "$smoke_event_id" 1 || return 1
   cleanup_payload="{\"confirmName\":\"$smoke_event_name\"}"
   printf '%s' "$cleanup_payload" | curl -sS -f -o /dev/null -b "$cookie_jar" \
     -H 'Content-Type: application/json' --data-binary @- \
-    -X DELETE "$base_url/api/admin/events/$smoke_event_id" || cleanup_failed=1
+    -X DELETE "$base_url/api/admin/events/$smoke_event_id" || return 1
   if test -n "$smoke_user_id"; then
     curl -sS -f -o /dev/null -b "$cookie_jar" -X DELETE \
-      "$base_url/api/admin/users/$smoke_user_id" || cleanup_failed=1
+      "$base_url/api/admin/users/$smoke_user_id" || return 1
   fi
-  if test "$cleanup_failed" -ne 0; then
-    echo "submission-smoke-cleanup=failed" >&2
-    return 1
-  fi
+  smoke_event_cleanup_pending=0
   smoke_event_id=
   smoke_user_id=
   echo "submission-smoke-cleanup=ok"
 }
 
-recover_organization_smoke_ids() {
-  test -n "$smoke_organization_token" || return 0
+refresh_organization_cleanup_records() {
   cleanup_users_response="$work_dir/cleanup-users.json"
   cleanup_organizations_response="$work_dir/cleanup-organizations.json"
   curl -sS -f -o "$cleanup_users_response" -b "$cookie_jar" "$base_url/api/users" || return 1
-  curl -sS -f -o "$cleanup_organizations_response" -b "$cookie_jar" "$base_url/api/admin/organizations" || return 1
-  if test "$smoke_organization_created" -eq 1 && test -z "$smoke_organization_user_id"; then
-    smoke_organization_user_id="$(EXPECTED_PHONE="$smoke_organization_phone" EXPECTED_NAME="组织冒烟负责人" docker compose exec -T -e EXPECTED_PHONE -e EXPECTED_NAME api node -e 'let input="";process.stdin.on("data",chunk=>input+=chunk).on("end",()=>{const rows=JSON.parse(input).rows||[];const matches=rows.filter(row=>row.type==="organization"&&row.phone===process.env.EXPECTED_PHONE&&row.name===process.env.EXPECTED_NAME);if(matches.length!==1)process.exit(2);process.stdout.write(encodeURIComponent(matches[0].id));});' < "$cleanup_users_response")" || return 1
+  curl -sS -f -o "$cleanup_organizations_response" -b "$cookie_jar" "$base_url/api/admin/organizations"
+}
+
+recover_organization_fixture() {
+  recovery_phone="$1"
+  recovery_owner_name="$2"
+  recovery_organization_name="$3"
+  recovered_user_id="$(EXPECTED_PHONE="$recovery_phone" EXPECTED_NAME="$recovery_owner_name" docker compose exec -T -e EXPECTED_PHONE -e EXPECTED_NAME api node -e 'let input="";process.stdin.on("data",chunk=>input+=chunk).on("end",()=>{const rows=JSON.parse(input).rows||[];const matches=rows.filter(row=>row.type==="organization"&&row.phone===process.env.EXPECTED_PHONE&&row.name===process.env.EXPECTED_NAME);if(matches.length>1)process.exit(2);if(matches[0])process.stdout.write(encodeURIComponent(matches[0].id));});' < "$cleanup_users_response")" || return 1
+  recovered_organization_id="$(EXPECTED_NAME="$recovery_organization_name" EXPECTED_TOKEN="$smoke_organization_token" docker compose exec -T -e EXPECTED_NAME -e EXPECTED_TOKEN api node -e 'let input="";process.stdin.on("data",chunk=>input+=chunk).on("end",()=>{const rows=JSON.parse(input).rows||[];const matches=rows.filter(organization=>organization.name === process.env.EXPECTED_NAME&&organization.name.includes(process.env.EXPECTED_TOKEN));if(matches.length>1)process.exit(2);if(matches[0])process.stdout.write(encodeURIComponent(matches[0].id));});' < "$cleanup_organizations_response")" || return 1
+  if test -z "$recovered_user_id" && test -z "$recovered_organization_id"; then
+    return 2
   fi
-  if test "$smoke_foreign_organization_created" -eq 1 && test -z "$smoke_foreign_organization_user_id"; then
-    smoke_foreign_organization_user_id="$(EXPECTED_PHONE="$smoke_foreign_organization_phone" EXPECTED_NAME="外部组织负责人" docker compose exec -T -e EXPECTED_PHONE -e EXPECTED_NAME api node -e 'let input="";process.stdin.on("data",chunk=>input+=chunk).on("end",()=>{const rows=JSON.parse(input).rows||[];const matches=rows.filter(row=>row.type==="organization"&&row.phone===process.env.EXPECTED_PHONE&&row.name===process.env.EXPECTED_NAME);if(matches.length!==1)process.exit(2);process.stdout.write(encodeURIComponent(matches[0].id));});' < "$cleanup_users_response")" || return 1
+  test -n "$recovered_user_id" && test -n "$recovered_organization_id" || return 1
+  EXPECTED_ID="$recovered_organization_id" EXPECTED_NAME="$recovery_organization_name" EXPECTED_TOKEN="$smoke_organization_token" EXPECTED_USER_ID="$recovered_user_id" docker compose exec -T -e EXPECTED_ID -e EXPECTED_NAME -e EXPECTED_TOKEN -e EXPECTED_USER_ID api node -e 'let input="";process.stdin.on("data",chunk=>input+=chunk).on("end",()=>{const rows=JSON.parse(input).rows||[];const matches=rows.filter(organization=>organization.id===process.env.EXPECTED_ID&&organization.name === process.env.EXPECTED_NAME&&organization.name.includes(process.env.EXPECTED_TOKEN)&&organization.ownerUserId===process.env.EXPECTED_USER_ID);if(matches.length!==1)process.exit(2);});' < "$cleanup_organizations_response" >/dev/null || return 1
+  printf '%s\n%s\n' "$recovered_user_id" "$recovered_organization_id"
+}
+
+recover_organization_smoke_ids() {
+  test -n "$smoke_organization_token" || return 0
+  refresh_organization_cleanup_records || return 1
+  if test "$smoke_organization_cleanup_pending" -eq 1; then
+    recovered_ids="$(recover_organization_fixture "$smoke_organization_phone" "组织冒烟负责人" "$smoke_organization_name")" || recovered_status=$?
+    case "${recovered_status:-0}" in
+      0)
+        recovered_user_id="$(printf '%s\n' "$recovered_ids" | sed -n '1p')"
+        recovered_organization_id="$(printf '%s\n' "$recovered_ids" | sed -n '2p')"
+        if test -n "$smoke_organization_user_id" && test "$smoke_organization_user_id" != "$recovered_user_id"; then return 1; fi
+        if test -n "$smoke_organization_id" && test "$smoke_organization_id" != "$recovered_organization_id"; then return 1; fi
+        smoke_organization_user_id="$recovered_user_id"
+        smoke_organization_id="$recovered_organization_id"
+        ;;
+      2) smoke_organization_cleanup_pending=0 ;;
+      *) return 1 ;;
+    esac
+    unset recovered_status
   fi
-  if test "$smoke_organization_created" -eq 1 && test -z "$smoke_organization_id"; then
-    smoke_organization_id="$(EXPECTED_NAME="$smoke_organization_name" EXPECTED_TOKEN="$smoke_organization_token" EXPECTED_USER_ID="$smoke_organization_user_id" docker compose exec -T -e EXPECTED_NAME -e EXPECTED_TOKEN -e EXPECTED_USER_ID api node -e 'let input="";process.stdin.on("data",chunk=>input+=chunk).on("end",()=>{const rows=JSON.parse(input).rows||[];const matches=rows.filter(row=>row.name===process.env.EXPECTED_NAME&&row.name.includes(process.env.EXPECTED_TOKEN)&&row.ownerUserId===process.env.EXPECTED_USER_ID);if(matches.length!==1)process.exit(2);process.stdout.write(encodeURIComponent(matches[0].id));});' < "$cleanup_organizations_response")" || return 1
-  fi
-  if test "$smoke_foreign_organization_created" -eq 1 && test -z "$smoke_foreign_organization_id"; then
-    smoke_foreign_organization_id="$(EXPECTED_NAME="$smoke_foreign_organization_name" EXPECTED_TOKEN="$smoke_organization_token" EXPECTED_USER_ID="$smoke_foreign_organization_user_id" docker compose exec -T -e EXPECTED_NAME -e EXPECTED_TOKEN -e EXPECTED_USER_ID api node -e 'let input="";process.stdin.on("data",chunk=>input+=chunk).on("end",()=>{const rows=JSON.parse(input).rows||[];const matches=rows.filter(row=>row.name===process.env.EXPECTED_NAME&&row.name.includes(process.env.EXPECTED_TOKEN)&&row.ownerUserId===process.env.EXPECTED_USER_ID);if(matches.length!==1)process.exit(2);process.stdout.write(encodeURIComponent(matches[0].id));});' < "$cleanup_organizations_response")" || return 1
+  if test "$smoke_foreign_organization_cleanup_pending" -eq 1; then
+    recovered_ids="$(recover_organization_fixture "$smoke_foreign_organization_phone" "外部组织负责人" "$smoke_foreign_organization_name")" || recovered_status=$?
+    case "${recovered_status:-0}" in
+      0)
+        recovered_user_id="$(printf '%s\n' "$recovered_ids" | sed -n '1p')"
+        recovered_organization_id="$(printf '%s\n' "$recovered_ids" | sed -n '2p')"
+        if test -n "$smoke_foreign_organization_user_id" && test "$smoke_foreign_organization_user_id" != "$recovered_user_id"; then return 1; fi
+        if test -n "$smoke_foreign_organization_id" && test "$smoke_foreign_organization_id" != "$recovered_organization_id"; then return 1; fi
+        smoke_foreign_organization_user_id="$recovered_user_id"
+        smoke_foreign_organization_id="$recovered_organization_id"
+        ;;
+      2) smoke_foreign_organization_cleanup_pending=0 ;;
+      *) return 1 ;;
+    esac
+    unset recovered_status
   fi
 }
 
@@ -324,39 +396,47 @@ cleanup_organization_target() {
   organization_user_id="$3"
   organization_phone="$4"
   organization_owner_name="$5"
+  refresh_organization_cleanup_records || return 1
   verify_organization_cleanup_target "$organization_id" "$organization_name" "$organization_user_id" "$organization_phone" "$organization_owner_name" || return 1
   printf '%s' '{"status":"disabled"}' | curl -sS -f -o /dev/null -b "$cookie_jar" \
     -H 'Content-Type: application/json' --data-binary @- \
     -X PATCH "$base_url/api/admin/organizations/$organization_id/status" || return 1
+  refresh_organization_cleanup_records || return 1
+  verify_organization_cleanup_target "$organization_id" "$organization_name" "$organization_user_id" "$organization_phone" "$organization_owner_name" || return 1
   cleanup_payload="{\"confirmName\":\"$organization_name\"}"
   printf '%s' "$cleanup_payload" | curl -sS -f -o /dev/null -b "$cookie_jar" \
     -H 'Content-Type: application/json' --data-binary @- \
     -X POST "$base_url/api/admin/organizations/$organization_id/credential-cleanup" || return 1
+  refresh_organization_cleanup_records || return 1
+  verify_organization_cleanup_target "$organization_id" "$organization_name" "$organization_user_id" "$organization_phone" "$organization_owner_name" || return 1
   curl -sS -f -o /dev/null -b "$cookie_jar" -X DELETE "$base_url/api/admin/users/$organization_user_id"
 }
 
 cleanup_organization_smoke() {
   test -n "$smoke_organization_token" || return 0
-  if test "$smoke_organization_created" -ne 1 && test "$smoke_foreign_organization_created" -ne 1; then
+  if test "$smoke_organization_cleanup_pending" -ne 1 && test "$smoke_foreign_organization_cleanup_pending" -ne 1; then
     return 0
   fi
   recover_organization_smoke_ids || {
     echo "organization-smoke-cleanup could not recover exact temporary identities" >&2
     return 1
   }
-  if test "$smoke_organization_created" -eq 1 && test "$smoke_organization_cleaned" -ne 1; then
+  if test "$smoke_organization_cleanup_pending" -eq 1 && test "$smoke_organization_cleaned" -ne 1; then
     cleanup_organization_target "$smoke_organization_id" "$smoke_organization_name" "$smoke_organization_user_id" "$smoke_organization_phone" "组织冒烟负责人" || return 1
     smoke_organization_cleaned=1
+    smoke_organization_cleanup_pending=0
   fi
-  if test "$smoke_foreign_organization_created" -eq 1 && test "$smoke_foreign_organization_cleaned" -ne 1; then
+  if test "$smoke_foreign_organization_cleanup_pending" -eq 1 && test "$smoke_foreign_organization_cleaned" -ne 1; then
     cleanup_organization_target "$smoke_foreign_organization_id" "$smoke_foreign_organization_name" "$smoke_foreign_organization_user_id" "$smoke_foreign_organization_phone" "外部组织负责人" || return 1
     smoke_foreign_organization_cleaned=1
+    smoke_foreign_organization_cleanup_pending=0
   fi
   echo "organization-smoke-cleanup=ok"
 }
 
 submission_token="$(date +%s)-$$"
 smoke_event_name="上传冒烟-$submission_token"
+smoke_event_cleanup_pending=1
 printf '{"name":"%s"}' "$smoke_event_name" | \
 assert_status "submission-event-copy" 201 \
   -b "$cookie_jar" -H 'Content-Type: application/json' --data-binary @- \
@@ -398,6 +478,7 @@ endobj
 %%EOF
 ' > "$organization_credential_file"
 
+smoke_organization_cleanup_pending=1
 assert_status "organization-owner-register" 201 \
   -F "name=组织冒烟负责人" \
   -F "phone=$smoke_organization_phone" \
@@ -407,7 +488,6 @@ assert_status "organization-owner-register" 201 \
   -F 'documentType=business_license' \
   -F "credential=@$organization_credential_file;type=application/pdf" \
   "$base_url/api/auth/register/organization"
-smoke_organization_created=1
 assert_json_response "organization-owner-register"
 smoke_organization_user_id="$(json_path 'let input="";process.stdin.on("data",chunk=>input+=chunk).on("end",()=>{const data=JSON.parse(input);if(data.user&&data.user.id)process.stdout.write(encodeURIComponent(data.user.id));});')"
 registered_organization_phone="$(json_path 'let input="";process.stdin.on("data",chunk=>input+=chunk).on("end",()=>{const data=JSON.parse(input);if(data.user&&data.user.phone)process.stdout.write(data.user.phone);});')"
@@ -449,6 +529,7 @@ if test -z "$organization_registration_id"; then
   exit 1
 fi
 
+smoke_foreign_organization_cleanup_pending=1
 assert_status "organization-foreign-register" 201 \
   -F "name=外部组织负责人" \
   -F "phone=$smoke_foreign_organization_phone" \
@@ -458,7 +539,6 @@ assert_status "organization-foreign-register" 201 \
   -F 'documentType=business_license' \
   -F "credential=@$organization_credential_file;type=application/pdf" \
   "$base_url/api/auth/register/organization"
-smoke_foreign_organization_created=1
 assert_json_response "organization-foreign-register"
 smoke_foreign_organization_user_id="$(json_path 'let input="";process.stdin.on("data",chunk=>input+=chunk).on("end",()=>{const data=JSON.parse(input);if(data.user&&data.user.id)process.stdout.write(encodeURIComponent(data.user.id));});')"
 registered_foreign_organization_phone="$(json_path 'let input="";process.stdin.on("data",chunk=>input+=chunk).on("end",()=>{const data=JSON.parse(input);if(data.user&&data.user.phone)process.stdout.write(data.user.phone);});')"

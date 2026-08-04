@@ -33,6 +33,9 @@ test("remote smoke keeps organization records scoped and validates the organizat
   assert.match(smoke, /data\.organization\.id/);
   assert.match(smoke, /data\.grades/);
   assert.match(smoke, /smoke_organization_token=/);
+  assert.match(smoke, /smoke_event_cleanup_pending=0/);
+  assert.match(smoke, /smoke_organization_cleanup_pending=0/);
+  assert.match(smoke, /smoke_foreign_organization_cleanup_pending=0/);
   assert.match(smoke, /credential-cleanup/);
   assert.match(smoke, /DELETE "\$base_url\/api\/admin\/users\/\$organization_user_id"/);
   assert.match(smoke, /recover_organization_smoke_ids\(\)/);
@@ -47,16 +50,45 @@ test("remote smoke keeps organization records scoped and validates the organizat
   assert.match(smoke, /trap 'handle_exit' 0/);
   assert.match(smoke, /cleanup failed after exit status/);
   assert.match(smoke, /if \[ "\$status" -eq 0 \]; then\s*status=1/);
-  for (const [label, created] of [
-    ["organization-owner-register", "smoke_organization_created=1"],
-    ["organization-foreign-register", "smoke_foreign_organization_created=1"]
+  for (const [label, pending] of [
+    ["organization-owner-register", "smoke_organization_cleanup_pending=1"],
+    ["organization-foreign-register", "smoke_foreign_organization_cleanup_pending=1"]
   ]) {
     const status = smoke.indexOf(`assert_status "${label}" 201`);
-    const createdAt = smoke.indexOf(created, status);
+    const pendingAt = smoke.lastIndexOf(pending, status);
     const json = smoke.indexOf(`assert_json_response "${label}"`, status);
-    assert.ok(status >= 0 && createdAt > status && createdAt < json,
-      `${label} must be recoverable before JSON parsing can abort`);
+    assert.ok(status >= 0 && pendingAt >= 0 && pendingAt < status && json > status,
+      `${label} must lock cleanup intent before its request can create a fixture`);
   }
+  const eventCopy = smoke.indexOf('assert_status "submission-event-copy" 201');
+  const eventPending = smoke.lastIndexOf("smoke_event_cleanup_pending=1", eventCopy);
+  const eventJson = smoke.indexOf('assert_json_response "submission-event-copy"', eventCopy);
+  assert.ok(eventPending >= 0 && eventPending < eventCopy && eventJson > eventCopy,
+    "event-copy must lock cleanup intent before its request can create a fixture");
+  assert.match(smoke, /recover_submission_smoke_event_id\(\)/);
+  assert.match(smoke, /verify_submission_smoke_event_target\(\)/);
+  assert.match(smoke, /cleanup-events\.json/);
+  assert.match(smoke, /event\.name === expectedName/);
+  assert.match(smoke, /event\.name\.includes\(expectedToken\)/);
+  assert.match(smoke, /event\.id !== sourceEventId/);
+  assert.match(smoke, /organization\.name === process\.env\.EXPECTED_NAME/);
+  assert.match(smoke, /organization\.name\.includes\(process\.env\.EXPECTED_TOKEN\)/);
+  assert.match(smoke, /if test -z "\$recovered_event_id"; then\s*smoke_event_cleanup_pending=0/);
+  assert.match(smoke, /2\) smoke_organization_cleanup_pending=0/);
+  assert.match(smoke, /2\) smoke_foreign_organization_cleanup_pending=0/);
+  const submissionCleanup = smoke.match(/cleanup_submission_smoke\(\) \{([\s\S]*?)\n\}/)?.[1] || "";
+  const archive = submissionCleanup.indexOf('/archive"');
+  const deletion = submissionCleanup.indexOf('-X DELETE "$base_url/api/admin/events/$smoke_event_id"');
+  assert.ok(
+    submissionCleanup.indexOf('verify_submission_smoke_event_target "$smoke_event_id" 0') < archive
+      && submissionCleanup.lastIndexOf('verify_submission_smoke_event_target "$smoke_event_id" 1') < deletion,
+    "event cleanup must verify the recovered fixture before archive and delete"
+  );
+  const organizationCleanup = smoke.match(/cleanup_organization_target\(\) \{([\s\S]*?)\n\}/)?.[1] || "";
+  assert.ok(
+    organizationCleanup.split('verify_organization_cleanup_target').length - 1 >= 3,
+    "organization cleanup must refresh and verify identity before each destructive request"
+  );
   assert.doesNotMatch(smoke, /echo[^\r\n]*(?:password|token|cookie)/i);
 });
 
