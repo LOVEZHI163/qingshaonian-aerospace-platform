@@ -33,6 +33,20 @@ function userSummary(user) {
   return { id: user.id, name: user.name, phone: user.phone };
 }
 
+function membershipDto(row) {
+  return {
+    id: row.id,
+    userId: row.userId,
+    organizationId: row.organizationId,
+    role: row.role,
+    status: row.status,
+    direction: row.direction,
+    note: row.note,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt
+  };
+}
+
 function upsertPending(db, { user, organization, direction, note, makeId, now }) {
   const existing = db.memberships.find((row) => row.userId === user.id && row.organizationId === organization.id);
   if (existing?.status === "active" || existing?.status === "pending") return { row: existing, changed: false };
@@ -51,11 +65,16 @@ function upsertPending(db, { user, organization, direction, note, makeId, now })
 }
 
 function mutation(organization, result) {
-  return { ...result, organization: organizationSummary(organization), cancelled: [] };
+  return {
+    row: membershipDto(result.row),
+    organization: organizationSummary(organization),
+    cancelled: [],
+    changed: result.changed
+  };
 }
 
 function relationWithOrganization(row, organization) {
-  return { ...row, organization: organizationSummary(organization) };
+  return { ...membershipDto(row), organization: organizationSummary(organization) };
 }
 
 function requireMembership(db, membershipId) {
@@ -162,7 +181,7 @@ export function actAsPersonalUser(db, user, membershipId, action, now) {
   const cancelled = transition.to === "active"
     ? rejectOtherPendingMemberships(db, row.userId, row.id, now)
     : [];
-  return { row, organization: organizationSummary(organization), cancelled, changed: true };
+  return { row: membershipDto(row), organization: organizationSummary(organization), cancelled, changed: true };
 }
 
 export function actAsOrganizationOwner(db, owner, membershipId, action, now) {
@@ -181,7 +200,7 @@ export function actAsOrganizationOwner(db, owner, membershipId, action, now) {
   const cancelled = transition.to === "active"
     ? rejectOtherPendingMemberships(db, row.userId, row.id, now)
     : [];
-  return { row, organization: organizationSummary(organization), cancelled, changed: true };
+  return { row: membershipDto(row), organization: organizationSummary(organization), cancelled, changed: true };
 }
 
 export function listPersonalRelations(db, user) {
@@ -213,7 +232,7 @@ export function listOwnedMemberships(db, owner) {
     .filter((row) => row.organizationId === organization.id)
     .map((row) => {
       const user = db.users.find((item) => item.id === row.userId);
-      return { ...row, user: user ? userSummary(user) : null };
+      return { ...membershipDto(row), user: user ? userSummary(user) : null };
     });
   return {
     organization: organizationSummary(organization),

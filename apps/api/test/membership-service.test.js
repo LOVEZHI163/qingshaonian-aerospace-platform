@@ -16,6 +16,16 @@ const fixedNow = "2026-08-04T00:00:00.000Z";
 const now = () => fixedNow;
 let sequence = 0;
 const makeId = (prefix) => `${prefix}-TEST-${++sequence}`;
+const MEMBERSHIP_FIELDS = [
+  "id", "userId", "organizationId", "role", "status", "direction", "note", "createdAt", "updatedAt"
+];
+
+function assertMembershipDto(row, extraFields = []) {
+  assert.deepEqual(Object.keys(row).sort(), [...MEMBERSHIP_FIELDS, ...extraFields].sort());
+  assert.equal("invitedPhone" in row, false);
+  assert.equal("invitedName" in row, false);
+  assert.equal("internalOnly" in row, false);
+}
 
 function fixture() {
   return {
@@ -180,4 +190,48 @@ test("operational organization search matches names and codes", () => {
   db.organizations[1].status = "disabled";
   assert.deepEqual(searchOperationalOrganizations(db, "ORG-001").map((row) => row.id), ["O1"]);
   assert.deepEqual(searchOperationalOrganizations(db, "组织").map((row) => row.id), ["O1"]);
+});
+
+test("membership mutations whitelist every public membership row", () => {
+  const creationDb = fixture();
+  assertMembershipDto(requestMembership(creationDb, creationDb.users[0], { organizationId: "O1" }, makeId, now).row);
+  assertMembershipDto(inviteMembership(creationDb, creationDb.users[2], { phone: "13700000001" }, makeId, now).row);
+
+  const personalDb = fixture();
+  personalDb.memberships = [{
+    id: "M1", userId: "U1", organizationId: "O1", role: "member", status: "pending", direction: "organization_invite", note: "",
+    createdAt: now(), updatedAt: now(), invitedPhone: "13700000001", invitedName: "普通用户", internalOnly: "secret"
+  }];
+  assertMembershipDto(actAsPersonalUser(personalDb, personalDb.users[0], "M1", "accept", now).row);
+
+  const ownerDb = fixture();
+  ownerDb.memberships = [{
+    id: "M1", userId: "U1", organizationId: "O1", role: "member", status: "pending", direction: "user_request", note: "",
+    createdAt: now(), updatedAt: now(), invitedPhone: "13700000001", invitedName: "普通用户", internalOnly: "secret"
+  }];
+  assertMembershipDto(actAsOrganizationOwner(ownerDb, ownerDb.users[1], "M1", "approve", now).row);
+});
+
+test("membership list DTOs whitelist membership, user and organization fields", () => {
+  const db = fixture();
+  db.organizations[0].internalOnly = "secret";
+  db.users[0].internalOnly = "secret";
+  db.memberships = [{
+    id: "M1", userId: "U1", organizationId: "O1", role: "member", status: "active", direction: "user_request", note: "",
+    createdAt: now(), updatedAt: now(), invitedPhone: "13700000001", invitedName: "普通用户", internalOnly: "secret"
+  }];
+
+  const relation = listPersonalRelations(db, db.users[0]).active[0];
+  assertMembershipDto(relation, ["organization"]);
+  assert.deepEqual(relation.organization, {
+    id: "O1", name: "组织一", code: "ORG-001", contactName: "负责人一", contactPhone: "13700000011"
+  });
+
+  const owned = listOwnedMemberships(db, db.users[1]);
+  assertMembershipDto(owned.rows[0], ["user"]);
+  assert.deepEqual(owned.rows[0].user, { id: "U1", name: "普通用户", phone: "13700000001" });
+
+  assert.deepEqual(Object.keys(searchOperationalOrganizations(db, "")[0]).sort(), [
+    "id", "name", "code", "contactName", "contactPhone"
+  ].sort());
 });
