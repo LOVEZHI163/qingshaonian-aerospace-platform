@@ -20,10 +20,11 @@ import { createPublicSiteRouter } from "./routes/public-site.js";
 import { createAccountEventsRouter } from "./routes/account-events.js";
 import { createSystemRouter } from "./routes/system.js";
 import { createSubmissionAssetsRouter } from "./routes/submission-assets.js";
+import { createMembershipsRouter } from "./routes/memberships.js";
 import { startSubmissionSessionExpiryCleanup } from "./services/submission-assets.js";
 import { registrationContext } from "./services/events.js";
 import { replayFileCleanupJournal } from "./services/organizations.js";
-import { organizationForOwner, requireOrdinaryUser, requireOrganizationOwner } from "./services/access-control.js";
+import { organizationForOwner } from "./services/access-control.js";
 import { publishDueScheduledContent, startScheduledContentPublisher } from "./services/scheduled-content-publisher.js";
 
 const PORT = Number(process.env.PORT || 4300);
@@ -184,6 +185,16 @@ app.use("/api", createOrganizationsRouter({
   makeId: id,
   now,
   publicUser
+}));
+
+app.use("/api", createMembershipsRouter({
+  store: dataStore,
+  requireUser,
+  requirePasswordReady,
+  asyncRoute,
+  mutationAsyncRoute,
+  makeId: id,
+  now
 }));
 
 app.use("/api", createAccountEventsRouter({
@@ -495,13 +506,6 @@ app.delete("/api/admin/users/:id", requireAdmin, requirePasswordReady, mutationA
   res.json({ ok: true });
 }));
 
-app.get("/api/organizations", requireUser, requirePasswordReady, asyncRoute(async (_req, res) => {
-  const db = await readDb();
-  res.json({
-    rows: db.organizations.map(({ ownerUserId, ...organization }) => organization)
-  });
-}));
-
 app.get("/api/me/:userId", requireUser, requirePasswordReady, asyncRoute(async (req, res, next) => {
   if (["registrations", "certificates"].includes(req.params.userId)) return next();
   const db = await readDb();
@@ -513,64 +517,6 @@ app.get("/api/me/:userId", requireUser, requirePasswordReady, asyncRoute(async (
     organizations: userOrganizations(db, user.id),
     memberships: db.memberships.filter((item) => item.userId === user.id || item.invitedPhone === user.phone)
   });
-}));
-
-app.post("/api/organizations/request", requireUser, requirePasswordReady, mutationAsyncRoute(async (req, res) => {
-  const db = await readDb();
-  const user = db.users.find((item) => item.id === req.user.id);
-  requireOrdinaryUser(user);
-  const organization = db.organizations.find((item) => item.id === req.body.organizationId);
-  if (!user || !organization) return res.status(404).json({ error: "用户或组织不存在" });
-  if (organization.status !== "active" || organization.reviewStatus !== "approved") return res.status(403).json({ error: "组织尚未通过审核" });
-  const existing = db.memberships.find((item) => item.userId === user.id && item.organizationId === organization.id && ["active", "pending"].includes(item.status));
-  if (existing) return res.status(409).json({ error: "已经存在成员关系或待审核申请" });
-
-  const membership = {
-    id: id("M"),
-    userId: user.id,
-    organizationId: organization.id,
-    role: "member",
-    status: "pending",
-    direction: "user_request",
-    note: req.body.note || "",
-    createdAt: now(),
-    updatedAt: now()
-  };
-  db.memberships.unshift(membership);
-  await writeDb(db);
-  res.status(201).json({ row: membership });
-}));
-
-app.patch("/api/memberships/:id", requireUser, requirePasswordReady, mutationAsyncRoute(async (req, res) => {
-  const db = await readDb();
-  const row = db.memberships.find((item) => item.id === req.params.id);
-  if (!row) return res.status(404).json({ error: "成员关系不存在" });
-  if (!isOrganizationOperational(db, row.organizationId)) {
-    return res.status(403).json({ error: "组织尚未通过审核" });
-  }
-
-  if (!["active", "rejected", "removed"].includes(req.body.status)) return res.status(422).json({ error: "状态不合法" });
-  let organization;
-  try {
-    organization = requireOrganizationOwner(db, req.user);
-  } catch (error) {
-    return res.status(error.status || 403).json({ error: error.message });
-  }
-  if (organization.id !== row.organizationId) {
-    return res.status(403).json({ error: "无权处理该关系" });
-  }
-
-  row.status = req.body.status;
-  row.role = "member";
-  row.updatedAt = now();
-  await writeDb(db);
-  res.json({ row });
-}));
-
-app.get("/api/organizations/:id/members", requireUser, requirePasswordReady, asyncRoute(async (req, res) => {
-  const db = await readDb();
-  if (!canManageOrganization(db, req.user.id, req.params.id)) return res.status(403).json({ error: "无权查看该组织成员" });
-  res.json({ rows: db.memberships.filter((membership) => membership.organizationId === req.params.id) });
 }));
 
 app.use((error, req, res, next) => {

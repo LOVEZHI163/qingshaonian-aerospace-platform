@@ -38,6 +38,10 @@ test("every business API requires a session and every administrator API rejects 
       "/api/admin/events/wz-aerospace-2026/registrations",
       "/api/admin/events/wz-aerospace-2026/registrations/export.xlsx?scope=all",
       "/api/organizations",
+      "/api/organizations/search?q=温州",
+      "/api/me/organization-relations",
+      "/api/organization/member-candidate?phone=13700000001",
+      "/api/organization/memberships",
       "/api/me/events",
       "/api/me/events/wz-aerospace-2026/registrations",
       "/api/me/events/wz-aerospace-2026/certificates",
@@ -51,6 +55,8 @@ test("every business API requires a session and every administrator API rejects 
     }
     for (const [route, body] of [
       ["/api/organizations/request", { organizationId: "O1001" }],
+      ["/api/me/organization-requests", { organizationId: "O1001" }],
+      ["/api/organization/invitations", { phone: "13700000001" }],
       ["/api/organization/events/wz-aerospace-2026/join", {}],
       ["/api/registrations/check", { athlete: {} }],
       ["/api/me/events/wz-aerospace-2026/registrations", {}]
@@ -80,6 +86,35 @@ test("every business API requires a session and every administrator API rejects 
         ? withSession(ordinary.cookie, { method })
         : jsonOptions(method, body, ordinary.cookie);
       assert.equal((await fetch(`${baseUrl}${route}`, options)).status, 403, `${method} ${route}`);
+    }
+
+    const owner = await loginAs(baseUrl, "13800000011", "123456");
+    const admin = await loginAs(baseUrl, "13900000000", "admin123");
+    for (const [method, route, body] of [
+      ["GET", "/api/organization/member-candidate?phone=13800000001"],
+      ["GET", "/api/organization/memberships"],
+      ["POST", "/api/organization/invitations", { phone: "13800000001" }],
+      ["PATCH", "/api/organization/memberships/M1002", { action: "remove" }]
+    ]) {
+      const options = body === undefined
+        ? withSession(ordinary.cookie, { method })
+        : jsonOptions(method, body, ordinary.cookie);
+      assert.equal((await fetch(`${baseUrl}${route}`, options)).status, 403, `ordinary ${method} ${route}`);
+    }
+    assert.equal((await fetch(
+      `${baseUrl}/api/me/organization-relations/M1002`,
+      jsonOptions("PATCH", { action: "leave" }, owner.cookie)
+    )).status, 403);
+    for (const [method, route, body] of [
+      ["GET", "/api/organization/member-candidate?phone=13800000001"],
+      ["GET", "/api/organization/memberships"],
+      ["POST", "/api/organization/invitations", { phone: "13800000001" }],
+      ["PATCH", "/api/organization/memberships/M1002", { action: "remove" }]
+    ]) {
+      const options = body === undefined
+        ? withSession(admin.cookie, { method })
+        : jsonOptions(method, body, admin.cookie);
+      assert.equal((await fetch(`${baseUrl}${route}`, options)).status, 403, `admin ${method} ${route}`);
     }
   });
 });
