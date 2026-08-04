@@ -111,6 +111,7 @@ test("an organization workspace and export are scoped to its joined event", asyn
     assert.equal(workspace.status, 200);
     const payload = await workspace.json();
     assert.equal(payload.event.id, "wz-aerospace-2026");
+    assert.deepEqual(payload.organization, { id: "O1001", name: "温州市实验小学" });
     assert.equal(payload.summary.registrationCount, payload.registrations.length);
     assert.equal(payload.registrations.every((row) => row.organizationId === "O1001"), true);
 

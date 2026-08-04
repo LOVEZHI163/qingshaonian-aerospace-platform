@@ -39,6 +39,7 @@ export function createAccountEventsRouter({ store, requireUser, requirePasswordR
     const registrations = db.registrations.filter((row) => row.organizationId === organization.id && row.eventId === event.id);
     res.json({
       event,
+      organization: { id: organization.id, name: organization.name },
       summary: {
         registrationCount: registrations.length,
         pendingRegistrationCount: registrations.filter((row) => row.status === "pending").length,

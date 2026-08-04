@@ -16,6 +16,13 @@ import OrganizationAthleteRegistrationForm from "../../components/OrganizationAt
 import OrganizationEventWorkspacePage from "../OrganizationEventWorkspacePage.vue";
 
 const event = { id: "E2", name: "赛事二", status: "published" };
+const grades = [
+  { id: "primary_lower", name: "小学低段", grades: ["一年级", "二年级", "三年级"] },
+  { id: "primary_upper", name: "小学高段", grades: ["四年级", "五年级", "六年级"] },
+  { id: "middle_school", name: "中学组", grades: ["初一", "初二", "初三"] },
+  { id: "high_vocational", name: "职高/高中组", grades: ["高一", "高二", "高三", "职高一年级", "职高二年级", "职高三年级"] }
+];
+const gradeValues = ["一年级", "二年级", "三年级", "四年级", "五年级", "六年级", "初一", "初二", "初三", "高一", "高二", "高三", "职高一年级", "职高二年级", "职高三年级"];
 const registration = {
   id: "R1", athlete: { name: "张三", school: "航空学校", grade: "五年级", phone: "13800000000" },
   projectId: "P1", projectName: "无人机", status: "approved", awardName: "一等奖", rank: "1", score: "95"
@@ -28,8 +35,10 @@ describe("OrganizationEventWorkspacePage", () => {
     apiMock.mockImplementation(async (path) => {
       if (path === "/api/organization/events/E2/workspace") return {
         event,
+        organization: { id: "O1", name: "温州市实验小学" },
         summary: { registrationCount: 1, pendingRegistrationCount: 0, certificateCount: 1 },
         projects: [{ id: "P1", name: "无人机" }],
+        grades,
         registrations: [registration]
       };
       if (path === "/api/organization/events/E2/registrations") return { rows: [registration] };
@@ -52,7 +61,7 @@ describe("OrganizationEventWorkspacePage", () => {
   it("submits organization athletes only to the explicit event endpoint and reports a merge", async () => {
     apiMock.mockResolvedValueOnce({ merged: true, row: registration });
     const wrapper = mount(OrganizationAthleteRegistrationForm, {
-      props: { eventId: "E2", projects: [{ id: "P1", name: "无人机" }] }
+      props: { eventId: "E2", projects: [{ id: "P1", name: "无人机" }], grades }
     });
     await wrapper.get('[data-field="athlete-name"]').setValue("张三");
     await wrapper.get('input[placeholder="输入或选择学校"]').setValue("航空学校");
@@ -69,6 +78,45 @@ describe("OrganizationEventWorkspacePage", () => {
     expect(wrapper.find("select[data-field=organization]").exists()).toBe(false);
   });
 
+  it("renders exactly the workspace grade values as select options", async () => {
+    const wrapper = mount(OrganizationAthleteRegistrationForm, {
+      props: { eventId: "E2", projects: [{ id: "P1", name: "无人机" }], grades }
+    });
+
+    expect(wrapper.get('[data-field="athlete-grade"]').findAll("option").slice(1).map((option) => option.element.value)).toEqual(gradeValues);
+  });
+
+  it("defaults a new athlete school to its organization, allows an edit, and restores the default after creation", async () => {
+    apiMock.mockResolvedValueOnce({ row: registration });
+    const wrapper = mount(OrganizationAthleteRegistrationForm, {
+      props: { eventId: "E2", projects: [{ id: "P1", name: "无人机" }], grades, defaultSchool: "温州市实验小学" }
+    });
+    const school = wrapper.get('input[placeholder="输入或选择学校"]');
+    expect(school.element.value).toBe("温州市实验小学");
+    await school.setValue("自定义学校");
+    await wrapper.get('[data-field="athlete-name"]').setValue("张三");
+    await wrapper.get('[data-field="athlete-grade"]').setValue("五年级");
+    await wrapper.get('[data-field="athlete-phone"]').setValue("13800000000");
+    await wrapper.get("form").trigger("submit");
+    await flushPromises();
+
+    expect(apiMock).toHaveBeenCalledWith("/api/organization/events/E2/registrations", expect.objectContaining({
+      body: JSON.stringify({ athlete: { name: "张三", school: "自定义学校", grade: "五年级", phone: "13800000000" }, projectId: "P1", instructor: "" })
+    }));
+    expect(school.element.value).toBe("温州市实验小学");
+  });
+
+  it("retains the saved school when editing an organization registration", async () => {
+    const wrapper = mount(OrganizationAthleteRegistrationForm, {
+      props: {
+        eventId: "E2", projects: [{ id: "P1", name: "无人机" }], grades, defaultSchool: "温州市实验小学",
+        registration: { ...registration, athlete: { ...registration.athlete, school: "保存的学校" } }
+      }
+    });
+
+    expect(wrapper.get('input[placeholder="输入或选择学校"]').element.value).toBe("保存的学校");
+  });
+
   it("creates organization-owned material sessions and includes the completed session without exposing an editable organization id", async () => {
     apiMock.mockImplementation(async (path) => {
       if (path === "/api/organization/events/E2/projects/P-IMAGE/upload-sessions") return { row: { id: "US-ORG", assets: {} } };
@@ -77,7 +125,7 @@ describe("OrganizationEventWorkspacePage", () => {
       throw new Error(`unexpected API path ${path}`);
     });
     const wrapper = mount(OrganizationAthleteRegistrationForm, {
-      props: { eventId: "E2", projects: [{ id: "P-IMAGE", name: "绘画", submissionMode: "image_video" }] }
+      props: { eventId: "E2", projects: [{ id: "P-IMAGE", name: "绘画", submissionMode: "image_video" }], grades }
     });
     await flushPromises();
     await wrapper.get('[data-field="athlete-name"]').setValue("张三");
@@ -279,7 +327,7 @@ describe("OrganizationEventWorkspacePage", () => {
     };
     apiMock.mockResolvedValue({ row: second });
     const wrapper = mount(OrganizationAthleteRegistrationForm, {
-      props: { eventId: "E2", projects: [{ id: "P1", name: "无人机" }, { id: "P2", name: "火箭" }], registration: first }
+      props: { eventId: "E2", projects: [{ id: "P1", name: "无人机" }, { id: "P2", name: "火箭" }], grades, registration: first }
     });
     await wrapper.get('[data-field="instructor"]').setValue("A的旧编辑值");
     await wrapper.setProps({ registration: second });
@@ -289,8 +337,8 @@ describe("OrganizationEventWorkspacePage", () => {
     expect(wrapper.get('input[placeholder="输入或选择学校"]').element.value).toBe("第二学校");
     expect(wrapper.get('[data-field="athlete-grade"]').element.value).toBe("六年级");
     expect(wrapper.get('[data-field="instructor"]').element.value).toBe("B老师");
-    expect(wrapper.get("select").element.value).toBe("P2");
-    expect(wrapper.get("select").attributes("disabled")).toBeDefined();
+    expect(wrapper.findAll("select")[1].element.value).toBe("P2");
+    expect(wrapper.findAll("select")[1].attributes("disabled")).toBeDefined();
     expect(wrapper.text()).toContain("赛项在报名创建后不可修改");
 
     await wrapper.get('[data-field="instructor"]').setValue("B的新编辑值");

@@ -8,6 +8,8 @@ import { api } from "../lib/api.js";
 const props = defineProps({
   eventId: { type: String, required: true },
   projects: { type: Array, default: () => [] },
+  grades: { type: Array, default: () => [] },
+  defaultSchool: { type: String, default: "" },
   registration: { type: Object, default: null },
   disabled: { type: Boolean, default: false }
 });
@@ -26,9 +28,14 @@ const assetsComplete = ref(false);
 let uploadSessionRequest = 0;
 const hasEventContext = computed(() => Boolean(String(props.eventId || "").trim()));
 const editing = computed(() => Boolean(props.registration?.id));
+const gradeOptions = computed(() => props.grades.flatMap((group) => group.grades || []));
 const selectedProject = computed(() => props.projects.find((project) => project.id === form.projectId) || null);
 const requiresSubmission = computed(() => !editing.value && selectedProject.value?.submissionMode === "image_video");
 const submitDisabled = computed(() => submitting.value || !form.projectId || (requiresSubmission.value && (!uploadSession.value?.id || uploadSessionLoading.value || !assetsComplete.value)));
+
+function blankAthlete() {
+  return { name: "", school: props.defaultSchool || "", grade: "", phone: "" };
+}
 
 watch(() => props.projects, (projects) => {
   if (!projects.some((project) => project.id === form.projectId)) form.projectId = projects[0]?.id || "";
@@ -36,10 +43,14 @@ watch(() => props.projects, (projects) => {
 
 watch(() => props.registration, (registration) => {
   const athlete = registration?.athlete ? JSON.parse(JSON.stringify(registration.athlete)) : {};
-  Object.assign(form.athlete, { name: "", school: "", grade: "", phone: "" }, athlete);
+  Object.assign(form.athlete, blankAthlete(), athlete);
   form.projectId = registration?.projectId || props.projects[0]?.id || "";
   form.instructor = registration?.instructor || "";
   message.value = "";
+}, { immediate: true });
+
+watch(() => props.defaultSchool, (defaultSchool) => {
+  if (!editing.value && !form.athlete.school) form.athlete.school = defaultSchool || "";
 }, { immediate: true });
 
 function clearUploadSession() {
@@ -95,7 +106,7 @@ async function submit() {
     });
     message.value = editing.value ? "组织报名已更新" : payload.merged ? "已与现有个人报名合并，未重复创建" : "组织报名已提交";
     if (!editing.value) {
-      Object.assign(form.athlete, { name: "", school: "", grade: "", phone: "" });
+      Object.assign(form.athlete, blankAthlete());
       form.instructor = "";
       form.projectId = "";
       clearUploadSession();
@@ -114,7 +125,7 @@ async function submit() {
     <div class="panel-title"><h3>{{ editing ? "编辑组织报名" : "组织报名" }}</h3></div>
     <p class="hint">报名将自动归属当前组织；不支持切换个人身份或其他组织。</p>
     <div class="two"><label>姓名<input v-model="form.athlete.name" data-field="athlete-name" required /></label><label>学校<SchoolCombobox v-model="form.athlete.school" /></label></div>
-    <div class="two"><label>年级<input v-model="form.athlete.grade" data-field="athlete-grade" required /></label><label>手机/监护人手机<input v-model="form.athlete.phone" data-field="athlete-phone" required /></label></div>
+    <div class="two"><label>年级<select v-model="form.athlete.grade" data-field="athlete-grade" required><option value="" disabled>请选择年级</option><option v-for="grade in gradeOptions" :key="grade" :value="grade">{{ grade }}</option></select></label><label>手机/监护人手机<input v-model="form.athlete.phone" data-field="athlete-phone" required /></label></div>
     <div class="two"><label>赛项<select v-model="form.projectId" :disabled="editing" required><option v-for="project in projects" :key="project.id" :value="project.id">{{ project.name }}</option></select></label><label>指导老师<input v-model="form.instructor" data-field="instructor" /></label></div>
     <p v-if="editing" class="hint">赛项在报名创建后不可修改；如需更换赛项，请取消后重新报名。</p>
     <section v-if="requiresSubmission" class="registration-submission" aria-label="作品材料">
