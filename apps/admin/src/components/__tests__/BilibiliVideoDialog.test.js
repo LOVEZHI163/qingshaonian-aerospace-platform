@@ -4,6 +4,21 @@ import { describe, expect, it } from "vitest";
 import BilibiliVideoDialog from "../BilibiliVideoDialog.vue";
 
 describe("BilibiliVideoDialog", () => {
+  it("associates the dialog instructions and displays the recognized BV id", async () => {
+    const wrapper = mount(BilibiliVideoDialog, { props: { open: true } });
+
+    const dialog = wrapper.get('[role="dialog"]');
+    const descriptionId = dialog.attributes("aria-describedby");
+    expect(descriptionId).toBe("bilibili-video-instructions");
+    expect(wrapper.get(`#${descriptionId}`).text()).toBe(
+      "填写B站完整视频链接或BV号和自定义标题，系统将生成封面与播放器。"
+    );
+
+    await wrapper.get('[data-field="bilibili-url"]').setValue("https://www.bilibili.com/video/BV1B7411m7LV");
+
+    expect(wrapper.get('[data-bilibili-recognized]').text()).toBe("已识别：BV1B7411m7LV");
+  });
+
   it("explains accepted input and previews a valid video", async () => {
     const wrapper = mount(BilibiliVideoDialog, { props: { open: true } });
 

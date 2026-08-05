@@ -3,6 +3,19 @@ import { describe, expect, it } from "vitest";
 import { enhanceBilibiliVideos } from "../bilibili-video.js";
 
 describe("公开 B站播放器", () => {
+  it("keeps the existing iframe when the same DOM is enhanced again", () => {
+    const root = document.createElement("div");
+    root.innerHTML = '<figure class="content-bilibili-video" data-bilibili-video="BV1B7411m7LV"><figcaption>比赛回顾</figcaption></figure>';
+
+    enhanceBilibiliVideos(root);
+    const firstFrame = root.querySelector("iframe");
+
+    enhanceBilibiliVideos(root);
+
+    expect(root.querySelector("iframe")).toBe(firstFrame);
+    expect(root.querySelectorAll("iframe")).toHaveLength(1);
+  });
+
   it("enhances a valid canonical marker into the fixed lazy player and fallback link", () => {
     const root = document.createElement("div");
     root.innerHTML = '<figure class="content-bilibili-video" data-bilibili-video="BV1B7411m7LV"><figcaption>比赛回顾</figcaption></figure>';

@@ -72,11 +72,12 @@ function handleKeydown(event) {
 
 <template>
   <div v-if="open" class="dialog-backdrop" @click.self="close">
-    <section ref="dialog" role="dialog" aria-modal="true" aria-labelledby="bilibili-video-title" class="panel content-bilibili-dialog" tabindex="-1" @keydown="handleKeydown">
+    <section ref="dialog" role="dialog" aria-modal="true" aria-labelledby="bilibili-video-title" aria-describedby="bilibili-video-instructions" class="panel content-bilibili-dialog" tabindex="-1" @keydown="handleKeydown">
       <div class="panel-title">
         <h3 id="bilibili-video-title">{{ initial?.bvid ? "编辑B站视频" : "插入B站视频" }}</h3>
         <button type="button" data-action="close-bilibili-video" @click="close">关闭</button>
       </div>
+      <p id="bilibili-video-instructions" class="content-bilibili-help">填写B站完整视频链接或BV号和自定义标题，系统将生成封面与播放器。</p>
 
       <label>
         B站视频链接或BV号
@@ -84,6 +85,7 @@ function handleKeydown(event) {
       </label>
       <p class="content-bilibili-help">{{ shortLinkHelp }}</p>
       <p v-if="url && !parsed.ok" role="alert">{{ parsed.message }}</p>
+      <p v-if="parsed.ok" class="content-bilibili-help" data-bilibili-recognized>已识别：{{ parsed.bvid }}</p>
 
       <label>
         视频标题

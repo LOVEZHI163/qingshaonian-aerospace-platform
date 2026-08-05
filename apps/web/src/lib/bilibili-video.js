@@ -1,7 +1,9 @@
 const BVID_RE = /^BV[0-9A-Za-z]{10}$/;
+const enhancedFigures = new WeakSet();
 
 export function enhanceBilibiliVideos(root) {
   for (const figure of root?.querySelectorAll("figure.content-bilibili-video[data-bilibili-video]") || []) {
+    if (enhancedFigures.has(figure)) continue;
     const bvid = figure.getAttribute("data-bilibili-video") || "";
     const title = figure.querySelector(":scope > figcaption")?.textContent?.trim() || "";
     if (!BVID_RE.test(bvid) || !title) continue;
@@ -28,5 +30,6 @@ export function enhanceBilibiliVideos(root) {
     link.textContent = "在哔哩哔哩打开";
 
     figure.replaceChildren(frameWrap, caption, link);
+    enhancedFigures.add(figure);
   }
 }
