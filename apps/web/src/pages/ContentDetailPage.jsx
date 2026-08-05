@@ -4,6 +4,7 @@ import { fetchJson } from "../api/client.js";
 import AsyncState from "../components/AsyncState.jsx";
 import AttachmentList from "../components/AttachmentList.jsx";
 import Seo from "../components/Seo.jsx";
+import { enhanceBilibiliVideos } from "../lib/bilibili-video.js";
 
 function ContentNotFound() {
   return (
@@ -47,6 +48,7 @@ export function ContentDetailView({ row, preview = false, canonicalPath = null }
       if (!image.hasAttribute("alt")) image.alt = "正文图片";
       image.loading = "lazy";
     }
+    enhanceBilibiliVideos(root);
   }, [row?.bodyHtml]);
 
   return (

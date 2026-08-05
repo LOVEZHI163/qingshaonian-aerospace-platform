@@ -657,6 +657,31 @@ describe("public content detail and failures", () => {
     expect(window.__bodyScriptRan).toBe(false);
   });
 
+  it("renders API-cleaned B站 markers through the fixed public player", async () => {
+    installApi({
+      "/api/public/content/safe-story": {
+        row: {
+          ...content("SAFE", "news", { slug: "safe-story", title: "视频公开内容" }),
+          bodyHtml: '<figure class="content-bilibili-video" data-bilibili-video="BV1B7411m7LV"><figcaption>比赛回顾</figcaption></figure>',
+          attachments: []
+        }
+      }
+    });
+
+    render(<App />);
+
+    const player = await screen.findByTitle("B站视频：比赛回顾");
+    expect(player).toHaveAttribute(
+      "src",
+      "https://player.bilibili.com/player.html?bvid=BV1B7411m7LV&poster=1&autoplay=0&danmaku=0"
+    );
+    expect(screen.getByText("比赛回顾")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "在哔哩哔哩打开" })).toHaveAttribute(
+      "href",
+      "https://www.bilibili.com/video/BV1B7411m7LV"
+    );
+  });
+
   it("renders responsive figures and captions without horizontal overflow", async () => {
     const css = readFileSync("src/styles/content.css", "utf8");
     installApi({
@@ -674,6 +699,17 @@ describe("public content detail and failures", () => {
     expect(screen.getByText("比赛现场")).toBeInTheDocument();
     expect(css).toMatch(/\.rich-content figure\s*\{[^}]*max-width:\s*100%/s);
     expect(css).toMatch(/\.rich-content figcaption\s*\{[^}]*text-align:\s*center/s);
+  });
+
+  it("keeps the B站 player responsive at 16:9 without a fixed pixel iframe width", () => {
+    const css = readFileSync("src/styles/content.css", "utf8");
+    const frameRule = css.match(/\.rich-content \.content-bilibili-frame\s*\{([^}]*)\}/s)?.[1] || "";
+    const iframeRule = css.match(/\.rich-content \.content-bilibili-frame iframe\s*\{([^}]*)\}/s)?.[1] || "";
+
+    expect(frameRule).toMatch(/width:\s*100%/);
+    expect(frameRule).toMatch(/aspect-ratio:\s*16\s*\/\s*9/);
+    expect(iframeRule).toMatch(/width:\s*100%/);
+    expect(iframeRule).not.toMatch(/width:\s*\d+(?:\.\d+)?px/);
   });
 
   it("distinguishes a 404 from a retryable network failure", async () => {

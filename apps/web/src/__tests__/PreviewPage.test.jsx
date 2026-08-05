@@ -228,6 +228,28 @@ describe("PreviewPage", () => {
     }
   });
 
+  it("renders a draft B站 marker through the same fixed content player", async () => {
+    storeSnapshot(validSnapshot({
+      kind: "content",
+      payload: {
+        row: {
+          id: "draft-video",
+          slug: "draft-video",
+          title: "视频草稿",
+          bodyHtml: '<figure class="content-bilibili-video" data-bilibili-video="BV1B7411m7LV"><figcaption>草稿比赛回顾</figcaption></figure>',
+          attachments: []
+        }
+      }
+    }));
+
+    render(<PreviewPage location={`/preview?token=${token}`} />);
+
+    expect(await screen.findByTitle("B站视频：草稿比赛回顾")).toHaveAttribute(
+      "src",
+      "https://player.bilibili.com/player.html?bvid=BV1B7411m7LV&poster=1&autoplay=0&danmaku=0"
+    );
+  });
+
   it("uses homepage site drafts for the shared footer and preview SEO without a duplicate footer", () => {
     vi.stubEnv("VITE_PUBLIC_SITE_URL", "https://aerogp.cn");
     storeSnapshot(validSnapshot({

@@ -111,6 +111,11 @@
 .rich-content figure { max-width: 100%; margin: var(--space-4) auto; }
 .rich-content figure img { width: auto; max-width: 100%; height: auto; margin: 0 auto; }
 .rich-content figcaption { margin-top: var(--space-1); color: var(--color-text-muted); text-align: center; font-size: .9rem; }
+.rich-content .content-bilibili-video { margin: 24px 0; }
+.rich-content .content-bilibili-frame { width: 100%; aspect-ratio: 16 / 9; overflow: hidden; background: #0b1f3a; border-radius: 12px; }
+.rich-content .content-bilibili-frame iframe { display: block; width: 100%; height: 100%; border: 0; }
+.rich-content .content-bilibili-video figcaption { margin-top: 10px; font-weight: 700; color: #10233f; }
+.rich-content .content-bilibili-video a { display: inline-block; margin-top: 6px; }
 .rich-content table { display: block; max-width: 100%; overflow-x: auto; border-collapse: collapse; }
 .rich-content th,
 .rich-content td { padding: 0.6rem; border: 1px solid var(--color-border); }
