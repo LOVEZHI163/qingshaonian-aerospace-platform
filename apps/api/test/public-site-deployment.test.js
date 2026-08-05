@@ -96,6 +96,16 @@ test("nginx protects HTML and public media while caching immutable assets", asyn
   assert.match(nginx, /location \/\s*\{[\s\S]*\/index\.html/);
 });
 
+test("public pages allow only the official Bilibili player as an external frame", async () => {
+  const nginx = await read("deploy/nginx.conf");
+  const policies = nginx.match(/add_header Content-Security-Policy [^\r\n]+/g) || [];
+  const htmlLocation = nginx.match(/location ~\* \\.html\$ \{([\s\S]*?)\n  \}/)?.[1] || "";
+
+  assert.ok(policies.some((line) => line.includes("frame-src 'self' https://player.bilibili.com")));
+  assert.match(htmlLocation, /Content-Security-Policy[^\r\n]+frame-src 'self' https:\/\/player\.bilibili\.com/);
+  assert.doesNotMatch(nginx, /frame-src[^\r\n]+\*/);
+});
+
 test("nginx streams only submission uploads with the enlarged request limit", async () => {
   const nginx = await read("deploy/nginx.conf");
   const uploadLocation = nginx.match(/location \^~ \/api\/upload-sessions\/\s*\{([\s\S]*?)\n  \}/)?.[1];
