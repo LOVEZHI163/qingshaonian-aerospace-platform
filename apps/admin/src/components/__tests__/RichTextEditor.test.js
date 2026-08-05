@@ -175,6 +175,54 @@ describe("RichTextEditor", () => {
     prompt.mockRestore();
   });
 
+  it("advertises and inserts an editable B站 video at the current selection", async () => {
+    const wrapper = await mountEditor({
+      attachTo: document.body,
+      props: { modelValue: "<p>前文后文</p>" }
+    });
+    expect(wrapper.get('[data-command="bilibili-video"]').attributes("title")).toContain("完整链接或BV号");
+    wrapper.vm.editor.commands.setTextSelection(3);
+    expect(wrapper.vm.insertBilibiliVideo({ bvid: "BV1B7411m7LV", title: "比赛回顾" })).toBe(true);
+    expect(wrapper.emitted("update:modelValue").at(-1)[0]).toContain('data-bilibili-video="BV1B7411m7LV"');
+    expect(wrapper.emitted("update:modelValue").at(-1)[0]).toContain("<figcaption>比赛回顾</figcaption>");
+    wrapper.unmount();
+  });
+
+  it("updates and removes only the selected video node", async () => {
+    const wrapper = await mountEditor({
+      props: {
+        modelValue: '<figure class="content-bilibili-video" data-bilibili-video="BV1B7411m7LV"><figcaption>旧标题</figcaption></figure>'
+      }
+    });
+    wrapper.vm.editor.commands.setNodeSelection(0);
+    expect(wrapper.vm.updateSelectedBilibiliVideo({ bvid: "BV1SS4y1n7Fc", title: "新标题" })).toBe(true);
+    expect(wrapper.vm.editor.getHTML()).toContain("BV1SS4y1n7Fc");
+    expect(wrapper.vm.removeSelectedBilibiliVideo()).toBe(true);
+    expect(wrapper.vm.editor.getHTML()).not.toContain("data-bilibili-video");
+  });
+
+  it("preserves videos through visual and HTML modes", async () => {
+    const html = '<figure class="content-bilibili-video" data-bilibili-video="BV1B7411m7LV"><figcaption>比赛回顾</figcaption></figure>';
+    const wrapper = await mountEditor({ props: { modelValue: html } });
+    await wrapper.get('[data-editor-mode="html"]').trigger("click");
+    expect(wrapper.get('[data-rich-editor="html"]').element.value).toContain("data-bilibili-video");
+    await wrapper.get('[data-editor-mode="visual"]').trigger("click");
+    expect(wrapper.vm.editor.getHTML()).toContain("data-bilibili-video");
+  });
+
+  it("warns before pure text mode removes structured media", async () => {
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    const wrapper = await mountEditor({
+      props: {
+        modelValue: '<figure class="content-bilibili-video" data-bilibili-video="BV1B7411m7LV"><figcaption>比赛回顾</figcaption></figure>'
+      }
+    });
+    await wrapper.get('[data-editor-mode="text"]').trigger("click");
+    expect(confirm).toHaveBeenCalledWith("纯文本编辑会移除正文媒体，是否继续？");
+    expect(wrapper.find('[data-rich-editor="text"]').exists()).toBe(false);
+    confirm.mockRestore();
+  });
+
   it("serializes a selected media item as canonical public figure html", async () => {
     const wrapper = await mountEditor({ props: { modelValue: "<p>正文</p>" } });
     wrapper.vm.editor.commands.setTextSelection(3);
@@ -413,6 +461,21 @@ describe("RichTextEditor", () => {
     expect(html).toContain('<figure><img src="/api/public/media/M1" alt="现场"><figcaption>图注</figcaption></figure>');
     expect(html).toContain("正文");
     expect(html).not.toMatch(/script|onerror|data:image|secret|svg|<div/i);
+  });
+
+  it("canonicalizes valid B站 video figures and rejects invalid embeds", () => {
+    const html = sanitizeEditorHtml(
+      '<figure class="content-bilibili-video extra" data-bilibili-video="BV1B7411m7LV" data-extra="bad" onclick="bad()"><figcaption class="bad"><strong>纯文本标题</strong></figcaption></figure>'
+      + '<figure class="content-bilibili-video" data-bilibili-video="not-a-bvid"><figcaption>无效视频标题</figcaption></figure>'
+      + '<iframe src="https://player.bilibili.com/player.html?bvid=BV1B7411m7LV"></iframe>'
+    );
+
+    expect(html).toContain(
+      '<figure class="content-bilibili-video" data-bilibili-video="BV1B7411m7LV"><figcaption>纯文本标题</figcaption></figure>'
+    );
+    expect(html).toContain("无效视频标题");
+    expect((html.match(/data-bilibili-video/g) || [])).toHaveLength(1);
+    expect(html).not.toMatch(/extra|data-extra|onclick|iframe|player\.bilibili/i);
   });
 
   it("sanitizes HTML repair input before switching back to visual mode", async () => {

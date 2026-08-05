@@ -13,6 +13,25 @@ function canonicalizeManagedFigures(body) {
   const figures = [...body.querySelectorAll("figure")].reverse();
   figures.forEach((figure) => {
     const nodes = meaningfulFigureNodes(figure);
+    const bvid = figure.getAttribute("data-bilibili-video");
+    if (bvid !== null) {
+      const caption = nodes.length === 1 && nodes[0]?.tagName === "FIGCAPTION"
+        ? nodes[0]
+        : null;
+      const title = caption?.textContent?.trim() || "";
+      if (/^BV[0-9A-Za-z]{10}$/.test(bvid) && title) {
+        const rebuilt = document.createElement("figure");
+        rebuilt.className = "content-bilibili-video";
+        rebuilt.setAttribute("data-bilibili-video", bvid);
+        const rebuiltCaption = document.createElement("figcaption");
+        rebuiltCaption.textContent = title;
+        rebuilt.append(rebuiltCaption);
+        figure.replaceWith(rebuilt);
+      } else {
+        figure.replaceWith(document.createTextNode(title));
+      }
+      return;
+    }
     const image = nodes[0];
     const caption = nodes[1];
     const canonical = (nodes.length === 1 || nodes.length === 2)
@@ -88,6 +107,13 @@ export function sanitizeEditorHtml(raw) {
     node.setAttribute("data-editor-src", src);
     node.setAttribute("data-editor-alt", alt);
   });
+  parsed.body.querySelectorAll("figure[data-bilibili-video]").forEach((node) => {
+    node.setAttribute("data-editor-bilibili", node.getAttribute("data-bilibili-video") || "");
+    node.setAttribute(
+      "data-editor-video-title",
+      node.querySelector(":scope > figcaption")?.textContent?.trim() || ""
+    );
+  });
   visit(parsed.body);
   parsed.body.querySelectorAll("a[data-editor-href]").forEach((node) => {
     node.setAttribute("href", node.getAttribute("data-editor-href")); node.removeAttribute("data-editor-href");
@@ -95,6 +121,17 @@ export function sanitizeEditorHtml(raw) {
   parsed.body.querySelectorAll("img[data-editor-src]").forEach((node) => {
     node.setAttribute("src", node.getAttribute("data-editor-src")); node.removeAttribute("data-editor-src");
     if (node.hasAttribute("data-editor-alt")) { node.setAttribute("alt", node.getAttribute("data-editor-alt")); node.removeAttribute("data-editor-alt"); }
+  });
+  parsed.body.querySelectorAll("figure[data-editor-bilibili]").forEach((node) => {
+    const bvid = node.getAttribute("data-editor-bilibili") || "";
+    const title = node.getAttribute("data-editor-video-title") || "";
+    node.removeAttribute("data-editor-bilibili");
+    node.removeAttribute("data-editor-video-title");
+    node.className = "content-bilibili-video";
+    node.setAttribute("data-bilibili-video", bvid);
+    const caption = parsed.createElement("figcaption");
+    caption.textContent = title;
+    node.replaceChildren(caption);
   });
   canonicalizeManagedFigures(parsed.body);
   return parsed.body.innerHTML;

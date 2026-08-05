@@ -5,8 +5,10 @@ import StarterKit from "@tiptap/starter-kit";
 import { EditorContent, useEditor } from "@tiptap/vue-3";
 import { computed, nextTick, onMounted, ref, shallowRef, watch } from "vue";
 
+import { BilibiliVideo, validBilibiliVideoAttrs } from "../lib/bilibili-video-extension.js";
 import { ContentImage, validContentMediaId } from "../lib/content-image-extension.js";
 import { sanitizeEditorHtml } from "../lib/rich-text.js";
+import BilibiliVideoDialog from "./BilibiliVideoDialog.vue";
 import ContentImageDialog from "./ContentImageDialog.vue";
 
 const props = defineProps({
@@ -27,6 +29,11 @@ const imageDialogInitial = ref(null);
 const imageButton = ref(null);
 const savedImageSelection = shallowRef(null);
 const editingImageTarget = shallowRef(null);
+const bilibiliDialogOpen = ref(false);
+const bilibiliDialogInitial = ref(null);
+const bilibiliButton = ref(null);
+const savedBilibiliSelection = shallowRef(null);
+const editingBilibiliTarget = shallowRef(null);
 const toolbarState = ref({
   paragraph: false,
   "heading-2": false,
@@ -104,6 +111,22 @@ function editContentImage({ node, position }) {
   imageDialogOpen.value = true;
 }
 
+function editBilibiliVideo({ node, position }) {
+  if (props.disabled || typeof position !== "number") return;
+  editingBilibiliTarget.value = {
+    doc: editor.value.state.doc,
+    revision: props.revision,
+    position,
+    bvid: node.attrs.bvid
+  };
+  savedBilibiliSelection.value = null;
+  bilibiliDialogInitial.value = {
+    bvid: node.attrs.bvid,
+    title: node.attrs.title
+  };
+  bilibiliDialogOpen.value = true;
+}
+
 const editor = useEditor({
   content: value.value,
   editable: !props.disabled,
@@ -122,7 +145,8 @@ const editor = useEditor({
       protocols: ["http", "https", "mailto"],
       HTMLAttributes: { target: null, rel: null }
     }),
-    ContentImage.configure({ onEdit: editContentImage })
+    ContentImage.configure({ onEdit: editContentImage }),
+    BilibiliVideo.configure({ onEdit: editBilibiliVideo })
   ],
   editorProps: {
     attributes: {
@@ -185,8 +209,11 @@ watch([() => props.modelValue, () => props.revision], ([next, revision], [, prev
   if (revisionChanged) {
     pendingExternal.value = null;
     savedImageSelection.value = null;
+    savedBilibiliSelection.value = null;
     if (imageDialogOpen.value) closeImageDialog();
     else editingImageTarget.value = null;
+    if (bilibiliDialogOpen.value) closeBilibiliDialog();
+    else editingBilibiliTarget.value = null;
   }
   if (!revisionChanged && mode.value === "visual" && editor.value?.isFocused) {
     pendingExternal.value = safe;
@@ -237,6 +264,15 @@ function updateTextRepair(event) {
 }
 
 async function setMode(next) {
+  if (next === "text" && mode.value !== "text") {
+    const container = document.createElement("div");
+    container.innerHTML = sanitizeEditorHtml(value.value);
+    if (
+      container.querySelector("figure, img, [data-bilibili-video]")
+      && typeof window.confirm === "function"
+      && !window.confirm("纯文本编辑会移除正文媒体，是否继续？")
+    ) return;
+  }
   mode.value = next;
   if (next === "html") repairValue.value = value.value;
   if (next === "text") textRepair.value = plainText.value;
@@ -292,6 +328,20 @@ function openImageDialog() {
   editingImageTarget.value = null;
   imageDialogInitial.value = null;
   imageDialogOpen.value = true;
+}
+
+function openBilibiliDialog() {
+  if (props.disabled || !editor.value) return;
+  const { from, to } = editor.value.state.selection;
+  savedBilibiliSelection.value = {
+    from,
+    to,
+    doc: editor.value.state.doc,
+    revision: props.revision
+  };
+  editingBilibiliTarget.value = null;
+  bilibiliDialogInitial.value = null;
+  bilibiliDialogOpen.value = true;
 }
 
 function contentImageAttrs(payload) {
@@ -357,6 +407,59 @@ function removeSelectedContentImage() {
   return editor.value.commands.removeContentImage();
 }
 
+function bilibiliVideoAttrs(payload) {
+  return {
+    bvid: String(payload?.bvid || ""),
+    title: String(payload?.title || "").trim()
+  };
+}
+
+function insertBilibiliVideo(payload) {
+  const current = editor.value;
+  const attrs = bilibiliVideoAttrs(payload);
+  if (props.disabled || !current || !validBilibiliVideoAttrs(attrs)) return false;
+
+  const saved = savedBilibiliSelection.value;
+  savedBilibiliSelection.value = null;
+  const selectionIsCurrent = saved
+    && saved.revision === props.revision
+    && saved.doc === current.state.doc
+    && saved.from >= 0
+    && saved.to >= saved.from
+    && saved.to <= current.state.doc.content.size;
+
+  if (selectionIsCurrent) {
+    return current.chain()
+      .focus(null, { scrollIntoView: false })
+      .setTextSelection({ from: saved.from, to: saved.to })
+      .insertBilibiliVideo(attrs)
+      .run();
+  }
+  if (!saved && !emptyEditorDocument(current)) {
+    return current.chain()
+      .focus(null, { scrollIntoView: false })
+      .insertBilibiliVideo(attrs)
+      .run();
+  }
+  const inserted = current.chain()
+    .focus(null, { scrollIntoView: false })
+    .insertContentAt(current.state.doc.content.size, { type: "bilibiliVideo", attrs })
+    .run();
+  if (inserted) emit("notice", "原插入位置已失效，视频已插入到正文末尾");
+  return inserted;
+}
+
+function updateSelectedBilibiliVideo(payload) {
+  const attrs = bilibiliVideoAttrs(payload);
+  if (props.disabled || !editor.value || !validBilibiliVideoAttrs(attrs)) return false;
+  return editor.value.commands.updateBilibiliVideo(attrs);
+}
+
+function removeSelectedBilibiliVideo() {
+  if (props.disabled || !editor.value) return false;
+  return editor.value.commands.removeBilibiliVideo();
+}
+
 async function closeImageDialog() {
   imageDialogOpen.value = false;
   imageDialogInitial.value = null;
@@ -364,6 +467,15 @@ async function closeImageDialog() {
   savedImageSelection.value = null;
   await nextTick();
   imageButton.value?.focus();
+}
+
+async function closeBilibiliDialog() {
+  bilibiliDialogOpen.value = false;
+  bilibiliDialogInitial.value = null;
+  editingBilibiliTarget.value = null;
+  savedBilibiliSelection.value = null;
+  await nextTick();
+  bilibiliButton.value?.focus();
 }
 
 async function selectContentImage(payload) {
@@ -393,11 +505,37 @@ function contentImageError(error) {
   emit("notice", error?.message || "图片媒体请求失败");
 }
 
+async function selectBilibiliVideo(payload) {
+  const current = editor.value;
+  if (!current) return;
+  let changed;
+  if (editingBilibiliTarget.value !== null) {
+    const target = editingBilibiliTarget.value;
+    const node = current.state.doc.nodeAt(target.position);
+    const targetIsCurrent = target.doc === current.state.doc
+      && target.revision === props.revision
+      && node?.type.name === "bilibiliVideo"
+      && node.attrs.bvid === target.bvid;
+    if (!targetIsCurrent) {
+      emit("notice", "所选视频已发生变化，请重新选择");
+      return;
+    }
+    current.commands.setNodeSelection(target.position);
+    changed = updateSelectedBilibiliVideo(payload);
+  } else {
+    changed = insertBilibiliVideo(payload);
+  }
+  if (changed) await closeBilibiliDialog();
+}
+
 defineExpose({
   editor,
   insertContentImage,
   updateSelectedContentImage,
-  removeSelectedContentImage
+  removeSelectedContentImage,
+  insertBilibiliVideo,
+  updateSelectedBilibiliVideo,
+  removeSelectedBilibiliVideo
 });
 
 function isActive(command) {
@@ -431,6 +569,24 @@ function isDisabled(command) {
       <button type="button" data-command="redo" aria-label="重做" :disabled="isDisabled('redo')" @click="run('redo')">重做</button>
       <button type="button" data-command="clear-formatting" aria-label="清除格式" :disabled="isDisabled('clear-formatting')" @click="run('clear-formatting')">清除格式</button>
       <button ref="imageButton" type="button" data-command="image" aria-label="图片" :disabled="isDisabled('image')" @click="openImageDialog">图片</button>
+      <button
+        ref="bilibiliButton"
+        type="button"
+        data-command="bilibili-video"
+        aria-label="B站视频"
+        title="粘贴B站完整链接或BV号，插入可播放视频"
+        :disabled="isDisabled('bilibili-video')"
+        @click="openBilibiliDialog"
+      >B站视频</button>
+      <span class="content-bilibili-toolbar-help">
+        <button
+          type="button"
+          data-action="bilibili-video-help"
+          aria-label="B站视频格式说明"
+          aria-describedby="bilibili-video-format-help"
+        >?</button>
+        <span id="bilibili-video-format-help">支持完整 bilibili.com 视频链接或BV号；暂不支持 b23.tv 短链接。</span>
+      </span>
     </div>
     <EditorContent v-show="mode === 'visual'" :editor="editor" />
     <textarea v-if="mode === 'html'" :value="repairValue" data-rich-editor="html" :disabled="disabled" @input="updateHtmlRepair"></textarea>
@@ -442,6 +598,13 @@ function isDisabled(command) {
       @close="closeImageDialog"
       @select="selectContentImage"
       @error="contentImageError"
+    />
+    <BilibiliVideoDialog
+      :open="bilibiliDialogOpen"
+      :initial="bilibiliDialogInitial"
+      :disabled="disabled"
+      @close="closeBilibiliDialog"
+      @select="selectBilibiliVideo"
     />
   </section>
 </template>
