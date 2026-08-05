@@ -56,6 +56,23 @@ describe("RegistrationManagementPage", () => {
     expect(wrapper.find('[data-action="certificate-template"]').exists()).toBe(true);
   });
 
+  it("shows an approved registration as reviewed in Chinese and disables repeat approval", async () => {
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/admin/events") return { rows: [event], projects: [project] };
+      if (path === "/api/admin/organizations") return { rows: [{ id: "O1", name: "实验小学" }] };
+      if (path.startsWith("/api/admin/events/E1/registrations?")) return { rows: [{ ...registration, status: "approved" }], total: 1, page: 1, pageSize: 25 };
+      return { row: registration };
+    });
+    const wrapper = mount(RegistrationManagementPage);
+    await flushPromises();
+
+    expect(wrapper.get("em.approved").text()).toBe("已审核");
+    const reviewedButton = wrapper.get('[data-action="approve-R1"]');
+    expect(reviewedButton.text()).toBe("已审核");
+    expect(reviewedButton.attributes("disabled")).toBeDefined();
+    expect(wrapper.text()).not.toContain("approved");
+  });
+
   it("refreshes the filtered page without rendering a certificate number", async () => {
     const wrapper = mount(RegistrationManagementPage);
     await flushPromises();
