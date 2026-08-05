@@ -30,11 +30,11 @@ export function sanitizeContentHtml(html) {
           : Object.fromEntries(Object.entries(attribs).filter(([key]) => key !== "src"))
       }),
       figure: (tagName, attribs) => {
-        const claimedVideo = Object.hasOwn(attribs, "data-bilibili-video") || String(attribs.class || "").split(/\s+/).includes(BILIBILI_CLASS);
         const bvid = String(attribs["data-bilibili-video"] || "");
-        if (!claimedVideo) return { tagName, attribs: {} };
-        if (!BILIBILI_BVID_RE.test(bvid)) return { tagName: "div", attribs: {} };
-        return { tagName, attribs: { class: BILIBILI_CLASS, "data-bilibili-video": bvid } };
+        if (attribs.class === BILIBILI_CLASS && BILIBILI_BVID_RE.test(bvid)) {
+          return { tagName, attribs: { class: BILIBILI_CLASS, "data-bilibili-video": bvid } };
+        }
+        return { tagName, attribs: {} };
       }
     }
   });
