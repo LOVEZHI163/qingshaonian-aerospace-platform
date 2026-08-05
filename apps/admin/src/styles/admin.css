@@ -2216,7 +2216,7 @@ em.invited {
   padding: 0;
 }
 
-.user-shell > .user-sidebar nav button::before {
+.user-shell > .user-sidebar nav button .user-nav-icon {
   display: grid;
   flex: 0 0 26px;
   width: 26px;
@@ -2229,16 +2229,9 @@ em.invited {
   font-weight: 900;
 }
 
-.user-sidebar [data-user-nav="eventCenter"]::before { content: "赛"; }
-.user-sidebar [data-user-nav="registration"]::before { content: "报"; }
-.user-sidebar [data-user-nav="registrationRecords"]::before { content: "录"; }
-.user-sidebar [data-user-nav="certificates"]::before { content: "证"; }
-.user-sidebar [data-user-nav="organizationWorkspace"]::before { content: "台"; }
-.user-sidebar [data-user-nav="organization"]::before { content: "组"; }
-.user-sidebar .user-logout-button::before { content: "退"; }
 .user-shell > .user-sidebar nav .user-logout-button { margin-top: auto; }
 
-.user-sidebar nav button.active::before {
+.user-sidebar nav button.active .user-nav-icon {
   color: #10233f;
   background: #fff;
 }

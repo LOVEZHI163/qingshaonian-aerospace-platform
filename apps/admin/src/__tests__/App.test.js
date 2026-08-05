@@ -180,6 +180,24 @@ describe("App session integration", () => {
     expect(wrapper.get('[data-testid="user-shell"]').classes()).not.toContain("user-sidebar-mobile-open");
   });
 
+  it.each([
+    ["ordinary", ["赛", "组", "录", "证"]],
+    ["organization", ["赛", "录", "组", "证"]]
+  ])("keeps every %s sidebar label aligned behind an icon slot", async (type, expectedIcons) => {
+    sessionUser.value = { id: `${type}-1`, type, name: "账户", phone: "13800000001", mustChangePassword: false };
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/public/event") return publicData();
+      if (path === "/api/me/events") return { rows: [] };
+      return { rows: [] };
+    });
+    const wrapper = mount(App);
+    await flushPromises();
+
+    const navigationItems = wrapper.findAll("[data-user-nav]");
+    expect(navigationItems.map((item) => item.get(".user-nav-icon").text())).toEqual(expectedIcons);
+    expect(wrapper.get(".user-logout-button .user-nav-icon").text()).toBe("退");
+  });
+
   it("keeps ordinary history navigation available without an explicit event context", async () => {
     sessionUser.value = { id: "U1", type: "ordinary", name: "用户", mustChangePassword: false };
     apiMock.mockImplementation(async (path) => {
@@ -660,8 +678,7 @@ describe("App session integration", () => {
     await flushPromises();
     await wrapper.get('[data-event-card="E1"] [data-action="open"]').trigger("click");
     await flushPromises();
-    const certificateNav = wrapper.findAll("aside button").find((button) => button.text() === "证书查询");
-    await certificateNav.trigger("click");
+    await wrapper.get('[data-user-nav="certificates"]').trigger("click");
     await wrapper.get('[data-action="download-user-certificate"]').trigger("click");
     await flushPromises();
 

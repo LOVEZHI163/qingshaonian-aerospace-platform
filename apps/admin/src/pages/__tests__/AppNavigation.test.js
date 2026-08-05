@@ -217,7 +217,7 @@ describe("role based application navigation", () => {
 
   it("shows the personal organization page without changing event context", async () => {
     const wrapper = await mountFor({ id: "U1", type: "ordinary", name: "普通用户", phone: "13800000001", mustChangePassword: false }); mounted.push(wrapper);
-    const labels = wrapper.findAll("[data-user-nav]").map((item) => item.text());
+    const labels = wrapper.findAll("[data-user-nav]").map((item) => item.get(".user-nav-label").text());
     expect(labels).toEqual(["赛事中心", "我的组织", "报名记录", "证书查询"]);
     expect(wrapper.text()).not.toContain("普通用户管理");
     expect(apiMock.mock.calls.some(([path]) => path === "/api/users" || path.startsWith("/api/admin/"))).toBe(false);
@@ -449,7 +449,7 @@ describe("role based application navigation", () => {
     const wrapper = await mountFor({ id: "O1U", type: "organization", name: "负责人", phone: "13800000002", mustChangePassword: false }, organization); mounted.push(wrapper);
     expect(wrapper.find('[data-testid="event-center-page"]').exists()).toBe(true);
     expect(wrapper.text()).not.toContain("邀请成员");
-    expect(wrapper.findAll("[data-user-nav]").map((item) => item.text())).toEqual(["赛事工作台", "报名记录", "组织与成员", "证书查询"]);
+    expect(wrapper.findAll("[data-user-nav]").map((item) => item.get(".user-nav-label").text())).toEqual(["赛事工作台", "报名记录", "组织与成员", "证书查询"]);
     expect(wrapper.text()).not.toContain("审核进度");
     expect(wrapper.find('[data-user-nav="myOrganization"]').exists()).toBe(false);
     expect(apiMock.mock.calls.some(([path]) => path.includes("/registrations") || path.includes("/certificates"))).toBe(false);
@@ -459,7 +459,7 @@ describe("role based application navigation", () => {
     const organization = { id: "O1", ownerUserId: "O1U", name: "组织学校", reviewStatus, status: "active", membershipRole: "owner" };
     const wrapper = await mountFor({ id: "O1U", type: "organization", name: "负责人", phone: "13800000002", mustChangePassword: false }, organization); mounted.push(wrapper);
 
-    expect(wrapper.findAll("[data-user-nav]").map((item) => item.text())).toEqual([
+    expect(wrapper.findAll("[data-user-nav]").map((item) => item.get(".user-nav-label").text())).toEqual([
       "赛事工作台", "报名记录", "组织与成员", "证书查询"
     ]);
     expect(wrapper.text()).not.toContain("审核进度");
@@ -495,7 +495,7 @@ describe("role based application navigation", () => {
   it("opens the organization console for an approved owner", async () => {
     const organization = { id: "O1", ownerUserId: "O1U", name: "实验学校", reviewStatus: "approved", status: "active", membershipRole: "owner" };
     const wrapper = await mountFor({ id: "O1U", type: "organization", name: "负责人", phone: "13800000002", mustChangePassword: false }, organization); mounted.push(wrapper);
-    expect(wrapper.findAll("[data-user-nav]").map((item) => item.text())).toEqual(["赛事工作台", "报名记录", "组织与成员", "证书查询"]);
+    expect(wrapper.findAll("[data-user-nav]").map((item) => item.get(".user-nav-label").text())).toEqual(["赛事工作台", "报名记录", "组织与成员", "证书查询"]);
     expect(wrapper.find('[data-user-nav="myOrganization"]').exists()).toBe(false);
     expect(wrapper.find('[data-testid="event-center-page"]').exists()).toBe(true);
   });
