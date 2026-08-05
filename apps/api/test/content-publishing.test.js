@@ -96,3 +96,22 @@ test("sanitize content keeps only the rich text allowlist and safe media paths",
   assert.equal(clean.includes("style="), false);
   assert.equal(clean.includes("evil.test"), false);
 });
+
+test("sanitize content preserves only canonical Bilibili video markers", () => {
+  const clean = sanitizeContentHtml([
+    '<figure class="content-bilibili-video extra" data-bilibili-video="BV1B7411m7LV" onclick="bad()"><figcaption>比赛<strong>回顾</strong><script>bad()</script></figcaption></figure>',
+    '<figure class="content-bilibili-video" data-bilibili-video="BV1B7411m7L<script>"><figcaption>恶意</figcaption></figure>',
+    '<iframe src="https://player.bilibili.com/player.html?bvid=BV1B7411m7LV"></iframe>'
+  ].join(""));
+
+  assert.match(clean, /<figure class="content-bilibili-video" data-bilibili-video="BV1B7411m7LV"><figcaption>比赛<strong>回顾<\/strong><\/figcaption><\/figure>/);
+  assert.equal(clean.includes("onclick"), false);
+  assert.equal(clean.includes("BV1B7411m7L<script>"), false);
+  assert.equal(clean.includes("iframe"), false);
+});
+
+test("sanitize content leaves ordinary image figures attribute-free", () => {
+  const clean = sanitizeContentHtml('<figure><img src="/api/public/media/aircraft.jpg" alt="航模"><figcaption>飞行展示</figcaption></figure>');
+
+  assert.equal(clean, '<figure><img src="/api/public/media/aircraft.jpg" alt="航模" /><figcaption>飞行展示</figcaption></figure>');
+});
