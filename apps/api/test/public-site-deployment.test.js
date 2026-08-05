@@ -98,12 +98,37 @@ test("nginx protects HTML and public media while caching immutable assets", asyn
 
 test("public pages allow only the official Bilibili player as an external frame", async () => {
   const nginx = await read("deploy/nginx.conf");
-  const policies = nginx.match(/add_header Content-Security-Policy [^\r\n]+/g) || [];
+  const serverPrelude = nginx.match(/server\s*\{([\s\S]*?)\n\s*location\b/)?.[1] || "";
   const htmlLocation = nginx.match(/location ~\* \\.html\$ \{([\s\S]*?)\n  \}/)?.[1] || "";
+  const mediaLocation = nginx.match(/location \^~ \/api\/public\/media\/\s*\{([\s\S]*?)\n  \}/)?.[1] || "";
+  const serverCsp = serverPrelude.match(/add_header Content-Security-Policy "([^"]+)" always;/)?.[1] || "";
+  const htmlCsp = htmlLocation.match(/add_header Content-Security-Policy "([^"]+)" always;/)?.[1] || "";
+  const mediaCsp = mediaLocation.match(/add_header Content-Security-Policy "([^"]+)" always;/)?.[1] || "";
+  const pageDirectives = [
+    "default-src 'self'",
+    "script-src 'self'",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: blob:",
+    "connect-src 'self'",
+    "media-src 'self' blob:",
+    "frame-src 'self' https://player.bilibili.com",
+    "object-src 'none'",
+    "base-uri 'self'",
+    "frame-ancestors 'self'"
+  ];
 
-  assert.ok(policies.some((line) => line.includes("frame-src 'self' https://player.bilibili.com")));
-  assert.match(htmlLocation, /Content-Security-Policy[^\r\n]+frame-src 'self' https:\/\/player\.bilibili\.com/);
-  assert.doesNotMatch(nginx, /frame-src[^\r\n]+\*/);
+  assert.ok(serverCsp, "server-level CSP must remain present");
+  assert.ok(htmlCsp, "HTML location CSP must remain present because add_header is not inherited");
+  assert.ok(mediaCsp, "public media CSP must remain present");
+  for (const directive of pageDirectives) {
+    assert.ok(serverCsp.includes(directive), `server-level CSP must include ${directive}`);
+    assert.ok(htmlCsp.includes(directive), `HTML CSP must include ${directive}`);
+  }
+  assert.match(mediaCsp, /(?:^|;)\s*sandbox(?:;|$)/);
+  assert.match(mediaCsp, /default-src 'none'/);
+  assert.doesNotMatch(mediaCsp, /player\.bilibili\.com/);
+  assert.doesNotMatch(serverCsp, /frame-src[^;]*\*/);
+  assert.doesNotMatch(htmlCsp, /frame-src[^;]*\*/);
 });
 
 test("nginx streams only submission uploads with the enlarged request limit", async () => {
