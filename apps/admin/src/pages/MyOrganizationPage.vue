@@ -1,5 +1,5 @@
 <script setup>
-import { onMounted, ref } from "vue";
+import { onBeforeUnmount, onMounted, ref } from "vue";
 
 import { api } from "../lib/api.js";
 
@@ -97,12 +97,20 @@ function leaveOrganization(row) {
   void updateRelation(row, "leave");
 }
 
-onMounted(loadRelations);
+function refreshRelationsOnFocus() {
+  void loadRelations();
+}
+
+onMounted(() => {
+  void loadRelations();
+  window.addEventListener("focus", refreshRelationsOnFocus);
+});
+onBeforeUnmount(() => window.removeEventListener("focus", refreshRelationsOnFocus));
 </script>
 
 <template>
   <section class="panel my-organization-page" data-testid="my-organization-page">
-    <div class="panel-title"><h3>我的组织</h3><span>个人组织关系</span></div>
+    <div class="panel-title"><h3>我的组织</h3><span>个人组织关系</span><button type="button" class="mini" data-action="refresh-organization-relations" :disabled="loading" @click="loadRelations">{{ loading ? "正在刷新…" : "刷新" }}</button></div>
     <p class="hint">可申请加入已通过审核的组织；组织邀请须由本人确认后才会生效。</p>
     <p v-if="message" class="message" role="alert">{{ message }}</p>
     <p v-if="loading" class="hint">正在更新组织关系…</p>
@@ -116,7 +124,24 @@ onMounted(loadRelations);
       <p class="hint">退出不会删除历史报名、成绩和证书。</p>
     </section>
 
-    <template v-else>
+    <div v-if="relations.requests.length || relations.invitations.length" class="organization-relation-grid">
+      <section v-if="relations.requests.length" class="relation-status-list" aria-label="我的加入申请">
+        <h4>我的加入申请</h4>
+        <article v-for="row in relations.requests" :key="row.id" class="organization-result-card">
+          <div><strong>{{ row.organization?.name }}</strong><p>{{ row.note || "等待组织审核" }}</p></div>
+          <div class="relation-card-actions"><em class="pending">待审核</em><button type="button" class="mini" :data-action="`withdraw-organization-request-${row.id}`" :disabled="Boolean(busyAction)" @click="updateRelation(row, 'withdraw')">{{ busyAction === `${row.id}:withdraw` ? "正在撤回…" : "撤回申请" }}</button></div>
+        </article>
+      </section>
+      <section v-if="relations.invitations.length" class="relation-status-list" aria-label="收到的组织邀请">
+        <h4>收到的组织邀请</h4>
+        <article v-for="row in relations.invitations" :key="row.id" class="organization-result-card">
+          <div><strong>{{ row.organization?.name }}</strong><p>{{ row.note || "该组织邀请你加入" }}</p></div>
+          <div class="relation-card-actions"><em class="pending">待确认</em><button type="button" class="mini" :data-action="`accept-organization-invitation-${row.id}`" :disabled="Boolean(busyAction)" @click="updateRelation(row, 'accept')">{{ busyAction === `${row.id}:accept` ? "正在接受…" : "接受邀请" }}</button><button type="button" class="mini reject" :data-action="`reject-organization-invitation-${row.id}`" :disabled="Boolean(busyAction)" @click="updateRelation(row, 'reject')">拒绝</button></div>
+        </article>
+      </section>
+    </div>
+
+    <template v-if="!relations.active.length">
       <section class="organization-search-form" aria-label="搜索组织">
         <label>搜索组织
           <input v-model="query" data-field="organization-search" type="search" placeholder="输入组织名称或组织编码" @keyup.enter="searchOrganizations" />
@@ -135,21 +160,5 @@ onMounted(loadRelations);
       <p v-else-if="query && !loading" class="hint empty-state">暂无匹配的可加入组织。</p>
     </template>
 
-    <div v-if="relations.requests.length || relations.invitations.length" class="organization-relation-grid">
-      <section v-if="relations.requests.length" class="relation-status-list" aria-label="我的加入申请">
-        <h4>我的加入申请</h4>
-        <article v-for="row in relations.requests" :key="row.id" class="organization-result-card">
-          <div><strong>{{ row.organization?.name }}</strong><p>{{ row.note || "等待组织审核" }}</p></div>
-          <div class="relation-card-actions"><em class="pending">待审核</em><button type="button" class="mini" :data-action="`withdraw-organization-request-${row.id}`" :disabled="Boolean(busyAction)" @click="updateRelation(row, 'withdraw')">{{ busyAction === `${row.id}:withdraw` ? "正在撤回…" : "撤回申请" }}</button></div>
-        </article>
-      </section>
-      <section v-if="relations.invitations.length" class="relation-status-list" aria-label="收到的组织邀请">
-        <h4>收到的组织邀请</h4>
-        <article v-for="row in relations.invitations" :key="row.id" class="organization-result-card">
-          <div><strong>{{ row.organization?.name }}</strong><p>{{ row.note || "该组织邀请你加入" }}</p></div>
-          <div class="relation-card-actions"><em class="pending">待确认</em><button type="button" class="mini" :data-action="`accept-organization-invitation-${row.id}`" :disabled="Boolean(busyAction)" @click="updateRelation(row, 'accept')">{{ busyAction === `${row.id}:accept` ? "正在接受…" : "接受邀请" }}</button><button type="button" class="mini reject" :data-action="`reject-organization-invitation-${row.id}`" :disabled="Boolean(busyAction)" @click="updateRelation(row, 'reject')">拒绝</button></div>
-        </article>
-      </section>
-    </div>
   </section>
 </template>

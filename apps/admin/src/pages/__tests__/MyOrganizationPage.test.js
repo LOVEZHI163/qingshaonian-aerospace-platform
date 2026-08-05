@@ -1,10 +1,12 @@
-import { flushPromises, mount } from "@vue/test-utils";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { enableAutoUnmount, flushPromises, mount } from "@vue/test-utils";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { apiMock } = vi.hoisted(() => ({ apiMock: vi.fn() }));
 vi.mock("../../lib/api.js", () => ({ api: apiMock }));
 
 import MyOrganizationPage from "../MyOrganizationPage.vue";
+
+enableAutoUnmount(afterEach);
 
 const organization = { id: "O1", name: "实验学校", code: "WZ-001", contactName: "王老师", contactPhone: "13800000000" };
 const otherOrganization = { id: "O2", name: "航空少年宫", code: "WZ-002", contactName: "李老师", contactPhone: "13900000000" };
@@ -137,5 +139,72 @@ describe("MyOrganizationPage", () => {
     expect(wrapper.get('[data-field="organization-search"]').element.value).toBe("实验");
     expect(wrapper.text()).toContain("组织搜索暂不可用");
     expect(wrapper.emitted("error")).toEqual([["组织搜索暂不可用"]]);
+  });
+
+  it("页面重新获得焦点时刷新后来收到的组织邀请", async () => {
+    const invitation = relation("M-focus-invite", "pending", "organization_invite", otherOrganization);
+    let relationLoads = 0;
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/me/organization-relations") {
+        relationLoads += 1;
+        return relationLoads === 1
+          ? { active: [], requests: [], invitations: [] }
+          : { active: [], requests: [], invitations: [invitation] };
+      }
+      return { rows: [] };
+    });
+
+    const wrapper = mount(MyOrganizationPage);
+    await flushPromises();
+    expect(wrapper.find('[data-action="accept-organization-invitation-M-focus-invite"]').exists()).toBe(false);
+
+    window.dispatchEvent(new Event("focus"));
+    await flushPromises();
+
+    expect(wrapper.find('[data-action="accept-organization-invitation-M-focus-invite"]').exists()).toBe(true);
+    expect(relationLoads).toBe(2);
+    wrapper.unmount();
+  });
+
+  it("把待确认邀请显示在组织搜索之前", async () => {
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/me/organization-relations") {
+        return {
+          active: [],
+          requests: [],
+          invitations: [relation("M-priority", "pending", "organization_invite", otherOrganization)]
+        };
+      }
+      return { rows: [] };
+    });
+
+    const wrapper = mount(MyOrganizationPage);
+    await flushPromises();
+    const invitationSection = wrapper.get('[data-action="accept-organization-invitation-M-priority"]').element.closest(".relation-status-list");
+    const searchForm = wrapper.get(".organization-search-form").element;
+
+    expect(invitationSection.compareDocumentPosition(searchForm) & Node.DOCUMENT_POSITION_FOLLOWING)
+      .toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+  });
+
+  it("允许用户手动刷新组织关系", async () => {
+    const invitation = relation("M-manual-refresh", "pending", "organization_invite", otherOrganization);
+    let relationLoads = 0;
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/me/organization-relations") {
+        relationLoads += 1;
+        return relationLoads === 1
+          ? { active: [], requests: [], invitations: [] }
+          : { active: [], requests: [], invitations: [invitation] };
+      }
+      return { rows: [] };
+    });
+
+    const wrapper = mount(MyOrganizationPage);
+    await flushPromises();
+    await wrapper.get('[data-action="refresh-organization-relations"]').trigger("click");
+    await flushPromises();
+
+    expect(wrapper.find('[data-action="accept-organization-invitation-M-manual-refresh"]').exists()).toBe(true);
   });
 });
