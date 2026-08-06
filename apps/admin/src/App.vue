@@ -16,6 +16,7 @@ import OrganizationCertificatesPage from "./pages/OrganizationCertificatesPage.v
 import OrganizationEventWorkspacePage from "./pages/OrganizationEventWorkspacePage.vue";
 import OrganizationManagementPage from "./pages/OrganizationManagementPage.vue";
 import OrganizationRegistrationRecordsPage from "./pages/OrganizationRegistrationRecordsPage.vue";
+import PasswordSettingsPage from "./pages/PasswordSettingsPage.vue";
 import RegistrationManagementPage from "./pages/RegistrationManagementPage.vue";
 import RegistrationPage from "./pages/RegistrationPage.vue";
 import RegistrationRecordsPage from "./pages/RegistrationRecordsPage.vue";
@@ -34,7 +35,7 @@ const releaseBlocked = ref(false);
 const releaseMessage = ref("");
 const userSidebarOpen = ref(false);
 const certificateRegistrationId = ref("");
-const DEEP_LINK_VIEWS = new Set(["overview", "events", "siteContent", "organizations", "registration", "registrationRecords", "organizationRecords", "records", "certificates", "users", "organization", "eventCenter", "organizationWorkspace", "myOrganization"]);
+const DEEP_LINK_VIEWS = new Set(["overview", "events", "siteContent", "organizations", "registration", "registrationRecords", "organizationRecords", "records", "certificates", "users", "organization", "eventCenter", "organizationWorkspace", "myOrganization", "password"]);
 const SAFE_EVENT_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 const initialParams = new URLSearchParams(window.location.search);
 const requestedView = DEEP_LINK_VIEWS.has(initialParams.get("view")) ? initialParams.get("view") : "";
@@ -58,7 +59,6 @@ const selectedEventId = ref(initialEventId);
 const selectedRegistrationEvent = ref(null);
 const siteContentPage = ref(null);
 const siteContentId = ref(initialContentId);
-const passwordChangeForm = reactive({ currentPassword: "", newPassword: "" });
 const roleText = { ordinary: "普通用户", organization: "组织用户", admin: "超级管理员" };
 
 const accountEvents = computed(() => session.accountEvents?.value || []);
@@ -77,9 +77,9 @@ const userActive = computed(() => {
 });
 const userNavigation = computed(() => {
   if (currentUser.value?.type === "ordinary") {
-    return [["eventCenter", "赛事中心", "赛"], ["myOrganization", "我的组织", "组"], ["registrationRecords", "报名记录", "录"], ["certificates", "证书查询", "证"]];
+    return [["eventCenter", "赛事中心", "赛"], ["myOrganization", "我的组织", "组"], ["registrationRecords", "报名记录", "录"], ["certificates", "证书查询", "证"], ["password", "修改密码", "密"]];
   }
-  return [["eventCenter", "赛事工作台", "赛"], ["organizationRecords", "报名记录", "录"], ["organization", "组织与成员", "组"], ["certificates", "证书查询", "证"]];
+  return [["eventCenter", "赛事工作台", "赛"], ["organizationRecords", "报名记录", "录"], ["organization", "组织与成员", "组"], ["certificates", "证书查询", "证"], ["password", "修改密码", "密"]];
 });
 const userHeaderEvent = computed(() => {
   if (currentView.value === "eventCenter") return { name: currentUser.value?.type === "organization" ? "赛事工作台" : "赛事中心", date: "", venue: "", registrationDeadline: "" };
@@ -88,6 +88,7 @@ const userHeaderEvent = computed(() => {
   if (currentView.value === "organizationRecords") return { name: "报名记录", date: "", venue: "", registrationDeadline: "" };
   if (currentView.value === "registrationRecords" && !recordsEventId.value) return { name: "报名记录", date: "", venue: "", registrationDeadline: "" };
   if (currentView.value === "certificates" && !certificateEventId.value) return { name: "我的证书", date: "", venue: "", registrationDeadline: "" };
+  if (currentView.value === "password") return { name: "修改密码", date: "", venue: "", registrationDeadline: "" };
   if (selectedAccountEvent.value?.event) {
     const event = selectedAccountEvent.value.event;
     return {
@@ -204,9 +205,9 @@ function targetView(user = currentUser.value) {
   const allowed = user.type === "admin"
     ? new Set(["overview", "events", "siteContent", "organizations", "registration", "certificates", "users"])
     : user.type === "organization"
-      ? new Set(["eventCenter", "organizationWorkspace", "organizationRecords", "certificates", "organization"])
-      : new Set(["eventCenter", "registration", "registrationRecords", "certificates", "myOrganization"]);
-  if (user.type === "organization") return new Set(["eventCenter", "organizationWorkspace", "organizationRecords", "certificates", "organization"]).has(routeView)
+      ? new Set(["eventCenter", "organizationWorkspace", "organizationRecords", "certificates", "organization", "password"])
+      : new Set(["eventCenter", "registration", "registrationRecords", "certificates", "myOrganization", "password"]);
+  if (user.type === "organization") return new Set(["eventCenter", "organizationWorkspace", "organizationRecords", "certificates", "organization", "password"]).has(routeView)
     ? routeView
     : defaultView(user);
   return allowed.has(routeView) ? routeView : defaultView(user);
@@ -243,18 +244,13 @@ async function login(credentials) {
   }
 }
 
-async function changePassword() {
-  message.value = "";
-  try {
-    const payload = await api("/api/auth/change-password", { method: "POST", body: JSON.stringify(passwordChangeForm) });
-    session.setUser(payload.user, session.organizations.value);
-    Object.assign(passwordChangeForm, { currentPassword: "", newPassword: "" });
+async function passwordChanged(user) {
+  const wasForced = Boolean(currentUser.value?.mustChangePassword);
+  session.setUser(user, session.organizations.value);
+  if (wasForced) {
     await loadAccountEvents();
     await loadAdminEvents();
-    currentView.value = targetView(payload.user);
-    message.value = "密码修改成功";
-  } catch (error) {
-    message.value = error.message;
+    currentView.value = targetView(user);
   }
 }
 
@@ -431,14 +427,7 @@ onMounted(async () => {
   <AuthPage v-else-if="!currentUser" :event-name="eventData.event.name" :login-error="message" @login="login" @clear-message="message = ''" />
 
   <section v-else-if="currentUser.mustChangePassword" class="auth-shell force-password-shell">
-    <form class="panel auth-panel" @submit.prevent="changePassword">
-      <h3>首次登录请修改密码</h3>
-      <p class="hint">管理员为你设置的是临时密码。修改完成后才能进入系统，不能跳过此步骤。</p>
-      <label>当前临时密码<input v-model="passwordChangeForm.currentPassword" type="password" /></label>
-      <label>新密码<input v-model="passwordChangeForm.newPassword" type="password" placeholder="至少 8 位，含字母和数字" /></label>
-      <button class="primary">修改密码并进入系统</button>
-      <p v-if="message" class="message">{{ message }}</p>
-    </form>
+    <PasswordSettingsPage forced @changed="passwordChanged" @logout="logout" />
   </section>
 
   <AdminShell v-else-if="currentUser.type === 'admin'" :active="adminActive" @navigate="navigateAdmin">
@@ -479,6 +468,7 @@ onMounted(async () => {
       <OrganizationEventWorkspacePage v-else-if="currentView === 'organizationWorkspace'" :event-id="selectedEventId" @back-to-events="navigateUser('eventCenter')" @context="useRegistrationEvent" @access-denied="handleWorkspaceAccessDenied" @error="handleError" />
       <OrganizationRegistrationRecordsPage v-else-if="currentView === 'organizationRecords'" @back-to-events="navigateUser('eventCenter')" />
       <OrganizationConsolePage v-else-if="currentView === 'organization'" @error="handleError" />
+      <PasswordSettingsPage v-else-if="currentView === 'password'" @changed="passwordChanged" />
     </main>
   </div>
 </template>

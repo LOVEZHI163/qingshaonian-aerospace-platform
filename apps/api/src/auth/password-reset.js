@@ -1,6 +1,7 @@
 import { createHmac, randomInt } from "node:crypto";
 
 import { hashPassword, validatePassword } from "./passwords.js";
+import { clearUserTemporaryPassword } from "../services/account-passwords.js";
 
 const HOUR_MS = 60 * 60 * 1000;
 const UNIFORM_RESPONSE = { ok: true, message: "如果该手机号已注册，验证码将发送到该号码" };
@@ -27,6 +28,7 @@ export function createSmsPasswordResetService({
   withMutationLock = (handler) => handler(),
   clock = Date.now,
   generateCode = () => String(randomInt(0, 1_000_000)).padStart(6, "0"),
+  clearTemporaryPassword = clearUserTemporaryPassword,
   logger = console
 }) {
   if (!authState) throw new Error("authState is required");
@@ -95,6 +97,7 @@ export function createSmsPasswordResetService({
         user.password = await hashPassword(password);
         user.sessionVersion += 1;
         user.mustChangePassword = false;
+        clearTemporaryPassword(user);
         await writeDb(db);
       });
       return { ok: true };

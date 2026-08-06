@@ -55,11 +55,9 @@ test("event management routes enforce admin sessions and temporary-password read
     }
 
     const admin = await loginAs(baseUrl, "13900000000", "admin123");
-    const reset = await fetch(`${baseUrl}/api/admin/users/U9001/reset-password`, jsonOptions("POST", {
-      password: "Temporary9"
-    }, admin.cookie));
+    const reset = await fetch(`${baseUrl}/api/admin/users/U9001/reset-password`, jsonOptions("POST", {}, admin.cookie));
     assert.equal(reset.status, 200);
-    const temporaryAdmin = await loginAs(baseUrl, "13900000000", "Temporary9");
+    const temporaryAdmin = await loginAs(baseUrl, "13900000000", (await reset.json()).temporaryPassword);
     const blocked = await fetch(`${baseUrl}/api/admin/events`, withSession(temporaryAdmin.cookie));
     assert.equal(blocked.status, 428);
     assert.equal((await json(blocked)).code, "PASSWORD_CHANGE_REQUIRED");

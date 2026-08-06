@@ -20,6 +20,8 @@ const previewUrl = ref("");
 const previewLoading = ref(false);
 const previewError = ref("");
 const credentialCleanupOpen = ref(false);
+const temporaryPasswordDialog = ref(null);
+const deleteTarget = ref(null);
 let previewRequestId = 0;
 let previewController = null;
 
@@ -115,6 +117,49 @@ async function cleanupCredentials(confirmName) {
   } catch (cause) { error.value = cause.message || "组织资质清理失败"; } finally { saving.value = false; }
 }
 
+async function resetOwnerPassword(row) {
+  const user = owner(row);
+  if (!user.id || saving.value) return;
+  saving.value = true; error.value = ""; success.value = "";
+  try {
+    const result = await api(`/api/admin/users/${user.id}/reset-password`, { method: "POST", body: "{}" });
+    temporaryPasswordDialog.value = { userName: user.name || row.name, password: result.temporaryPassword };
+    success.value = "临时密码已生成，负责人下次登录时必须修改密码";
+    await loadOrganizations();
+  } catch (cause) { error.value = cause.message || "重置密码失败"; } finally { saving.value = false; }
+}
+
+async function viewOwnerTemporaryPassword(row) {
+  const user = owner(row);
+  if (!user.id || saving.value) return;
+  saving.value = true; error.value = "";
+  try {
+    const result = await api(`/api/admin/users/${user.id}/temporary-password`);
+    temporaryPasswordDialog.value = { userName: user.name || row.name, password: result.temporaryPassword };
+  } catch (cause) { error.value = cause.message || "读取临时密码失败"; } finally { saving.value = false; }
+}
+
+async function copyTemporaryPassword() {
+  const password = temporaryPasswordDialog.value?.password;
+  if (!password) return;
+  try {
+    await navigator.clipboard?.writeText(password);
+    success.value = "临时密码已复制";
+  } catch { error.value = "复制失败，请手动选择临时密码"; }
+}
+
+async function deleteOrganization() {
+  if (!deleteTarget.value || saving.value) return;
+  saving.value = true; error.value = ""; success.value = "";
+  try {
+    await api(`/api/admin/organizations/${deleteTarget.value.id}`, { method: "DELETE" });
+    if (selected.value?.id === deleteTarget.value.id) selected.value = null;
+    deleteTarget.value = null;
+    success.value = "组织及负责人账号已删除，历史业务记录已保留组织名称快照";
+    await loadOrganizations();
+  } catch (cause) { error.value = cause.message || "删除组织失败"; } finally { saving.value = false; }
+}
+
 function openReject(row) { rejectTarget.value = row; rejectReason.value = ""; }
 onMounted(loadOrganizations);
 onBeforeUnmount(closePreview);
@@ -125,7 +170,7 @@ onBeforeUnmount(closePreview);
     <div class="page-title-row"><div><h2>组织审核</h2><p>审核组织资质，查看负责人和关联报名情况。</p></div><button type="button" class="dark" :disabled="loading" @click="loadOrganizations">刷新</button></div>
     <p v-if="error" class="message">{{ error }}</p><p v-if="success" class="success-message">{{ success }}</p>
     <div class="organization-tabs" role="tablist"><button v-for="status in ['all', 'pending', 'approved', 'rejected']" :key="status" type="button" :class="{ active: statusFilter === status }" @click="statusFilter = status">{{ status === 'all' ? '全部' : statusText[status] }}</button></div>
-    <section class="panel"><div class="organization-toolbar"><input v-model="search" placeholder="搜索组织名称 / 统一社会信用代码 / 负责人" /><span>{{ filteredRows.length }} 个组织</span></div><p v-if="loading" class="hint">正在加载组织资料…</p><div v-else class="table-wrap"><table class="organization-table"><thead><tr><th>组织</th><th>负责人</th><th>审核状态</th><th>成员/报名</th><th>审核信息</th><th>操作</th></tr></thead><tbody><tr v-for="row in filteredRows" :key="row.id"><td><strong>{{ row.name }}</strong><br /><span>{{ row.creditCode || '-' }}</span></td><td>{{ owner(row).name || '-' }}<br /><span>{{ owner(row).phone || '-' }}</span></td><td><em :class="row.reviewStatus">{{ statusText[row.reviewStatus] || row.reviewStatus }}</em><p v-if="row.rejectReason" class="hint">{{ row.rejectReason }}</p></td><td>{{ memberCount(row) }} 名成员<br /><span>{{ registrationCount(row) }} 条报名</span></td><td>{{ userName(row.reviewedBy) }}<br /><span>{{ row.reviewedAt ? new Date(row.reviewedAt).toLocaleString('zh-CN') : '-' }}</span></td><td><button class="mini" @click="selected = row">详情</button><button v-if="currentDocument(row)" class="mini" :data-action="`preview-${row.id}`" @click="openPreview(row)">预览资质</button><button v-if="row.reviewStatus === 'pending'" class="mini" :data-action="`approve-${row.id}`" :disabled="saving" @click="review(row, 'approved')">通过</button><button v-if="row.reviewStatus === 'pending'" class="mini reject" :data-action="`reject-${row.id}`" :disabled="saving" @click="openReject(row)">驳回</button><button v-if="row.status !== 'disabled'" class="mini reject" :data-action="`disable-${row.id}`" :disabled="saving" @click="setOrganizationEnabled(row, false)">停用</button><button v-else class="mini" :data-action="`enable-${row.id}`" :disabled="saving" @click="setOrganizationEnabled(row, true)">启用</button></td></tr></tbody></table><p v-if="filteredRows.length === 0" class="hint empty-state">暂无符合条件的组织。</p></div></section>
+    <section class="panel"><div class="organization-toolbar"><input v-model="search" placeholder="搜索组织名称 / 统一社会信用代码 / 负责人" /><span>{{ filteredRows.length }} 个组织</span></div><p v-if="loading" class="hint">正在加载组织资料…</p><div v-else class="table-wrap"><table class="organization-table"><thead><tr><th>组织</th><th>负责人</th><th>审核状态</th><th>成员/报名</th><th>审核信息</th><th>操作</th></tr></thead><tbody><tr v-for="row in filteredRows" :key="row.id"><td><strong>{{ row.name }}</strong><br /><span>{{ row.creditCode || '-' }}</span></td><td>{{ owner(row).name || '-' }}<br /><span>{{ owner(row).phone || '-' }}</span></td><td><em :class="row.reviewStatus">{{ statusText[row.reviewStatus] || row.reviewStatus }}</em><p v-if="row.rejectReason" class="hint">{{ row.rejectReason }}</p></td><td>{{ memberCount(row) }} 名成员<br /><span>{{ registrationCount(row) }} 条报名</span></td><td>{{ userName(row.reviewedBy) }}<br /><span>{{ row.reviewedAt ? new Date(row.reviewedAt).toLocaleString('zh-CN') : '-' }}</span></td><td><button class="mini" @click="selected = row">详情</button><button v-if="currentDocument(row)" class="mini" :data-action="`preview-${row.id}`" @click="openPreview(row)">预览资质</button><button v-if="row.reviewStatus === 'pending'" class="mini" :data-action="`approve-${row.id}`" :disabled="saving" @click="review(row, 'approved')">通过</button><button v-if="row.reviewStatus === 'pending'" class="mini reject" :data-action="`reject-${row.id}`" :disabled="saving" @click="openReject(row)">驳回</button><button v-if="row.status !== 'disabled'" class="mini reject" :data-action="`disable-${row.id}`" :disabled="saving" @click="setOrganizationEnabled(row, false)">停用</button><button v-else class="mini" :data-action="`enable-${row.id}`" :disabled="saving" @click="setOrganizationEnabled(row, true)">启用</button><button class="mini" :data-action="`reset-password-${row.id}`" :disabled="saving || !owner(row).id" @click="resetOwnerPassword(row)">重置密码</button><button v-if="owner(row).mustChangePassword" class="mini" :data-action="`view-temporary-password-${row.id}`" :disabled="saving" @click="viewOwnerTemporaryPassword(row)">查看临时密码</button><button class="mini reject" :data-action="`delete-${row.id}`" :disabled="saving" @click="deleteTarget = row">删除</button></td></tr></tbody></table><p v-if="filteredRows.length === 0" class="hint empty-state">暂无符合条件的组织。</p></div></section>
     <div v-if="selected" class="dialog-backdrop" @click.self="selected = null"><section class="panel organization-dialog"><div class="panel-title"><h3>{{ selected.name }}</h3><button class="mini reject" @click="selected = null">关闭</button></div><dl><dt>统一社会信用代码</dt><dd>{{ selected.creditCode }}</dd><dt>负责人</dt><dd>{{ owner(selected).name || '-' }} {{ owner(selected).phone || '' }}</dd><dt>成员数</dt><dd>{{ memberCount(selected) }}（全部成员）</dd><dt>报名数</dt><dd>{{ registrationCount(selected) }}</dd><dt>审核人</dt><dd>{{ userName(selected.reviewedBy) }}</dd><dt>审核时间</dt><dd>{{ selected.reviewedAt ? new Date(selected.reviewedAt).toLocaleString('zh-CN') : '-' }}</dd><dt>资质类型</dt><dd>{{ documentTypeText[currentDocument(selected)?.documentType] || '-' }}</dd><dt>资质文件</dt><dd>{{ currentDocument(selected)?.originalName || '未上传' }}</dd></dl><section class="organization-event-participations"><h4>已参与赛事</h4><p v-if="!(selected.eventParticipations || []).length" class="hint">尚未参与赛事。</p><ul v-else><li v-for="item in selected.eventParticipations" :key="item.eventId"><strong>{{ item.eventId }}</strong><span>报名 {{ item.registrationCount }} · 成绩 {{ item.resultCount }} · 证书 {{ item.certificateCount }}</span></li></ul></section><div v-if="selected.status === 'disabled'" class="form-actions"><button type="button" class="reject" data-action="open-credential-cleanup" :disabled="saving" @click="credentialCleanupOpen = true">清理组织资质</button></div></section></div>
     <DangerConfirmationDialog
       :open="credentialCleanupOpen"
@@ -137,6 +182,8 @@ onBeforeUnmount(closePreview);
       @confirm="cleanupCredentials"
     />
     <div v-if="rejectTarget" class="dialog-backdrop" @click.self="rejectTarget = null"><form class="panel organization-dialog" @submit.prevent="review(rejectTarget, 'rejected', rejectReason)"><h3>驳回组织申请</h3><p class="hint">请说明需要补充或修改的内容，负责人可据此重新提交。</p><label>驳回原因<textarea data-testid="reject-reason" v-model="rejectReason" required /></label><div class="form-actions"><button class="primary" data-action="confirm-reject" :disabled="saving">确认驳回</button><button type="button" @click="rejectTarget = null">取消</button></div></form></div>
+    <div v-if="temporaryPasswordDialog" class="dialog-backdrop" @click.self="temporaryPasswordDialog = null"><section class="panel organization-dialog" data-testid="temporary-password-dialog"><h3>{{ temporaryPasswordDialog.userName }} 的临时密码</h3><p class="hint">该临时密码可在用户修改密码前重复查看；用户下次登录必须先修改密码。</p><output class="temporary-password-value">{{ temporaryPasswordDialog.password }}</output><div class="form-actions"><button type="button" class="primary" data-action="copy-temporary-password" @click="copyTemporaryPassword">复制临时密码</button><button type="button" data-action="close-temporary-password" @click="temporaryPasswordDialog = null">关闭</button></div></section></div>
+    <div v-if="deleteTarget" class="dialog-backdrop" @click.self="deleteTarget = null"><section class="panel organization-dialog" data-testid="delete-organization-dialog"><h3>确认删除组织</h3><p class="danger-message">负责人账号、组织资料、成员关系和资质将删除；历史报名、成绩和证书保留组织名称快照；操作不可恢复。</p><p>是否删除组织 <strong>{{ deleteTarget.name }}</strong>？</p><div class="form-actions"><button type="button" class="reject" data-action="confirm-delete-organization" :disabled="saving" @click="deleteOrganization">是，确认删除</button><button type="button" data-action="cancel-delete-organization" :disabled="saving" @click="deleteTarget = null">否，取消</button></div></section></div>
     <div v-if="preview" class="dialog-backdrop" @click.self="closePreview"><section class="panel organization-dialog credential-preview-dialog"><div class="panel-title"><h3>资质预览：{{ preview.document.originalName }}</h3><button class="mini reject" data-action="close-preview" @click="closePreview">关闭</button></div><p v-if="previewLoading" class="hint">正在安全加载资质文件…</p><p v-else-if="previewError" class="message">{{ previewError }}</p><embed v-else-if="preview.mimeType === 'application/pdf' && previewUrl" data-testid="credential-preview" :src="previewUrl" type="application/pdf" /><img v-else-if="previewUrl" data-testid="credential-preview" :src="previewUrl" :alt="preview.document.originalName" /></section></div>
   </section>
 </template>

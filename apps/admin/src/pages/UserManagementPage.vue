@@ -11,6 +11,7 @@ const search = ref("");
 const typeFilter = ref("all");
 const statusFilter = ref("all");
 const message = ref("");
+const temporaryPasswordDialog = ref(null);
 const form = reactive({ id: "", name: "", phone: "", password: "", type: "ordinary", status: "active", organizationName: "", organizationCode: "" });
 
 const roleText = { ordinary: "普通用户", organization: "组织用户", admin: "超级管理员" };
@@ -79,18 +80,28 @@ async function save() {
 }
 
 async function resetTemporaryPassword(user) {
-  const password = window.prompt(`请输入 ${user.name} 的临时密码（至少 8 位，含字母和数字）`, "");
-  if (!password) return;
-  if (!/^(?=.*[A-Za-z])(?=.*\d).{8,64}$/.test(password)) {
-    message.value = "临时密码至少 8 位且必须同时包含字母和数字";
-    return;
-  }
   try {
-    await api(`/api/admin/users/${user.id}/reset-password`, { method: "POST", body: JSON.stringify({ password }) });
-    message.value = "临时密码已重置；用户首次登录必须修改。";
+    const result = await api(`/api/admin/users/${user.id}/reset-password`, { method: "POST", body: "{}" });
+    user.mustChangePassword = true;
+    temporaryPasswordDialog.value = { userName: user.name, password: result.temporaryPassword };
+    message.value = "临时密码已生成；用户下次登录必须修改。";
   } catch (error) {
     message.value = error.message;
   }
+}
+
+async function viewTemporaryPassword(user) {
+  try {
+    const result = await api(`/api/admin/users/${user.id}/temporary-password`);
+    temporaryPasswordDialog.value = { userName: user.name, password: result.temporaryPassword };
+  } catch (error) { message.value = error.message; }
+}
+
+async function copyTemporaryPassword() {
+  try {
+    await navigator.clipboard?.writeText(temporaryPasswordDialog.value?.password || "");
+    message.value = "临时密码已复制";
+  } catch { message.value = "复制失败，请手动选择临时密码"; }
 }
 
 async function removeUser(user) {
@@ -140,11 +151,20 @@ onMounted(load);
         <tr v-for="user in filteredUsers" :key="user.id">
           <td>{{ user.name }}</td><td>{{ user.phone }}</td><td>{{ roleText[user.type] }}</td>
           <td>{{ ownerOrganization(user.id)?.name || "查看详情" }}</td><td><em :class="user.status">{{ user.status === "disabled" ? "停用" : "启用" }}</em></td>
-          <td><button class="mini" data-action="user-details" @click="showDetails(user)">组织关系与报名历史</button><button v-if="user.type !== 'admin'" class="mini" @click="editUser(user)">编辑</button><button v-if="user.type !== 'admin'" class="mini" @click="resetTemporaryPassword(user)">重置临时密码</button><button v-if="user.type !== 'admin'" class="mini reject" @click="removeUser(user)">删除</button></td>
+          <td><button class="mini" data-action="user-details" @click="showDetails(user)">组织关系与报名历史</button><button v-if="user.type !== 'admin'" class="mini" @click="editUser(user)">编辑</button><button v-if="user.type !== 'admin'" class="mini" :data-action="`reset-user-password-${user.id}`" @click="resetTemporaryPassword(user)">重置密码</button><button v-if="user.type !== 'admin' && user.mustChangePassword" class="mini" :data-action="`view-user-password-${user.id}`" @click="viewTemporaryPassword(user)">查看临时密码</button><button v-if="user.type !== 'admin'" class="mini reject" @click="removeUser(user)">删除</button></td>
         </tr>
       </tbody></table></div>
     </section>
   </section>
+
+  <div v-if="temporaryPasswordDialog" class="dialog-backdrop" @click.self="temporaryPasswordDialog = null">
+    <section class="panel organization-dialog" data-testid="temporary-password-dialog">
+      <h3>{{ temporaryPasswordDialog.userName }} 的临时密码</h3>
+      <p class="hint">该密码可在用户修改前重复查看；用户下次登录必须先修改密码。</p>
+      <output class="temporary-password-value">{{ temporaryPasswordDialog.password }}</output>
+      <div class="form-actions"><button type="button" class="primary" data-action="copy-temporary-password" @click="copyTemporaryPassword">复制临时密码</button><button type="button" data-action="close-temporary-password" @click="temporaryPasswordDialog = null">关闭</button></div>
+    </section>
+  </div>
 
   <section v-if="selectedDetails" class="panel user-detail-panel" data-testid="user-details">
     <div class="panel-title"><h3>{{ selectedDetails.user.name }} 的组织关系与跨赛事报名历史</h3><button class="mini reject" @click="selectedDetails = null">关闭</button></div>

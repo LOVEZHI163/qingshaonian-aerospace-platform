@@ -71,6 +71,8 @@ describe("App session integration", () => {
 
     expect(wrapper.text()).toContain("首次登录请修改密码");
     expect(wrapper.text()).not.toContain("报名端");
+    expect(wrapper.find('[data-action="password-logout"]').exists()).toBe(true);
+    expect(wrapper.find('[data-testid="user-shell"]').exists()).toBe(false);
   });
 
   it("renders the admin shell only for administrators", async () => {
@@ -181,8 +183,8 @@ describe("App session integration", () => {
   });
 
   it.each([
-    ["ordinary", ["赛", "组", "录", "证"]],
-    ["organization", ["赛", "录", "组", "证"]]
+    ["ordinary", ["赛", "组", "录", "证", "密"]],
+    ["organization", ["赛", "录", "组", "证", "密"]]
   ])("keeps every %s sidebar label aligned behind an icon slot", async (type, expectedIcons) => {
     sessionUser.value = { id: `${type}-1`, type, name: "账户", phone: "13800000001", mustChangePassword: false };
     apiMock.mockImplementation(async (path) => {
@@ -403,7 +405,7 @@ describe("App session integration", () => {
     const wrapper = mount(App);
     await flushPromises();
 
-    expect(wrapper.findAll("[data-user-nav]").map((item) => item.attributes("data-user-nav"))).toEqual(["eventCenter", "organizationRecords", "organization", "certificates"]);
+    expect(wrapper.findAll("[data-user-nav]").map((item) => item.attributes("data-user-nav"))).toEqual(["eventCenter", "organizationRecords", "organization", "certificates", "password"]);
     expect(wrapper.find('[data-user-nav="organizationWorkspace"]').exists()).toBe(false);
 
     await wrapper.get('[data-event-card="E2"]').trigger("click");
@@ -610,7 +612,7 @@ describe("App session integration", () => {
     expect(wrapper.find(".organization-management").exists()).toBe(true);
   });
 
-  it("rejects an invalid administrator temporary password before calling the API", async () => {
+  it("lets the system generate an ordinary user's temporary password", async () => {
     sessionUser.value = { id: "A1", type: "admin", name: "管理员", mustChangePassword: false };
     apiMock.mockImplementation(async (path) => {
       if (path === "/api/public/event") return publicData();
@@ -622,20 +624,22 @@ describe("App session integration", () => {
         { id: "U1", name: "张三", phone: "13800000001", type: "ordinary", status: "active" }
       ] };
       if (path === "/api/admin/registrations?pageSize=100" || path === "/api/admin/certificates") return { rows: [] };
+      if (path === "/api/admin/users/U1/reset-password") return { user: { id: "U1", mustChangePassword: true }, temporaryPassword: "GeneratedPass2" };
       return { rows: [] };
     });
-    vi.spyOn(window, "prompt").mockReturnValue("short1");
+    const prompt = vi.spyOn(window, "prompt");
     const wrapper = mount(App);
     await flushPromises();
     await wrapper.get('[data-nav="users"]').trigger("click");
     await flushPromises();
 
-    const resetButton = wrapper.findAll("button").find((button) => button.text() === "重置临时密码");
+    const resetButton = wrapper.findAll("button").find((button) => button.text() === "重置密码");
     await resetButton.trigger("click");
     await flushPromises();
 
-    expect(wrapper.text()).toContain("至少 8 位且必须同时包含字母和数字");
-    expect(apiMock.mock.calls.some(([path]) => path === "/api/admin/users/U1/reset-password")).toBe(false);
+    expect(prompt).not.toHaveBeenCalled();
+    expect(apiMock).toHaveBeenCalledWith("/api/admin/users/U1/reset-password", { method: "POST", body: "{}" });
+    expect(wrapper.get('[data-testid="temporary-password-dialog"]').text()).toContain("GeneratedPass2");
   });
 
   it("returns to login after registration instead of creating a fake session", async () => {

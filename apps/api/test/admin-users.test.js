@@ -23,8 +23,30 @@ test("admin global user and organization DTOs never expose storage or session in
 
     assert.equal(Object.hasOwn(users.find((user) => user.id === "U1001"), "privateAuditToken"), false);
     assert.equal(Object.hasOwn(users.find((user) => user.id === "U1001"), "password"), false);
+    assert.equal(Object.hasOwn(users.find((user) => user.id === "U1001"), "temporaryPasswordCiphertext"), false);
     assert.equal(Object.hasOwn(organizations[0], "privateStorageMarker"), false);
     assert.equal(Object.hasOwn(organizations[0], "filePath"), false);
+  });
+});
+
+test("administrator temporary-password reset and read audits contain no secret material", async () => {
+  await withServer(async (baseUrl, { dbPath }) => {
+    const admin = await loginAs(baseUrl, "13900000000", "admin123");
+    const reset = await fetch(`${baseUrl}/api/admin/users/U1001/reset-password`, withSession(admin.cookie, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: "{}"
+    }));
+    assert.equal(reset.status, 200);
+    const temporaryPassword = (await reset.json()).temporaryPassword;
+    const viewed = await fetch(`${baseUrl}/api/admin/users/U1001/temporary-password`, withSession(admin.cookie));
+    assert.equal(viewed.status, 200);
+    assert.equal((await viewed.json()).temporaryPassword, temporaryPassword);
+
+    const persisted = JSON.parse(await fs.readFile(dbPath, "utf8"));
+    const auditText = JSON.stringify(persisted.auditLogs.filter((row) => row.targetId === "U1001"));
+    assert.match(auditText, /user\.password-reset/);
+    assert.match(auditText, /user\.temporary-password-view/);
+    assert.doesNotMatch(auditText, new RegExp(temporaryPassword));
+    assert.doesNotMatch(auditText, /temporaryPasswordCiphertext|passwordHash|\$2[aby]\$/i);
   });
 });
 

@@ -2,6 +2,7 @@ import express from "express";
 import cors from "cors";
 import { hashPassword, isLegacyPassword, validatePassword, verifyLoginPassword } from "./auth/passwords.js";
 import { createSmsPasswordResetService, sendPasswordResetError } from "./auth/password-reset.js";
+import { createTemporaryPasswordVault } from "./auth/temporary-passwords.js";
 import { asyncRoute, createSessionMiddleware, requireAdmin, requirePasswordReady, requireUser } from "./auth/session.js";
 import { createAliyunSmsProvider } from "./auth/sms.js";
 import { createDataStore } from "./data/index.js";
@@ -24,6 +25,13 @@ import { createMembershipsRouter } from "./routes/memberships.js";
 import { startSubmissionSessionExpiryCleanup } from "./services/submission-assets.js";
 import { registrationContext } from "./services/events.js";
 import { replayFileCleanupJournal } from "./services/organizations.js";
+import {
+  clearUserTemporaryPassword,
+  readUserTemporaryPassword,
+  resetUserTemporaryPassword,
+  temporaryPasswordKeyUnavailable
+} from "./services/account-passwords.js";
+import { recordAudit } from "./services/audit.js";
 import { organizationForOwner } from "./services/access-control.js";
 import { publishDueScheduledContent, startScheduledContentPublisher } from "./services/scheduled-content-publisher.js";
 
@@ -33,13 +41,24 @@ const mutationAsyncRoute = createMutationAsyncRoute(dataStore);
 const readDb = () => dataStore.readDb();
 const writeDb = (db) => dataStore.writeDb(db);
 const smsProvider = createAliyunSmsProvider(process.env);
+let temporaryPasswordVault = null;
+try {
+  temporaryPasswordVault = createTemporaryPasswordVault(process.env.TEMP_PASSWORD_ENCRYPTION_KEY);
+} catch {
+  // Password reset/view endpoints fail closed with a stable API error below.
+}
+function requireTemporaryPasswordVault() {
+  if (!temporaryPasswordVault) throw temporaryPasswordKeyUnavailable();
+  return temporaryPasswordVault;
+}
 const smsPasswordReset = createSmsPasswordResetService({
   secret: process.env.SESSION_SECRET || "test-session-secret-32-characters",
   readDb,
   writeDb,
   smsProvider,
   authState: dataStore.authState,
-  withMutationLock: (handler) => dataStore.withMutationLock(handler)
+  withMutationLock: (handler) => dataStore.withMutationLock(handler),
+  clearTemporaryPassword: clearUserTemporaryPassword
 });
 
 function id(prefix) {
@@ -389,6 +408,7 @@ app.post("/api/auth/change-password", requireUser, asyncRoute(async (req, res) =
     user.password = await hashPassword(req.body.newPassword);
     user.sessionVersion += 1;
     user.mustChangePassword = false;
+    clearUserTemporaryPassword(user);
     await writeDb(db);
     return { user };
   });
@@ -429,16 +449,44 @@ app.get("/api/users", requireAdmin, requirePasswordReady, asyncRoute(async (_req
 }));
 
 app.post("/api/admin/users/:id/reset-password", requireAdmin, requirePasswordReady, mutationAsyncRoute(async (req, res) => {
-  const passwordError = validatePassword(req.body.password);
-  if (passwordError) return res.status(422).json({ error: passwordError });
+  const vault = requireTemporaryPasswordVault();
   const db = await readDb();
   const user = db.users.find((item) => item.id === req.params.id);
   if (!user) return res.status(404).json({ error: "用户不存在" });
-  user.password = await hashPassword(req.body.password);
-  user.sessionVersion += 1;
-  user.mustChangePassword = true;
+  const { temporaryPassword } = await resetUserTemporaryPassword(db, user, { vault, hashPassword, now });
+  recordAudit(db, {
+    actor: req.user,
+    action: "user.password-reset",
+    targetType: "user",
+    targetId: user.id,
+    summary: `已为用户 ${user.name} 生成新的临时密码`,
+    createdAt: now()
+  });
   await writeDb(db);
-  res.json({ user: publicUser(user) });
+  res.json({ user: publicUser(user), temporaryPassword });
+}));
+
+app.get("/api/admin/users/:id/temporary-password", requireAdmin, requirePasswordReady, asyncRoute(async (req, res) => {
+  const vault = requireTemporaryPasswordVault();
+  const result = await dataStore.withMutationLock(async () => {
+    const db = await readDb();
+    const user = db.users.find((item) => item.id === req.params.id);
+    if (!user) return { status: 404, error: "用户不存在" };
+    const temporaryPassword = readUserTemporaryPassword(user, vault);
+    if (!temporaryPassword) return { status: 404, error: "当前没有可查看的临时密码" };
+    recordAudit(db, {
+      actor: req.user,
+      action: "user.temporary-password-view",
+      targetType: "user",
+      targetId: user.id,
+      summary: `已查看用户 ${user.name} 的当前临时密码`,
+      createdAt: now()
+    });
+    await writeDb(db);
+    return { temporaryPassword };
+  });
+  if (result.error) return res.status(result.status).json({ error: result.error });
+  res.json(result);
 }));
 
 app.post("/api/admin/users", requireAdmin, requirePasswordReady, mutationAsyncRoute(async (req, res) => {

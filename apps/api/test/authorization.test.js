@@ -314,11 +314,12 @@ test("certificate downloads enforce ownership, publication, and organization man
 test("temporary-password users must change password and only the current session survives", async () => {
   await withServer(async (baseUrl) => {
     const admin = await loginAs(baseUrl, "13900000000", "admin123");
-    const reset = await fetch(`${baseUrl}/api/admin/users/U1001/reset-password`, jsonOptions("POST", { password: "TempPass9" }, admin.cookie));
+    const reset = await fetch(`${baseUrl}/api/admin/users/U1001/reset-password`, jsonOptions("POST", {}, admin.cookie));
     assert.equal(reset.status, 200);
+    const temporaryPassword = (await reset.json()).temporaryPassword;
 
-    const first = await loginAs(baseUrl, "13800000001", "TempPass9");
-    const second = await loginAs(baseUrl, "13800000001", "TempPass9");
+    const first = await loginAs(baseUrl, "13800000001", temporaryPassword);
+    const second = await loginAs(baseUrl, "13800000001", temporaryPassword);
     assert.equal((await fetch(`${baseUrl}/api/auth/me`, withSession(first.cookie))).status, 200);
     const blocked = await fetch(`${baseUrl}/api/me/events/wz-aerospace-2026/registrations`, withSession(first.cookie));
     assert.equal(blocked.status, 428);
@@ -330,13 +331,13 @@ test("temporary-password users must change password and only the current session
     assert.equal(wrong.status, 401);
 
     const unchanged = await fetch(`${baseUrl}/api/auth/change-password`, jsonOptions("POST", {
-      currentPassword: "TempPass9", newPassword: "TempPass9"
+      currentPassword: temporaryPassword, newPassword: temporaryPassword
     }, first.cookie));
     assert.equal(unchanged.status, 422);
     assert.equal((await fetch(`${baseUrl}/api/me/events/wz-aerospace-2026/registrations`, withSession(first.cookie))).status, 428);
 
     const changed = await fetch(`${baseUrl}/api/auth/change-password`, jsonOptions("POST", {
-      currentPassword: "TempPass9", newPassword: "NextPass2"
+      currentPassword: temporaryPassword, newPassword: "NextPass2"
     }, first.cookie));
     assert.equal(changed.status, 200);
     const changedPayload = await changed.json();
