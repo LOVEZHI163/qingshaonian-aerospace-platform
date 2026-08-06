@@ -36,9 +36,15 @@ test("administrator temporary-password reset and read audits contain no secret m
       method: "POST", headers: { "Content-Type": "application/json" }, body: "{}"
     }));
     assert.equal(reset.status, 200);
+    assert.equal(reset.headers.get("cache-control"), "no-store, private");
+    assert.equal(reset.headers.get("pragma"), "no-cache");
+    assert.equal(reset.headers.get("expires"), "0");
     const temporaryPassword = (await reset.json()).temporaryPassword;
     const viewed = await fetch(`${baseUrl}/api/admin/users/U1001/temporary-password`, withSession(admin.cookie));
     assert.equal(viewed.status, 200);
+    assert.equal(viewed.headers.get("cache-control"), "no-store, private");
+    assert.equal(viewed.headers.get("pragma"), "no-cache");
+    assert.equal(viewed.headers.get("expires"), "0");
     assert.equal((await viewed.json()).temporaryPassword, temporaryPassword);
 
     const persisted = JSON.parse(await fs.readFile(dbPath, "utf8"));
@@ -59,6 +65,9 @@ test("admin creates an ordinary user with a system-generated repeat-viewable tem
       body: JSON.stringify({ name: "测试家长", phone: "13600001111", password: "CallerChosen9", type: "ordinary" })
     }));
     assert.equal(createRes.status, 201);
+    assert.equal(createRes.headers.get("cache-control"), "no-store, private");
+    assert.equal(createRes.headers.get("pragma"), "no-cache");
+    assert.equal(createRes.headers.get("expires"), "0");
     const createPayload = await asJson(createRes);
     const created = createPayload.row;
     assert.equal(created.type, "ordinary");
@@ -82,11 +91,34 @@ test("admin creates an ordinary user with a system-generated repeat-viewable tem
       body: JSON.stringify({ phone: "13600001111", password: createPayload.temporaryPassword })
     });
     assert.equal(temporaryLogin.status, 200);
+    const temporaryCookie = temporaryLogin.headers.get("set-cookie")?.split(";")[0];
     assert.equal((await temporaryLogin.json()).user.mustChangePassword, true);
 
+    const changed = await fetch(`${baseUrl}/api/auth/change-password`, withSession(temporaryCookie, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ currentPassword: createPayload.temporaryPassword, newPassword: "NextGeneratedPass2" })
+    }));
+    assert.equal(changed.status, 200);
+    const opened = await fetch(`${baseUrl}/api/admin/events/wz-aerospace-2026`, withSession(admin.cookie, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ registrationMode: "force_open" })
+    }));
+    assert.equal(opened.status, 200);
+    const unaffiliated = await fetch(`${baseUrl}/api/me/events/wz-aerospace-2026/registrations`, withSession(temporaryCookie, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        projectId: "paper-plane-gate",
+        athlete: { name: "Unaffiliated", school: "Test school", grade: "五年级", phone: "13600001111" }
+      })
+    }));
+    assert.equal(unaffiliated.status, 403);
+    assert.equal((await unaffiliated.json()).code, "ACTIVE_ORGANIZATION_REQUIRED");
+
     const viewed = await fetch(`${baseUrl}/api/admin/users/${created.id}/temporary-password`, withSession(admin.cookie));
-    assert.equal(viewed.status, 200);
-    assert.equal((await viewed.json()).temporaryPassword, createPayload.temporaryPassword);
+    assert.equal(viewed.status, 404);
 
     const updateRes = await fetch(`${baseUrl}/api/admin/users/${created.id}`, {
       ...withSession(admin.cookie),
@@ -176,5 +208,21 @@ test("admin patch rejects a historical organization user whose owned organizatio
     }));
     assert.equal(update.status, 422);
     assert.match((await update.json()).error, /资质|组织|重新注册/);
+  });
+});
+
+test("admin cannot downgrade an organization owner to ordinary", async () => {
+  await withServer(async (baseUrl, { dbPath }) => {
+    const admin = await loginAs(baseUrl, "13900000000", "admin123");
+    const response = await fetch(`${baseUrl}/api/admin/users/U2001`, withSession(admin.cookie, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "ordinary" })
+    }));
+    assert.equal(response.status, 422);
+    assert.equal((await response.json()).code, "ORGANIZATION_OWNER_TYPE_IMMUTABLE");
+    const persisted = JSON.parse(await fs.readFile(dbPath, "utf8"));
+    assert.equal(persisted.users.find((user) => user.id === "U2001").type, "organization");
+    assert.equal(persisted.organizations.some((organization) => organization.ownerUserId === "U2001"), true);
   });
 });

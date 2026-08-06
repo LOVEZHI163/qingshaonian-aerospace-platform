@@ -693,7 +693,11 @@ describe("App session integration", () => {
     await flushPromises();
 
     expect(prompt).not.toHaveBeenCalled();
-    expect(apiMock).toHaveBeenCalledWith("/api/admin/users/U1/reset-password", { method: "POST", body: "{}" });
+    expect(apiMock).toHaveBeenCalledWith("/api/admin/users/U1/reset-password", {
+      method: "POST",
+      body: "{}",
+      cache: "no-store"
+    });
     expect(wrapper.get('[data-testid="temporary-password-dialog"]').text()).toContain("GeneratedPass2");
   });
 

@@ -198,8 +198,8 @@ async function submit() {
     </fieldset>
     <div class="panel-title"><h3>{{ editing ? "编辑组织报名" : "组织报名" }}</h3></div>
     <p class="hint">报名将自动归属当前组织；不支持切换个人身份或其他组织。</p>
-    <div class="two"><label>姓名<input v-model="form.athlete.name" data-field="athlete-name" required /></label><label>学校<SchoolCombobox v-model="form.athlete.school" /></label></div>
-    <div class="two"><label>年级<select v-model="form.athlete.grade" data-field="athlete-grade" required><option value="" disabled>请选择年级</option><option v-for="grade in gradeOptions" :key="grade" :value="grade">{{ grade }}</option></select></label><label>手机/监护人手机<input v-model="form.athlete.phone" data-field="athlete-phone" required /></label></div>
+    <div class="two"><label>姓名<input v-model="form.athlete.name" data-field="athlete-name" :readonly="memberMode" required /></label><label>学校<SchoolCombobox v-model="form.athlete.school" /></label></div>
+    <div class="two"><label>年级<select v-model="form.athlete.grade" data-field="athlete-grade" required><option value="" disabled>请选择年级</option><option v-for="grade in gradeOptions" :key="grade" :value="grade">{{ grade }}</option></select></label><label>手机/监护人手机<input v-model="form.athlete.phone" data-field="athlete-phone" :readonly="memberMode" required /></label></div>
     <div class="two"><label>赛项<select v-model="form.projectId" :disabled="editing" required><option v-for="project in projects" :key="project.id" :value="project.id">{{ project.name }}</option></select></label><label>指导老师<input v-model="form.instructor" data-field="instructor" /></label></div>
     <p v-if="editing" class="hint">赛项在报名创建后不可修改；如需更换赛项，请取消后重新报名。</p>
     <section v-if="requiresSubmission" class="registration-submission" aria-label="作品材料">

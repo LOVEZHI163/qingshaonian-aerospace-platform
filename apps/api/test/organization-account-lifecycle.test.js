@@ -82,6 +82,11 @@ function lifecycleFixture() {
     originalName: "history.xlsx", status: "committed", previewJson: [], validCount: 1, errorCount: 0,
     replaceCount: 0, createdAt: "2026-08-05T08:00:00.000Z", committedAt: "2026-08-05T08:05:00.000Z"
   });
+  db.auditLogs.push({
+    id: "AUDIT-OWNER-HISTORY", actorUserId: owner.id, actorName: owner.name,
+    action: "registration.create", targetType: "registration", targetId: registration.id,
+    summary: "历史操作", createdAt: "2026-08-05T08:00:00.000Z"
+  });
   return { db, organization, owner, member, registration };
 }
 
@@ -127,6 +132,7 @@ test("delete organization account retains registration, result, certificate, and
     { id: "SA-COMMITTED", registrationId: registration.id, uploadedByUserId: null }
   ]);
   assert.equal(db.certificateImportBatches.find((row) => row.id === "B-OWNER-HISTORY").createdBy, null);
+  assert.equal(db.auditLogs.find((row) => row.id === "AUDIT-OWNER-HISTORY").actorUserId, null);
   const audit = db.auditLogs.find((row) => row.action === "organization.delete");
   assert.ok(audit);
   assert.equal(audit.actorUserId, actor.id);
@@ -255,6 +261,7 @@ test("organization account lifecycle round-trips retained history through Postgr
     assert.ok(persisted.registrationUploadSessions.some((row) => row.id === "US-COMMITTED" && row.ownerUserId === null && row.organizationId === null));
     assert.equal(persisted.registrationUploadSessions.some((row) => row.id === "US-TEMPORARY"), false);
     assert.equal(persisted.certificateImportBatches.find((row) => row.id === "B-OWNER-HISTORY").createdBy, null);
+    assert.equal(persisted.auditLogs.find((row) => row.id === "AUDIT-OWNER-HISTORY").actorUserId, null);
     assert.ok(persisted.fileCleanupJournal.some((row) => row.category === "organization-deleted"));
   } finally {
     await store.close();

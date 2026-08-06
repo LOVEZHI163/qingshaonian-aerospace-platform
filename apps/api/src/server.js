@@ -449,6 +449,14 @@ app.get("/api/users", requireAdmin, requirePasswordReady, asyncRoute(async (_req
   res.json({ rows: db.users.map(publicUser) });
 }));
 
+function preventSensitiveResponseCaching(res) {
+  res.set({
+    "Cache-Control": "no-store, private",
+    Pragma: "no-cache",
+    Expires: "0"
+  });
+}
+
 app.post("/api/admin/users/:id/reset-password", requireAdmin, requirePasswordReady, mutationAsyncRoute(async (req, res) => {
   const vault = requireTemporaryPasswordVault();
   const db = await readDb();
@@ -464,6 +472,7 @@ app.post("/api/admin/users/:id/reset-password", requireAdmin, requirePasswordRea
     createdAt: now()
   });
   await writeDb(db);
+  preventSensitiveResponseCaching(res);
   res.json({ user: publicUser(user), temporaryPassword });
 }));
 
@@ -483,6 +492,7 @@ app.get("/api/admin/users/:id/temporary-password", requireAdmin, requirePassword
     createdAt: now()
   });
   await writeDb(db);
+  preventSensitiveResponseCaching(res);
   res.json({ temporaryPassword });
 }));
 
@@ -503,6 +513,7 @@ app.post("/api/admin/users", requireAdmin, requirePasswordReady, mutationAsyncRo
   const { temporaryPassword } = await resetUserTemporaryPassword(db, user, { vault, hashPassword, now });
   db.users.push(user);
   await writeDb(db);
+  preventSensitiveResponseCaching(res);
   res.status(201).json({ row: publicUser(user), organization: null, temporaryPassword });
 }));
 
@@ -516,6 +527,9 @@ app.patch("/api/admin/users/:id", requireAdmin, requirePasswordReady, mutationAs
   }
   if (user.type === "admin" && req.body.type && req.body.type !== "admin") return res.status(422).json({ error: "不能修改超级管理员账号类型" });
   if (req.body.type === "organization" && user.type !== "organization") return res.status(422).json({ error: "组织必须通过资质注册并审核" });
+  if (organization && req.body.type === "ordinary") {
+    return res.status(422).json({ error: "组织负责人不能降级为普通用户，请使用组织删除流程", code: "ORGANIZATION_OWNER_TYPE_IMMUTABLE" });
+  }
 
   if (req.body.phone) {
     const normalizedPhone = normalizePhone(req.body.phone);

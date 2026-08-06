@@ -1,7 +1,6 @@
 import { GRADE_GROUPS, groupForGrade } from "../domain/grades.js";
 import { isRegistrationOpen } from "../domain/registration-window.js";
 import { businessError, projectForHistoricalRegistration, publishedRegistrationEvent, registrationContext } from "./events.js";
-import { recordAudit } from "./audit.js";
 import { organizationHistoryFields } from "./organization-account-lifecycle.js";
 import { ordinaryRegistrationEligibility, requireOrdinaryRegistrationEligibility, requireOrdinaryUser, requireOrganizationEventParticipation, requireWritableEvent } from "./access-control.js";
 import { registrationSubmissionSummary, withRegistrationSubmission } from "./submission-assets.js";
@@ -358,30 +357,23 @@ function validateCreateForEvent(db, input, event, actor, channel) {
   } else if (channel === "organization") {
     const scope = requireOrganizationEventParticipation(db, actor, event.id, { writable: true });
     organization = requireOperationalOrganization(db, scope.organization.id);
-    registrationSource = input?.registrationSource === "member_registration"
-      ? "member_registration"
-      : "organization_proxy";
-    personalUserId = registrationSource === "member_registration"
-      ? requireActiveOrganizationMember(db, organization.id, input?.memberUserId).id
-      : null;
+    registrationSource = String(input?.registrationSource || "");
+    if (!new Set(["member_registration", "organization_proxy"]).has(registrationSource)) {
+      throw businessError(422, "报名来源不合法", "REGISTRATION_SOURCE_INVALID");
+    }
+    if (registrationSource === "member_registration") {
+      const member = requireActiveOrganizationMember(db, organization.id, input?.memberUserId);
+      if (normalizeText(athlete.name) !== normalizeText(member.name) || normalizePhone(athlete.phone) !== normalizePhone(member.phone)) {
+        throw businessError(422, "参赛者姓名和手机号必须与所选组织成员一致", "MEMBER_IDENTITY_MISMATCH");
+      }
+      personalUserId = member.id;
+    } else {
+      personalUserId = null;
+    }
   } else {
     throw businessError(422, "报名渠道不合法");
   }
   return { athlete, group, project, organization, registrationSource, personalUserId, key: athleteKey(athlete) };
-}
-
-function checkPersonalOwnership(row, userId) {
-  if (row.personalUserId && row.personalUserId !== userId) {
-    throw businessError(409, "该报名已关联其他个人账号", "REGISTRATION_OWNED_BY_OTHER_USER");
-  }
-  return row.personalUserId !== userId;
-}
-
-function checkOrganizationOwnership(row, organizationId) {
-  if (row.organizationId && row.organizationId !== organizationId) {
-    throw businessError(409, "该报名已关联其他组织", "REGISTRATION_OWNED_BY_OTHER_ORGANIZATION");
-  }
-  return row.organizationId !== organizationId;
 }
 
 export function createOrMergeRegistration(db, input, actor, channel, {
@@ -409,37 +401,12 @@ export function createOrMergeRegistration(db, input, actor, channel, {
     return { row, created: true, merged: false };
   }
 
-  // Validate both prospective ownerships before changing either field.
-  const addPersonal = personalUserId ? checkPersonalOwnership(existing, personalUserId) : false;
-  const addOrganization = organizationId ? checkOrganizationOwnership(existing, organizationId) : false;
-  const normalizePersonal = channel === "personal" && (
-    existing.organizationId !== organizationId
-    || existing.organization !== prepared.organization.name
-    || existing.source !== "member_registration"
-  );
-  const normalizeOrganizationMember = channel === "organization"
-    && prepared.registrationSource === "member_registration"
-    && (existing.organization !== prepared.organization.name || existing.source !== "member_registration");
-  const merged = addPersonal || addOrganization || normalizePersonal || normalizeOrganizationMember;
-  if (merged) {
-    if (addPersonal) existing.personalUserId = personalUserId;
-    if (channel === "personal" || prepared.registrationSource === "member_registration") {
-      existing.organizationId = organizationId;
-      existing.organization = prepared.organization.name;
-      existing.source = "member_registration";
-    } else if (addOrganization) {
-      existing.organizationId = organizationId;
-      existing.organization = prepared.organization.name;
-    }
-    existing.updatedAt = timestamp;
-    recordAudit(db, {
-      actor,
-      action: "registration.ownership.merge",
-      targetType: "registration",
-      targetId: existing.id,
-      summary: `报名 ${existing.id} 的归属已合并`,
-      createdAt: timestamp
-    });
+  if (
+    existing.source !== prepared.registrationSource
+    || (existing.personalUserId || null) !== (personalUserId || null)
+    || (existing.organizationId || null) !== (organizationId || null)
+  ) {
+    throw businessError(409, "相同赛事、赛项和参赛者的报名已存在且归属不同", "REGISTRATION_IDENTITY_CONFLICT");
   }
-  return { row: existing, created: false, merged };
+  return { row: existing, created: false, merged: false };
 }

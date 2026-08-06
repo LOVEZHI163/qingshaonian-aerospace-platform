@@ -64,6 +64,7 @@ async function save() {
     };
     const result = await api(form.id ? `/api/admin/users/${form.id}` : "/api/admin/users", {
       method: form.id ? "PATCH" : "POST",
+      ...(!form.id ? { cache: "no-store" } : {}),
       body: JSON.stringify(body)
     });
     if (!form.id) {
@@ -79,7 +80,7 @@ async function save() {
 
 async function resetTemporaryPassword(user) {
   try {
-    const result = await api(`/api/admin/users/${user.id}/reset-password`, { method: "POST", body: "{}" });
+    const result = await api(`/api/admin/users/${user.id}/reset-password`, { method: "POST", body: "{}", cache: "no-store" });
     user.mustChangePassword = true;
     temporaryPasswordDialog.value = { userName: user.name, password: result.temporaryPassword };
     message.value = "临时密码已生成；用户下次登录必须修改。";
@@ -90,7 +91,7 @@ async function resetTemporaryPassword(user) {
 
 async function viewTemporaryPassword(user) {
   try {
-    const result = await api(`/api/admin/users/${user.id}/temporary-password`);
+    const result = await api(`/api/admin/users/${user.id}/temporary-password`, { cache: "no-store" });
     temporaryPasswordDialog.value = { userName: user.name, password: result.temporaryPassword };
   } catch (error) { message.value = error.message; }
 }

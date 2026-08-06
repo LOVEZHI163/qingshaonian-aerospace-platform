@@ -53,6 +53,7 @@ const context = {
 test("member_registration binds the selected active local member and ignores forged ownership fields", () => {
   const db = fixture();
   const result = createOrMergeRegistration(db, input({
+    athlete: { name: " Member   One ", school: "Aviation School", grade: "五年级", phone: "138-0000-0001" },
     registrationSource: "member_registration",
     memberUserId: "U1",
     organizationId: "O2",
@@ -64,6 +65,22 @@ test("member_registration binds the selected active local member and ignores for
   assert.equal(result.row.personalUserId, "U1");
   assert.equal(result.row.organizationId, "O1");
   assert.equal(result.row.createdVia, "organization");
+});
+
+test("member_registration rejects forged member name or phone and invalid sources", () => {
+  for (const athlete of [
+    { name: "Forged Name", school: "Aviation School", grade: "五年级", phone: "13800000001" },
+    { name: "Member One", school: "Aviation School", grade: "五年级", phone: "13800009999" }
+  ]) {
+    assert.throws(
+      () => createOrMergeRegistration(fixture(), input({ registrationSource: "member_registration", memberUserId: "U1", athlete }), owner, "organization", context),
+      (error) => error.status === 422 && error.code === "MEMBER_IDENTITY_MISMATCH"
+    );
+  }
+  assert.throws(
+    () => createOrMergeRegistration(fixture(), input({ registrationSource: "unexpected" }), owner, "organization", context),
+    (error) => error.status === 422 && error.code === "REGISTRATION_SOURCE_INVALID"
+  );
 });
 
 test("organization_proxy never accepts a client supplied personal user or source", () => {
@@ -94,39 +111,38 @@ test("member_registration requires an active ordinary member of the owner organi
   }
 });
 
-test("personal first and organization second merge into one registration", () => {
+test("personal and organization channels cannot claim each other's existing identity", () => {
   const db = fixture();
   const first = createOrMergeRegistration(db, input(), actor, "personal", context);
-  const second = createOrMergeRegistration(db, input(), owner, "organization", context);
-
   assert.equal(first.created, true);
-  assert.equal(second.created, false);
-  assert.equal(second.merged, false);
+  assert.throws(
+    () => createOrMergeRegistration(db, input({ registrationSource: "organization_proxy" }), owner, "organization", context),
+    (error) => error.status === 409 && error.code === "REGISTRATION_IDENTITY_CONFLICT"
+  );
   assert.equal(db.registrations.length, 1);
-  assert.equal(second.row.personalUserId, actor.id);
-  assert.equal(second.row.organizationId, "O1");
-  assert.equal(second.row.createdByUserId, actor.id);
-  assert.equal(second.row.createdVia, "personal");
+  assert.equal(first.row.personalUserId, actor.id);
+  assert.equal(first.row.source, "member_registration");
 });
 
-test("organization first and personal second preserve results and certificates", () => {
+test("historical proxy or deleted organization registration cannot be rebound and retains its history", () => {
   const db = fixture();
-  const first = createOrMergeRegistration(db, input(), owner, "organization", context);
-  first.row.organization = "Stale organization";
-  first.row.source = "legacy_organization";
+  const first = createOrMergeRegistration(db, input({ registrationSource: "organization_proxy" }), owner, "organization", context);
+  first.row.organizationDeleted = true;
+  first.row.organizationId = null;
   first.row.status = "approved";
   first.row.awardName = "一等奖";
   first.row.certificates = ["C1", "C2"];
 
-  const second = createOrMergeRegistration(db, input(), actor, "personal", context);
-  assert.equal(second.merged, true);
-  assert.equal(second.row.personalUserId, actor.id);
-  assert.equal(second.row.organizationId, "O1");
-  assert.equal(second.row.organization, "组织一");
-  assert.equal(second.row.source, "member_registration");
-  assert.equal(second.row.status, "approved");
-  assert.equal(second.row.awardName, "一等奖");
-  assert.deepEqual(second.row.certificates, ["C1", "C2"]);
+  assert.throws(
+    () => createOrMergeRegistration(db, input(), actor, "personal", context),
+    (error) => error.status === 409 && error.code === "REGISTRATION_IDENTITY_CONFLICT"
+  );
+  assert.equal(first.row.personalUserId, null);
+  assert.equal(first.row.organizationId, null);
+  assert.equal(first.row.source, "organization_proxy");
+  assert.equal(first.row.status, "approved");
+  assert.equal(first.row.awardName, "一等奖");
+  assert.deepEqual(first.row.certificates, ["C1", "C2"]);
 });
 
 test("same owner retry is idempotent while other owners conflict", () => {
@@ -136,12 +152,14 @@ test("same owner retry is idempotent while other owners conflict", () => {
   db.memberships.push({ userId: otherActor.id, organizationId: "O1", status: "active", role: "member" });
   assert.throws(
     () => createOrMergeRegistration(db, input(), otherActor, "personal", context),
-    (error) => error.code === "REGISTRATION_OWNED_BY_OTHER_USER"
+    (error) => error.code === "REGISTRATION_IDENTITY_CONFLICT"
   );
-  createOrMergeRegistration(db, input(), owner, "organization", context);
+  const separate = fixture();
+  createOrMergeRegistration(separate, input({ registrationSource: "organization_proxy" }), owner, "organization", context);
+  assert.equal(createOrMergeRegistration(separate, input({ registrationSource: "organization_proxy" }), owner, "organization", context).merged, false);
   assert.throws(
-    () => createOrMergeRegistration(db, input(), otherOwner, "organization", context),
-    (error) => error.code === "REGISTRATION_OWNED_BY_OTHER_ORGANIZATION"
+    () => createOrMergeRegistration(separate, input({ registrationSource: "organization_proxy" }), otherOwner, "organization", context),
+    (error) => error.code === "REGISTRATION_IDENTITY_CONFLICT"
   );
 });
 
@@ -177,10 +195,10 @@ test("event-scoped personal registration does not wait for the organization owne
     }));
     assert.equal(created.status, 200);
     const merged = await fetch(`${baseUrl}/api/organization/events/wz-aerospace-2026/registrations`, withSession(organization.cookie, {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body)
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...body, registrationSource: "organization_proxy" })
     }));
-    assert.equal(merged.status, 200);
-    assert.equal((await merged.json()).row.personalUserId, personal.user.id);
+    assert.equal(merged.status, 409);
+    assert.equal((await merged.json()).code, "REGISTRATION_IDENTITY_CONFLICT");
   });
 });
 

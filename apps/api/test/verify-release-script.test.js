@@ -128,7 +128,8 @@ test("remote smoke keeps organization records scoped and validates the organizat
     "ordinary user cleanup must verify its exact identity before deletion"
   );
   assert.doesNotMatch(smoke, /\bsmoke_password=/);
-  assert.match(smoke, /SMOKE_PASSWORD_FILE=.*docker compose exec/);
+  assert.match(smoke, /\. "\$script_dir\/smoke-credentials\.sh"/);
+  assert.match(smoke, /smoke_extract_temporary_password "\$response_file" "\$smoke_user_temporary_password_file"/);
   assert.doesNotMatch(smoke, /echo[^\r\n]*(?:password|token|cookie)/i);
   assert.doesNotMatch(smoke, /\/api\/admin\/events\/\$smoke_event_id\/current/);
   assert.doesNotMatch(smoke, /\/api\/admin\/events\/\$original_current_event_id\/current/);

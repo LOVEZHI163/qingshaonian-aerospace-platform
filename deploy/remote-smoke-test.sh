@@ -1,6 +1,9 @@
 #!/bin/sh
 set -eu
 
+script_dir="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+. "$script_dir/smoke-credentials.sh"
+
 base_url="${BASE_URL:-http://127.0.0.1}"
 admin_phone="${ADMIN_TEST_PHONE:-13900000000}"
 umask 077
@@ -249,6 +252,14 @@ if ! docker compose exec -T postgres sh -c \
   exit 1
 fi
 echo "organization-account-lifecycle-migration-013=applied"
+if ! docker compose exec -T postgres sh -c \
+  'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "$1"' sh \
+  "SELECT 1 FROM schema_migrations WHERE name = '014-organization-deletion-history.sql'" \
+  | grep -qx 1; then
+  echo "organization deletion history migration 014 is not recorded" >&2
+  exit 1
+fi
+echo "organization-deletion-history-migration-014=applied"
 
 assert_status "admin-event-error" 404 \
   -b "$cookie_jar" \
@@ -591,7 +602,7 @@ if ! EXPECTED_ORGANIZATION_ID="$smoke_organization_id" EXPECTED_ORGANIZATION_NAM
   echo "organization-workspace did not return the exact organization identity and grades" >&2
   exit 1
 fi
-printf '{"projectId":"%s","athlete":{"name":"组织冒烟选手","school":"%s","grade":"三年级","phone":"%s"}}' \
+printf '{"registrationSource":"organization_proxy","projectId":"%s","athlete":{"name":"组织冒烟选手","school":"%s","grade":"三年级","phone":"%s"}}' \
   "$smoke_project_id" "$smoke_organization_name" "$smoke_organization_phone" | \
 assert_status "organization-registration-create" 201 \
   -b "$smoke_organization_cookie_jar" -H 'Content-Type: application/json' --data-binary @- \
@@ -634,7 +645,7 @@ assert_status "organization-foreign-login" 200 \
 assert_status "organization-foreign-event-join" 201 \
   -b "$smoke_foreign_organization_cookie_jar" -X POST \
   "$base_url/api/organization/events/$smoke_event_id/join"
-printf '{"projectId":"%s","athlete":{"name":"外部组织选手","school":"%s","grade":"三年级","phone":"%s"}}' \
+printf '{"registrationSource":"organization_proxy","projectId":"%s","athlete":{"name":"外部组织选手","school":"%s","grade":"三年级","phone":"%s"}}' \
   "$smoke_project_id" "$smoke_foreign_organization_name" "$smoke_foreign_organization_phone" | \
 assert_status "organization-foreign-registration-create" 201 \
   -b "$smoke_foreign_organization_cookie_jar" -H 'Content-Type: application/json' --data-binary @- \
@@ -671,22 +682,39 @@ smoke_phone="$smoke_user_phone"
 smoke_user_name="上传冒烟用户-$submission_token"
 smoke_user_password_file="$work_dir/submission-user-password"
 printf 'Smoke-%s!a' "$submission_token" > "$smoke_user_password_file"
+chmod 600 "$smoke_user_password_file"
 smoke_user_cleanup_pending=1
-SMOKE_USER_NAME="$smoke_user_name" SMOKE_PHONE="$smoke_user_phone" SMOKE_PASSWORD_FILE="$smoke_user_password_file" docker compose exec -T -e SMOKE_USER_NAME -e SMOKE_PHONE -e SMOKE_PASSWORD_FILE api node -e 'let password="";process.stdin.on("data",chunk=>password+=chunk).on("end",()=>process.stdout.write(JSON.stringify({name:process.env.SMOKE_USER_NAME,phone:process.env.SMOKE_PHONE,password,type:"ordinary"})));' < "$smoke_user_password_file" | \
+SMOKE_USER_NAME="$smoke_user_name" SMOKE_PHONE="$smoke_user_phone" docker compose exec -T -e SMOKE_USER_NAME -e SMOKE_PHONE api node -e 'process.stdout.write(JSON.stringify({name:process.env.SMOKE_USER_NAME,phone:process.env.SMOKE_PHONE,type:"ordinary"}));' | \
 assert_status "submission-user-create" 201 \
   -b "$cookie_jar" -H 'Content-Type: application/json' --data-binary @- \
   "$base_url/api/admin/users"
 assert_json_response "submission-user-create"
+smoke_user_temporary_password_file="$work_dir/submission-user-temporary-password"
+if ! smoke_extract_temporary_password "$response_file" "$smoke_user_temporary_password_file"; then
+  echo "Submission smoke user creation did not return valid generated credentials" >&2
+  exit 1
+fi
 smoke_user_id="$(json_path 'let input="";process.stdin.on("data",chunk=>input+=chunk).on("end",()=>{const data=JSON.parse(input);if(data.row&&data.row.id)process.stdout.write(encodeURIComponent(data.row.id));});')"
 if ! recover_submission_smoke_user_id || test "$smoke_user_cleanup_pending" -ne 1; then
   echo "Submission smoke user did not match the exact temporary identity" >&2
   exit 1
 fi
 smoke_cookie_jar="$work_dir/submission-user.cookies"
-SMOKE_PHONE="$smoke_user_phone" SMOKE_PASSWORD_FILE="$smoke_user_password_file" docker compose exec -T -e SMOKE_PHONE -e SMOKE_PASSWORD_FILE api node -e 'let password="";process.stdin.on("data",chunk=>password+=chunk).on("end",()=>process.stdout.write(JSON.stringify({phone:process.env.SMOKE_PHONE,password})));' < "$smoke_user_password_file" | \
+SMOKE_PHONE="$smoke_user_phone" docker compose exec -T -e SMOKE_PHONE api node -e 'let password="";process.stdin.on("data",chunk=>password+=chunk).on("end",()=>process.stdout.write(JSON.stringify({phone:process.env.SMOKE_PHONE,password})));' < "$smoke_user_temporary_password_file" | \
 assert_status "submission-user-login" 200 \
   -c "$smoke_cookie_jar" -H 'Content-Type: application/json' --data-binary @- \
   "$base_url/api/auth/login"
+assert_json_response "submission-user-login"
+if ! json_path 'let input="";process.stdin.on("data",chunk=>input+=chunk).on("end",()=>{const data=JSON.parse(input);if(!data.user||data.user.mustChangePassword!==true)process.exit(2);});' >/dev/null; then
+  echo "Submission smoke user login did not require a credential change" >&2
+  exit 1
+fi
+{ cat "$smoke_user_temporary_password_file"; printf '\n'; cat "$smoke_user_password_file"; } | \
+docker compose exec -T api node -e 'let input="";process.stdin.on("data",chunk=>input+=chunk).on("end",()=>{const separator=input.indexOf("\n");if(separator<1)process.exit(2);process.stdout.write(JSON.stringify({currentPassword:input.slice(0,separator),newPassword:input.slice(separator+1)}));});' | \
+assert_status "submission-user-force-password-change" 200 \
+  -b "$smoke_cookie_jar" -H 'Content-Type: application/json' --data-binary @- \
+  "$base_url/api/auth/change-password"
+assert_json_response "submission-user-force-password-change"
 
 printf '{"projectId":"%s","athlete":{"name":"未入组织冒烟选手","school":"未入组织冒烟学校","grade":"五年级","phone":"%s"}}' \
   "$smoke_project_id" "$smoke_user_phone" | \

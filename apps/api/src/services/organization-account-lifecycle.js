@@ -104,6 +104,9 @@ export function deleteOrganizationAccount(db, {
   for (const batch of db.certificateImportBatches || []) {
     if (batch.createdBy === owner.id) batch.createdBy = null;
   }
+  for (const audit of db.auditLogs || []) {
+    if (audit.actorUserId === owner.id) audit.actorUserId = null;
+  }
   db.organizationEventParticipations = (db.organizationEventParticipations || []).filter((row) => row.organizationId !== organization.id);
   db.memberships = (db.memberships || []).filter((row) => row.organizationId !== organization.id && row.userId !== owner.id);
   db.organizationDocuments = (db.organizationDocuments || []).filter((row) => row.organizationId !== organization.id);

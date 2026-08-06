@@ -37,6 +37,7 @@ describe("UserManagementPage", () => {
 
     expect(apiMock).toHaveBeenCalledWith("/api/admin/users", {
       method: "POST",
+      cache: "no-store",
       body: JSON.stringify({
         name: "新用户", phone: "13800009999", type: "ordinary", status: "active",
         organizationName: "", organizationCode: ""

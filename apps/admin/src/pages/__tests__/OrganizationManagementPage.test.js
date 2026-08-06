@@ -88,7 +88,7 @@ describe("OrganizationManagementPage", () => {
 
     await wrapper.get('[data-action="reset-password-O1"]').trigger("click");
     await flushPromises();
-    expect(apiMock).toHaveBeenCalledWith("/api/admin/users/U1/reset-password", { method: "POST", body: "{}" });
+    expect(apiMock).toHaveBeenCalledWith("/api/admin/users/U1/reset-password", { method: "POST", body: "{}", cache: "no-store" });
     expect(wrapper.get('[data-testid="temporary-password-dialog"]').text()).toContain("GeneratedPass2");
     await wrapper.get('[data-action="copy-temporary-password"]').trigger("click");
     expect(writeText).toHaveBeenCalledWith("GeneratedPass2");
@@ -96,7 +96,7 @@ describe("OrganizationManagementPage", () => {
 
     await wrapper.get('[data-action="view-temporary-password-O1"]').trigger("click");
     await flushPromises();
-    expect(apiMock).toHaveBeenCalledWith("/api/admin/users/U1/temporary-password");
+    expect(apiMock).toHaveBeenCalledWith("/api/admin/users/U1/temporary-password", { cache: "no-store" });
     expect(wrapper.get('[data-testid="temporary-password-dialog"]').text()).toContain("GeneratedPass2");
   });
 

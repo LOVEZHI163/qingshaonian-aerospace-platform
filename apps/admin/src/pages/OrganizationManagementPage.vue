@@ -122,7 +122,7 @@ async function resetOwnerPassword(row) {
   if (!user.id || saving.value) return;
   saving.value = true; error.value = ""; success.value = "";
   try {
-    const result = await api(`/api/admin/users/${user.id}/reset-password`, { method: "POST", body: "{}" });
+    const result = await api(`/api/admin/users/${user.id}/reset-password`, { method: "POST", body: "{}", cache: "no-store" });
     temporaryPasswordDialog.value = { userName: user.name || row.name, password: result.temporaryPassword };
     success.value = "临时密码已生成，负责人下次登录时必须修改密码";
     await loadOrganizations();
@@ -134,7 +134,7 @@ async function viewOwnerTemporaryPassword(row) {
   if (!user.id || saving.value) return;
   saving.value = true; error.value = "";
   try {
-    const result = await api(`/api/admin/users/${user.id}/temporary-password`);
+    const result = await api(`/api/admin/users/${user.id}/temporary-password`, { cache: "no-store" });
     temporaryPasswordDialog.value = { userName: user.name || row.name, password: result.temporaryPassword };
   } catch (cause) { error.value = cause.message || "读取临时密码失败"; } finally { saving.value = false; }
 }

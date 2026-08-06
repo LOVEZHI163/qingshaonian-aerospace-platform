@@ -135,6 +135,8 @@ describe("OrganizationEventWorkspacePage", () => {
     await wrapper.get('[data-field="member-user-id"]').setValue("U1");
     expect(wrapper.get('[data-field="athlete-name"]').element.value).toBe("Student Member");
     expect(wrapper.get('[data-field="athlete-phone"]').element.value).toBe("13800000001");
+    expect(wrapper.get('[data-field="athlete-name"]').attributes("readonly")).toBeDefined();
+    expect(wrapper.get('[data-field="athlete-phone"]').attributes("readonly")).toBeDefined();
     await wrapper.get('[data-field="athlete-grade"]').setValue("Grade 5");
     await wrapper.get('[data-testid="organization-registration-form"]').trigger("submit");
     await flushPromises();
@@ -143,6 +145,14 @@ describe("OrganizationEventWorkspacePage", () => {
       method: "POST",
       body: JSON.stringify({ registrationSource: "member_registration", memberUserId: "U1", athlete: { name: "Student Member", school: "Aviation School", grade: "Grade 5", phone: "13800000001" }, projectId: "P1", instructor: "" })
     }));
+  });
+
+  it("keeps proxy identity editable while member identity is derived and read-only", async () => {
+    const wrapper = mount(OrganizationEventWorkspacePage, { props: { eventId: "E2" } });
+    await flushPromises();
+    await wrapper.get('[data-registration-source="organization_proxy"]').setValue();
+    expect(wrapper.get('[data-field="athlete-name"]').attributes("readonly")).toBeUndefined();
+    expect(wrapper.get('[data-field="athlete-phone"]').attributes("readonly")).toBeUndefined();
   });
 
   it("searches active members by name or phone and clears stale selections and identity", async () => {
