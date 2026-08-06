@@ -31,6 +31,7 @@ function fixture() {
       { organizationId: "O2", eventId: "E1" }
     ],
     registrations: [],
+    certificates: [],
     auditLogs: []
   };
 }
@@ -130,19 +131,42 @@ test("a deleted-organization tombstone rejects an otherwise identical retry and 
   first.row.organizationDeleted = true;
   first.row.status = "approved";
   first.row.awardName = "一等奖";
-  first.row.certificates = ["C1", "C2"];
+  first.row.score = "98";
+  first.row.rank = "1";
+  db.certificates.push({
+    id: "C1",
+    registrationId: first.row.id,
+    slot: 1,
+    title: "一等奖证书",
+    fileName: "R1_一等奖.png",
+    storedName: "R1_一等奖-stored.png",
+    filePath: "/safe/R1_一等奖-stored.png",
+    awardName: "一等奖",
+    rank: "1",
+    score: "98",
+    status: "published",
+    source: "manual",
+    importBatchId: null,
+    uploadedAt: "2026-07-30T08:30:00.000Z",
+    publishedAt: "2026-07-30T09:00:00.000Z",
+    cleanedAt: ""
+  });
+  const registrationBeforeRetry = structuredClone(first.row);
+  const certificatesBeforeRetry = structuredClone(db.certificates);
 
   assert.throws(
     () => createOrMergeRegistration(db, input({ registrationSource: "organization_proxy" }), owner, "organization", context),
     (error) => error.status === 409 && error.code === "REGISTRATION_IDENTITY_CONFLICT"
   );
-  assert.equal(first.row.personalUserId, null);
+  assert.deepEqual(first.row, registrationBeforeRetry);
+  assert.deepEqual(db.certificates, certificatesBeforeRetry);
   assert.equal(first.row.organizationId, "O1");
-  assert.equal(first.row.source, "organization_proxy");
-  assert.equal(first.row.organizationDeleted, true);
   assert.equal(first.row.status, "approved");
   assert.equal(first.row.awardName, "一等奖");
-  assert.deepEqual(first.row.certificates, ["C1", "C2"]);
+  assert.equal(first.row.score, "98");
+  assert.equal(first.row.rank, "1");
+  assert.equal(db.certificates[0].registrationId, first.row.id);
+  assert.equal(db.certificates[0].fileName, "R1_一等奖.png");
 });
 
 test("same owner retry is idempotent while other owners conflict", () => {
@@ -213,8 +237,10 @@ test("personal edits ignore caller-supplied organization substitutions", async (
     }));
     await fetch(`${baseUrl}/api/organization/events/wz-aerospace-2026/join`, withSession(ownerOne.cookie, { method: "POST" }));
     await fetch(`${baseUrl}/api/organization/events/wz-aerospace-2026/join`, withSession(ownerTwo.cookie, { method: "POST" }));
+    const personalInput = input({ eventId: "wz-aerospace-2026", projectId: "paper-plane-gate", organizationId: "O1002" });
+    personalInput.athlete = { ...personalInput.athlete, name: personal.user.name, phone: personal.user.phone };
     const create = await fetch(`${baseUrl}/api/me/events/wz-aerospace-2026/registrations`, withSession(personal.cookie, {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input({ eventId: "wz-aerospace-2026", projectId: "paper-plane-gate", organizationId: "O1002" }))
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(personalInput)
     }));
     const row = (await create.json()).row;
     assert.equal(row.organizationId, "O1001");

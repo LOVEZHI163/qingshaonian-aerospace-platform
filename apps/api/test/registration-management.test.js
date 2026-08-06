@@ -415,8 +415,18 @@ test("registration status changes enforce the owner's event window while adminis
   });
 });
 
-test("ordinary registration edits require an active membership while administrators may use any operational organization", async () => {
-  await withServer(async (baseUrl) => {
+test("member registration updates keep the selected active membership while proxy updates stay operational", async () => {
+  await withServer(async (baseUrl, dbPath) => {
+    await mutateDb(dbPath, (db) => {
+      const user = db.users.find((row) => row.id === "U1001");
+      const memberRegistration = db.registrations.find((row) => row.id === "R20260627001");
+      memberRegistration.source = "member_registration";
+      memberRegistration.athlete.name = user.name;
+      memberRegistration.athlete.phone = user.phone;
+      const proxyRegistration = db.registrations.find((row) => row.id === "R20260627002");
+      proxyRegistration.source = "organization_proxy";
+      proxyRegistration.personalUserId = null;
+    });
     const ordinary = await loginAs(baseUrl, "13800000001", "123456");
     const admin = await loginAs(baseUrl, "13900000000", "admin123");
     await openRegistration(baseUrl, admin.cookie);
@@ -424,12 +434,61 @@ test("ordinary registration edits require an active membership while administrat
       method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload)
     }));
 
-    const ordinaryResponse = await patch("/api/me/events/wz-aerospace-2026/registrations/R20260627001", { organizationId: "O1002" }, ordinary.cookie);
+    const ordinaryResponse = await patch("/api/me/events/wz-aerospace-2026/registrations/R20260627001", {
+      organizationId: "O1002",
+      instructor: "Updated by member"
+    }, ordinary.cookie);
     assert.equal(ordinaryResponse.status, 200);
-    assert.equal((await json(ordinaryResponse)).row.organizationId, "O1001");
+    const ordinaryRow = (await json(ordinaryResponse)).row;
+    assert.equal(ordinaryRow.organizationId, "O1001");
+    assert.equal(ordinaryRow.instructor, "Updated by member");
+
     const adminResponse = await patch("/api/admin/events/wz-aerospace-2026/registrations/R20260627001", { organizationId: "O1002" }, admin.cookie);
-    assert.equal(adminResponse.status, 200);
-    assert.equal((await json(adminResponse)).row.organizationId, "O1002");
+    assert.equal(adminResponse.status, 403);
+    assert.equal((await json(adminResponse)).code, "ACTIVE_ORGANIZATION_MEMBER_REQUIRED");
+
+    const proxyResponse = await patch("/api/admin/events/wz-aerospace-2026/registrations/R20260627002", {
+      organizationId: "O1001",
+      instructor: "Updated proxy"
+    }, admin.cookie);
+    assert.equal(proxyResponse.status, 200);
+    const proxyRow = (await json(proxyResponse)).row;
+    assert.equal(proxyRow.organizationId, "O1001");
+    assert.equal(proxyRow.instructor, "Updated proxy");
+
+    const persisted = JSON.parse(await fs.readFile(dbPath, "utf8"));
+    assert.equal(persisted.registrations.find((row) => row.id === "R20260627001").organizationId, "O1001");
+  });
+});
+
+test("member registration instructor-only updates fail closed after the member leaves the organization", async () => {
+  await withServer(async (baseUrl, dbPath) => {
+    await mutateDb(dbPath, (db) => {
+      const user = db.users.find((row) => row.id === "U1001");
+      const registration = db.registrations.find((row) => row.id === "R20260627001");
+      registration.source = "member_registration";
+      registration.athlete.name = user.name;
+      registration.athlete.phone = user.phone;
+      registration.instructor = "Original instructor";
+    });
+    const organizationOwner = await loginAs(baseUrl, "13800000011", "123456");
+    const admin = await loginAs(baseUrl, "13900000000", "admin123");
+    await openRegistration(baseUrl, admin.cookie);
+    assert.equal((await fetch(`${baseUrl}/api/organization/events/wz-aerospace-2026/join`, withSession(organizationOwner.cookie, { method: "POST" }))).status, 201);
+    await mutateDb(dbPath, (db) => {
+      db.memberships.find((row) => row.userId === "U1001" && row.organizationId === "O1001").status = "left";
+    });
+
+    const response = await fetch(`${baseUrl}/api/organization/events/wz-aerospace-2026/registrations/R20260627001`, withSession(organizationOwner.cookie, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ instructor: "Forged after leaving" })
+    }));
+    assert.equal(response.status, 403);
+    assert.equal((await json(response)).code, "ACTIVE_ORGANIZATION_MEMBER_REQUIRED");
+
+    const persisted = JSON.parse(await fs.readFile(dbPath, "utf8"));
+    assert.equal(persisted.registrations.find((row) => row.id === "R20260627001").instructor, "Original instructor");
   });
 });
 

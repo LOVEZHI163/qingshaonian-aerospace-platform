@@ -172,7 +172,7 @@ export function prepareAdminRegistrationUpdate(db, row, input) {
     organization = operationalOrganization(db, organizationId);
     if (!organization) throw businessError(422, "组织不存在、未审核或已停用");
   }
-  if (row.personalUserId && Object.hasOwn(input, "athlete")) {
+  if (row.source === "member_registration") {
     requireMemberIdentity(db, organizationId, row.personalUserId, athlete);
   }
   const next = { ...row, athlete, group, projectId, organizationId, instructor: input.instructor ?? row.instructor };
@@ -196,7 +196,7 @@ export function prepareOrdinaryRegistrationUpdate(db, row, input, userId) {
   const project = validateProjectForRegistration(db, row.eventId, projectId, group);
   const organization = validateOrganizationForUser(db, userId);
   const organizationId = organization.id;
-  if (Object.hasOwn(input, "athlete")) {
+  if (row.source === "member_registration") {
     requireMemberIdentity(db, organizationId, row.personalUserId, athlete);
   }
   const next = { ...row, athlete, group, projectId, organizationId, instructor: input.instructor ?? row.instructor };
