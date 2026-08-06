@@ -32,36 +32,63 @@ export function createBlobDownloadManager() {
 }
 
 export function createBlobPreviewManager() {
-  const pending = new Map();
+  const reservations = new Set();
 
-  function release(url) {
-    const timer = pending.get(url);
-    if (timer === undefined) return;
-    clearTimeout(timer);
-    URL.revokeObjectURL(url);
-    pending.delete(url);
+  function release(reservation, { closePopup = false } = {}) {
+    if (!reservations.has(reservation)) return false;
+    reservation.active = false;
+    if (reservation.timer !== null) clearTimeout(reservation.timer);
+    reservation.timer = null;
+    if (reservation.url) URL.revokeObjectURL(reservation.url);
+    reservation.url = "";
+    reservations.delete(reservation);
+    if (closePopup) {
+      try { reservation.popup.close(); } catch { /* the popup may already be closed */ }
+    }
+    return true;
+  }
+
+  function isActive(reservation) {
+    return Boolean(reservation?.active && reservations.has(reservation));
   }
 
   return {
     reserve() {
-      const popup = window.open("", "_blank", "noopener,noreferrer");
+      const popup = window.open("", "_blank");
       if (!popup) return null;
-      try { popup.opener = null; } catch { /* noopener is already requested */ }
-      return { popup, url: "" };
+      try {
+        popup.opener = null;
+        if (popup.opener !== null) throw new Error("unsafe preview window");
+        if (!popup.location?.href) popup.location.href = "about:blank";
+      } catch {
+        try { popup.close(); } catch { /* best effort */ }
+        return null;
+      }
+      const reservation = { popup, url: "", timer: null, active: true, state: "pending" };
+      reservations.add(reservation);
+      return reservation;
     },
+    isActive,
     navigate(reservation, blob) {
+      if (!isActive(reservation)) return false;
+      if (reservation.popup.closed) {
+        release(reservation);
+        return false;
+      }
       const url = URL.createObjectURL(blob);
       reservation.url = url;
-      pending.set(url, setTimeout(() => release(url), PREVIEW_RELEASE_DELAY_MS));
+      reservation.timer = setTimeout(() => release(reservation), PREVIEW_RELEASE_DELAY_MS);
       reservation.popup.location.href = url;
+      reservation.state = "navigated";
+      return true;
     },
     close(reservation) {
-      if (!reservation) return;
-      if (reservation.url) release(reservation.url);
-      try { reservation.popup.close(); } catch { /* the popup may already be closed */ }
+      release(reservation, { closePopup: true });
     },
     dispose() {
-      for (const url of [...pending.keys()]) release(url);
+      for (const reservation of [...reservations]) {
+        release(reservation, { closePopup: reservation.state === "pending" });
+      }
     }
   };
 }

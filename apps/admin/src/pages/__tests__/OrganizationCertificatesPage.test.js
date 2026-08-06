@@ -63,8 +63,9 @@ describe("OrganizationCertificatesPage", () => {
     await flushPromises();
 
     await wrapper.get('[data-action="preview-organization-certificate-C1"]').trigger("click");
-    expect(window.open).toHaveBeenCalledWith("", "_blank", "noopener,noreferrer");
+    expect(window.open).toHaveBeenCalledWith("", "_blank");
     expect(apiBlobMock).toHaveBeenCalledWith("/api/certificates/C1/file");
+    expect(window.open.mock.invocationCallOrder[0]).toBeLessThan(apiBlobMock.mock.invocationCallOrder[0]);
     expect(popup.location.href).toBe("about:blank");
     expect(popup.opener).toBeNull();
 
@@ -78,6 +79,56 @@ describe("OrganizationCertificatesPage", () => {
     expect(apiMock.mock.calls.some(([path]) => path.startsWith("/api/me/"))).toBe(false);
     wrapper.unmount();
     expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:certificate-1");
+  });
+
+  it("closes a registered pending placeholder when unmounted before preview settles", async () => {
+    const pending = deferred();
+    const popup = { location: { href: "about:blank" }, close: vi.fn(), opener: {} };
+    window.open.mockReturnValue(popup);
+    apiBlobMock.mockReturnValueOnce(pending.promise);
+    const wrapper = mount(OrganizationCertificatesPage);
+    await flushPromises();
+
+    await wrapper.get('[data-action="preview-organization-certificate-C1"]').trigger("click");
+    wrapper.unmount();
+
+    expect(popup.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores a preview blob that resolves after unmount without navigating or leaking a URL", async () => {
+    const pending = deferred();
+    const popup = { location: { href: "about:blank" }, close: vi.fn(), opener: {} };
+    window.open.mockReturnValue(popup);
+    apiBlobMock.mockReturnValueOnce(pending.promise);
+    const wrapper = mount(OrganizationCertificatesPage);
+    await flushPromises();
+
+    await wrapper.get('[data-action="preview-organization-certificate-C1"]').trigger("click");
+    wrapper.unmount();
+    pending.resolve(new Blob(["late preview"]));
+    await flushPromises();
+
+    expect(popup.location.href).toBe("about:blank");
+    expect(URL.createObjectURL).not.toHaveBeenCalled();
+    expect(URL.revokeObjectURL).not.toHaveBeenCalled();
+  });
+
+  it("ignores a preview rejection after unmount without emitting or updating the disposed page", async () => {
+    const pending = deferred();
+    const popup = { location: { href: "about:blank" }, close: vi.fn(), opener: {} };
+    window.open.mockReturnValue(popup);
+    apiBlobMock.mockReturnValueOnce(pending.promise);
+    const accessDenied = vi.fn();
+    const wrapper = mount(OrganizationCertificatesPage, { attrs: { onAccessDenied: accessDenied } });
+    await flushPromises();
+
+    await wrapper.get('[data-action="preview-organization-certificate-C1"]').trigger("click");
+    wrapper.unmount();
+    pending.reject(Object.assign(new Error("late restriction"), { code: "ORGANIZATION_DISABLED" }));
+    await flushPromises();
+
+    expect(accessDenied).not.toHaveBeenCalled();
+    expect(popup.close).toHaveBeenCalledTimes(1);
   });
 
   it("closes the placeholder and reports a stable restriction when controlled preview fails", async () => {
@@ -95,7 +146,7 @@ describe("OrganizationCertificatesPage", () => {
 
   it("releases the object URL and closes the placeholder if popup navigation fails", async () => {
     const location = {};
-    Object.defineProperty(location, "href", { configurable: true, set: () => { throw new Error("navigation failed"); } });
+    Object.defineProperty(location, "href", { configurable: true, get: () => "about:blank", set: () => { throw new Error("navigation failed"); } });
     const popup = { location, close: vi.fn(), opener: {} };
     window.open.mockReturnValue(popup);
     const wrapper = mount(OrganizationCertificatesPage);

@@ -13,6 +13,7 @@ const error = ref("");
 const eventFilter = ref("all");
 const downloads = createBlobDownloadManager();
 const previews = createBlobPreviewManager();
+let disposed = false;
 
 const eventOptions = computed(() => [...new Map(rows.value
   .filter((row) => row.eventId)
@@ -50,9 +51,15 @@ async function preview(certificate) {
     return;
   }
   try {
-    previews.navigate(reservation, await apiBlob(certificate.previewUrl));
+    const blob = await apiBlob(certificate.previewUrl);
+    if (!previews.isActive(reservation)) return;
+    if (!previews.navigate(reservation, blob)) {
+      error.value = "证书预览窗口已关闭，请重新点击预览";
+    }
   } catch (requestError) {
+    const active = previews.isActive(reservation);
     previews.close(reservation);
+    if (disposed || !active) return;
     if (isOrganizationRestrictionError(requestError)) emit("access-denied", requestError);
     error.value = safeError(requestError, "证书预览失败，请重试");
   }
@@ -72,6 +79,7 @@ async function download(certificate) {
 
 onMounted(loadCertificates);
 onBeforeUnmount(() => {
+  disposed = true;
   downloads.dispose();
   previews.dispose();
 });
