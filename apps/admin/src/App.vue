@@ -53,6 +53,7 @@ const adminContextMessage = ref("");
 let adminEventsRequestSequence = 0;
 let publicEventRequestSequence = 0;
 let adminContextRefreshSequence = 0;
+let adminEventContextGeneration = 0;
 const initialContentId = initialView === "siteContent" && SAFE_EVENT_ID.test(initialParams.get("contentId") || "")
   ? initialParams.get("contentId")
   : "";
@@ -66,6 +67,7 @@ const selectedRegistrationEvent = ref(null);
 const siteContentPage = ref(null);
 const siteContentId = ref(initialContentId);
 const roleText = { ordinary: "普通用户", organization: "组织用户", admin: "超级管理员" };
+const sessionIdentity = computed(() => currentUser.value ? `${currentUser.value.type || ""}:${currentUser.value.id || ""}` : "");
 
 const accountEvents = computed(() => session.accountEvents?.value || []);
 const selectedAccountEvent = computed(() => accountEvents.value.find((row) => row?.event?.id === selectedEventId.value) || null);
@@ -178,18 +180,40 @@ async function loadAccountEvents() {
   }
 }
 
+function invalidateAdminEventContextRequests({ clearContext = false, clearMessages = false } = {}) {
+  adminEventContextGeneration += 1;
+  adminEventsRequestSequence += 1;
+  publicEventRequestSequence += 1;
+  adminContextRefreshSequence += 1;
+  if (clearMessages) {
+    message.value = "";
+    adminContextMessage.value = "";
+  }
+  if (clearContext) {
+    adminEvents.value = [];
+    adminProjects.value = [];
+    setAdminEventId("");
+    const url = new URL(window.location.href);
+    const hadEventContext = url.searchParams.has("eventId") || url.searchParams.has("eventSlug");
+    url.searchParams.delete("eventId");
+    url.searchParams.delete("eventSlug");
+    if (hadEventContext) window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
+  }
+}
+
 async function loadAdminEvents({ reconcileSelection = true } = {}) {
   if (currentUser.value?.type !== "admin") return { applied: false, skipped: true };
+  const contextGeneration = adminEventContextGeneration;
   const requestSequence = ++adminEventsRequestSequence;
   try {
     const payload = await api("/api/admin/events");
-    if (requestSequence !== adminEventsRequestSequence) return { applied: false, stale: true };
+    if (contextGeneration !== adminEventContextGeneration || requestSequence !== adminEventsRequestSequence) return { applied: false, stale: true };
     adminEvents.value = payload.rows || [];
     adminProjects.value = payload.projects || [];
     if (reconcileSelection && adminEventId.value && !adminEvents.value.some((event) => event.id === adminEventId.value)) setAdminEventId("");
     return { applied: true };
   } catch (error) {
-    if (requestSequence !== adminEventsRequestSequence) return { applied: false, stale: true };
+    if (contextGeneration !== adminEventContextGeneration || requestSequence !== adminEventsRequestSequence) return { applied: false, stale: true };
     throw error;
   }
 }
@@ -247,25 +271,27 @@ function targetView(user = currentUser.value) {
 }
 
 async function loadEvent() {
+  const contextGeneration = adminEventContextGeneration;
   const requestSequence = ++publicEventRequestSequence;
   try {
     const payload = await api("/api/public/event");
-    if (requestSequence !== publicEventRequestSequence) return { applied: false, stale: true };
+    if (contextGeneration !== adminEventContextGeneration || requestSequence !== publicEventRequestSequence) return { applied: false, stale: true };
     eventData.value = payload;
     return { applied: true };
   } catch (error) {
-    if (requestSequence !== publicEventRequestSequence) return { applied: false, stale: true };
+    if (contextGeneration !== adminEventContextGeneration || requestSequence !== publicEventRequestSequence) return { applied: false, stale: true };
     throw error;
   }
 }
 
 async function refreshAdminEventContext() {
+  const contextGeneration = adminEventContextGeneration;
   const refreshSequence = ++adminContextRefreshSequence;
   const [publicResult, adminResult] = await Promise.allSettled([
     loadEvent(),
     loadAdminEvents({ reconcileSelection: false })
   ]);
-  if (refreshSequence !== adminContextRefreshSequence) return;
+  if (contextGeneration !== adminEventContextGeneration || refreshSequence !== adminContextRefreshSequence) return;
 
   const publicFailed = publicResult.status === "rejected";
   const adminFailed = adminResult.status === "rejected";
@@ -302,10 +328,10 @@ async function verifyRelease() {
 }
 
 async function login(credentials) {
-  message.value = "";
-  adminContextMessage.value = "";
+  invalidateAdminEventContextRequests({ clearMessages: true });
   try {
     const user = await session.login(credentials);
+    invalidateAdminEventContextRequests({ clearMessages: true });
     await loadAccountEvents();
     await loadAdminEventsSafely();
     currentView.value = user.mustChangePassword ? "password" : targetView(user);
@@ -325,6 +351,7 @@ async function passwordChanged(user) {
 }
 
 async function performLogout() {
+  invalidateAdminEventContextRequests({ clearContext: true, clearMessages: true });
   await session.logout();
   initialRoutePending = false;
   selectEventContext("");
@@ -461,6 +488,14 @@ watch(organizationAccess, (access) => {
     currentView.value = "organization";
   }
 });
+
+watch(sessionIdentity, (identity, previousIdentity) => {
+  if (identity === previousIdentity) return;
+  invalidateAdminEventContextRequests({
+    clearContext: !identity || Boolean(previousIdentity),
+    clearMessages: true
+  });
+}, { flush: "sync" });
 
 watch(currentView, (view) => {
   if (!["registration", "organizationWorkspace"].includes(view)) selectedRegistrationEvent.value = null;
