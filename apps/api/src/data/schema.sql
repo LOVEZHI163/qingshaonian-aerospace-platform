@@ -7,6 +7,10 @@ CREATE TABLE IF NOT EXISTS users (
   status TEXT NOT NULL,
   session_version INTEGER NOT NULL DEFAULT 0,
   must_change_password BOOLEAN NOT NULL DEFAULT FALSE,
+  temporary_password_ciphertext TEXT,
+  temporary_password_iv TEXT,
+  temporary_password_tag TEXT,
+  temporary_password_created_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL
 );
 
@@ -125,9 +129,9 @@ CREATE TABLE IF NOT EXISTS registrations (
   id TEXT PRIMARY KEY,
   event_id TEXT NOT NULL REFERENCES events(id),
   source TEXT NOT NULL,
-  created_by_user_id TEXT NOT NULL REFERENCES users(id),
+  created_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
   personal_user_id TEXT REFERENCES users(id),
-  organization_id TEXT REFERENCES organizations(id),
+  organization_id TEXT REFERENCES organizations(id) ON DELETE SET NULL,
   created_via TEXT NOT NULL CHECK (created_via IN ('personal', 'organization')),
   organization_name TEXT NOT NULL DEFAULT '',
   athlete JSONB NOT NULL,
@@ -141,7 +145,7 @@ CREATE TABLE IF NOT EXISTS registrations (
   reject_reason TEXT NOT NULL DEFAULT '',
   created_at TIMESTAMPTZ NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL,
-  CHECK (personal_user_id IS NOT NULL OR organization_id IS NOT NULL),
+  CHECK (personal_user_id IS NOT NULL OR organization_id IS NOT NULL OR organization_name <> ''),
   UNIQUE (event_id, project_id, athlete_key)
 );
 

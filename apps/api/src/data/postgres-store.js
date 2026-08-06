@@ -479,6 +479,10 @@ export function createPostgresStore(pool, { seedOnEmpty = true } = {}) {
           status: row.status,
           sessionVersion: row.session_version,
           mustChangePassword: row.must_change_password,
+          temporaryPasswordCiphertext: row.temporary_password_ciphertext,
+          temporaryPasswordIv: row.temporary_password_iv,
+          temporaryPasswordTag: row.temporary_password_tag,
+          temporaryPasswordCreatedAt: row.temporary_password_created_at ? iso(row.temporary_password_created_at) : null,
           createdAt: iso(row.created_at)
         })),
         organizations: organizations.rows.map((row) => ({
@@ -773,8 +777,10 @@ export function createPostgresStore(pool, { seedOnEmpty = true } = {}) {
 
         for (const row of db.users) {
           await client.query(
-            `INSERT INTO users (id, name, phone, password, type, status, session_version, must_change_password, created_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            `INSERT INTO users
+              (id, name, phone, password, type, status, session_version, must_change_password,
+               temporary_password_ciphertext, temporary_password_iv, temporary_password_tag, temporary_password_created_at, created_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
              ON CONFLICT (id) DO UPDATE SET
                name = EXCLUDED.name,
                phone = EXCLUDED.phone,
@@ -783,8 +789,15 @@ export function createPostgresStore(pool, { seedOnEmpty = true } = {}) {
                status = EXCLUDED.status,
                session_version = EXCLUDED.session_version,
                must_change_password = EXCLUDED.must_change_password,
+               temporary_password_ciphertext = EXCLUDED.temporary_password_ciphertext,
+               temporary_password_iv = EXCLUDED.temporary_password_iv,
+               temporary_password_tag = EXCLUDED.temporary_password_tag,
+               temporary_password_created_at = EXCLUDED.temporary_password_created_at,
                created_at = EXCLUDED.created_at`,
-            [row.id, row.name, row.phone, row.password, row.type, row.status, row.sessionVersion, row.mustChangePassword, row.createdAt]
+            [
+              row.id, row.name, row.phone, row.password, row.type, row.status, row.sessionVersion, row.mustChangePassword,
+              row.temporaryPasswordCiphertext, row.temporaryPasswordIv, row.temporaryPasswordTag, row.temporaryPasswordCreatedAt, row.createdAt
+            ]
           );
         }
 

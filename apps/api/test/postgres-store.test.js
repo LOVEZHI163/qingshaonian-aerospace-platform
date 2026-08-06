@@ -50,6 +50,27 @@ test("PostgreSQL store creates normalized tables and seeds an empty database", a
   });
 });
 
+test("PostgreSQL store round-trips temporary-password fields", async () => {
+  await withStore(async (store) => {
+    const db = await store.readDb();
+    const user = db.users[0];
+    const fields = {
+      temporaryPasswordCiphertext: "ciphertext-base64",
+      temporaryPasswordIv: "iv-base64",
+      temporaryPasswordTag: "tag-base64",
+      temporaryPasswordCreatedAt: "2026-08-06T00:00:00.000Z"
+    };
+    Object.assign(user, fields);
+
+    await store.writeDb(db);
+
+    assert.deepEqual((await store.readDb()).users.find((row) => row.id === user.id), {
+      ...user,
+      ...fields
+    });
+  });
+});
+
 test("012 migration normalizes legacy member rows and restores the active-member constraint", async () => {
   await withStore(async (store, pool) => {
     await pool.query("DROP INDEX memberships_single_active_user_idx");

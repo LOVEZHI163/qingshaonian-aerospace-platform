@@ -83,10 +83,10 @@ export const GRADES = ["小学低组（1-3年级）", "小学中高组（4-6年�
 
 export const seedDb = {
   users: [
-    { id: "U1001", name: "陈宇航家长", phone: "13800000001", password: "123456", type: "ordinary", status: "active", sessionVersion: 0, mustChangePassword: false, createdAt: "2026-06-27T06:30:00.000Z" },
-    { id: "U2001", name: "林老师", phone: "13800000011", password: "123456", type: "organization", status: "active", sessionVersion: 0, mustChangePassword: false, createdAt: "2026-06-27T06:31:00.000Z" },
-    { id: "U2002", name: "王老师", phone: "13800000012", password: "123456", type: "organization", status: "active", sessionVersion: 0, mustChangePassword: false, createdAt: "2026-06-27T06:31:30.000Z" },
-    { id: "U9001", name: "赛事管理员", phone: "13900000000", password: "admin123", type: "admin", status: "active", sessionVersion: 0, mustChangePassword: false, createdAt: "2026-06-27T06:32:00.000Z" }
+    { id: "U1001", name: "陈宇航家长", phone: "13800000001", password: "123456", type: "ordinary", status: "active", sessionVersion: 0, mustChangePassword: false, temporaryPasswordCiphertext: null, temporaryPasswordIv: null, temporaryPasswordTag: null, temporaryPasswordCreatedAt: null, createdAt: "2026-06-27T06:30:00.000Z" },
+    { id: "U2001", name: "林老师", phone: "13800000011", password: "123456", type: "organization", status: "active", sessionVersion: 0, mustChangePassword: false, temporaryPasswordCiphertext: null, temporaryPasswordIv: null, temporaryPasswordTag: null, temporaryPasswordCreatedAt: null, createdAt: "2026-06-27T06:31:00.000Z" },
+    { id: "U2002", name: "王老师", phone: "13800000012", password: "123456", type: "organization", status: "active", sessionVersion: 0, mustChangePassword: false, temporaryPasswordCiphertext: null, temporaryPasswordIv: null, temporaryPasswordTag: null, temporaryPasswordCreatedAt: null, createdAt: "2026-06-27T06:31:30.000Z" },
+    { id: "U9001", name: "赛事管理员", phone: "13900000000", password: "admin123", type: "admin", status: "active", sessionVersion: 0, mustChangePassword: false, temporaryPasswordCiphertext: null, temporaryPasswordIv: null, temporaryPasswordTag: null, temporaryPasswordCreatedAt: null, createdAt: "2026-06-27T06:32:00.000Z" }
   ],
   organizations: [
     { id: "O1001", name: "温州市实验小学", code: "WZ-SYXX", ownerUserId: "U2001", contactName: "林老师", contactPhone: "13800000011", status: "active", createdAt: "2026-06-27T06:31:00.000Z" },
@@ -197,6 +197,10 @@ export function ensureDbShape(db) {
   for (const user of db.users) {
     user.sessionVersion ??= 0;
     user.mustChangePassword ??= false;
+    user.temporaryPasswordCiphertext ??= null;
+    user.temporaryPasswordIv ??= null;
+    user.temporaryPasswordTag ??= null;
+    user.temporaryPasswordCreatedAt ??= null;
   }
   db.organizations ||= [];
   const isLegacyOrganizationShape = !Array.isArray(db.organizationDocuments);
