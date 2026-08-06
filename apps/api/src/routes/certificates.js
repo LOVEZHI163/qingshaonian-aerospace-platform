@@ -15,6 +15,7 @@ import {
 import { recordAudit } from "../services/audit.js";
 import { requireOrganizationAccess, requireOrganizationEventParticipation, requireWritableEvent } from "../services/access-control.js";
 import { requireEventId } from "../services/registrations.js";
+import { organizationHistoryFields } from "../services/organization-account-lifecycle.js";
 
 export const defaultCertificateStorage = {
   saveFile: saveCertificateFile,
@@ -103,6 +104,7 @@ async function finishCommittedCleanup({ store, db, marker, file, storage, now })
 }
 
 function certificatePayload(certificate, registration) {
+  const registrationPayload = registration ? { ...registration, ...organizationHistoryFields(registration) } : registration;
   const payload = {
     id: certificate.id,
     registrationId: certificate.registrationId,
@@ -119,10 +121,10 @@ function certificatePayload(certificate, registration) {
     publishedAt: certificate.publishedAt,
     cleanedAt: certificate.cleanedAt,
     updatedAt: certificate.updatedAt,
-    registration,
+    registration: registrationPayload,
     athlete: registration?.athlete,
     projectName: registration?.projectName,
-    organization: registration?.organization || ""
+    organization: registrationPayload?.organization || ""
   };
   if (!certificate.cleanedAt) {
     payload.previewUrl = `/api/certificates/${certificate.id}/file`;

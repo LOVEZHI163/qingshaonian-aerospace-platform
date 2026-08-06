@@ -287,7 +287,7 @@ export function ensureDbShape(db) {
   }
   for (const row of db.registrations) {
     row.eventId ||= EVENT.id;
-    row.createdByUserId ||= row.userId;
+    if (!Object.hasOwn(row, "createdByUserId")) row.createdByUserId = row.userId ?? null;
     const creator = db.users.find((user) => user.id === row.createdByUserId);
     row.createdVia ||= creator?.type === "organization" ? "organization" : "personal";
     row.personalUserId ??= row.createdVia === "personal" ? row.createdByUserId : null;

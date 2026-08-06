@@ -112,3 +112,28 @@ test("organization certificate history lists every published certificate owned b
     assert.equal((await fetch(`${baseUrl}/api/organization/certificates`, withSession(ordinary.cookie))).status, 403);
   }, { prefix: "organization-all-certificate-history-" });
 });
+
+test("retains published certificate history after the platform administrator deletes the organization", async () => {
+  await withTestServer(async ({ baseUrl, dbPath }) => {
+    const db = JSON.parse(await fs.readFile(dbPath, "utf8"));
+    const organizationName = db.organizations.find((row) => row.id === "O1001").name;
+    db.certificates.push({
+      id: "C-DELETED-ORGANIZATION", registrationId: "R20260627001", slot: 1,
+      title: "历史一等奖", status: "published", fileName: "history.png", storedName: "history.png",
+      filePath: "/safe/history.png", cleanedAt: "", source: "manual", importBatchId: null,
+      awardName: "一等奖", rank: "1", score: "98", uploadedAt: "2026-08-05T00:00:00.000Z",
+      publishedAt: "2026-08-05T00:00:00.000Z"
+    });
+    await fs.writeFile(dbPath, JSON.stringify(db), "utf8");
+    const admin = await loginAs(baseUrl, "13900000000", "admin123");
+
+    assert.equal((await fetch(`${baseUrl}/api/admin/organizations/O1001`, withSession(admin.cookie, { method: "DELETE" }))).status, 200);
+    const response = await fetch(`${baseUrl}/api/admin/events/wz-aerospace-2026/certificates`, withSession(admin.cookie));
+    assert.equal(response.status, 200);
+    const certificate = (await response.json()).rows.find((row) => row.id === "C-DELETED-ORGANIZATION");
+    assert.ok(certificate);
+    assert.equal(certificate.registration.organizationId, null);
+    assert.equal(certificate.registration.organizationSnapshot, organizationName);
+    assert.match(certificate.organization, /原组织已删除/);
+  }, { prefix: "organization-deleted-certificate-history-" });
+});

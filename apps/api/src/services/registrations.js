@@ -2,6 +2,7 @@ import { GRADE_GROUPS, groupForGrade } from "../domain/grades.js";
 import { isRegistrationOpen } from "../domain/registration-window.js";
 import { businessError, projectForHistoricalRegistration, publishedRegistrationEvent, registrationContext } from "./events.js";
 import { recordAudit } from "./audit.js";
+import { organizationHistoryFields } from "./organization-account-lifecycle.js";
 import { ordinaryRegistrationEligibility, requireOrdinaryRegistrationEligibility, requireOrdinaryUser, requireOrganizationEventParticipation, requireWritableEvent } from "./access-control.js";
 import { registrationSubmissionSummary, withRegistrationSubmission } from "./submission-assets.js";
 
@@ -243,6 +244,7 @@ export function listAdminRegistrations(db, query, clock = () => new Date()) {
   const total = rows.length;
   rows = rows.slice((page - 1) * pageSize, page * pageSize).map((row) => ({
     ...withRegistrationSubmission(db, row),
+    ...organizationHistoryFields(row),
     grade: row.athlete?.grade || ""
   }));
   return { rows, total, page, pageSize, refreshedAt: clock().toISOString() };

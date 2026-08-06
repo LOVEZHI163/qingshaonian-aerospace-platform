@@ -248,10 +248,17 @@ function cleanupPathIsReferenced(db, filePath) {
   return referencedByDocument || (db.certificates || []).some((row) => row.filePath === filePath);
 }
 
-export async function replayFileCleanupJournal({ store, removePrivateFile = deletePrivateFile, now = () => new Date().toISOString() }) {
-  return store.withMutationLock(async () => {
+export async function replayFileCleanupJournal({
+  store,
+  removePrivateFile = deletePrivateFile,
+  now = () => new Date().toISOString(),
+  markerIds = null,
+  alreadyLocked = false
+}) {
+  const replay = async () => {
     const db = await store.readDb();
-    const markers = [...(db.fileCleanupJournal || [])];
+    const selectedIds = markerIds ? new Set(markerIds) : null;
+    const markers = (db.fileCleanupJournal || []).filter((marker) => !selectedIds || selectedIds.has(marker.id));
     if (!markers.length) return { removed: 0, retained: 0 };
     let changed = false;
     let removed = 0;
@@ -282,5 +289,6 @@ export async function replayFileCleanupJournal({ store, removePrivateFile = dele
     }
     if (changed) await store.writeDb(db);
     return { removed, retained };
-  });
+  };
+  return alreadyLocked ? replay() : store.withMutationLock(replay);
 }
