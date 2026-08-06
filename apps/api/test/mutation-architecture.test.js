@@ -254,6 +254,36 @@ test("mutation handler errors release the lock for the next request", async () =
   }
 });
 
+test("file store keeps the original JSON and removes its temporary file when atomic rename fails", async () => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "atomic-file-store-"));
+  const dbPath = path.join(tempDir, "db.json");
+  const original = '{"sentinel":"original"}\n';
+  await fs.writeFile(dbPath, original, "utf8");
+  const failingFileSystem = {
+    mkdir: fs.mkdir,
+    readFile: fs.readFile,
+    writeFile: fs.writeFile,
+    rm: fs.rm,
+    async rename() {
+      const error = new Error("simulated atomic rename failure");
+      error.code = "EPERM";
+      throw error;
+    }
+  };
+  const store = createFileStore(dbPath, {
+    fileSystem: failingFileSystem,
+    makeTempPath: () => path.join(tempDir, ".db.json.atomic-test.tmp")
+  });
+
+  try {
+    await assert.rejects(store.writeDb({ users: [] }), /simulated atomic rename failure/);
+    assert.equal(await fs.readFile(dbPath, "utf8"), original);
+    await assert.rejects(fs.access(path.join(tempDir, ".db.json.atomic-test.tmp")), { code: "ENOENT" });
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("cleanup journal replay removes orphan files and markers but never deletes referenced documents", async () => {
   assert.equal(typeof organizations.replayFileCleanupJournal, "function");
   const uploadRoot = await fs.mkdtemp(path.join(os.tmpdir(), "cleanup-replay-"));

@@ -1,10 +1,14 @@
 import fs from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 
 import { ensureDbShape, seedDb } from "./seed.js";
 import { createFileAuthState } from "./auth-state.js";
 
-export function createFileStore(dbPath) {
+export function createFileStore(dbPath, {
+  fileSystem = fs,
+  makeTempPath = () => path.join(path.dirname(dbPath), `.${path.basename(dbPath)}.${process.pid}.${randomUUID()}.tmp`)
+} = {}) {
   let tail = Promise.resolve();
   return {
     kind: "file",
@@ -12,7 +16,7 @@ export function createFileStore(dbPath) {
     async initialize() {},
     async readDb() {
       try {
-        return ensureDbShape(JSON.parse(await fs.readFile(dbPath, "utf8")));
+        return ensureDbShape(JSON.parse(await fileSystem.readFile(dbPath, "utf8")));
       } catch (error) {
         if (error.code !== "ENOENT") throw error;
         const initial = ensureDbShape(structuredClone(seedDb));
@@ -21,8 +25,19 @@ export function createFileStore(dbPath) {
       }
     },
     async writeDb(db) {
-      await fs.mkdir(path.dirname(dbPath), { recursive: true });
-      await fs.writeFile(dbPath, JSON.stringify(ensureDbShape(structuredClone(db)), null, 2), "utf8");
+      await fileSystem.mkdir(path.dirname(dbPath), { recursive: true });
+      const tempPath = makeTempPath();
+      try {
+        await fileSystem.writeFile(
+          tempPath,
+          JSON.stringify(ensureDbShape(structuredClone(db)), null, 2),
+          { encoding: "utf8", flag: "wx" }
+        );
+        await fileSystem.rename(tempPath, dbPath);
+      } catch (error) {
+        try { await fileSystem.rm(tempPath, { force: true }); } catch { /* best-effort cleanup */ }
+        throw error;
+      }
     },
     async acquireMutationLock() {
       let unlock;

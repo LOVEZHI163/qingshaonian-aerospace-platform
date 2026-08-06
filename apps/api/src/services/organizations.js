@@ -245,7 +245,9 @@ function cleanupPathIsReferenced(db, filePath) {
     const organization = (db.organizations || []).find((row) => row.id === document.organizationId);
     return !document.cleanedAt || organization?.currentDocumentId === document.id;
   });
-  return referencedByDocument || (db.certificates || []).some((row) => row.filePath === filePath);
+  return referencedByDocument
+    || (db.certificates || []).some((row) => row.filePath === filePath)
+    || (db.registrationSubmissionAssets || []).some((row) => row.filePath === filePath && !row.cleanedAt);
 }
 
 export async function replayFileCleanupJournal({

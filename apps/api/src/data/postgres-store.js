@@ -530,6 +530,7 @@ export function createPostgresStore(pool, { seedOnEmpty = true } = {}) {
           organizationId: row.organization_id,
           createdVia: row.created_via,
           organization: row.organization_name,
+          organizationDeleted: Boolean(row.organization_deleted),
           athlete: row.athlete,
           athleteKey: row.athlete_key,
           group: row.group_name,
@@ -912,9 +913,9 @@ export function createPostgresStore(pool, { seedOnEmpty = true } = {}) {
         for (const row of db.registrations) {
           await client.query(
             `INSERT INTO registrations
-              (id, event_id, source, created_by_user_id, personal_user_id, organization_id, created_via, organization_name, athlete, athlete_key,
+              (id, event_id, source, created_by_user_id, personal_user_id, organization_id, created_via, organization_name, organization_deleted, athlete, athlete_key,
                group_name, project_id, project_name, project_type, instructor, status, reject_reason, created_at, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
              ON CONFLICT (id) DO UPDATE SET
                event_id = EXCLUDED.event_id,
                source = EXCLUDED.source,
@@ -923,6 +924,7 @@ export function createPostgresStore(pool, { seedOnEmpty = true } = {}) {
                organization_id = EXCLUDED.organization_id,
                created_via = EXCLUDED.created_via,
                organization_name = EXCLUDED.organization_name,
+               organization_deleted = EXCLUDED.organization_deleted,
                athlete = EXCLUDED.athlete,
                athlete_key = EXCLUDED.athlete_key,
                group_name = EXCLUDED.group_name,
@@ -934,7 +936,7 @@ export function createPostgresStore(pool, { seedOnEmpty = true } = {}) {
                reject_reason = EXCLUDED.reject_reason,
                created_at = EXCLUDED.created_at,
                updated_at = EXCLUDED.updated_at`,
-            [row.id, row.eventId || EVENT.id, row.source, row.createdByUserId, row.personalUserId || null, row.organizationId || null, row.createdVia, row.organization || "", JSON.stringify(row.athlete || {}), row.athleteKey, row.group, row.projectId, row.projectName, row.projectType, row.instructor || "", row.status, row.rejectReason || "", row.createdAt, row.updatedAt]
+            [row.id, row.eventId || EVENT.id, row.source, row.createdByUserId || null, row.personalUserId || null, row.organizationId || null, row.createdVia, row.organization || "", Boolean(row.organizationDeleted), JSON.stringify(row.athlete || {}), row.athleteKey, row.group, row.projectId, row.projectName, row.projectType, row.instructor || "", row.status, row.rejectReason || "", row.createdAt, row.updatedAt]
           );
 
           const hasResult = Boolean(row.awardName || row.rank || row.score || row.resultRecordedAt);
@@ -969,7 +971,7 @@ export function createPostgresStore(pool, { seedOnEmpty = true } = {}) {
                created_at = EXCLUDED.created_at,
                expires_at = EXCLUDED.expires_at,
                committed_at = EXCLUDED.committed_at`,
-            [row.id, row.eventId, row.projectId, row.ownerUserId, row.organizationId || null, row.channel || (row.organizationId ? "organization" : "personal"), row.state, row.createdAt, row.expiresAt, row.committedAt || null]
+            [row.id, row.eventId, row.projectId, row.ownerUserId || null, row.organizationId || null, row.channel || (row.organizationId ? "organization" : "personal"), row.state, row.createdAt, row.expiresAt, row.committedAt || null]
           );
         }
 
@@ -999,7 +1001,7 @@ export function createPostgresStore(pool, { seedOnEmpty = true } = {}) {
             [
               row.id, row.registrationId || null, row.uploadSessionId, row.kind, row.originalName, row.storedName,
               row.filePath, row.mimeType, row.sizeBytes, row.width ?? null, row.height ?? null, row.durationMs ?? null,
-              JSON.stringify(normalizeSubmissionWarnings(row.warnings)), row.uploadedByUserId, row.uploadedAt,
+              JSON.stringify(normalizeSubmissionWarnings(row.warnings)), row.uploadedByUserId || null, row.uploadedAt,
               row.cleanedAt || null, row.cleanupReason || ""
             ]
           );
@@ -1021,7 +1023,7 @@ export function createPostgresStore(pool, { seedOnEmpty = true } = {}) {
                replace_count = EXCLUDED.replace_count,
                created_at = EXCLUDED.created_at,
                committed_at = EXCLUDED.committed_at`,
-            [row.id, row.eventId, row.createdBy, row.originalName, row.status, JSON.stringify(row.previewJson || []), row.validCount || 0, row.errorCount || 0, row.replaceCount || 0, row.createdAt, row.committedAt || null]
+            [row.id, row.eventId, row.createdBy || null, row.originalName, row.status, JSON.stringify(row.previewJson || []), row.validCount || 0, row.errorCount || 0, row.replaceCount || 0, row.createdAt, row.committedAt || null]
           );
         }
 

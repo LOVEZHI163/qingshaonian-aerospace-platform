@@ -6,7 +6,7 @@ function timestamp(now) {
   return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
 }
 
-function uniquePendingCredentialFiles(db, organizationId) {
+function uniquePendingCleanupFiles(db, organizationId, removableAssets) {
   const known = new Set((db.fileCleanupJournal || []).map((row) => row.filePath));
   const paths = [];
   for (const document of db.organizationDocuments || []) {
@@ -15,12 +15,17 @@ function uniquePendingCredentialFiles(db, organizationId) {
     known.add(document.filePath);
     paths.push(document.filePath);
   }
+  for (const asset of removableAssets) {
+    if (asset.cleanedAt || !asset.filePath || known.has(asset.filePath)) continue;
+    known.add(asset.filePath);
+    paths.push(asset.filePath);
+  }
   return paths;
 }
 
 export function organizationHistoryFields(registration) {
   const organizationSnapshot = String(registration?.organization || "").trim();
-  const organizationDeleted = Boolean(organizationSnapshot && !registration?.organizationId);
+  const organizationDeleted = registration?.organizationDeleted === true;
   return {
     organizationSnapshot,
     organizationDeleted,
@@ -45,9 +50,23 @@ export function deleteOrganizationAccount(db, {
   }
 
   const deletedAt = timestamp(now);
-  const credentialPaths = uniquePendingCredentialFiles(db, organization.id);
+  const retainedRegistrationIds = new Set((db.registrations || []).map((row) => row.id));
+  const ownedSessionIds = new Set((db.registrationUploadSessions || [])
+    .filter((row) => row.ownerUserId === owner.id || row.organizationId === organization.id)
+    .map((row) => row.id));
+  const preservedAssets = (db.registrationSubmissionAssets || []).filter((row) => (
+    retainedRegistrationIds.has(row.registrationId)
+  ));
+  const preservedAssetIds = new Set(preservedAssets.map((row) => row.id));
+  const preservedSessionIds = new Set(preservedAssets.map((row) => row.uploadSessionId));
+  const removableAssets = (db.registrationSubmissionAssets || []).filter((row) => (
+    (ownedSessionIds.has(row.uploadSessionId) || row.uploadedByUserId === owner.id)
+    && !preservedAssetIds.has(row.id)
+  ));
+  const removableAssetIds = new Set(removableAssets.map((row) => row.id));
+  const cleanupPaths = uniquePendingCleanupFiles(db, organization.id, removableAssets);
   db.fileCleanupJournal ||= [];
-  for (const filePath of credentialPaths) {
+  for (const filePath of cleanupPaths) {
     db.fileCleanupJournal.push({
       id: makeId("CLN"),
       filePath,
@@ -65,18 +84,26 @@ export function deleteOrganizationAccount(db, {
       retainedRegistrationCount += 1;
       registration.organization = String(registration.organization || organization.name).trim() || organization.name;
       registration.organizationId = null;
+      registration.organizationDeleted = true;
     }
     if (registration.createdByUserId === owner.id) registration.createdByUserId = null;
     if (registration.personalUserId === owner.id) registration.personalUserId = null;
   }
 
-  const deletedSessionIds = new Set((db.registrationUploadSessions || [])
-    .filter((row) => row.ownerUserId === owner.id || row.organizationId === organization.id)
-    .map((row) => row.id));
-  db.registrationSubmissionAssets = (db.registrationSubmissionAssets || []).filter((row) => (
-    !deletedSessionIds.has(row.uploadSessionId) && row.uploadedByUserId !== owner.id
+  db.registrationSubmissionAssets = (db.registrationSubmissionAssets || []).filter((row) => !removableAssetIds.has(row.id));
+  for (const asset of db.registrationSubmissionAssets) {
+    if (asset.uploadedByUserId === owner.id) asset.uploadedByUserId = null;
+  }
+  db.registrationUploadSessions = (db.registrationUploadSessions || []).filter((row) => (
+    !ownedSessionIds.has(row.id) || preservedSessionIds.has(row.id)
   ));
-  db.registrationUploadSessions = (db.registrationUploadSessions || []).filter((row) => !deletedSessionIds.has(row.id));
+  for (const session of db.registrationUploadSessions) {
+    if (session.ownerUserId === owner.id) session.ownerUserId = null;
+    if (session.organizationId === organization.id) session.organizationId = null;
+  }
+  for (const batch of db.certificateImportBatches || []) {
+    if (batch.createdBy === owner.id) batch.createdBy = null;
+  }
   db.organizationEventParticipations = (db.organizationEventParticipations || []).filter((row) => row.organizationId !== organization.id);
   db.memberships = (db.memberships || []).filter((row) => row.organizationId !== organization.id && row.userId !== owner.id);
   db.organizationDocuments = (db.organizationDocuments || []).filter((row) => row.organizationId !== organization.id);
@@ -96,6 +123,6 @@ export function deleteOrganizationAccount(db, {
     ownerUserId: owner.id,
     organizationName: organization.name,
     retainedRegistrationCount,
-    queuedFileCount: credentialPaths.length
+    queuedFileCount: cleanupPaths.length
   };
 }

@@ -178,7 +178,10 @@ for (const organization of seedDb.organizations) {
   });
 }
 for (const project of seedDb.projects) project.submissionMode ||= "none";
-for (const row of seedDb.registrations) row.eventId = EVENT.id;
+for (const row of seedDb.registrations) {
+  row.eventId = EVENT.id;
+  row.organizationDeleted = false;
+}
 
 export function ensureDbShape(db) {
   db.siteSettings ||= {};
@@ -249,6 +252,7 @@ export function ensureDbShape(db) {
     (project.allowedGroups || APPROVED_GROUP_NAMES).map((groupName) => ({ projectId: project.id, groupName }))
   );
   db.registrations ||= [];
+  for (const registration of db.registrations) registration.organizationDeleted ??= false;
   db.organizationEventParticipations ||= [];
   db.certificates ||= [];
   db.certificateImportBatches ||= [];
