@@ -85,6 +85,22 @@ describe("createBlobPreviewManager", () => {
     expect(popup.close).not.toHaveBeenCalled();
   });
 
+  it("allows each reservation to navigate only once without replacing its URL or timer", () => {
+    let created = 0;
+    URL.createObjectURL.mockImplementation(() => `blob:preview-${++created}`);
+    const manager = createBlobPreviewManager();
+    const reservation = manager.reserve();
+
+    expect(manager.navigate(reservation, new Blob(["first"]))).toBe(true);
+    expect(manager.navigate(reservation, new Blob(["second"]))).toBe(false);
+    expect(URL.createObjectURL).toHaveBeenCalledTimes(1);
+    expect(popup.location.href).toBe("blob:preview-1");
+
+    vi.advanceTimersByTime(60_000);
+    expect(URL.revokeObjectURL).toHaveBeenCalledTimes(1);
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:preview-1");
+  });
+
   it("clears a navigated preview timer on dispose", () => {
     const manager = createBlobPreviewManager();
     const reservation = manager.reserve();

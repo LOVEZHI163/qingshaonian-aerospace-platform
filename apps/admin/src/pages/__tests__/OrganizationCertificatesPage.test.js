@@ -1,5 +1,5 @@
 import { flushPromises, mount } from "@vue/test-utils";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { apiMock, apiBlobMock, apiUrlMock } = vi.hoisted(() => ({
   apiMock: vi.fn(),
@@ -42,6 +42,10 @@ describe("OrganizationCertificatesPage", () => {
     vi.spyOn(window, "open").mockImplementation(() => null);
   });
 
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it("loads cross-event organization certificates immediately and filters by event", async () => {
     const wrapper = mount(OrganizationCertificatesPage);
     await flushPromises();
@@ -79,6 +83,91 @@ describe("OrganizationCertificatesPage", () => {
     expect(apiMock.mock.calls.some(([path]) => path.startsWith("/api/me/"))).toBe(false);
     wrapper.unmount();
     expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:certificate-1");
+  });
+
+  it("clears the opener and registers the reservation before requesting the preview blob", async () => {
+    const sequence = [];
+    const pending = deferred();
+    let opener = {};
+    const popup = { location: { href: "about:blank" }, close: vi.fn() };
+    Object.defineProperty(popup, "opener", {
+      configurable: true,
+      get: () => opener,
+      set: (value) => { opener = value; sequence.push("opener-cleared"); }
+    });
+    window.open.mockImplementation(() => { sequence.push("open"); return popup; });
+    const originalAdd = Set.prototype.add;
+    vi.spyOn(Set.prototype, "add").mockImplementation(function add(value) {
+      if (value?.popup === popup) sequence.push("registered");
+      return originalAdd.call(this, value);
+    });
+    apiBlobMock.mockImplementationOnce(() => {
+      sequence.push("apiBlob");
+      expect(popup.opener).toBeNull();
+      return pending.promise;
+    });
+    const wrapper = mount(OrganizationCertificatesPage);
+    await flushPromises();
+
+    await wrapper.get('[data-action="preview-organization-certificate-C1"]').trigger("click");
+
+    expect(sequence.slice(0, 4)).toEqual(["open", "opener-cleared", "registered", "apiBlob"]);
+    wrapper.unmount();
+  });
+
+  it("closes an unsafe popup whose opener assignment silently fails without fetching or registering it", async () => {
+    const originalOpener = {};
+    const popup = { location: { href: "about:blank" }, close: vi.fn() };
+    Object.defineProperty(popup, "opener", {
+      configurable: true,
+      get: () => originalOpener,
+      set: vi.fn()
+    });
+    const registered = [];
+    const originalAdd = Set.prototype.add;
+    vi.spyOn(Set.prototype, "add").mockImplementation(function add(value) {
+      if (value?.popup === popup) registered.push(value);
+      return originalAdd.call(this, value);
+    });
+    window.open.mockReturnValue(popup);
+    const wrapper = mount(OrganizationCertificatesPage);
+    await flushPromises();
+
+    await wrapper.get('[data-action="preview-organization-certificate-C1"]').trigger("click");
+
+    expect(popup.close).toHaveBeenCalledTimes(1);
+    expect(apiBlobMock).not.toHaveBeenCalled();
+    expect(registered).toEqual([]);
+    expect(wrapper.get('[role="alert"]').text()).toContain("安全");
+    wrapper.unmount();
+    expect(popup.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("closes an unsafe popup when clearing its opener throws without fetching or registering it", async () => {
+    const popup = { location: { href: "about:blank" }, close: vi.fn() };
+    Object.defineProperty(popup, "opener", {
+      configurable: true,
+      get: () => ({}),
+      set: () => { throw new Error("opener denied"); }
+    });
+    const registered = [];
+    const originalAdd = Set.prototype.add;
+    vi.spyOn(Set.prototype, "add").mockImplementation(function add(value) {
+      if (value?.popup === popup) registered.push(value);
+      return originalAdd.call(this, value);
+    });
+    window.open.mockReturnValue(popup);
+    const wrapper = mount(OrganizationCertificatesPage);
+    await flushPromises();
+
+    await wrapper.get('[data-action="preview-organization-certificate-C1"]').trigger("click");
+
+    expect(popup.close).toHaveBeenCalledTimes(1);
+    expect(apiBlobMock).not.toHaveBeenCalled();
+    expect(registered).toEqual([]);
+    expect(wrapper.get('[role="alert"]').text()).toContain("安全");
+    wrapper.unmount();
+    expect(popup.close).toHaveBeenCalledTimes(1);
   });
 
   it("closes a registered pending placeholder when unmounted before preview settles", async () => {

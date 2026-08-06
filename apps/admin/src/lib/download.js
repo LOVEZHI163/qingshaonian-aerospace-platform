@@ -70,11 +70,14 @@ export function createBlobPreviewManager() {
     },
     isActive,
     navigate(reservation, blob) {
-      if (!isActive(reservation)) return false;
+      // Returning false leaves the blob with the caller. Once URL creation starts,
+      // this reservation owns the URL/timer and close() releases them on failure.
+      if (!isActive(reservation) || reservation.state !== "pending") return false;
       if (reservation.popup.closed) {
         release(reservation);
         return false;
       }
+      reservation.state = "navigating";
       const url = URL.createObjectURL(blob);
       reservation.url = url;
       reservation.timer = setTimeout(() => release(reservation), PREVIEW_RELEASE_DELAY_MS);

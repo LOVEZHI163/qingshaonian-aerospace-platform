@@ -47,7 +47,7 @@ async function preview(certificate) {
   error.value = "";
   const reservation = previews.reserve();
   if (!reservation) {
-    error.value = "浏览器阻止了证书预览窗口，请允许弹窗或使用下载按钮";
+    error.value = "浏览器未能创建安全的证书预览窗口，请允许弹窗或使用下载按钮";
     return;
   }
   try {
