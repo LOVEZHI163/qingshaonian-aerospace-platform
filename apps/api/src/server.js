@@ -6,7 +6,7 @@ import { createTemporaryPasswordVault } from "./auth/temporary-passwords.js";
 import { asyncRoute, createSessionMiddleware, requireAdmin, requirePasswordReady, requireUser } from "./auth/session.js";
 import { createAliyunSmsProvider } from "./auth/sms.js";
 import { createDataStore } from "./data/index.js";
-import { createMutationAsyncRoute } from "./data/mutation-lock.js";
+import { createLockedAsyncRoute, createMutationAsyncRoute } from "./data/mutation-lock.js";
 import { createEventsRouter } from "./routes/events.js";
 import { createOrganizationsRouter } from "./routes/organizations.js";
 import { createRegistrationsRouter } from "./routes/registrations.js";
@@ -38,6 +38,7 @@ import { publishDueScheduledContent, startScheduledContentPublisher } from "./se
 const PORT = Number(process.env.PORT || 4300);
 const dataStore = createDataStore();
 const mutationAsyncRoute = createMutationAsyncRoute(dataStore);
+const lockedAsyncRoute = createLockedAsyncRoute(dataStore);
 const readDb = () => dataStore.readDb();
 const writeDb = (db) => dataStore.writeDb(db);
 const smsProvider = createAliyunSmsProvider(process.env);
@@ -466,27 +467,23 @@ app.post("/api/admin/users/:id/reset-password", requireAdmin, requirePasswordRea
   res.json({ user: publicUser(user), temporaryPassword });
 }));
 
-app.get("/api/admin/users/:id/temporary-password", requireAdmin, requirePasswordReady, asyncRoute(async (req, res) => {
+app.get("/api/admin/users/:id/temporary-password", requireAdmin, requirePasswordReady, lockedAsyncRoute(async (req, res) => {
   const vault = requireTemporaryPasswordVault();
-  const result = await dataStore.withMutationLock(async () => {
-    const db = await readDb();
-    const user = db.users.find((item) => item.id === req.params.id);
-    if (!user) return { status: 404, error: "用户不存在" };
-    const temporaryPassword = readUserTemporaryPassword(user, vault);
-    if (!temporaryPassword) return { status: 404, error: "当前没有可查看的临时密码" };
-    recordAudit(db, {
-      actor: req.user,
-      action: "user.temporary-password-view",
-      targetType: "user",
-      targetId: user.id,
-      summary: `已查看用户 ${user.name} 的当前临时密码`,
-      createdAt: now()
-    });
-    await writeDb(db);
-    return { temporaryPassword };
+  const db = await readDb();
+  const user = db.users.find((item) => item.id === req.params.id);
+  if (!user) return res.status(404).json({ error: "用户不存在" });
+  const temporaryPassword = readUserTemporaryPassword(user, vault);
+  if (!temporaryPassword) return res.status(404).json({ error: "当前没有可查看的临时密码" });
+  recordAudit(db, {
+    actor: req.user,
+    action: "user.temporary-password-view",
+    targetType: "user",
+    targetId: user.id,
+    summary: `已查看用户 ${user.name} 的当前临时密码`,
+    createdAt: now()
   });
-  if (result.error) return res.status(result.status).json({ error: result.error });
-  res.json(result);
+  await writeDb(db);
+  res.json({ temporaryPassword });
 }));
 
 app.post("/api/admin/users", requireAdmin, requirePasswordReady, mutationAsyncRoute(async (req, res) => {
@@ -614,6 +611,8 @@ const stopSubmissionSessionExpiryCleanup = process.env.NODE_ENV === "production"
 const server = app.listen(PORT, () => {
   console.log(`API listening on http://localhost:${server.address().port}`);
 });
+
+export { dataStore, server };
 
 async function shutdown() {
   stopScheduledContentPublisher();
