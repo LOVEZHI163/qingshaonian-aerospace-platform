@@ -172,6 +172,9 @@ export function prepareAdminRegistrationUpdate(db, row, input) {
     organization = operationalOrganization(db, organizationId);
     if (!organization) throw businessError(422, "组织不存在、未审核或已停用");
   }
+  if (row.personalUserId && Object.hasOwn(input, "athlete")) {
+    requireMemberIdentity(db, organizationId, row.personalUserId, athlete);
+  }
   const next = { ...row, athlete, group, projectId, organizationId, instructor: input.instructor ?? row.instructor };
   const validation = validateRegistration(next, db.registrations, project, row.eventId, row.id);
   if (!validation.ok) throw Object.assign(businessError(422, validation.errors[0]), { validation });
@@ -193,6 +196,9 @@ export function prepareOrdinaryRegistrationUpdate(db, row, input, userId) {
   const project = validateProjectForRegistration(db, row.eventId, projectId, group);
   const organization = validateOrganizationForUser(db, userId);
   const organizationId = organization.id;
+  if (Object.hasOwn(input, "athlete")) {
+    requireMemberIdentity(db, organizationId, row.personalUserId, athlete);
+  }
   const next = { ...row, athlete, group, projectId, organizationId, instructor: input.instructor ?? row.instructor };
   const validation = validateRegistration(next, db.registrations, project, row.eventId, row.id);
   if (!validation.ok) throw Object.assign(businessError(422, validation.errors[0]), { validation });
@@ -338,6 +344,14 @@ function requireActiveOrganizationMember(db, organizationId, memberUserId) {
   return user;
 }
 
+function requireMemberIdentity(db, organizationId, memberUserId, athlete) {
+  const member = requireActiveOrganizationMember(db, organizationId, memberUserId);
+  if (normalizeText(athlete?.name) !== normalizeText(member.name) || normalizePhone(athlete?.phone) !== normalizePhone(member.phone)) {
+    throw businessError(422, "参赛者姓名和手机号必须与所选组织成员一致", "MEMBER_IDENTITY_MISMATCH");
+  }
+  return member;
+}
+
 function validateCreateForEvent(db, input, event, actor, channel) {
   const athlete = input?.athlete || {};
   requireText(athlete.name, "姓名");
@@ -362,10 +376,7 @@ function validateCreateForEvent(db, input, event, actor, channel) {
       throw businessError(422, "报名来源不合法", "REGISTRATION_SOURCE_INVALID");
     }
     if (registrationSource === "member_registration") {
-      const member = requireActiveOrganizationMember(db, organization.id, input?.memberUserId);
-      if (normalizeText(athlete.name) !== normalizeText(member.name) || normalizePhone(athlete.phone) !== normalizePhone(member.phone)) {
-        throw businessError(422, "参赛者姓名和手机号必须与所选组织成员一致", "MEMBER_IDENTITY_MISMATCH");
-      }
+      const member = requireMemberIdentity(db, organization.id, input?.memberUserId, athlete);
       personalUserId = member.id;
     } else {
       personalUserId = null;
@@ -399,6 +410,10 @@ export function createOrMergeRegistration(db, input, actor, channel, {
     };
     db.registrations.unshift(row);
     return { row, created: true, merged: false };
+  }
+
+  if (existing.organizationDeleted === true) {
+    throw businessError(409, "相同赛事、赛项和参赛者的历史报名所属组织已删除，不能重新认领", "REGISTRATION_IDENTITY_CONFLICT");
   }
 
   if (

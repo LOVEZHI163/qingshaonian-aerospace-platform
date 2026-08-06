@@ -124,22 +124,22 @@ test("personal and organization channels cannot claim each other's existing iden
   assert.equal(first.row.source, "member_registration");
 });
 
-test("historical proxy or deleted organization registration cannot be rebound and retains its history", () => {
+test("a deleted-organization tombstone rejects an otherwise identical retry and retains its history", () => {
   const db = fixture();
   const first = createOrMergeRegistration(db, input({ registrationSource: "organization_proxy" }), owner, "organization", context);
   first.row.organizationDeleted = true;
-  first.row.organizationId = null;
   first.row.status = "approved";
   first.row.awardName = "一等奖";
   first.row.certificates = ["C1", "C2"];
 
   assert.throws(
-    () => createOrMergeRegistration(db, input(), actor, "personal", context),
+    () => createOrMergeRegistration(db, input({ registrationSource: "organization_proxy" }), owner, "organization", context),
     (error) => error.status === 409 && error.code === "REGISTRATION_IDENTITY_CONFLICT"
   );
   assert.equal(first.row.personalUserId, null);
-  assert.equal(first.row.organizationId, null);
+  assert.equal(first.row.organizationId, "O1");
   assert.equal(first.row.source, "organization_proxy");
+  assert.equal(first.row.organizationDeleted, true);
   assert.equal(first.row.status, "approved");
   assert.equal(first.row.awardName, "一等奖");
   assert.deepEqual(first.row.certificates, ["C1", "C2"]);

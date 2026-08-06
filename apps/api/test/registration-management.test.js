@@ -433,6 +433,64 @@ test("ordinary registration edits require an active membership while administrat
   });
 });
 
+test("member registration edits keep the selected account identity while proxy edits remain editable", async () => {
+  await withServer(async (baseUrl, dbPath) => {
+    await mutateDb(dbPath, (db) => { db.users.find((row) => row.id === "U1001").name = "Member Identity"; });
+    const ordinary = await loginAs(baseUrl, "13800000001", "123456");
+    const organizationOwner = await loginAs(baseUrl, "13800000011", "123456");
+    const admin = await loginAs(baseUrl, "13900000000", "admin123");
+    await openRegistration(baseUrl, admin.cookie);
+    assert.equal((await fetch(`${baseUrl}/api/organization/events/wz-aerospace-2026/join`, withSession(organizationOwner.cookie, { method: "POST" }))).status, 201);
+
+    const create = async (body) => fetch(`${baseUrl}/api/organization/events/wz-aerospace-2026/registrations`, withSession(organizationOwner.cookie, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body)
+    }));
+    const patch = async (path, body, cookie) => fetch(`${baseUrl}${path}`, withSession(cookie, {
+      method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body)
+    }));
+
+    const memberCreated = await create({
+      registrationSource: "member_registration",
+      memberUserId: "U1001",
+      athlete: { name: "Member Identity", school: "成员身份测试学校", grade: "五年级", phone: "13800000001" },
+      projectId: "paper-plane-gate"
+    });
+    assert.equal(memberCreated.status, 201);
+    const memberRow = (await json(memberCreated)).row;
+
+    const forgedByOrganization = await patch(
+      `/api/organization/events/wz-aerospace-2026/registrations/${memberRow.id}`,
+      { athlete: { ...memberRow.athlete, name: "伪造姓名" } },
+      organizationOwner.cookie
+    );
+    assert.equal(forgedByOrganization.status, 422);
+    assert.equal((await json(forgedByOrganization)).code, "MEMBER_IDENTITY_MISMATCH");
+
+    const forgedByPersonal = await patch(
+      `/api/me/events/wz-aerospace-2026/registrations/${memberRow.id}`,
+      { athlete: { ...memberRow.athlete, phone: "13999999999" } },
+      ordinary.cookie
+    );
+    assert.equal(forgedByPersonal.status, 422);
+    assert.equal((await json(forgedByPersonal)).code, "MEMBER_IDENTITY_MISMATCH");
+
+    const proxyCreated = await create({
+      registrationSource: "organization_proxy",
+      athlete: { name: "代理选手", school: "代理身份测试学校", grade: "五年级", phone: "13700009999" },
+      projectId: "paper-plane-gate"
+    });
+    assert.equal(proxyCreated.status, 201);
+    const proxyRow = (await json(proxyCreated)).row;
+    const proxyUpdated = await patch(
+      `/api/organization/events/wz-aerospace-2026/registrations/${proxyRow.id}`,
+      { athlete: { ...proxyRow.athlete, name: "代理选手已修改", phone: "13700008888" } },
+      organizationOwner.cookie
+    );
+    assert.equal(proxyUpdated.status, 200);
+    assert.equal((await json(proxyUpdated)).row.athlete.name, "代理选手已修改");
+  });
+});
+
 test("administrator and organization edits keep a registration's project immutable once submission materials exist", async () => {
   await withServer(async (baseUrl, dbPath) => {
     const admin = await loginAs(baseUrl, "13900000000", "admin123");
