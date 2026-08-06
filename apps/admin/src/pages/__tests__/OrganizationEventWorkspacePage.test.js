@@ -117,6 +117,57 @@ describe("OrganizationEventWorkspacePage", () => {
     }));
   });
 
+  it("searches active members by name or phone and clears stale selections and identity", async () => {
+    const searchableWorkspace = {
+      ...workspace,
+      members: [
+        { id: "U1", name: "张同学", phone: "13800000001" },
+        { id: "U2", name: "李同学", phone: "13900000002" }
+      ]
+    };
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/organization/events/E2/workspace") return searchableWorkspace;
+      return { rows: [] };
+    });
+    const wrapper = mount(OrganizationEventWorkspacePage, { props: { eventId: "E2" } });
+    await flushPromises();
+
+    await wrapper.get('[data-registration-source="member_registration"]').setValue();
+    const search = wrapper.get('[data-field="member-search"]');
+    await search.setValue("李同学");
+    expect(wrapper.get('[data-field="member-user-id"]').findAll("option").map((option) => option.text())).toEqual([
+      "请选择本组织有效成员",
+      "李同学 · 13900000002"
+    ]);
+
+    await search.setValue("0002");
+    await wrapper.get('[data-field="member-user-id"]').setValue("U2");
+    expect(wrapper.get('[data-field="athlete-name"]').element.value).toBe("李同学");
+    expect(wrapper.get('[data-field="athlete-phone"]').element.value).toBe("13900000002");
+
+    await search.setValue("");
+    await wrapper.get('[data-field="member-user-id"]').setValue("U1");
+    expect(wrapper.get('[data-field="athlete-name"]').element.value).toBe("张同学");
+    expect(wrapper.get('[data-field="athlete-phone"]').element.value).toBe("13800000001");
+
+    await search.setValue("0002");
+    expect(wrapper.get('[data-field="member-user-id"]').element.value).toBe("");
+    expect(wrapper.get('[data-field="athlete-name"]').element.value).toBe("");
+    expect(wrapper.get('[data-field="athlete-phone"]').element.value).toBe("");
+
+    await search.setValue("没有这个成员");
+    expect(wrapper.get('[data-state="member-search-empty"]').text()).toContain("未找到匹配的有效成员");
+
+    await search.setValue("");
+    await wrapper.get('[data-field="member-user-id"]').setValue("U1");
+    await wrapper.get('[data-registration-source="organization_proxy"]').setValue();
+    await wrapper.get('[data-registration-source="member_registration"]').setValue();
+    expect(wrapper.get('[data-field="member-search"]').element.value).toBe("");
+    expect(wrapper.get('[data-field="member-user-id"]').element.value).toBe("");
+    expect(wrapper.get('[data-field="athlete-name"]').element.value).toBe("");
+    expect(wrapper.get('[data-field="athlete-phone"]').element.value).toBe("");
+  });
+
   it("renders the exact grade dropdown and keeps the organization school editable", async () => {
     const exactGrades = ["一年级", "二年级", "三年级", "四年级", "五年级", "六年级", "初一", "初二", "初三", "高一", "高二", "高三", "职高一年级", "职高二年级", "职高三年级"];
     const exactWorkspace = {

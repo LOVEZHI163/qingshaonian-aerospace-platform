@@ -15,6 +15,7 @@ const props = defineProps({
   disabled: { type: Boolean, default: false }
 });
 const emit = defineEmits(["registered", "error"]);
+const memberSearch = ref("");
 const form = reactive({
   registrationSource: "",
   memberUserId: "",
@@ -35,6 +36,14 @@ const gradeOptions = computed(() => props.grades.flatMap((group) => group.grades
 const selectedProject = computed(() => props.projects.find((project) => project.id === form.projectId) || null);
 const selectedMember = computed(() => props.members.find((member) => member.id === form.memberUserId) || null);
 const memberMode = computed(() => form.registrationSource === "member_registration");
+const filteredMembers = computed(() => {
+  const query = memberSearch.value.trim().toLowerCase();
+  if (!query) return props.members;
+  return props.members.filter((member) => (
+    String(member.name || "").toLowerCase().includes(query)
+    || String(member.phone || "").toLowerCase().includes(query)
+  ));
+});
 const requiresSubmission = computed(() => !editing.value && selectedProject.value?.submissionMode === "image_video");
 const submitDisabled = computed(() => submitting.value
   || !form.projectId
@@ -68,13 +77,18 @@ watch(selectedMember, (member) => {
   if (!form.athlete.school) form.athlete.school = props.defaultSchool || "";
 });
 
-watch(() => form.registrationSource, (source) => {
+watch(filteredMembers, (members) => {
+  if (!memberMode.value || editing.value || !form.memberUserId) return;
+  if (!members.some((member) => member.id === form.memberUserId)) form.memberUserId = "";
+});
+
+watch(() => form.registrationSource, (source, previous) => {
   if (editing.value) return;
-  if (source === "organization_proxy") {
-    form.memberUserId = "";
-    form.athlete.name = "";
-    form.athlete.phone = "";
-  }
+  if (source === previous) return;
+  memberSearch.value = "";
+  form.memberUserId = "";
+  form.athlete.name = "";
+  form.athlete.phone = "";
 });
 
 watch(() => props.defaultSchool, (defaultSchool) => {
@@ -166,12 +180,19 @@ async function submit() {
       <legend>报名方式</legend>
       <label><input v-model="form.registrationSource" type="radio" value="member_registration" data-registration-source="member_registration" required />成员报名</label>
       <label><input v-model="form.registrationSource" type="radio" value="organization_proxy" data-registration-source="organization_proxy" required />组织代报名</label>
-      <label v-if="memberMode">选择成员
-        <select v-model="form.memberUserId" data-field="member-user-id" required>
-          <option value="" disabled>请选择本组织有效成员</option>
-          <option v-for="member in members" :key="member.id" :value="member.id">{{ member.name }} · {{ member.phone }}</option>
-        </select>
-      </label>
+      <div v-if="memberMode" class="organization-member-picker">
+        <label>搜索成员
+          <input v-model="memberSearch" type="search" data-field="member-search" placeholder="输入姓名或手机号" autocomplete="off" />
+        </label>
+        <label>选择成员
+          <select v-model="form.memberUserId" data-field="member-user-id" required>
+            <option value="" disabled>请选择本组织有效成员</option>
+            <option v-for="member in filteredMembers" :key="member.id" :value="member.id">{{ member.name }} · {{ member.phone }}</option>
+          </select>
+        </label>
+        <p v-if="members.length === 0" class="hint" data-state="member-search-empty">本组织暂无可报名的有效普通成员。</p>
+        <p v-else-if="filteredMembers.length === 0" class="hint" data-state="member-search-empty">未找到匹配的有效成员，请更换姓名或手机号。</p>
+      </div>
       <p class="hint">成员报名会关联该成员账号；组织代报名仅保存参赛者资料，不关联个人账号。</p>
     </fieldset>
     <div class="panel-title"><h3>{{ editing ? "编辑组织报名" : "组织报名" }}</h3></div>

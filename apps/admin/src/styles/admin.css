@@ -1700,8 +1700,25 @@ select:focus {
 }
 
 .organization-registration-source > label:has(select),
+.organization-registration-source .organization-member-picker,
 .organization-registration-source .hint {
   flex-basis: 100%;
+}
+
+.organization-member-picker {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(220px, 1.5fr);
+  gap: 10px;
+}
+
+.organization-member-picker label {
+  display: grid;
+  gap: 6px;
+}
+
+.organization-member-picker .hint {
+  grid-column: 1 / -1;
+  margin: 0;
 }
 
 .organization-event-workspace .table-wrap {
@@ -1711,7 +1728,8 @@ select:focus {
 
 @media (max-width: 768px) {
   .organization-event-workspace-layout,
-  .organization-event-summary-facts {
+  .organization-event-summary-facts,
+  .organization-member-picker {
     grid-template-columns: 1fr;
   }
 
