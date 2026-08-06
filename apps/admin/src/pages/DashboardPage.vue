@@ -21,7 +21,6 @@ const activeModule = ref(validModules.has(requestedModule) ? requestedModule : "
 
 const data = ref({
   event: {},
-  events: [],
   registrationWindow: { open: false, reason: "正在读取" },
   counts: { registrations: 0, pendingRegistrations: 0, pendingOrganizations: 0, draftCertificates: 0 },
   recentImports: [],

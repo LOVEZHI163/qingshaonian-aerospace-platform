@@ -47,7 +47,9 @@ const initialEventContext = initialView && SAFE_EVENT_ID.test(initialParams.get(
   : "";
 const initialEventId = initialEventContext;
 const adminEvents = ref([]);
+const adminProjects = ref([]);
 const adminEventId = ref(initialEventId);
+let adminEventsRequestSequence = 0;
 const initialContentId = initialView === "siteContent" && SAFE_EVENT_ID.test(initialParams.get("contentId") || "")
   ? initialParams.get("contentId")
   : "";
@@ -175,11 +177,15 @@ async function loadAccountEvents() {
 
 async function loadAdminEvents() {
   if (currentUser.value?.type !== "admin") return;
+  const requestSequence = ++adminEventsRequestSequence;
   try {
     const payload = await api("/api/admin/events");
+    if (requestSequence !== adminEventsRequestSequence) return;
     adminEvents.value = payload.rows || [];
-    if (adminEventId.value && !adminEvents.value.some((event) => event.id === adminEventId.value)) adminEventId.value = "";
+    adminProjects.value = payload.projects || [];
+    if (adminEventId.value && !adminEvents.value.some((event) => event.id === adminEventId.value)) setAdminEventId("");
   } catch (error) {
+    if (requestSequence !== adminEventsRequestSequence) return;
     message.value = error.message || "赛事列表加载失败，请稍后重试";
   }
 }
@@ -229,6 +235,13 @@ function targetView(user = currentUser.value) {
 
 async function loadEvent() {
   eventData.value = await api("/api/public/event");
+}
+
+async function refreshAdminEventContext() {
+  await Promise.all([loadEvent(), loadAdminEvents()]);
+  if (adminEventId.value && !adminEvents.value.some((event) => event.id === adminEventId.value)) {
+    setAdminEventId("");
+  }
 }
 
 async function verifyRelease() {
@@ -472,7 +485,7 @@ onMounted(async () => {
     <template #sidebar-footer><button type="button" class="ghost admin-logout-button" data-action="logout" aria-label="退出登录" title="退出登录" @click="logout"><span class="admin-nav-label">退出登录</span></button></template>
     <p v-if="message" class="message">{{ message }}</p>
     <DashboardPage v-if="currentView === 'overview'" :event-id="adminEventId" :events="adminEvents" @update:event-id="setAdminEventId" @navigate="navigateAdmin" />
-    <EventManagementPage v-else-if="currentView === 'events'" @event-changed="loadEvent" />
+    <EventManagementPage v-else-if="currentView === 'events'" :events="adminEvents" :projects="adminProjects" @event-changed="refreshAdminEventContext" />
     <SiteContentPage v-else-if="currentView === 'siteContent'" ref="siteContentPage" :initial-content-id="siteContentId" @content-id="siteContentId = $event || ''" @navigate="navigateAdmin" />
     <OrganizationManagementPage v-else-if="currentView === 'organizations'" />
     <RegistrationManagementPage :key="`registration-management:${adminEventId}`" v-else-if="currentView === 'registration'" :event-id="adminEventId" :event-archived="adminEvents.find((event) => event.id === adminEventId)?.status === 'archived'" @open-certificates="openCertificateManagement" />

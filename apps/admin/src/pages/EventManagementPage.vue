@@ -1,11 +1,15 @@
 <script setup>
-import { computed, nextTick, onMounted, reactive, ref } from "vue";
+import { computed, nextTick, onMounted, reactive, ref, watch } from "vue";
 
 import { ApiError, api } from "../lib/api.js";
 import { loadAdminRegistrations } from "../lib/admin-registrations.js";
 import ResourceCleanupPanel from "../components/ResourceCleanupPanel.vue";
 
 const emit = defineEmits(["event-changed"]);
+const props = defineProps({
+  events: { type: Array, default: null },
+  projects: { type: Array, default: null }
+});
 const GROUPS = ["小学低段", "小学高段", "中学组", "职高/高中组"];
 const EVENT_FIELDS = ["name", "theme", "dateLabel", "venue", "contact", "registrationStartAt", "registrationEndAt", "registrationMode"];
 const PROJECT_FIELDS = ["name", "type", "category", "enabled", "instructorRequired", "displayOrder", "allowedGroups", "submissionMode"];
@@ -28,6 +32,7 @@ const projectFormElement = ref(null);
 const projectNameInput = ref(null);
 
 const selectedEvent = computed(() => events.value.find((row) => row.id === selectedId.value) || null);
+const externallyManaged = computed(() => Array.isArray(props.events) && Array.isArray(props.projects));
 const selectedArchived = computed(() => Boolean(
   selectedEvent.value?.archivedAt || selectedEvent.value?.status === "archived"
 ));
@@ -156,20 +161,27 @@ function registrationCount(projectId) {
   return registrations.value.filter((row) => row.projectId === projectId).length;
 }
 
+async function applyEventCatalog(eventRows, projectRows, { preserveSelection = true } = {}) {
+  events.value = [...(eventRows || [])];
+  projects.value = [...(projectRows || [])];
+  const nextId = preserveSelection && events.value.some((row) => row.id === selectedId.value)
+    ? selectedId.value
+    : events.value.find((row) => row.isCurrent)?.id || events.value[0]?.id || "";
+  if (nextId) {
+    selectEvent(nextId);
+    registrations.value = await loadAdminRegistrations({ eventId: nextId });
+  } else {
+    selectedId.value = "";
+    registrations.value = [];
+  }
+}
+
 async function loadEvents({ preserveSelection = true } = {}) {
   loading.value = true;
   pageError.value = "";
   try {
     const eventPayload = await api("/api/admin/events");
-    events.value = eventPayload.rows || [];
-    projects.value = eventPayload.projects || [];
-    const nextId = preserveSelection && events.value.some((row) => row.id === selectedId.value)
-      ? selectedId.value
-      : events.value.find((row) => row.isCurrent)?.id || events.value[0]?.id || "";
-    if (nextId) {
-      selectEvent(nextId);
-      registrations.value = await loadAdminRegistrations({ eventId: nextId });
-    } else registrations.value = [];
+    await applyEventCatalog(eventPayload.rows, eventPayload.projects, { preserveSelection });
   } catch (error) {
     pageError.value = error.message || "赛事加载失败";
   } finally {
@@ -202,7 +214,7 @@ async function perform(action, successText, { changed = true } = {}) {
   success.value = "";
   try {
     await action();
-    await loadEvents();
+    if (!externallyManaged.value) await loadEvents();
     success.value = successText;
     if (changed) emit("event-changed");
   } catch (error) {
@@ -284,7 +296,7 @@ async function archiveSelected() {
 
 async function eventDeleted() {
   selectedId.value = "";
-  await loadEvents({ preserveSelection: false });
+  if (!externallyManaged.value) await loadEvents({ preserveSelection: false });
   managementLevel.value = "list";
   success.value = "历史赛事已彻底删除";
   emit("event-changed");
@@ -334,7 +346,25 @@ async function deleteProject(row) {
   await perform(() => api(`/api/admin/projects/${row.id}`, { method: "DELETE" }), "赛项已删除");
 }
 
-onMounted(() => loadEvents({ preserveSelection: false }));
+watch(
+  () => [props.events, props.projects],
+  async ([eventRows, projectRows]) => {
+    if (!externallyManaged.value) return;
+    loading.value = true;
+    pageError.value = "";
+    try {
+      await applyEventCatalog(eventRows, projectRows);
+    } catch (error) {
+      pageError.value = error.message || "赛事加载失败";
+    } finally {
+      loading.value = false;
+    }
+  },
+  { immediate: true }
+);
+onMounted(() => {
+  if (!externallyManaged.value) void loadEvents({ preserveSelection: false });
+});
 </script>
 
 <template>

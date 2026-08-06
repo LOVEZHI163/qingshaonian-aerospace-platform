@@ -64,6 +64,20 @@ describe("DashboardPage", () => {
     expect(fallbackWrapper.get('[data-active-module="operations"]').exists()).toBe(true);
   });
 
+  it("renders only the current administrator event list instead of cached dashboard event names", async () => {
+    apiMock.mockResolvedValue({
+      ...dashboard,
+      events: [{ id: "E-DELETED", name: "Deleted cached event" }]
+    });
+    const wrapper = mount(DashboardPage, {
+      props: { eventId: "E1", events: [{ id: "E1", name: "Current event" }] }
+    });
+    await flushPromises();
+
+    expect(wrapper.find('option[value="E1"]').exists()).toBe(true);
+    expect(wrapper.find('option[value="E-DELETED"]').exists()).toBe(false);
+  });
+
   it("emits navigation targets from review shortcuts", async () => {
     const wrapper = mount(DashboardPage);
     await flushPromises();

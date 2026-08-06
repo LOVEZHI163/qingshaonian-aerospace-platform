@@ -2,7 +2,7 @@ import { flushPromises, mount } from "@vue/test-utils";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { apiMock } = vi.hoisted(() => ({ apiMock: vi.fn() }));
-vi.mock("../../lib/api.js", () => ({ api: apiMock }));
+vi.mock("../../lib/api.js", () => ({ api: apiMock, ApiError: class ApiError extends Error {} }));
 
 import EventManagementPage from "../EventManagementPage.vue";
 
@@ -143,6 +143,36 @@ describe("EventManagementPage", () => {
     expect(wrapper.emitted("event-changed")).toHaveLength(1);
   });
 
+  it("does not announce an event change when the mutation fails", async () => {
+    apiMock.mockImplementation(async (path, options = {}) => {
+      if (path === "/api/admin/events") return { rows: [event], projects: [project] };
+      if (path === "/api/admin/events/E1/registrations?pageSize=100") return { rows: [], total: 0, page: 1, pageSize: 100 };
+      if (path === "/api/admin/events/E1" && options.method === "PATCH") throw new Error("save failed");
+      return { row: event };
+    });
+    const wrapper = mount(EventManagementPage);
+    await flushPromises();
+    await openEventDetails(wrapper);
+
+    await wrapper.get('[data-mode="force_closed"]').trigger("click");
+    await flushPromises();
+
+    expect(wrapper.emitted("event-changed")).toBeUndefined();
+  });
+
+  it("announces a saved event edit exactly once", async () => {
+    mockLoads();
+    const wrapper = mount(EventManagementPage);
+    await flushPromises();
+    await openEventDetails(wrapper);
+
+    await wrapper.get("form.event-form").trigger("submit");
+    await flushPromises();
+
+    expect(apiMock).toHaveBeenCalledWith("/api/admin/events/E1", expect.objectContaining({ method: "PATCH" }));
+    expect(wrapper.emitted("event-changed")).toHaveLength(1);
+  });
+
   it("offers submission modes and saves the selected project submission mode", async () => {
     mockLoads();
     const wrapper = mount(EventManagementPage);
@@ -176,6 +206,7 @@ describe("EventManagementPage", () => {
       method: "POST",
       body: JSON.stringify({ name: "2027赛事" })
     });
+    expect(wrapper.emitted("event-changed")).toHaveLength(1);
   });
 
   it("offers disable instead of delete when a project has registrations", async () => {
@@ -265,6 +296,7 @@ describe("EventManagementPage", () => {
 
     expect(apiMock).toHaveBeenCalledWith("/api/admin/events", expect.objectContaining({ method: "POST" }));
     expect(wrapper.text()).toContain("赛事草稿已创建");
+    expect(wrapper.emitted("event-changed")).toHaveLength(1);
   });
 
   it("uses matching module headers and opens a blank project form from the top shortcut", async () => {
@@ -299,6 +331,53 @@ describe("EventManagementPage", () => {
 
     expect(confirm).toHaveBeenCalledTimes(2);
     expect(apiMock).toHaveBeenCalledWith("/api/admin/events/E1/archive", { method: "POST" });
+    expect(wrapper.emitted("event-changed")).toHaveLength(1);
+  });
+
+  it("announces a permanent event deletion exactly once", async () => {
+    const archived = { ...event, id: "E-OLD", name: "Archived event", status: "archived", isCurrent: false };
+    let deleted = false;
+    apiMock.mockImplementation(async (path, options = {}) => {
+      if (path === "/api/admin/events") return deleted ? { rows: [], projects: [] } : { rows: [archived], projects: [] };
+      if (path === "/api/admin/events/E-OLD/registrations?pageSize=100") return { rows: [], total: 0, page: 1, pageSize: 100 };
+      if (path === "/api/admin/events/E-OLD/storage") return { certificateFiles: 0, importFiles: 0, totalBytes: 0 };
+      if (path === "/api/admin/events/E-OLD" && options.method === "DELETE") {
+        deleted = true;
+        return { deletedEventId: "E-OLD", deletedFiles: 0, failedFiles: [] };
+      }
+      return { row: archived };
+    });
+    const wrapper = mount(EventManagementPage);
+    await flushPromises();
+    await openEventDetails(wrapper, "E-OLD");
+
+    await wrapper.get('[data-action="open-delete"]').trigger("click");
+    await wrapper.get('[data-testid="danger-confirm-name"]').setValue("Archived event");
+    await wrapper.get('[data-action="confirm-danger"]').trigger("click");
+    await flushPromises();
+
+    expect(wrapper.emitted("event-changed")).toHaveLength(1);
+  });
+
+  it("does not announce a permanent deletion when the delete request fails", async () => {
+    const archived = { ...event, id: "E-OLD", name: "Archived event", status: "archived", isCurrent: false };
+    apiMock.mockImplementation(async (path, options = {}) => {
+      if (path === "/api/admin/events") return { rows: [archived], projects: [] };
+      if (path === "/api/admin/events/E-OLD/registrations?pageSize=100") return { rows: [], total: 0, page: 1, pageSize: 100 };
+      if (path === "/api/admin/events/E-OLD/storage") return { certificateFiles: 0, importFiles: 0, totalBytes: 0 };
+      if (path === "/api/admin/events/E-OLD" && options.method === "DELETE") throw new Error("delete failed");
+      return { row: archived };
+    });
+    const wrapper = mount(EventManagementPage);
+    await flushPromises();
+    await openEventDetails(wrapper, "E-OLD");
+
+    await wrapper.get('[data-action="open-delete"]').trigger("click");
+    await wrapper.get('[data-testid="danger-confirm-name"]').setValue("Archived event");
+    await wrapper.get('[data-action="confirm-danger"]').trigger("click");
+    await flushPromises();
+
+    expect(wrapper.emitted("event-changed")).toBeUndefined();
   });
 
   it("shows resource cleanup controls only for the selected archived event", async () => {
