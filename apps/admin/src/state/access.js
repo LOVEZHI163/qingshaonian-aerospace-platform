@@ -6,6 +6,17 @@ export const accessMessages = Object.freeze({
   ORGANIZATION_OWNER_REQUIRED: "当前账号没有可管理的组织"
 });
 
+const organizationRestrictionCodes = new Set([
+  "ORGANIZATION_REVIEW_PENDING",
+  "ORGANIZATION_REJECTED",
+  "ORGANIZATION_DISABLED",
+  "ORGANIZATION_OWNER_REQUIRED"
+]);
+
+export function isOrganizationRestrictionError(error) {
+  return organizationRestrictionCodes.has(error?.code);
+}
+
 export function accessMessage(error, fallback = "操作失败，请稍后重试") {
   return accessMessages[error?.code] || error?.message || fallback;
 }

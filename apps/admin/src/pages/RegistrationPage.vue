@@ -24,7 +24,8 @@ let uploadSessionRequest = 0;
 const form = reactive({ eventId: props.eventId, athlete: { name: "", school: "", grade: "", phone: "" }, projectId: "", instructor: "" });
 const ordinaryUser = computed(() => props.accountType === "ordinary");
 const eligibility = computed(() => context.value?.eligibility || { eligible: false, code: "ACTIVE_ORGANIZATION_REQUIRED", organization: null });
-const eligibleOrganization = computed(() => eligibility.value.eligible ? eligibility.value.organization : null);
+const registrationEligible = computed(() => eligibility.value.eligible === true && Boolean(String(eligibility.value.organization?.id || "").trim()));
+const eligibleOrganization = computed(() => registrationEligible.value ? eligibility.value.organization : null);
 const eligibilityMessage = computed(() => accessMessage({ code: eligibility.value.code }, "请先加入已通过审核的组织后再报名"));
 const hasEventContext = computed(() => Boolean(String(props.eventId || "").trim()));
 const registrationOpen = computed(() => !ordinaryUser.value || props.registrationState === "" || props.registrationState === "open");
@@ -101,7 +102,7 @@ async function submit() {
     emit("error", "请从组织赛事工作台提交报名");
     return;
   }
-  if (!eligibility.value.eligible || !eligibleOrganization.value?.id) {
+  if (!registrationEligible.value) {
     emit("error", eligibilityMessage.value);
     return;
   }
@@ -151,7 +152,7 @@ onMounted(async () => {
   <section v-if="!hasEventContext" class="content-grid registration-page"><div class="panel event-context-empty"><h3>请先选择赛事</h3><p class="hint">报名必须在明确的赛事上下文中进行。请返回赛事中心后再继续。</p></div></section>
   <section v-else-if="!registrationOpen" class="content-grid registration-page"><div class="panel event-context-empty"><h3>当前不可报名</h3><p class="hint">{{ registrationStateMessage }}</p></div></section>
   <section v-else-if="loading" class="content-grid registration-page"><div class="panel event-context-empty"><h3>正在加载报名资料…</h3></div></section>
-  <section v-else-if="ordinaryUser && !eligibility.eligible" class="content-grid registration-page"><div class="panel registration-eligibility-card" data-testid="registration-eligibility-guidance"><h3>请先加入组织</h3><p class="hint">{{ eligibilityMessage }}</p><button type="button" class="primary" data-action="open-my-organization" @click="emit('navigate', 'myOrganization')">前往“我的组织”</button></div></section>
+  <section v-else-if="ordinaryUser && !registrationEligible" class="content-grid registration-page"><div class="panel registration-eligibility-card" data-testid="registration-eligibility-guidance"><h3>请先加入组织</h3><p class="hint">{{ eligibilityMessage }}</p><button type="button" class="primary" data-action="open-my-organization" @click="emit('navigate', 'myOrganization')">前往“我的组织”</button></div></section>
   <section v-else class="content-grid registration-page"><form class="panel form-panel" @submit.prevent="submit">
     <div class="panel-title"><h3>报名端<span v-if="context.event?.name"> · {{ context.event.name }}</span></h3><span v-if="selectedGroup">{{ selectedGroup }}</span></div>
     <template>

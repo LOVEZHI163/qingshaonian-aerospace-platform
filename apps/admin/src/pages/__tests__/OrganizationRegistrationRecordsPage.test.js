@@ -85,6 +85,14 @@ describe("OrganizationRegistrationRecordsPage", () => {
     expect(wrapper.get('[data-action="organization-records-next"]').attributes("disabled")).toBeUndefined();
   });
 
+  it("reports a stable organization restriction to the application shell", async () => {
+    apiMock.mockRejectedValue(Object.assign(new Error("stale session"), { code: "ORGANIZATION_DISABLED" }));
+    const wrapper = mount(OrganizationRegistrationRecordsPage);
+    await flushPromises();
+
+    expect(wrapper.emitted("access-denied")?.[0]?.[0]).toMatchObject({ code: "ORGANIZATION_DISABLED" });
+  });
+
   it("shows an empty state when the organization has no matching registrations", async () => {
     apiMock.mockResolvedValue({ ...payload, rows: [], total: 0 });
     const wrapper = mount(OrganizationRegistrationRecordsPage);

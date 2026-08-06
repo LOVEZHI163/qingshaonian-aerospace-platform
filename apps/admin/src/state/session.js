@@ -41,6 +41,10 @@ async function restore() {
     return payload.user;
   } catch (error) {
     if (error.status === 401) clear();
+    else if (user.value?.type === "organization") {
+      organizations.value = [];
+      accountEvents.value = [];
+    }
     return null;
   } finally {
     restoring.value = false;

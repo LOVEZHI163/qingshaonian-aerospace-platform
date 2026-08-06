@@ -167,7 +167,7 @@ async function submit() {
     }
     emit("registered", payload);
   } catch (error) {
-    emit("error", error.message || "组织报名提交失败");
+    emit("error", error);
   } finally {
     submitting.value = false;
   }

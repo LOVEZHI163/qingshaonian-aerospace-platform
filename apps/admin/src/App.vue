@@ -22,7 +22,7 @@ import RegistrationPage from "./pages/RegistrationPage.vue";
 import RegistrationRecordsPage from "./pages/RegistrationRecordsPage.vue";
 import SiteContentPage from "./pages/SiteContentPage.vue";
 import UserManagementPage from "./pages/UserManagementPage.vue";
-import { organizationAccessFor } from "./state/access.js";
+import { accessMessage, isOrganizationRestrictionError, organizationAccessFor } from "./state/access.js";
 import { useSession } from "./state/session.js";
 
 const session = useSession();
@@ -373,10 +373,20 @@ async function refreshPersonalOrganization() {
   await loadAccountEvents();
 }
 
-function handleWorkspaceAccessDenied(error) {
-  selectEventContext("");
-  currentView.value = "eventCenter";
-  handleError(error?.message || "无权访问该赛事工作台");
+async function handleOrganizationBusinessError(error) {
+  if (currentUser.value?.type === "organization" && isOrganizationRestrictionError(error)) {
+    const deniedMessage = accessMessage(error, "当前组织暂时无法使用该功能");
+    selectEventContext("");
+    await session.restore();
+    currentView.value = "organization";
+    message.value = deniedMessage;
+    return;
+  }
+  if ([403, 404].includes(error?.status) && currentView.value === "organizationWorkspace") {
+    selectEventContext("");
+    currentView.value = "eventCenter";
+  }
+  handleError(accessMessage(error, "组织业务操作失败，请稍后重试"));
 }
 
 function useRegistrationEvent(event) {
@@ -486,11 +496,11 @@ onMounted(async () => {
       <RegistrationPage v-else-if="currentUser.type === 'ordinary' && currentView === 'registration'" :event-id="registrationEventId" :account-type="currentUser.type" :registration-state="selectedAccountEvent?.registrationState || ''" :fallback-context="{ projects: eventData.projects }" @context="useRegistrationEvent" @registered="message = '报名已提交，等待审核'" @navigate="navigateUser" @error="handleError" />
       <MyOrganizationPage v-else-if="currentView === 'myOrganization'" @organization-changed="refreshPersonalOrganization" @error="handleError" />
       <RegistrationRecordsPage :key="`records:${recordsEventId}`" v-else-if="currentView === 'registrationRecords'" :event-id="recordsEventId" @error="handleError" />
-      <OrganizationCertificatesPage v-else-if="currentUser.type === 'organization' && currentView === 'certificates'" />
+      <OrganizationCertificatesPage v-else-if="currentUser.type === 'organization' && currentView === 'certificates'" @access-denied="handleOrganizationBusinessError" />
       <MyCertificatesPage :key="`certificates:${certificateEventId}`" v-else-if="currentView === 'certificates'" :event-id="certificateEventId" @event-id="setCertificateEventId" @error="handleError" />
-      <OrganizationEventWorkspacePage v-else-if="currentView === 'organizationWorkspace'" :event-id="selectedEventId" @back-to-events="navigateUser('eventCenter')" @context="useRegistrationEvent" @access-denied="handleWorkspaceAccessDenied" @error="handleError" />
-      <OrganizationRegistrationRecordsPage v-else-if="currentView === 'organizationRecords'" @back-to-events="navigateUser('eventCenter')" />
-      <OrganizationConsolePage v-else-if="currentView === 'organization'" @error="handleError" />
+      <OrganizationEventWorkspacePage v-else-if="currentView === 'organizationWorkspace'" :event-id="selectedEventId" @back-to-events="navigateUser('eventCenter')" @context="useRegistrationEvent" @access-denied="handleOrganizationBusinessError" @error="handleOrganizationBusinessError" />
+      <OrganizationRegistrationRecordsPage v-else-if="currentView === 'organizationRecords'" @back-to-events="navigateUser('eventCenter')" @access-denied="handleOrganizationBusinessError" />
+      <OrganizationConsolePage v-else-if="currentView === 'organization'" @error="handleOrganizationBusinessError" />
       <PasswordSettingsPage v-else-if="['password', 'passwordSettings'].includes(currentView)" @changed="passwordChanged" />
     </main>
   </div>

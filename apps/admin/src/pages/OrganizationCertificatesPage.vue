@@ -3,6 +3,9 @@ import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 
 import { api, apiBlob, apiUrl } from "../lib/api.js";
 import { createBlobDownloadManager } from "../lib/download.js";
+import { isOrganizationRestrictionError } from "../state/access.js";
+
+const emit = defineEmits(["access-denied"]);
 
 const rows = ref([]);
 const loading = ref(true);
@@ -29,6 +32,7 @@ async function loadCertificates() {
   try {
     rows.value = (await api("/api/organization/certificates")).rows || [];
   } catch (requestError) {
+    if (isOrganizationRestrictionError(requestError)) emit("access-denied", requestError);
     rows.value = [];
     error.value = safeError(requestError, "证书加载失败，请重试");
   } finally {
@@ -47,6 +51,7 @@ async function download(certificate) {
     const blob = await apiBlob(certificate.downloadUrl);
     downloads.save(blob, certificate.fileName || certificate.title || "证书");
   } catch (requestError) {
+    if (isOrganizationRestrictionError(requestError)) emit("access-denied", requestError);
     error.value = safeError(requestError, "证书下载失败，请重试");
   }
 }

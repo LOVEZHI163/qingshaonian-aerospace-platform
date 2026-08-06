@@ -41,7 +41,11 @@ const history = computed(() => memberships.value.filter((row) => row.status === 
 
 function reportError(error, fallback) {
   message.value = accessMessage(error, fallback);
-  emit("error", message.value);
+  emit("error", error);
+}
+
+function handleResubmissionError(error) {
+  message.value = accessMessage(error, "组织资料重新提交失败");
 }
 
 function calculateSummary(rows) {
@@ -160,7 +164,7 @@ onMounted(load);
     <p v-if="ownedOrganization?.rejectReason" class="hint">驳回原因：{{ ownedOrganization.rejectReason }}</p>
     <template v-if="ownedOrganization?.reviewStatus === 'rejected'">
       <button type="button" class="dark" data-action="resubmit-organization" @click="resubmitOpen = !resubmitOpen">重新提交资质</button>
-      <OrganizationRegistrationForm v-if="resubmitOpen" endpoint="/api/me/organization" method="PATCH" submit-label="重新提交组织资料" resubmission :initial-form="{ name: session.user.value?.name, phone: session.user.value?.phone, organizationName: ownedOrganization?.name, creditCode: ownedOrganization?.creditCode }" @registered="resubmitted" @error="message = $event" />
+      <OrganizationRegistrationForm v-if="resubmitOpen" endpoint="/api/me/organization" method="PATCH" submit-label="重新提交组织资料" resubmission :initial-form="{ name: session.user.value?.name, phone: session.user.value?.phone, organizationName: ownedOrganization?.name, creditCode: ownedOrganization?.creditCode }" @registered="resubmitted" @error="handleResubmissionError" />
     </template>
     <p v-if="message" class="message" role="alert">{{ message }}</p>
   </section>

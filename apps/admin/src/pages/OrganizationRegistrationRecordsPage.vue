@@ -5,8 +5,9 @@ import OrganizationAthleteRegistrationForm from "../components/OrganizationAthle
 import SubmissionAssetUploader from "../components/SubmissionAssetUploader.vue";
 import { api, apiBlob, apiUrl } from "../lib/api.js";
 import { createBlobDownloadManager } from "../lib/download.js";
+import { isOrganizationRestrictionError } from "../state/access.js";
 
-const emit = defineEmits(["back-to-events"]);
+const emit = defineEmits(["back-to-events", "access-denied"]);
 
 const filters = reactive({ q: "", eventId: "", projectId: "", status: "", page: 1, pageSize: 25 });
 const rows = ref([]);
@@ -56,6 +57,12 @@ function safeMessage(error, fallback) {
   const message = String(typeof error === "string" ? error : error?.message || "").trim();
   if (!message || /<html|<!doctype|cannot\s+(?:get|post|put|patch|delete)/i.test(message)) return fallback;
   return message;
+}
+
+function reportAccessDenied(error) {
+  if (!isOrganizationRestrictionError(error)) return false;
+  emit("access-denied", error);
+  return true;
 }
 
 function recordsErrorMessage(error) {
@@ -114,6 +121,7 @@ async function loadRecords() {
     filterOptions.projects = payload.filterOptions?.projects || [];
   } catch (requestError) {
     if (currentRequest !== requestId) return;
+    reportAccessDenied(requestError);
     rows.value = [];
     total.value = 0;
     error.value = recordsErrorMessage(requestError);
@@ -146,6 +154,7 @@ async function downloadSubmissionAsset(row, kind, asset) {
     const blob = await apiBlob(organizationAssetPath(row, kind));
     downloads.save(blob, blob.fileName || asset.originalName);
   } catch (downloadError) {
+    reportAccessDenied(downloadError);
     lastDownload.value = { row, kind, asset };
     materialError.value = materialErrorMessage(downloadError);
   }
@@ -186,6 +195,7 @@ async function editRegistration(row) {
     editingWorkspace.value = workspace || {};
   } catch (workspaceError) {
     if (currentRequest !== editRequestId || editingRegistration.value?.id !== row.id) return;
+    reportAccessDenied(workspaceError);
     editingError.value = workspaceErrorMessage(workspaceError);
   } finally {
     if (currentRequest === editRequestId) editingLoading.value = false;
@@ -228,6 +238,7 @@ async function createReplacementSession(row) {
     replacementSession.value = session;
   } catch (sessionError) {
     if (currentRequest !== replacementRequestId || replacingRegistration.value?.id !== row.id) return;
+    reportAccessDenied(sessionError);
     replacementError.value = replacementSessionErrorMessage(sessionError);
   } finally {
     if (currentRequest === replacementRequestId) replacementLoading.value = false;
@@ -265,6 +276,7 @@ async function confirmReplacement() {
     replacementResult.value = "作品材料已替换，报名已恢复待审核";
     cancelReplacement({ keepResult: true });
   } catch (replaceError) {
+    reportAccessDenied(replaceError);
     if (currentReplacement()) replacementError.value = replacementAssetErrorMessage(replaceError);
   } finally {
     if (currentReplacement()) replacementLoading.value = false;

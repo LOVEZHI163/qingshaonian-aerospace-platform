@@ -71,6 +71,14 @@ describe("OrganizationEventWorkspacePage", () => {
     expect(wrapper.emitted("access-denied")[0][0]).toMatchObject({ status });
   });
 
+  it("emits access-denied for a stable organization restriction code without an HTTP status", async () => {
+    apiMock.mockRejectedValueOnce(Object.assign(new Error("stale session"), { code: "ORGANIZATION_REJECTED" }));
+    const wrapper = mount(OrganizationEventWorkspacePage, { props: { eventId: "E2" } });
+    await flushPromises();
+
+    expect(wrapper.emitted("access-denied")?.[0]?.[0]).toMatchObject({ code: "ORGANIZATION_REJECTED" });
+  });
+
   it("submits a new organization registration from the retained form", async () => {
     apiMock.mockImplementation(async (path, options) => {
       if (path === "/api/organization/events/E2/workspace") return workspace;

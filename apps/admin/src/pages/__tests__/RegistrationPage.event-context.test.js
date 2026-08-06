@@ -141,6 +141,26 @@ describe("RegistrationPage selected event context", () => {
     expect(apiMock).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ["missing organization", null],
+    ["empty organization", {}],
+    ["blank organization id", { id: "", name: "Invalid organization" }]
+  ])("fails closed when eligibility is true with %s", async (_label, organization) => {
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/me/registration-context?eventId=E2") {
+        return { ...context(), organizations: [], eligibility: { eligible: true, code: "OK", organization } };
+      }
+      if (path.startsWith("/api/schools")) return { rows: [] };
+      throw new Error(`unexpected API path ${path}`);
+    });
+
+    const wrapper = mount(RegistrationPage, { props: { eventId: "E2", accountType: "ordinary" } });
+    await flushPromises();
+
+    expect(wrapper.find('[data-testid="registration-eligibility-guidance"]').exists()).toBe(true);
+    expect(wrapper.find("form.form-panel").exists()).toBe(false);
+  });
+
   it("never falls back to the legacy registration endpoint for a non-ordinary account", async () => {
     const wrapper = mount(RegistrationPage, { props: { eventId: "E2", accountType: "organization" } });
     await flushPromises();

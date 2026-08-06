@@ -200,6 +200,30 @@ describe("OrganizationConsolePage", () => {
     expect(apiMock).not.toHaveBeenCalledWith("/api/organization/memberships");
   });
 
+  it("uses the shared access-code message when qualification resubmission fails", async () => {
+    const rejectedOrganization = { ...organization, reviewStatus: "rejected", rejectReason: "Please resubmit" };
+    session.organizations.value = [rejectedOrganization];
+    apiMock.mockImplementation(async (path, options) => {
+      if (path === "/api/me/organizations") return { rows: [rejectedOrganization] };
+      if (path === "/api/me/organization" && options?.method === "PATCH") {
+        throw Object.assign(new Error("raw server wording"), { code: "ORGANIZATION_DISABLED" });
+      }
+      return { rows: [] };
+    });
+    const wrapper = mount(OrganizationConsolePage);
+    await flushPromises();
+    await wrapper.get('[data-action="resubmit-organization"]').trigger("click");
+    await wrapper.get('[data-testid="organization-credit-code"]').setValue("123456789012345678");
+    const fileInput = wrapper.get('input[type="file"]');
+    Object.defineProperty(fileInput.element, "files", { configurable: true, value: [new File(["credential"], "credential.png", { type: "image/png" })] });
+    await fileInput.trigger("change");
+    await wrapper.get('form[data-register="organization"]').trigger("submit");
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("组织已被平台停用");
+    expect(wrapper.text()).not.toContain("raw server wording");
+  });
+
   it("explains when platform administration has disabled an approved organization", async () => {
     const disabledOrganization = { ...organization, status: "disabled", reviewStatus: "approved" };
     session.organizations.value = [disabledOrganization];

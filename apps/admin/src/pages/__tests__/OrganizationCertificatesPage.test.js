@@ -70,4 +70,12 @@ describe("OrganizationCertificatesPage", () => {
     await flushPromises();
     expect(wrapper.text()).toContain("往届赛事");
   });
+
+  it("reports a stable organization restriction to the application shell", async () => {
+    apiMock.mockRejectedValueOnce(Object.assign(new Error("stale session"), { code: "ORGANIZATION_REVIEW_PENDING" }));
+    const wrapper = mount(OrganizationCertificatesPage);
+    await flushPromises();
+
+    expect(wrapper.emitted("access-denied")?.[0]?.[0]).toMatchObject({ code: "ORGANIZATION_REVIEW_PENDING" });
+  });
 });
