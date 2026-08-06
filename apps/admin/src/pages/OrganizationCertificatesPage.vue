@@ -1,8 +1,8 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 
-import { api, apiBlob, apiUrl } from "../lib/api.js";
-import { createBlobDownloadManager } from "../lib/download.js";
+import { api, apiBlob } from "../lib/api.js";
+import { createBlobDownloadManager, createBlobPreviewManager } from "../lib/download.js";
 import { isOrganizationRestrictionError } from "../state/access.js";
 
 const emit = defineEmits(["access-denied"]);
@@ -12,6 +12,7 @@ const loading = ref(true);
 const error = ref("");
 const eventFilter = ref("all");
 const downloads = createBlobDownloadManager();
+const previews = createBlobPreviewManager();
 
 const eventOptions = computed(() => [...new Map(rows.value
   .filter((row) => row.eventId)
@@ -40,9 +41,15 @@ async function loadCertificates() {
   }
 }
 
-function preview(certificate) {
+async function preview(certificate) {
   if (certificate.cleanedAt || !certificate.previewUrl) return;
-  window.open(apiUrl(certificate.previewUrl), "_blank", "noopener,noreferrer");
+  error.value = "";
+  try {
+    previews.open(await apiBlob(certificate.previewUrl));
+  } catch (requestError) {
+    if (isOrganizationRestrictionError(requestError)) emit("access-denied", requestError);
+    error.value = safeError(requestError, "证书预览失败，请重试");
+  }
 }
 
 async function download(certificate) {
@@ -57,7 +64,10 @@ async function download(certificate) {
 }
 
 onMounted(loadCertificates);
-onBeforeUnmount(() => downloads.dispose());
+onBeforeUnmount(() => {
+  downloads.dispose();
+  previews.dispose();
+});
 </script>
 
 <template>

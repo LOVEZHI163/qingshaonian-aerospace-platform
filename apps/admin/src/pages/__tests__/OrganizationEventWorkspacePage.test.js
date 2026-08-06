@@ -79,6 +79,26 @@ describe("OrganizationEventWorkspacePage", () => {
     expect(wrapper.emitted("access-denied")?.[0]?.[0]).toMatchObject({ code: "ORGANIZATION_REJECTED" });
   });
 
+  it("propagates a stable restriction from upload-session creation", async () => {
+    const imageWorkspace = {
+      ...workspace,
+      projects: [{ id: "P-IMAGE", name: "Artwork", type: "individual", allowedGroups: ["Primary"], submissionMode: "image_video" }]
+    };
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/organization/events/E2/workspace") return imageWorkspace;
+      if (path === "/api/organization/events/E2/projects/P-IMAGE/upload-sessions") {
+        throw Object.assign(new Error("stale session"), { code: "ORGANIZATION_DISABLED" });
+      }
+      return { rows: [] };
+    });
+    const wrapper = mount(OrganizationEventWorkspacePage, { props: { eventId: "E2" } });
+    await flushPromises();
+    await wrapper.get('[data-field="athlete-grade"]').setValue("Grade 5");
+    await flushPromises();
+
+    expect(wrapper.emitted("access-denied")?.[0]?.[0]).toMatchObject({ code: "ORGANIZATION_DISABLED" });
+  });
+
   it("submits a new organization registration from the retained form", async () => {
     apiMock.mockImplementation(async (path, options) => {
       if (path === "/api/organization/events/E2/workspace") return workspace;

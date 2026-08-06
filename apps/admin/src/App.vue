@@ -164,6 +164,10 @@ async function loadAccountEvents() {
     await session.loadAccountEvents?.();
     return true;
   } catch (error) {
+    if (currentUser.value?.type === "organization" && isOrganizationRestrictionError(error)) {
+      await handleOrganizationBusinessError(error);
+      return false;
+    }
     message.value = error.message || "赛事列表加载失败，请稍后重试";
     return false;
   }
@@ -492,7 +496,7 @@ onMounted(async () => {
         <div><h2>{{ userHeaderEvent.name || "赛事报名平台" }}</h2><p>{{ userHeaderEvent.date }} · {{ userHeaderEvent.venue }} · 报名截止 {{ userHeaderEvent.registrationDeadline }}</p></div>
       </header>
       <p v-if="message" class="message">{{ message }}</p>
-      <EventCenterPage v-if="currentView === 'eventCenter'" :account-type="currentUser.type" @open-event="openAccountEvent" />
+      <EventCenterPage v-if="currentView === 'eventCenter'" :account-type="currentUser.type" @open-event="openAccountEvent" @access-denied="handleOrganizationBusinessError" />
       <RegistrationPage v-else-if="currentUser.type === 'ordinary' && currentView === 'registration'" :event-id="registrationEventId" :account-type="currentUser.type" :registration-state="selectedAccountEvent?.registrationState || ''" :fallback-context="{ projects: eventData.projects }" @context="useRegistrationEvent" @registered="message = '报名已提交，等待审核'" @navigate="navigateUser" @error="handleError" />
       <MyOrganizationPage v-else-if="currentView === 'myOrganization'" @organization-changed="refreshPersonalOrganization" @error="handleError" />
       <RegistrationRecordsPage :key="`records:${recordsEventId}`" v-else-if="currentView === 'registrationRecords'" :event-id="recordsEventId" @error="handleError" />

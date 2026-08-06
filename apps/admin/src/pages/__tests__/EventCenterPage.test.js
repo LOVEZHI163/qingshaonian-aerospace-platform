@@ -113,6 +113,15 @@ describe("EventCenterPage", () => {
 
     expect(wrapper.text()).toContain("组织资质正在审核中");
     expect(wrapper.text()).not.toContain("raw server wording");
+    expect(wrapper.emitted("access-denied")?.[0]?.[0]).toMatchObject({ code: "ORGANIZATION_REVIEW_PENDING" });
+  });
+
+  it("reports a stable organization restriction while loading events", async () => {
+    apiMock.mockRejectedValueOnce(Object.assign(new Error("stale list"), { code: "ORGANIZATION_DISABLED" }));
+    const wrapper = mount(EventCenterPage, { props: { accountType: "organization" } });
+    await flushPromises();
+
+    expect(wrapper.emitted("access-denied")?.[0]?.[0]).toMatchObject({ code: "ORGANIZATION_DISABLED" });
   });
 
   it("opens a joined organization event when the card itself is clicked", async () => {

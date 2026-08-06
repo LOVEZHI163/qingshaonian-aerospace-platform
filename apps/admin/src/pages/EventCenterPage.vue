@@ -2,10 +2,10 @@
 import { onMounted, ref } from "vue";
 
 import { api } from "../lib/api.js";
-import { accessMessage } from "../state/access.js";
+import { accessMessage, isOrganizationRestrictionError } from "../state/access.js";
 
 const props = defineProps({ accountType: { type: String, default: "ordinary" } });
-const emit = defineEmits(["open-event"]);
+const emit = defineEmits(["open-event", "access-denied"]);
 const rows = ref([]);
 const loading = ref(true);
 const error = ref("");
@@ -13,6 +13,13 @@ const joiningEventId = ref("");
 
 const registrationStateText = { not_started: "未开始", open: "报名中", closed: "已截止" };
 const participationStateText = { available: "可加入", joined: "已加入", blocked: "资质不可用" };
+
+function reportRequestError(requestError, fallback) {
+  if (props.accountType === "organization" && isOrganizationRestrictionError(requestError)) {
+    emit("access-denied", requestError);
+  }
+  error.value = accessMessage(requestError, fallback);
+}
 
 function openRegistration(eventId) {
   emit("open-event", { eventId, mode: "registration" });
@@ -31,7 +38,7 @@ async function joinEvent(row) {
     row.participationState = "joined";
     openOrganizationWorkspace(row.event.id);
   } catch (requestError) {
-    error.value = accessMessage(requestError, "加入赛事失败，请稍后重试");
+    reportRequestError(requestError, "加入赛事失败，请稍后重试");
   } finally {
     joiningEventId.value = "";
   }
@@ -55,7 +62,7 @@ async function loadEvents() {
     const payload = await api("/api/me/events");
     rows.value = Array.isArray(payload?.rows) ? payload.rows.filter((row) => row?.event?.id) : [];
   } catch (requestError) {
-    error.value = accessMessage(requestError, "赛事中心加载失败，请稍后重试");
+    reportRequestError(requestError, "赛事中心加载失败，请稍后重试");
   } finally {
     loading.value = false;
   }

@@ -527,6 +527,33 @@ describe("role based application navigation", () => {
     expect(new URLSearchParams(window.location.search).get("view")).toBe("organization");
   });
 
+  it("refreshes the session when the organization event center reports a stable restriction", async () => {
+    window.history.replaceState({}, "", "/admin/?view=eventCenter");
+    const organization = { id: "O1", ownerUserId: "O1U", name: "Organization", reviewStatus: "approved", status: "active", membershipRole: "owner" };
+    session.user.value = { id: "O1U", type: "organization", name: "Owner", phone: "13800000002", mustChangePassword: false };
+    session.organizations.value = [organization];
+    session.restore
+      .mockImplementationOnce(async () => session.user.value)
+      .mockImplementationOnce(async () => {
+        session.organizations.value = [{ ...organization, reviewStatus: "rejected" }];
+        return session.user.value;
+      });
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/public/event") return { event: { name: "Event" }, projects: [], grades: [] };
+      if (path === "/api/me/events") throw Object.assign(new Error("stale list"), { code: "ORGANIZATION_REJECTED" });
+      if (path === "/api/me/organizations") return { rows: [{ ...organization, reviewStatus: "rejected" }] };
+      return { rows: [] };
+    });
+
+    const wrapper = mount(App); mounted.push(wrapper);
+    await flushPromises();
+    await flushPromises();
+
+    expect(session.restore).toHaveBeenCalledTimes(2);
+    expect(wrapper.find('[data-testid="organization-review-progress"]').exists()).toBe(true);
+    expect(wrapper.findAll("[data-user-nav]").map((item) => item.attributes("data-user-nav"))).toEqual(["organization", "passwordSettings"]);
+  });
+
   it("opens the organization console for an approved owner", async () => {
     const organization = { id: "O1", ownerUserId: "O1U", name: "实验学校", reviewStatus: "approved", status: "active", membershipRole: "owner" };
     const wrapper = await mountFor({ id: "O1U", type: "organization", name: "负责人", phone: "13800000002", mustChangePassword: false }, organization); mounted.push(wrapper);

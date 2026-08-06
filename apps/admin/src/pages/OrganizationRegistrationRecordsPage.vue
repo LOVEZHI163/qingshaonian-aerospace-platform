@@ -65,6 +65,16 @@ function reportAccessDenied(error) {
   return true;
 }
 
+function handleEditingError(error) {
+  reportAccessDenied(error);
+  editingError.value = safeMessage(error, "报名记录保存失败，请重试");
+}
+
+function handleReplacementUploadError(error) {
+  reportAccessDenied(error);
+  replacementError.value = safeMessage(error, "作品材料上传失败，请重试");
+}
+
 function recordsErrorMessage(error) {
   if ([403, 404].includes(error?.status)) return "无法访问报名记录，请返回赛事工作台后重试";
   return safeMessage(error, "报名记录加载失败，请重试");
@@ -311,14 +321,14 @@ onBeforeUnmount(() => {
       <div class="panel-title"><h4>编辑 {{ editingRegistration.athlete?.name || "报名记录" }}</h4><button type="button" class="mini" data-action="return-organization-records" @click="cancelEditing">返回报名记录</button></div>
       <p v-if="editingLoading" class="hint">正在加载赛事工作台…</p>
       <p v-else-if="editingError" class="message" role="alert">{{ editingError }} <button type="button" class="mini" :data-action="`retry-organization-edit-${editingRegistration.id}`" @click="editRegistration(editingRegistration)">重试</button> <button type="button" class="mini" data-action="return-organization-records" @click="cancelEditing">返回报名记录</button></p>
-      <OrganizationAthleteRegistrationForm v-else-if="editingWorkspace" :event-id="editingRegistration.eventId" :projects="editingWorkspace.projects || []" :grades="editingWorkspace.grades || []" :members="editingWorkspace.members || []" :default-school="editingWorkspace.organization?.name || ''" :registration="editingRegistration" @registered="savedRegistration" @error="editingError = safeMessage($event, '报名记录保存失败，请重试')" />
+      <OrganizationAthleteRegistrationForm v-else-if="editingWorkspace" :event-id="editingRegistration.eventId" :projects="editingWorkspace.projects || []" :grades="editingWorkspace.grades || []" :members="editingWorkspace.members || []" :default-school="editingWorkspace.organization?.name || ''" :registration="editingRegistration" @registered="savedRegistration" @error="handleEditingError" />
     </section>
 
     <section v-if="replacingRegistration" class="organization-registration-material-replacement" aria-label="替换作品材料">
       <div class="panel-title"><h4>替换 {{ replacingRegistration.athlete?.name || "报名记录" }} 的作品材料</h4><button type="button" class="mini" data-action="return-organization-records" @click="cancelReplacement">返回报名记录</button></div>
       <p v-if="replacementLoading && !replacementSession" class="hint">正在创建作品上传会话…</p>
       <template v-else-if="replacementSession?.id">
-        <SubmissionAssetUploader :key="replacementSession.id" :session-id="replacementSession.id" mode="image_video" :assets="replacementSession.assets || {}" @complete="replacementComplete = $event" @error="replacementError = '作品材料上传失败，请重试'" />
+        <SubmissionAssetUploader :key="replacementSession.id" :session-id="replacementSession.id" mode="image_video" :assets="replacementSession.assets || {}" @complete="replacementComplete = $event" @error="handleReplacementUploadError" />
         <p v-if="replacementError" class="message" role="alert">{{ replacementError }} <button type="button" class="mini" :data-action="`retry-organization-material-replacement-${replacingRegistration.id}`" :disabled="replacementLoading" @click="retryReplacement">重试</button></p>
         <button type="button" class="primary" :data-action="`confirm-organization-material-replacement-${replacingRegistration.id}`" :disabled="replacementLoading || !replacementComplete || !remainingReplacementKinds.length" @click="confirmReplacement">{{ replacementLoading ? "正在替换…" : "确认替换作品材料" }}</button>
       </template>

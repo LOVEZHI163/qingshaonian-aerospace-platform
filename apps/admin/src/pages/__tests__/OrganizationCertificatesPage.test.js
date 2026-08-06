@@ -29,7 +29,8 @@ describe("OrganizationCertificatesPage", () => {
     apiBlobMock.mockReset();
     apiMock.mockResolvedValue({ rows });
     apiBlobMock.mockResolvedValue(new Blob(["certificate"]));
-    URL.createObjectURL = vi.fn(() => "blob:certificate");
+    let objectUrl = 0;
+    URL.createObjectURL = vi.fn(() => `blob:certificate-${++objectUrl}`);
     URL.revokeObjectURL = vi.fn();
     vi.spyOn(window, "open").mockImplementation(() => null);
   });
@@ -51,11 +52,26 @@ describe("OrganizationCertificatesPage", () => {
     await flushPromises();
 
     await wrapper.get('[data-action="preview-organization-certificate-C1"]').trigger("click");
-    expect(window.open).toHaveBeenCalledWith("/api/certificates/C1/file", "_blank", "noopener,noreferrer");
+    await flushPromises();
+    expect(apiBlobMock).toHaveBeenCalledWith("/api/certificates/C1/file");
+    expect(window.open).toHaveBeenCalledWith("blob:certificate-1", "_blank", "noopener,noreferrer");
     await wrapper.get('[data-action="download-organization-certificate-C1"]').trigger("click");
     await flushPromises();
     expect(apiBlobMock).toHaveBeenCalledWith("/api/certificates/C1/file?download=1");
     expect(apiMock.mock.calls.some(([path]) => path.startsWith("/api/me/"))).toBe(false);
+    wrapper.unmount();
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:certificate-1");
+  });
+
+  it("reports a stable restriction from controlled certificate preview", async () => {
+    apiBlobMock.mockRejectedValueOnce(Object.assign(new Error("stale preview"), { code: "ORGANIZATION_REJECTED" }));
+    const wrapper = mount(OrganizationCertificatesPage);
+    await flushPromises();
+    await wrapper.get('[data-action="preview-organization-certificate-C1"]').trigger("click");
+    await flushPromises();
+
+    expect(wrapper.emitted("access-denied")?.[0]?.[0]).toMatchObject({ code: "ORGANIZATION_REJECTED" });
+    expect(window.open).not.toHaveBeenCalled();
   });
 
   it("shows a safe error and retries the global query", async () => {

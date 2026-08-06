@@ -116,9 +116,10 @@ async function createUploadSession() {
     const session = payload?.row || payload;
     if (!session?.id) throw new Error("invalid upload session");
     uploadSession.value = session;
-  } catch {
+  } catch (error) {
     if (request !== uploadSessionRequest || editing.value || form.projectId !== project.id) return;
     uploadSessionError.value = "无法创建作品上传会话，请重试";
+    emit("error", error);
   } finally {
     if (request === uploadSessionRequest) uploadSessionLoading.value = false;
   }
@@ -204,7 +205,7 @@ async function submit() {
     <section v-if="requiresSubmission" class="registration-submission" aria-label="作品材料">
       <p v-if="uploadSessionLoading" class="hint">正在创建作品上传会话…</p>
       <template v-else-if="uploadSession?.id">
-        <SubmissionAssetUploader :key="uploadSession.id" :session-id="uploadSession.id" mode="image_video" :assets="uploadSession.assets || {}" @complete="assetsComplete = $event" @error="uploadSessionError = '作品材料上传失败，请重试'" />
+        <SubmissionAssetUploader :key="uploadSession.id" :session-id="uploadSession.id" mode="image_video" :assets="uploadSession.assets || {}" @complete="assetsComplete = $event" @error="uploadSessionError = '作品材料上传失败，请重试'; emit('error', $event)" />
         <p v-if="!assetsComplete" class="hint">请先完成作品图片和作画视频的上传。</p>
       </template>
       <p v-else class="message" role="alert">{{ uploadSessionError || "作品上传会话不可用" }} <button type="button" class="mini" @click="retryUploadSession">重试</button></p>

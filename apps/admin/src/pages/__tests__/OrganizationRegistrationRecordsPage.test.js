@@ -10,15 +10,17 @@ vi.mock("../../lib/api.js", () => ({ api: apiMock, apiBlob: apiBlobMock, apiUrl:
 vi.mock("../../components/SubmissionAssetUploader.vue", () => ({
   default: {
     props: ["sessionId", "mode", "assets"],
-    emits: ["complete"],
-    template: '<button type="button" data-testid="submission-uploader" @click="$emit(\'complete\', true)">素材已完成</button>'
+    emits: ["complete", "error"],
+    data: () => ({ restrictionError: Object.assign(new Error("stale upload"), { code: "ORGANIZATION_DISABLED" }) }),
+    template: '<div><button type="button" data-testid="submission-uploader" @click="$emit(\'complete\', true)">素材已完成</button><button type="button" data-action="deny-submission-upload" @click="$emit(\'error\', restrictionError)">上传受限</button></div>'
   }
 }));
 vi.mock("../../components/OrganizationAthleteRegistrationForm.vue", () => ({
   default: {
     props: ["eventId", "projects", "grades", "defaultSchool", "registration"],
-    emits: ["registered"],
-    template: '<div data-testid="organization-registration-editor" :data-event-id="eventId" :data-registration-id="registration.id"><button type="button" data-action="save-organization-registration" @click="$emit(\'registered\')">保存</button></div>'
+    emits: ["registered", "error"],
+    data: () => ({ restrictionError: Object.assign(new Error("stale edit"), { code: "ORGANIZATION_REJECTED" }) }),
+    template: '<div data-testid="organization-registration-editor" :data-event-id="eventId" :data-registration-id="registration.id"><button type="button" data-action="save-organization-registration" @click="$emit(\'registered\')">保存</button><button type="button" data-action="deny-organization-registration-save" @click="$emit(\'error\', restrictionError)">保存受限</button></div>'
   }
 }));
 
@@ -236,6 +238,36 @@ describe("OrganizationRegistrationRecordsPage", () => {
     await flushPromises();
     expect(wrapper.find('[data-testid="organization-registration-editor"]').exists()).toBe(false);
     expect(apiMock.mock.calls.filter(([path]) => path === "/api/organization/registrations?page=1&pageSize=25")).toHaveLength(2);
+  });
+
+  it("propagates a stable restriction from editing save", async () => {
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/organization/registrations?page=1&pageSize=25") return payload;
+      if (path === "/api/organization/events/E1/workspace") return { event: { id: "E1", status: "published" }, organization: { name: "School" }, projects: [], grades: [] };
+      throw new Error(`unexpected ${path}`);
+    });
+    const wrapper = mount(OrganizationRegistrationRecordsPage);
+    await flushPromises();
+    await wrapper.get('[data-action="edit-organization-registration-R1"]').trigger("click");
+    await flushPromises();
+    await wrapper.get('[data-action="deny-organization-registration-save"]').trigger("click");
+
+    expect(wrapper.emitted("access-denied")?.[0]?.[0]).toMatchObject({ code: "ORGANIZATION_REJECTED" });
+  });
+
+  it("propagates a stable restriction from material upload", async () => {
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/organization/registrations?page=1&pageSize=25") return payload;
+      if (path === "/api/organization/events/E1/projects/P1/upload-sessions") return { row: { id: "US1", assets: {} } };
+      throw new Error(`unexpected ${path}`);
+    });
+    const wrapper = mount(OrganizationRegistrationRecordsPage);
+    await flushPromises();
+    await wrapper.get('[data-action="replace-organization-materials-R1"]').trigger("click");
+    await flushPromises();
+    await wrapper.get('[data-action="deny-submission-upload"]').trigger("click");
+
+    expect(wrapper.emitted("access-denied")?.[0]?.[0]).toMatchObject({ code: "ORGANIZATION_DISABLED" });
   });
 
   it.each([

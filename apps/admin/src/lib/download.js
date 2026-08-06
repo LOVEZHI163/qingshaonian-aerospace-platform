@@ -1,4 +1,5 @@
 const RELEASE_DELAY_MS = 1_000;
+const PREVIEW_RELEASE_DELAY_MS = 60_000;
 
 export function createBlobDownloadManager() {
   const pending = new Map();
@@ -23,6 +24,29 @@ export function createBlobDownloadManager() {
       link.click();
       const timer = setTimeout(() => release(url), RELEASE_DELAY_MS);
       pending.set(url, { link, timer });
+    },
+    dispose() {
+      for (const url of [...pending.keys()]) release(url);
+    }
+  };
+}
+
+export function createBlobPreviewManager() {
+  const pending = new Map();
+
+  function release(url) {
+    const timer = pending.get(url);
+    if (timer === undefined) return;
+    clearTimeout(timer);
+    URL.revokeObjectURL(url);
+    pending.delete(url);
+  }
+
+  return {
+    open(blob) {
+      const url = URL.createObjectURL(blob);
+      window.open(url, "_blank", "noopener,noreferrer");
+      pending.set(url, setTimeout(() => release(url), PREVIEW_RELEASE_DELAY_MS));
     },
     dispose() {
       for (const url of [...pending.keys()]) release(url);
