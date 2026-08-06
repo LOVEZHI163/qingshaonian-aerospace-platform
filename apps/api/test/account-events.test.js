@@ -133,7 +133,7 @@ test("join rejects unapproved and disabled organizations, ordinary users, drafts
     await setOrganization(dbPath, "O1001", { reviewStatus: "pending" });
     const unapproved = await fetch(`${baseUrl}/api/organization/events/wz-aerospace-2026/join`, withSession(owner.cookie, { method: "POST" }));
     assert.equal(unapproved.status, 403);
-    assert.equal((await unapproved.json()).code, "ORGANIZATION_NOT_APPROVED");
+    assert.equal((await unapproved.json()).code, "ORGANIZATION_REVIEW_PENDING");
 
     await setOrganization(dbPath, "O1001", { reviewStatus: "approved", status: "disabled" });
     const disabled = await fetch(`${baseUrl}/api/organization/events/wz-aerospace-2026/join`, withSession(owner.cookie, { method: "POST" }));

@@ -38,6 +38,10 @@ test("registration context defaults exactly one active organization and school s
     const contextResponse = await fetch(`${baseUrl}/api/me/registration-context`, withSession(ordinary.cookie));
     assert.equal(contextResponse.status, 200);
     const context = await json(contextResponse);
+    assert.equal(context.eligibility.eligible, true);
+    assert.equal(context.eligibility.code, "OK");
+    assert.equal(context.eligibility.organization.id, "O1001");
+    assert.equal(context.eligibility.membership.id, "M1002");
     assert.equal(context.defaultOrganizationId, "O1001");
     assert.deepEqual(context.organizations.map((organization) => organization.id), ["O1001"]);
     assert.deepEqual(context.grades.map((group) => group.name), ["小学低段", "小学高段", "中学组", "职高/高中组"]);
@@ -46,6 +50,81 @@ test("registration context defaults exactly one active organization and school s
     assert.equal(schoolsResponse.status, 200);
     const schools = await json(schoolsResponse);
     assert.deepEqual(schools.rows, ["温州市实验小学", "温州市第二实验中学"]);
+  });
+});
+
+test("ACTIVE_ORGANIZATION_REQUIRED blocks personal registration without an approved active member relation", async () => {
+  const cases = [
+    ["no membership", (db) => { db.memberships = []; }],
+    ["pending membership", (db) => { db.memberships.find((row) => row.userId === "U1001").status = "pending"; }],
+    ["rejected organization", (db) => { db.organizations.find((row) => row.id === "O1001").reviewStatus = "rejected"; }],
+    ["disabled organization", (db) => { db.organizations.find((row) => row.id === "O1001").status = "disabled"; }]
+  ];
+
+  for (const [label, arrange] of cases) {
+    await withServer(async (baseUrl, dbPath) => {
+      const ordinary = await loginAs(baseUrl, "13800000001", "123456");
+      await mutateDb(dbPath, (db) => {
+        db.events[0].registrationMode = "force_open";
+        arrange(db);
+      });
+      const response = await fetch(`${baseUrl}/api/me/events/wz-aerospace-2026/registrations`, withSession(ordinary.cookie, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          organizationId: "O1002",
+          athlete: { name: `Blocked ${label}`, school: "Test school", grade: "五年级", phone: "13600005001" },
+          projectId: "paper-plane-gate"
+        })
+      }));
+      assert.equal(response.status, 403, label);
+      assert.equal((await json(response)).code, "ACTIVE_ORGANIZATION_REQUIRED", label);
+    });
+  }
+});
+
+test("ordinary registration eligibility derives the approved member organization for individual and team projects", async () => {
+  await withServer(async (baseUrl, dbPath) => {
+    const ordinary = await loginAs(baseUrl, "13800000001", "123456");
+    await mutateDb(dbPath, (db) => { db.events[0].registrationMode = "force_open"; });
+    for (const [projectId, suffix] of [["paper-plane-gate", "individual"], ["drone-relay", "team"]]) {
+      const response = await fetch(`${baseUrl}/api/me/events/wz-aerospace-2026/registrations`, withSession(ordinary.cookie, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          organizationId: "O1002",
+          athlete: { name: `Eligible ${suffix}`, school: "Test school", grade: "五年级", phone: `13600005${suffix === "individual" ? "101" : "102"}` },
+          projectId
+        })
+      }));
+      assert.equal(response.status, 201);
+      const payload = await json(response);
+      assert.equal(payload.row.organizationId, "O1001");
+      assert.equal(payload.row.organization, "温州市实验小学");
+      assert.equal(payload.row.source, "member_registration");
+      assert.equal(payload.row.projectType, suffix);
+    }
+  });
+});
+
+test("ACTIVE_ORGANIZATION_REQUIRED also blocks personal updates and upload-session creation", async () => {
+  await withServer(async (baseUrl, dbPath) => {
+    const ordinary = await loginAs(baseUrl, "13800000001", "123456");
+    await mutateDb(dbPath, (db) => {
+      db.events[0].registrationMode = "force_open";
+      db.memberships.find((row) => row.userId === "U1001").status = "pending";
+      db.projects.find((row) => row.id === "rocket-duration").submissionMode = "image_video";
+    });
+
+    const updated = await fetch(`${baseUrl}/api/me/events/wz-aerospace-2026/registrations/R20260627001`, withSession(ordinary.cookie, {
+      method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ instructor: "Blocked" })
+    }));
+    assert.equal(updated.status, 403);
+    assert.equal((await json(updated)).code, "ACTIVE_ORGANIZATION_REQUIRED");
+
+    const session = await fetch(`${baseUrl}/api/me/events/wz-aerospace-2026/projects/rocket-duration/upload-sessions`, withSession(ordinary.cookie, { method: "POST" }));
+    assert.equal(session.status, 403);
+    assert.equal((await json(session)).code, "ACTIVE_ORGANIZATION_REQUIRED");
   });
 });
 
@@ -317,7 +396,9 @@ test("ordinary registration edits require an active membership while administrat
       method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload)
     }));
 
-    assert.equal((await patch("/api/me/events/wz-aerospace-2026/registrations/R20260627001", { organizationId: "O1002" }, ordinary.cookie)).status, 409);
+    const ordinaryResponse = await patch("/api/me/events/wz-aerospace-2026/registrations/R20260627001", { organizationId: "O1002" }, ordinary.cookie);
+    assert.equal(ordinaryResponse.status, 200);
+    assert.equal((await json(ordinaryResponse)).row.organizationId, "O1001");
     const adminResponse = await patch("/api/admin/events/wz-aerospace-2026/registrations/R20260627001", { organizationId: "O1002" }, admin.cookie);
     assert.equal(adminResponse.status, 200);
     assert.equal((await json(adminResponse)).row.organizationId, "O1002");

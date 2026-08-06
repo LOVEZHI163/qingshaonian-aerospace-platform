@@ -1,7 +1,30 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { organizationForOwner, requireOrganizationOwner, requireOrdinaryUser, requireOrganizationEventParticipation, requireWritableEvent } from "../src/services/access-control.js";
+import { organizationAccessState, organizationForOwner, requireOrganizationOwner, requireOrdinaryUser, requireOrganizationEventParticipation, requireWritableEvent } from "../src/services/access-control.js";
+
+test("organization access state exposes stable owner review and password codes", () => {
+  const pendingOrganization = { id: "O-pending", ownerUserId: "U-pending", status: "active", reviewStatus: "pending" };
+  const db = { organizations: [pendingOrganization] };
+  const pendingOwner = { id: "U-pending", type: "organization", mustChangePassword: false };
+
+  assert.deepEqual(organizationAccessState(db, pendingOwner), {
+    allowed: false,
+    code: "ORGANIZATION_REVIEW_PENDING",
+    organization: pendingOrganization
+  });
+  pendingOrganization.reviewStatus = "rejected";
+  assert.equal(organizationAccessState(db, pendingOwner).code, "ORGANIZATION_REJECTED");
+  pendingOrganization.reviewStatus = "approved";
+  pendingOrganization.status = "disabled";
+  assert.equal(organizationAccessState(db, pendingOwner).code, "ORGANIZATION_DISABLED");
+  pendingOrganization.status = "active";
+  pendingOwner.mustChangePassword = true;
+  assert.equal(organizationAccessState(db, pendingOwner).code, "PASSWORD_CHANGE_REQUIRED");
+  pendingOwner.mustChangePassword = false;
+  assert.equal(organizationAccessState(db, pendingOwner).code, "OK");
+  assert.equal(organizationAccessState(db, { id: "U-ordinary", type: "ordinary" }).code, "ORGANIZATION_OWNER_REQUIRED");
+});
 
 test("access control identifies ownership from organizations instead of membership roles", () => {
   const db = {

@@ -51,7 +51,7 @@ test("personal first and organization second merge into one registration", () =>
 
   assert.equal(first.created, true);
   assert.equal(second.created, false);
-  assert.equal(second.merged, true);
+  assert.equal(second.merged, false);
   assert.equal(db.registrations.length, 1);
   assert.equal(second.row.personalUserId, actor.id);
   assert.equal(second.row.organizationId, "O1");
@@ -78,6 +78,7 @@ test("same owner retry is idempotent while other owners conflict", () => {
   const db = fixture();
   createOrMergeRegistration(db, input(), actor, "personal", context);
   assert.equal(createOrMergeRegistration(db, input(), actor, "personal", context).merged, false);
+  db.memberships.push({ userId: otherActor.id, organizationId: "O1", status: "active", role: "member" });
   assert.throws(
     () => createOrMergeRegistration(db, input(), otherActor, "personal", context),
     (error) => error.code === "REGISTRATION_OWNED_BY_OTHER_USER"
@@ -89,16 +90,14 @@ test("same owner retry is idempotent while other owners conflict", () => {
   );
 });
 
-test("personal association requires active membership and joined organization event", () => {
+test("personal association requires active membership but not organization event participation", () => {
   const db = fixture();
   db.organizationEventParticipations = [];
-  assert.throws(
-    () => createOrMergeRegistration(db, input({ organizationId: "O1" }), actor, "personal", context),
-    (error) => error.code === "ORGANIZATION_NOT_JOINED"
-  );
+  const result = createOrMergeRegistration(db, input({ organizationId: "O2" }), actor, "personal", context);
+  assert.equal(result.row.organizationId, "O1");
 });
 
-test("event-scoped personal and organization endpoints merge only after the organization joins", async () => {
+test("event-scoped personal registration does not wait for the organization owner to join", async () => {
   await withTestServer(async ({ baseUrl }) => {
     const personal = await loginAs(baseUrl, "13800000001", "123456");
     const organization = await loginAs(baseUrl, "13800000011", "123456");
@@ -110,13 +109,18 @@ test("event-scoped personal and organization endpoints merge only after the orga
     const beforeJoin = await fetch(`${baseUrl}/api/me/events/wz-aerospace-2026/registrations`, withSession(personal.cookie, {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body)
     }));
-    assert.equal(beforeJoin.status, 403);
+    assert.equal(beforeJoin.status, 201);
+
+    const organizationBeforeJoin = await fetch(`${baseUrl}/api/organization/events/wz-aerospace-2026/registrations`, withSession(organization.cookie, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body)
+    }));
+    assert.equal(organizationBeforeJoin.status, 403);
 
     assert.equal((await fetch(`${baseUrl}/api/organization/events/wz-aerospace-2026/join`, withSession(organization.cookie, { method: "POST" }))).status, 201);
     const created = await fetch(`${baseUrl}/api/me/events/wz-aerospace-2026/registrations`, withSession(personal.cookie, {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body)
     }));
-    assert.equal(created.status, 201);
+    assert.equal(created.status, 200);
     const merged = await fetch(`${baseUrl}/api/organization/events/wz-aerospace-2026/registrations`, withSession(organization.cookie, {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body)
     }));
@@ -125,7 +129,7 @@ test("event-scoped personal and organization endpoints merge only after the orga
   });
 });
 
-test("personal edits cannot transfer or clear an already merged organization owner", async () => {
+test("personal edits ignore caller-supplied organization substitutions", async () => {
   await withTestServer(async ({ baseUrl, dbPath }) => {
     const personal = await loginAs(baseUrl, "13800000001", "123456");
     const ownerOne = await loginAs(baseUrl, "13800000011", "123456");
@@ -136,19 +140,17 @@ test("personal edits cannot transfer or clear an already merged organization own
     }));
     await fetch(`${baseUrl}/api/organization/events/wz-aerospace-2026/join`, withSession(ownerOne.cookie, { method: "POST" }));
     await fetch(`${baseUrl}/api/organization/events/wz-aerospace-2026/join`, withSession(ownerTwo.cookie, { method: "POST" }));
-    const db = JSON.parse(await (await import("node:fs/promises")).readFile(dbPath, "utf8"));
-    db.memberships.push({ id: "M-O2", userId: personal.user.id, organizationId: "O1002", role: "member", status: "active" });
-    await (await import("node:fs/promises")).writeFile(dbPath, JSON.stringify(db), "utf8");
     const create = await fetch(`${baseUrl}/api/me/events/wz-aerospace-2026/registrations`, withSession(personal.cookie, {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input({ eventId: "wz-aerospace-2026", projectId: "paper-plane-gate", organizationId: "O1001" }))
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input({ eventId: "wz-aerospace-2026", projectId: "paper-plane-gate", organizationId: "O1002" }))
     }));
     const row = (await create.json()).row;
+    assert.equal(row.organizationId, "O1001");
     for (const organizationId of ["O1002", null]) {
       const response = await fetch(`${baseUrl}/api/me/events/wz-aerospace-2026/registrations/${row.id}`, withSession(personal.cookie, {
         method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ organizationId })
       }));
-      assert.equal(response.status, 409);
-      assert.equal((await response.json()).code, "REGISTRATION_OWNED_BY_OTHER_ORGANIZATION");
+      assert.equal(response.status, 200);
+      assert.equal((await response.json()).row.organizationId, "O1001");
     }
   });
 });

@@ -217,11 +217,6 @@ export function createRegistrationsRouter({
     const row = db.registrations.find((item) => item.id === req.params.registrationId && item.eventId === req.params.eventId);
     if (!row) return res.status(404).json({ error: "Registration not found" });
     const prepared = prepareOrdinaryRegistrationUpdate(db, row, eventScopedInput(req), req.user.id);
-    if (prepared.organizationId && !db.organizationEventParticipations.some((item) => (
-      item.organizationId === prepared.organizationId && item.eventId === req.params.eventId
-    ))) {
-      throw Object.assign(new Error("Organization has not joined this event"), { status: 403, code: "ORGANIZATION_NOT_JOINED" });
-    }
     applyRegistrationUpdate(row, prepared, now());
     await store.writeDb(db);
     res.json({ row: withRegistrationSubmission(db, row) });

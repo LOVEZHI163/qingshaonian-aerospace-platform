@@ -5,6 +5,70 @@ export function organizationForOwner(db, userId) {
   return db.organizations.find((row) => row.ownerUserId === userId) || null;
 }
 
+export function organizationAccessState(db, user) {
+  const organization = organizationForOwner(db, user?.id);
+  if (user?.type !== "organization" || !organization) {
+    return { allowed: false, code: "ORGANIZATION_OWNER_REQUIRED", organization };
+  }
+  if (organization.reviewStatus === "pending") {
+    return { allowed: false, code: "ORGANIZATION_REVIEW_PENDING", organization };
+  }
+  if (organization.reviewStatus === "rejected") {
+    return { allowed: false, code: "ORGANIZATION_REJECTED", organization };
+  }
+  if (organization.status !== "active") {
+    return { allowed: false, code: "ORGANIZATION_DISABLED", organization };
+  }
+  if (user.mustChangePassword) {
+    return { allowed: false, code: "PASSWORD_CHANGE_REQUIRED", organization };
+  }
+  return { allowed: true, code: "OK", organization };
+}
+
+export function ordinaryRegistrationEligibility(db, userId) {
+  const membership = db.memberships.find((row) => (
+    row.userId === userId && row.role === "member" && row.status === "active"
+  )) || null;
+  const organization = membership
+    ? db.organizations.find((row) => row.id === membership.organizationId) || null
+    : null;
+  const eligible = Boolean(
+    membership && organization?.reviewStatus === "approved" && organization?.status === "active"
+  );
+  return {
+    eligible,
+    code: eligible ? "OK" : "ACTIVE_ORGANIZATION_REQUIRED",
+    organization,
+    membership
+  };
+}
+
+function organizationAccessMessage(code) {
+  return {
+    ORGANIZATION_OWNER_REQUIRED: "仅组织负责人可以执行此操作",
+    ORGANIZATION_REVIEW_PENDING: "组织资质正在审核中",
+    ORGANIZATION_REJECTED: "组织资质审核未通过",
+    ORGANIZATION_DISABLED: "组织已停用",
+    PASSWORD_CHANGE_REQUIRED: "请先修改临时密码"
+  }[code] || "组织当前不可用";
+}
+
+export function requireOrganizationAccess(db, user) {
+  const access = organizationAccessState(db, user);
+  if (!access.allowed) {
+    throw businessError(access.code === "PASSWORD_CHANGE_REQUIRED" ? 428 : 403, organizationAccessMessage(access.code), access.code);
+  }
+  return access.organization;
+}
+
+export function requireOrdinaryRegistrationEligibility(db, userId) {
+  const eligibility = ordinaryRegistrationEligibility(db, userId);
+  if (!eligibility.eligible) {
+    throw businessError(403, "需要加入已审核且正常启用的组织后才能报名", eligibility.code);
+  }
+  return eligibility;
+}
+
 export function requireOrdinaryUser(user) {
   if (user?.type !== "ordinary") {
     throw businessError(403, "仅普通用户可以个人报名", "ORDINARY_USER_REQUIRED");
@@ -39,13 +103,7 @@ export function requireWritableEvent(db, eventId, clock = () => new Date()) {
 }
 
 export function requireOrganizationEventParticipation(db, user, eventId, { writable = false } = {}) {
-  const organization = requireOrganizationOwner(db, user);
-  if (organization.status !== "active") {
-    throw businessError(403, "组织已停用", "ORGANIZATION_DISABLED");
-  }
-  if (organization.reviewStatus !== "approved") {
-    throw businessError(403, "组织资质尚未通过", "ORGANIZATION_NOT_APPROVED");
-  }
+  const organization = requireOrganizationAccess(db, user);
   const event = writable
     ? requireWritableEvent(db, eventId)
     : db.events.find((row) => row.id === eventId);

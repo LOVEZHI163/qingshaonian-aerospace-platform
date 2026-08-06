@@ -1,6 +1,6 @@
 import { isRegistrationOpen } from "../domain/registration-window.js";
 import { businessError } from "./events.js";
-import { requireOrganizationOwner } from "./access-control.js";
+import { requireOrganizationAccess } from "./access-control.js";
 
 function registrationState(event, clock) {
   const now = clock().getTime();
@@ -70,13 +70,7 @@ export function listAccountEvents(db, user, clock = () => new Date()) {
 }
 
 export function joinOrganizationEvent(db, user, eventId, now) {
-  const organization = requireOrganizationOwner(db, user);
-  if (organization.status !== "active") {
-    throw businessError(403, "组织已停用", "ORGANIZATION_DISABLED");
-  }
-  if (organization.reviewStatus !== "approved") {
-    throw businessError(403, "组织资质尚未通过", "ORGANIZATION_NOT_APPROVED");
-  }
+  const organization = requireOrganizationAccess(db, user);
   const event = db.events.find((row) => (
     row.id === eventId
     && !row.archivedAt

@@ -178,7 +178,8 @@ test("session identity cannot be replaced through body, query, or path values", 
       group: "中学组",
       projectId: "drone-relay"
     }, ordinary.cookie));
-    assert.equal(unrelatedOrganization.status, 403);
+    assert.equal(unrelatedOrganization.status, 201);
+    assert.equal((await unrelatedOrganization.json()).row.organizationId, "O1001");
 
     const unknownOrganization = await fetch(`${baseUrl}/api/me/events/wz-aerospace-2026/registrations`, jsonOptions("POST", {
       organizationId: "O-NOT-FOUND",
@@ -186,7 +187,8 @@ test("session identity cannot be replaced through body, query, or path values", 
       group: "中学组",
       projectId: "drone-relay"
     }, ordinary.cookie));
-    assert.equal(unknownOrganization.status, 404);
+    assert.equal(unknownOrganization.status, 201);
+    assert.equal((await unknownOrganization.json()).row.organizationId, "O1001");
 
     const privateRegistration = await fetch(`${baseUrl}/api/me/events/wz-aerospace-2026/registrations`, jsonOptions("POST", {
       athlete: { name: "私人参赛者", school: "个人学校", grade: "初二", phone: "13600001004" },
@@ -208,7 +210,7 @@ test("session identity cannot be replaced through body, query, or path values", 
     const ownerRows = (await ownerOrganizationRows.json()).rows;
     assert.equal(ownerRows.every((row) => row.organizationId === "O1001"), true);
     assert.equal(ownerRows.some((row) => row.id === "R20260627002"), false);
-    assert.equal(ownerRows.some((row) => row.id === privateRegistrationId), false);
+    assert.equal(ownerRows.some((row) => row.id === privateRegistrationId), true);
     const adminOrganizationRows = await fetch(`${baseUrl}/api/organization/events/wz-aerospace-2026/registrations`, withSession(admin.cookie));
     assert.equal(adminOrganizationRows.status, 403);
 
@@ -296,11 +298,11 @@ test("certificate downloads enforce ownership, publication, and organization man
     const privateUpload = await uploadCertificate(baseUrl, privateRow.id, 1, admin.cookie, "私人证书");
     const privateCertificate = (await privateUpload.json()).row;
     await fetch(`${baseUrl}/api/admin/events/wz-aerospace-2026/certificates/bulk-status`, jsonOptions("POST", { ids: [privateCertificate.id], status: "published" }, admin.cookie));
-    assert.equal((await fetch(`${baseUrl}/api/certificates/${privateCertificate.id}/file`, withSession(owner.cookie))).status, 403);
+    assert.equal((await fetch(`${baseUrl}/api/certificates/${privateCertificate.id}/file`, withSession(owner.cookie))).status, 200);
 
     const organizationCertificates = await fetch(`${baseUrl}/api/organization/events/wz-aerospace-2026/certificates`, withSession(owner.cookie));
     const organizationRows = (await organizationCertificates.json()).rows;
-    assert.deepEqual(organizationRows.map((row) => row.registrationId), ["R20260627001"]);
+    assert.deepEqual(organizationRows.map((row) => row.registrationId).sort(), ["R20260627001", privateRow.id].sort());
     assert.equal(organizationRows.every((row) => !("filePath" in row) && !("storedName" in row)), true);
     const ownCertificates = await fetch(`${baseUrl}/api/me/events/wz-aerospace-2026/certificates`, withSession(ordinary.cookie));
     assert.equal((await ownCertificates.json()).rows.every((row) => !("filePath" in row) && !("storedName" in row)), true);

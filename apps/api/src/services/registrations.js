@@ -2,7 +2,7 @@ import { GRADE_GROUPS, groupForGrade } from "../domain/grades.js";
 import { isRegistrationOpen } from "../domain/registration-window.js";
 import { businessError, projectForHistoricalRegistration, publishedRegistrationEvent, registrationContext } from "./events.js";
 import { recordAudit } from "./audit.js";
-import { requireOrdinaryUser, requireOrganizationEventParticipation, requireWritableEvent } from "./access-control.js";
+import { ordinaryRegistrationEligibility, requireOrdinaryRegistrationEligibility, requireOrdinaryUser, requireOrganizationEventParticipation, requireWritableEvent } from "./access-control.js";
 import { registrationSubmissionSummary, withRegistrationSubmission } from "./submission-assets.js";
 
 function normalizeText(value) {
@@ -31,7 +31,7 @@ function requireText(value, label) {
 
 export function activeMembershipOrganizations(db, userId) {
   return db.memberships
-    .filter((membership) => membership.userId === userId && membership.status === "active")
+    .filter((membership) => membership.userId === userId && membership.role === "member" && membership.status === "active")
     .map((membership) => {
       const organization = operationalOrganization(db, membership.organizationId);
       return organization && { ...organization, membershipRole: membership.role };
@@ -40,12 +40,14 @@ export function activeMembershipOrganizations(db, userId) {
 }
 
 export function registrationContextPayload(db, userId, input = {}, clock = () => new Date()) {
+  const eligibility = ordinaryRegistrationEligibility(db, userId);
   const organizations = activeMembershipOrganizations(db, userId);
   const event = publishedRegistrationEvent(db, input.eventId, clock);
   const projects = db.projects
     .filter((project) => project.eventId === event.id && project.enabled)
     .sort((left, right) => left.displayOrder - right.displayOrder || left.id.localeCompare(right.id));
   return {
+    eligibility,
     organizations,
     defaultOrganizationId: organizations.length === 1 ? organizations[0].id : "",
     event,
@@ -72,16 +74,8 @@ export function findSchools(db, query) {
   }).slice(0, 20);
 }
 
-function validateOrganizationForUser(db, userId, organizationId) {
-  if (!organizationId) return null;
-  const organization = db.organizations.find((row) => row.id === organizationId);
-  if (!organization) throw businessError(404, "组织不存在");
-  if (organization.status !== "active" || organization.reviewStatus !== "approved") {
-    throw businessError(403, "组织尚未通过审核或已停用");
-  }
-  const membership = db.memberships.find((row) => row.userId === userId && row.organizationId === organizationId && row.status === "active");
-  if (!membership) throw businessError(403, "无权使用该组织报名");
-  return organization;
+function validateOrganizationForUser(db, userId) {
+  return requireOrdinaryRegistrationEligibility(db, userId).organization;
 }
 
 function validateProjectForRegistration(db, eventId, projectId, group) {
@@ -132,7 +126,7 @@ export function prepareRegistrationCreate(db, input, userId, clock = () => new D
   if (!group) throw businessError(422, "实际年级不合法");
   const projectId = requireText(input?.projectId, "赛项");
   const { event, project } = registrationContext(db, { ...input, projectId, group }, clock);
-  const organization = validateOrganizationForUser(db, userId, input?.organizationId);
+  const organization = validateOrganizationForUser(db, userId);
   const validation = validateRegistration({ ...input, athlete, projectId }, db.registrations, project, event.id);
   if (!validation.ok) throw Object.assign(businessError(422, validation.errors[0]), { validation });
   return { event, project, athlete, group, organization, validation };
@@ -187,9 +181,6 @@ export function prepareAdminRegistrationUpdate(db, row, input) {
 export function prepareOrdinaryRegistrationUpdate(db, row, input, userId) {
   if (row.personalUserId !== userId) throw businessError(403, "无权修改该报名");
   assertRegistrationProjectImmutable(row, input);
-  if (Object.hasOwn(input, "organizationId") && (input.organizationId || null) !== (row.organizationId || null) && row.organizationId) {
-    throw businessError(409, "该报名已关联其他组织", "REGISTRATION_OWNED_BY_OTHER_ORGANIZATION");
-  }
   assertRegistrationWindowOpen(db, row.eventId);
   const athlete = input.athlete || row.athlete;
   requireText(athlete.name, "姓名");
@@ -200,8 +191,8 @@ export function prepareOrdinaryRegistrationUpdate(db, row, input, userId) {
   if (!group) throw businessError(422, "实际年级不合法");
   const projectId = input.projectId || row.projectId;
   const project = validateProjectForRegistration(db, row.eventId, projectId, group);
-  const organizationId = Object.hasOwn(input, "organizationId") ? input.organizationId || null : row.organizationId;
-  const organization = validateOrganizationForUser(db, userId, organizationId);
+  const organization = validateOrganizationForUser(db, userId);
+  const organizationId = organization.id;
   const next = { ...row, athlete, group, projectId, organizationId, instructor: input.instructor ?? row.instructor };
   const validation = validateRegistration(next, db.registrations, project, row.eventId, row.id);
   if (!validation.ok) throw Object.assign(businessError(422, validation.errors[0]), { validation });
@@ -310,22 +301,12 @@ function requireOperationalOrganization(db, organizationId) {
   if (organization.status !== "active") {
     throw businessError(403, "组织已停用", "ORGANIZATION_DISABLED");
   }
-  if (organization.reviewStatus !== "approved") {
-    throw businessError(403, "组织资质尚未通过", "ORGANIZATION_NOT_APPROVED");
+  if (organization.reviewStatus === "pending") {
+    throw businessError(403, "组织资质正在审核中", "ORGANIZATION_REVIEW_PENDING");
   }
-  return organization;
-}
-
-function requireActiveMembershipOrganization(db, userId, organizationId, eventId) {
-  const organization = requireOperationalOrganization(db, organizationId);
-  const membership = db.memberships.find((row) => (
-    row.userId === userId && row.organizationId === organization.id && row.status === "active"
-  ));
-  if (!membership) throw businessError(403, "当前用户不是该组织有效成员", "MEMBERSHIP_NOT_ACTIVE");
-  const participation = db.organizationEventParticipations.find((row) => (
-    row.organizationId === organization.id && row.eventId === eventId
-  ));
-  if (!participation) throw businessError(403, "组织尚未加入该赛事", "ORGANIZATION_NOT_JOINED");
+  if (organization.reviewStatus === "rejected") {
+    throw businessError(403, "组织资质审核未通过", "ORGANIZATION_REJECTED");
+  }
   return organization;
 }
 
@@ -349,9 +330,7 @@ function validateCreateForEvent(db, input, event, actor, channel) {
   let organization = null;
   if (channel === "personal") {
     requireOrdinaryUser(actor);
-    if (input?.organizationId) {
-      organization = requireActiveMembershipOrganization(db, actor.id, input.organizationId, event.id);
-    }
+    organization = requireOrdinaryRegistrationEligibility(db, actor.id).organization;
   } else if (channel === "organization") {
     const scope = requireOrganizationEventParticipation(db, actor, event.id, { writable: true });
     organization = requireOperationalOrganization(db, scope.organization.id);
@@ -389,7 +368,7 @@ export function createOrMergeRegistration(db, input, actor, channel, {
 
   if (!existing) {
     const row = {
-      id: makeId("R"), eventId: event.id, source: channel, createdByUserId: actor.id,
+      id: makeId("R"), eventId: event.id, source: channel === "personal" ? "member_registration" : channel, createdByUserId: actor.id,
       personalUserId, organizationId, createdVia: channel, organization: prepared.organization?.name || "",
       athlete: prepared.athlete, athleteKey: prepared.key, group: prepared.group,
       projectId: prepared.project.id, projectName: prepared.project.name, projectType: prepared.project.type,

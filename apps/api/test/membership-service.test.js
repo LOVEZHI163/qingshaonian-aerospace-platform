@@ -11,6 +11,7 @@ import {
   requestMembership,
   searchOperationalOrganizations
 } from "../src/services/memberships.js";
+import { ordinaryRegistrationEligibility } from "../src/services/access-control.js";
 
 const fixedNow = "2026-08-04T00:00:00.000Z";
 const now = () => fixedNow;
@@ -43,6 +44,29 @@ function fixture() {
     certificates: []
   };
 }
+
+test("ordinary registration eligibility requires one active member relation to an operational organization", () => {
+  const db = fixture();
+  const unaffiliatedUser = db.users[0];
+  assert.equal(ordinaryRegistrationEligibility(db, unaffiliatedUser.id).code, "ACTIVE_ORGANIZATION_REQUIRED");
+
+  db.memberships.push({
+    id: "M-active", userId: unaffiliatedUser.id, organizationId: "O1", role: "member", status: "active",
+    direction: "user_request", note: "", createdAt: now(), updatedAt: now()
+  });
+  const activeMember = unaffiliatedUser;
+  const eligibility = ordinaryRegistrationEligibility(db, activeMember.id);
+  assert.equal(eligibility.eligible, true);
+  assert.equal(eligibility.code, "OK");
+  assert.equal(eligibility.organization.id, "O1");
+  assert.equal(eligibility.membership.id, "M-active");
+
+  db.memberships[0].role = "owner";
+  assert.equal(ordinaryRegistrationEligibility(db, activeMember.id).code, "ACTIVE_ORGANIZATION_REQUIRED");
+  db.memberships[0].role = "member";
+  db.organizations[0].reviewStatus = "rejected";
+  assert.equal(ordinaryRegistrationEligibility(db, activeMember.id).code, "ACTIVE_ORGANIZATION_REQUIRED");
+});
 
 test("ordinary request and owner invitation create pending member relations", () => {
   const db = fixture();
