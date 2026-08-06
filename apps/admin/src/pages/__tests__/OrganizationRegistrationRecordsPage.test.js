@@ -106,6 +106,22 @@ describe("OrganizationRegistrationRecordsPage", () => {
     expect(rows[1].text()).toContain("-");
   });
 
+  it("shows Chinese source labels for member and organization proxy registrations", async () => {
+    apiMock.mockResolvedValue({
+      ...payload,
+      rows: payload.rows.map((row, index) => ({
+        ...row,
+        source: index === 0 ? "member_registration" : "organization_proxy"
+      }))
+    });
+    const wrapper = mount(OrganizationRegistrationRecordsPage);
+    await flushPromises();
+
+    expect(wrapper.findAll("thead th").map((cell) => cell.text())).toContain("报名来源");
+    expect(wrapper.findAll("tbody tr")[0].text()).toContain("成员报名");
+    expect(wrapper.findAll("tbody tr")[1].text()).toContain("组织代报名");
+  });
+
   it("allows a non-archived approved submission to enter the replacement flow", async () => {
     apiMock.mockImplementation(async (path) => {
       if (path === "/api/organization/registrations?page=1&pageSize=25") {

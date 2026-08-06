@@ -13,6 +13,12 @@ const otherOwner = { id: "OWNER2", type: "organization", name: "另一负责人"
 
 function fixture() {
   return {
+    users: [
+      { id: "U1", type: "ordinary", name: "Member One", phone: "13800000001", status: "active" },
+      { id: "U2", type: "ordinary", name: "Foreign Member", phone: "13800000002", status: "active" },
+      { id: "U3", type: "ordinary", name: "Pending Member", phone: "13800000003", status: "active" },
+      { id: "U4", type: "ordinary", name: "Disabled Member", phone: "13800000004", status: "disabled" }
+    ],
     events: [{ id: "E1", status: "published", archivedAt: null, isCurrent: true, registrationMode: "force_open", registrationStartAt: "2026-01-01T00:00:00.000Z", registrationEndAt: "2026-12-31T00:00:00.000Z" }],
     projects: [{ id: "P1", eventId: "E1", name: "纸飞机", type: "individual", enabled: true, allowedGroups: ["小学高段"] }],
     organizations: [
@@ -43,6 +49,50 @@ const context = {
   now: () => timestamp,
   clock: () => new Date(timestamp)
 };
+
+test("member_registration binds the selected active local member and ignores forged ownership fields", () => {
+  const db = fixture();
+  const result = createOrMergeRegistration(db, input({
+    registrationSource: "member_registration",
+    memberUserId: "U1",
+    organizationId: "O2",
+    personalUserId: "U2",
+    source: "personal"
+  }), owner, "organization", context);
+
+  assert.equal(result.row.source, "member_registration");
+  assert.equal(result.row.personalUserId, "U1");
+  assert.equal(result.row.organizationId, "O1");
+  assert.equal(result.row.createdVia, "organization");
+});
+
+test("organization_proxy never accepts a client supplied personal user or source", () => {
+  const db = fixture();
+  const result = createOrMergeRegistration(db, input({
+    registrationSource: "organization_proxy",
+    organizationId: "O2",
+    personalUserId: "U1",
+    source: "member_registration"
+  }), owner, "organization", context);
+
+  assert.equal(result.row.source, "organization_proxy");
+  assert.equal(result.row.personalUserId, null);
+  assert.equal(result.row.organizationId, "O1");
+  assert.equal(result.row.createdVia, "organization");
+});
+
+test("member_registration requires an active ordinary member of the owner organization", () => {
+  for (const [memberUserId, expectedStatus] of [[undefined, 422], ["U2", 403], ["U3", 403], ["U4", 403]]) {
+    const db = fixture();
+    if (memberUserId === "U2") db.memberships.push({ userId: "U2", organizationId: "O2", status: "active", role: "member" });
+    if (memberUserId === "U3") db.memberships.push({ userId: "U3", organizationId: "O1", status: "pending", role: "member" });
+    if (memberUserId === "U4") db.memberships.push({ userId: "U4", organizationId: "O1", status: "active", role: "member" });
+    assert.throws(
+      () => createOrMergeRegistration(db, input({ registrationSource: "member_registration", memberUserId }), owner, "organization", context),
+      (error) => error.status === expectedStatus
+    );
+  }
+});
 
 test("personal first and organization second merge into one registration", () => {
   const db = fixture();

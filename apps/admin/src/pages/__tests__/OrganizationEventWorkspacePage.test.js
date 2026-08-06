@@ -19,6 +19,7 @@ const workspace = {
   summary: { registrationCount: 1, pendingRegistrationCount: 0, certificateCount: 1 },
   projects: [{ id: "P1", name: "Drone" }],
   grades: [{ id: "primary", name: "Primary", grades: ["Grade 5"] }],
+  members: [{ id: "U1", name: "Student Member", phone: "13800000001" }],
   registrations: []
 };
 
@@ -78,6 +79,7 @@ describe("OrganizationEventWorkspacePage", () => {
     });
     const wrapper = mount(OrganizationEventWorkspacePage, { props: { eventId: "E2" } });
     await flushPromises();
+    await wrapper.get('[data-registration-source="organization_proxy"]').setValue();
     await wrapper.get('[data-field="athlete-name"]').setValue("Student A");
     await wrapper.get('[data-field="athlete-grade"]').setValue("Grade 5");
     await wrapper.get('[data-field="athlete-phone"]').setValue("13800000000");
@@ -86,7 +88,32 @@ describe("OrganizationEventWorkspacePage", () => {
 
     expect(apiMock).toHaveBeenCalledWith("/api/organization/events/E2/registrations", expect.objectContaining({
       method: "POST",
-      body: JSON.stringify({ athlete: { name: "Student A", school: "Aviation School", grade: "Grade 5", phone: "13800000000" }, projectId: "P1", instructor: "" })
+      body: JSON.stringify({ registrationSource: "organization_proxy", athlete: { name: "Student A", school: "Aviation School", grade: "Grade 5", phone: "13800000000" }, projectId: "P1", instructor: "" })
+    }));
+  });
+
+  it("submits member_registration with the selected active member and prefilled identity", async () => {
+    apiMock.mockImplementation(async (path, options) => {
+      if (path === "/api/organization/events/E2/workspace") return workspace;
+      if (path === "/api/organization/events/E2/registrations" && options?.method === "POST") return { row: { id: "R-member" } };
+      return { rows: [] };
+    });
+    const wrapper = mount(OrganizationEventWorkspacePage, { props: { eventId: "E2" } });
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("成员报名");
+    expect(wrapper.text()).toContain("组织代报名");
+    await wrapper.get('[data-registration-source="member_registration"]').setValue();
+    await wrapper.get('[data-field="member-user-id"]').setValue("U1");
+    expect(wrapper.get('[data-field="athlete-name"]').element.value).toBe("Student Member");
+    expect(wrapper.get('[data-field="athlete-phone"]').element.value).toBe("13800000001");
+    await wrapper.get('[data-field="athlete-grade"]').setValue("Grade 5");
+    await wrapper.get('[data-testid="organization-registration-form"]').trigger("submit");
+    await flushPromises();
+
+    expect(apiMock).toHaveBeenCalledWith("/api/organization/events/E2/registrations", expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({ registrationSource: "member_registration", memberUserId: "U1", athlete: { name: "Student Member", school: "Aviation School", grade: "Grade 5", phone: "13800000001" }, projectId: "P1", instructor: "" })
     }));
   });
 

@@ -70,6 +70,19 @@ test("export row limit rejects 10001 rows before creating a workbook", () => {
   assert.equal(created, false);
 });
 
+test("registration workbook exports stable Chinese labels for both organization registration channels", () => {
+  const workbook = buildBoundRegistrationWorkbook([
+    { id: "R1", source: "member_registration", athlete: {} },
+    { id: "R2", source: "organization_proxy", athlete: {} },
+    { id: "R3", source: "personal", athlete: {} },
+    { id: "R4", source: "organization", athlete: {} }
+  ]);
+  const sheet = workbook.worksheets[0];
+  assert.deepEqual([2, 3, 4, 5].map((row) => sheet.getRow(row).getCell(2).value), [
+    "成员报名", "组织代报名", "成员本人报名", "历史组织报名"
+  ]);
+});
+
 test("attachment filenames include an RFC5987 value and safe ASCII fallback", () => {
   const value = contentDisposition("赛事(总决赛)'*.xlsx");
   assert.match(value, /filename="download\.xlsx"/);

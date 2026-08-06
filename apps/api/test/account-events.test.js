@@ -97,7 +97,20 @@ test("approved organization can join an open draft event without a separate publ
 });
 
 test("an organization workspace and export are scoped to its joined event", async () => {
-  await withTestServer(async ({ baseUrl }) => {
+  await withTestServer(async ({ baseUrl, dbPath }) => {
+    const db = JSON.parse(await fs.readFile(dbPath, "utf8"));
+    db.users.push(
+      { id: "U-PENDING", type: "ordinary", status: "active", name: "Pending", phone: "13800000101", password: "unused" },
+      { id: "U-DISABLED", type: "ordinary", status: "disabled", name: "Disabled", phone: "13800000102", password: "unused" },
+      { id: "U-ORG", type: "organization", status: "active", name: "Owner Type", phone: "13800000103", password: "unused" }
+    );
+    db.memberships.push(
+      { id: "M-PENDING", userId: "U-PENDING", organizationId: "O1001", role: "member", status: "pending" },
+      { id: "M-DISABLED", userId: "U-DISABLED", organizationId: "O1001", role: "member", status: "active" },
+      { id: "M-ORG", userId: "U-ORG", organizationId: "O1001", role: "member", status: "active" },
+      { id: "M-FOREIGN", userId: "U-PENDING", organizationId: "O1002", role: "member", status: "active" }
+    );
+    await fs.writeFile(dbPath, JSON.stringify(db));
     const owner = await loginAs(baseUrl, "13800000011", "123456");
     assert.equal((await fetch(
       `${baseUrl}/api/organization/events/wz-aerospace-2026/join`,
@@ -114,6 +127,7 @@ test("an organization workspace and export are scoped to its joined event", asyn
     assert.deepEqual(payload.organization, { id: "O1001", name: "温州市实验小学" });
     assert.equal(payload.summary.registrationCount, payload.registrations.length);
     assert.equal(payload.registrations.every((row) => row.organizationId === "O1001"), true);
+    assert.deepEqual(payload.members, [{ id: "U1001", name: "陈宇航家长", phone: "13800000001" }]);
 
     const exported = await fetch(
       `${baseUrl}/api/organization/events/wz-aerospace-2026/export`,

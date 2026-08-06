@@ -32,6 +32,16 @@ function userSummary(user) {
   return { id: user.id, name: user.name, phone: user.phone };
 }
 
+export function listActiveOrganizationMembers(db, organizationId) {
+  return db.memberships.flatMap((membership) => {
+    if (membership.organizationId !== organizationId || membership.role !== "member" || membership.status !== "active") return [];
+    const user = db.users.find((row) => (
+      row.id === membership.userId && row.type === "ordinary" && row.status === "active"
+    ));
+    return user ? [userSummary(user)] : [];
+  });
+}
+
 function membershipDto(row) {
   return {
     id: row.id,
@@ -259,6 +269,7 @@ export function listOwnedMemberships(db, owner) {
     });
   return {
     organization: organizationSummary(organization),
+    members: listActiveOrganizationMembers(db, organization.id),
     summary: {
       total: rows.length,
       pending: rows.filter((row) => row.status === "pending").length,

@@ -67,7 +67,7 @@ onMounted(loadWorkspace);
       </section>
 
       <section class="organization-registration-card">
-        <OrganizationAthleteRegistrationForm v-if="!archived" :event-id="props.eventId" :projects="workspace.projects || []" :grades="workspace.grades || []" :default-school="workspace.organization?.name || ''" @registered="registered" @error="emit('error', $event)" />
+        <OrganizationAthleteRegistrationForm v-if="!archived" :event-id="props.eventId" :projects="workspace.projects || []" :grades="workspace.grades || []" :members="workspace.members || []" :default-school="workspace.organization?.name || ''" @registered="registered" @error="emit('error', $event)" />
         <div v-else class="panel event-context-empty"><h3>归档赛事不可新增报名</h3><p class="hint">请在报名记录、成绩和证书页面查看历史信息。</p></div>
       </section>
     </div>

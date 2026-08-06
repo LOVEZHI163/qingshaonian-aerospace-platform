@@ -48,6 +48,15 @@ export function styleWorkbookHeaderCell(cell, { fill = "FF1F4E78", fontColor = "
   cell.alignment = { vertical: "middle", horizontal: "center" };
 }
 
+export function registrationSourceLabel(source) {
+  return {
+    member_registration: "成员报名",
+    organization_proxy: "组织代报名",
+    personal: "成员本人报名",
+    organization: "历史组织报名"
+  }[source] || source;
+}
+
 export function buildRegistrationWorkbook(rows) {
   const workbook = createExportWorkbook();
 
@@ -61,6 +70,7 @@ export function buildRegistrationWorkbook(rows) {
 
   for (const row of rows) {
     const data = BASE_COLUMNS.map(([, value]) => value(row) ?? "");
+    data[1] = registrationSourceLabel(row.source) || "";
     const excelRow = sheet.addRow(data);
     excelRow.alignment = { vertical: "middle", wrapText: true };
   }

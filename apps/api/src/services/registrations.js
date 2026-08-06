@@ -317,6 +317,26 @@ function requireOpenRegistrationEvent(db, eventId, clock) {
   return event;
 }
 
+function requireActiveOrganizationMember(db, organizationId, memberUserId) {
+  const userId = String(memberUserId || "").trim();
+  if (!userId) {
+    throw businessError(422, "请选择组织成员", "MEMBER_USER_ID_REQUIRED");
+  }
+  const membership = db.memberships.find((row) => (
+    row.userId === userId
+    && row.organizationId === organizationId
+    && row.role === "member"
+    && row.status === "active"
+  ));
+  const user = membership && db.users.find((row) => (
+    row.id === userId && row.type === "ordinary" && row.status === "active"
+  ));
+  if (!user) {
+    throw businessError(403, "所选用户不是本组织的有效普通成员", "ACTIVE_ORGANIZATION_MEMBER_REQUIRED");
+  }
+  return user;
+}
+
 function validateCreateForEvent(db, input, event, actor, channel) {
   const athlete = input?.athlete || {};
   requireText(athlete.name, "姓名");
@@ -328,16 +348,24 @@ function validateCreateForEvent(db, input, event, actor, channel) {
   const projectId = requireText(input?.projectId, "赛项");
   const project = validateProjectForRegistration(db, event.id, projectId, group);
   let organization = null;
+  let registrationSource = "member_registration";
+  let personalUserId = actor.id;
   if (channel === "personal") {
     requireOrdinaryUser(actor);
     organization = requireOrdinaryRegistrationEligibility(db, actor.id).organization;
   } else if (channel === "organization") {
     const scope = requireOrganizationEventParticipation(db, actor, event.id, { writable: true });
     organization = requireOperationalOrganization(db, scope.organization.id);
+    registrationSource = input?.registrationSource === "member_registration"
+      ? "member_registration"
+      : "organization_proxy";
+    personalUserId = registrationSource === "member_registration"
+      ? requireActiveOrganizationMember(db, organization.id, input?.memberUserId).id
+      : null;
   } else {
     throw businessError(422, "报名渠道不合法");
   }
-  return { athlete, group, project, organization, key: athleteKey(athlete) };
+  return { athlete, group, project, organization, registrationSource, personalUserId, key: athleteKey(athlete) };
 }
 
 function checkPersonalOwnership(row, userId) {
@@ -362,13 +390,13 @@ export function createOrMergeRegistration(db, input, actor, channel, {
   const event = requireOpenRegistrationEvent(db, requireEventId(db, input?.eventId).id, clock);
   const prepared = validateCreateForEvent(db, input, event, actor, channel);
   const existing = findRegistrationIdentity(db, event.id, prepared.project.id, prepared.key);
-  const personalUserId = channel === "personal" ? actor.id : null;
+  const personalUserId = prepared.personalUserId;
   const organizationId = prepared.organization?.id || null;
   const timestamp = now();
 
   if (!existing) {
     const row = {
-      id: makeId("R"), eventId: event.id, source: channel === "personal" ? "member_registration" : channel, createdByUserId: actor.id,
+      id: makeId("R"), eventId: event.id, source: prepared.registrationSource, createdByUserId: actor.id,
       personalUserId, organizationId, createdVia: channel, organization: prepared.organization?.name || "",
       athlete: prepared.athlete, athleteKey: prepared.key, group: prepared.group,
       projectId: prepared.project.id, projectName: prepared.project.name, projectType: prepared.project.type,
@@ -387,10 +415,13 @@ export function createOrMergeRegistration(db, input, actor, channel, {
     || existing.organization !== prepared.organization.name
     || existing.source !== "member_registration"
   );
-  const merged = addPersonal || addOrganization || normalizePersonal;
+  const normalizeOrganizationMember = channel === "organization"
+    && prepared.registrationSource === "member_registration"
+    && (existing.organization !== prepared.organization.name || existing.source !== "member_registration");
+  const merged = addPersonal || addOrganization || normalizePersonal || normalizeOrganizationMember;
   if (merged) {
     if (addPersonal) existing.personalUserId = personalUserId;
-    if (channel === "personal") {
+    if (channel === "personal" || prepared.registrationSource === "member_registration") {
       existing.organizationId = organizationId;
       existing.organization = prepared.organization.name;
       existing.source = "member_registration";

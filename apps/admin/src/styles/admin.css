@@ -1678,6 +1678,32 @@ select:focus {
   margin: 0;
 }
 
+.organization-registration-source {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 18px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #f7fbff;
+}
+
+.organization-registration-source legend {
+  padding: 0 6px;
+  font-weight: 700;
+}
+
+.organization-registration-source > label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.organization-registration-source > label:has(select),
+.organization-registration-source .hint {
+  flex-basis: 100%;
+}
+
 .organization-event-workspace .table-wrap {
   max-width: 100%;
   overscroll-behavior-inline: contain;

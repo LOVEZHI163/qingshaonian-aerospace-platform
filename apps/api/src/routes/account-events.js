@@ -3,6 +3,7 @@ import express from "express";
 import { GRADE_GROUPS } from "../domain/grades.js";
 import { buildBoundRegistrationWorkbook, contentDisposition } from "../exports/registration-workbook.js";
 import { listAccountEvents, joinOrganizationEvent } from "../services/account-events.js";
+import { listActiveOrganizationMembers } from "../services/memberships.js";
 import { requireOrganizationEventParticipation } from "../services/access-control.js";
 import { recordAudit } from "../services/audit.js";
 
@@ -46,6 +47,7 @@ export function createAccountEventsRouter({ store, requireUser, requirePasswordR
         certificateCount: db.certificates.filter((certificate) => registrations.some((row) => row.id === certificate.registrationId)).length
       },
       registrations,
+      members: listActiveOrganizationMembers(db, organization.id),
       projects: db.projects.filter((project) => project.eventId === event.id && project.enabled),
       grades: GRADE_GROUPS
     });

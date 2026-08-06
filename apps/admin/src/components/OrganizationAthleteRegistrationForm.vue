@@ -9,12 +9,15 @@ const props = defineProps({
   eventId: { type: String, required: true },
   projects: { type: Array, default: () => [] },
   grades: { type: Array, default: () => [] },
+  members: { type: Array, default: () => [] },
   defaultSchool: { type: String, default: "" },
   registration: { type: Object, default: null },
   disabled: { type: Boolean, default: false }
 });
 const emit = defineEmits(["registered", "error"]);
 const form = reactive({
+  registrationSource: "",
+  memberUserId: "",
   athlete: { name: "", school: "", grade: "", phone: "" },
   projectId: "",
   instructor: ""
@@ -30,8 +33,13 @@ const hasEventContext = computed(() => Boolean(String(props.eventId || "").trim(
 const editing = computed(() => Boolean(props.registration?.id));
 const gradeOptions = computed(() => props.grades.flatMap((group) => group.grades || []));
 const selectedProject = computed(() => props.projects.find((project) => project.id === form.projectId) || null);
+const selectedMember = computed(() => props.members.find((member) => member.id === form.memberUserId) || null);
+const memberMode = computed(() => form.registrationSource === "member_registration");
 const requiresSubmission = computed(() => !editing.value && selectedProject.value?.submissionMode === "image_video");
-const submitDisabled = computed(() => submitting.value || !form.projectId || (requiresSubmission.value && (!uploadSession.value?.id || uploadSessionLoading.value || !assetsComplete.value)));
+const submitDisabled = computed(() => submitting.value
+  || !form.projectId
+  || (!editing.value && (!form.registrationSource || (memberMode.value && !form.memberUserId)))
+  || (requiresSubmission.value && (!uploadSession.value?.id || uploadSessionLoading.value || !assetsComplete.value)));
 
 function blankAthlete() {
   return { name: "", school: props.defaultSchool || "", grade: "", phone: "" };
@@ -44,10 +52,30 @@ watch(() => props.projects, (projects) => {
 watch(() => props.registration, (registration) => {
   const athlete = registration?.athlete ? JSON.parse(JSON.stringify(registration.athlete)) : {};
   Object.assign(form.athlete, blankAthlete(), athlete);
+  form.registrationSource = registration?.id
+    ? (registration.source === "organization_proxy" ? "organization_proxy" : "member_registration")
+    : "";
+  form.memberUserId = registration?.personalUserId || "";
   form.projectId = registration?.projectId || props.projects[0]?.id || "";
   form.instructor = registration?.instructor || "";
   message.value = "";
 }, { immediate: true });
+
+watch(selectedMember, (member) => {
+  if (!memberMode.value || editing.value) return;
+  form.athlete.name = member?.name || "";
+  form.athlete.phone = member?.phone || "";
+  if (!form.athlete.school) form.athlete.school = props.defaultSchool || "";
+});
+
+watch(() => form.registrationSource, (source) => {
+  if (editing.value) return;
+  if (source === "organization_proxy") {
+    form.memberUserId = "";
+    form.athlete.name = "";
+    form.athlete.phone = "";
+  }
+});
 
 watch(() => props.defaultSchool, (defaultSchool) => {
   if (!editing.value && !form.athlete.school) form.athlete.school = defaultSchool || "";
@@ -100,15 +128,27 @@ async function submit() {
     const path = editing.value
       ? `/api/organization/events/${encodeURIComponent(props.eventId)}/registrations/${encodeURIComponent(props.registration.id)}`
       : `/api/organization/events/${encodeURIComponent(props.eventId)}/registrations`;
+    const body = editing.value
+      ? { athlete: form.athlete, projectId: form.projectId, instructor: form.instructor }
+      : {
+          registrationSource: form.registrationSource,
+          ...(memberMode.value ? { memberUserId: form.memberUserId } : {}),
+          athlete: form.athlete,
+          projectId: form.projectId,
+          instructor: form.instructor,
+          ...(requiresSubmission.value ? { uploadSessionId: uploadSession.value.id } : {})
+        };
     const payload = await api(path, {
       method: editing.value ? "PATCH" : "POST",
-      body: JSON.stringify({ athlete: form.athlete, projectId: form.projectId, instructor: form.instructor, ...(requiresSubmission.value ? { uploadSessionId: uploadSession.value.id } : {}) })
+      body: JSON.stringify(body)
     });
     message.value = editing.value ? "组织报名已更新" : payload.merged ? "已与现有个人报名合并，未重复创建" : "组织报名已提交";
     if (!editing.value) {
       Object.assign(form.athlete, blankAthlete());
       form.instructor = "";
       form.projectId = "";
+      form.registrationSource = "";
+      form.memberUserId = "";
       clearUploadSession();
     }
     emit("registered", payload);
@@ -122,6 +162,18 @@ async function submit() {
 
 <template>
   <form v-if="hasEventContext && !disabled" class="panel form-panel organization-athlete-registration-form" :data-testid="editing ? 'organization-registration-editor' : 'organization-registration-form'" @submit.prevent="submit">
+    <fieldset v-if="!editing" class="organization-registration-source" aria-label="报名方式">
+      <legend>报名方式</legend>
+      <label><input v-model="form.registrationSource" type="radio" value="member_registration" data-registration-source="member_registration" required />成员报名</label>
+      <label><input v-model="form.registrationSource" type="radio" value="organization_proxy" data-registration-source="organization_proxy" required />组织代报名</label>
+      <label v-if="memberMode">选择成员
+        <select v-model="form.memberUserId" data-field="member-user-id" required>
+          <option value="" disabled>请选择本组织有效成员</option>
+          <option v-for="member in members" :key="member.id" :value="member.id">{{ member.name }} · {{ member.phone }}</option>
+        </select>
+      </label>
+      <p class="hint">成员报名会关联该成员账号；组织代报名仅保存参赛者资料，不关联个人账号。</p>
+    </fieldset>
     <div class="panel-title"><h3>{{ editing ? "编辑组织报名" : "组织报名" }}</h3></div>
     <p class="hint">报名将自动归属当前组织；不支持切换个人身份或其他组织。</p>
     <div class="two"><label>姓名<input v-model="form.athlete.name" data-field="athlete-name" required /></label><label>学校<SchoolCombobox v-model="form.athlete.school" /></label></div>
