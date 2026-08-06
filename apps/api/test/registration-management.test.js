@@ -122,9 +122,37 @@ test("ACTIVE_ORGANIZATION_REQUIRED also blocks personal updates and upload-sessi
     assert.equal(updated.status, 403);
     assert.equal((await json(updated)).code, "ACTIVE_ORGANIZATION_REQUIRED");
 
+    const cancelled = await fetch(`${baseUrl}/api/me/events/wz-aerospace-2026/registrations/R20260627001/status`, withSession(ordinary.cookie, {
+      method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "cancelled" })
+    }));
+    assert.equal(cancelled.status, 403);
+    assert.equal((await json(cancelled)).code, "ACTIVE_ORGANIZATION_REQUIRED");
+
     const session = await fetch(`${baseUrl}/api/me/events/wz-aerospace-2026/projects/rocket-duration/upload-sessions`, withSession(ordinary.cookie, { method: "POST" }));
     assert.equal(session.status, 403);
     assert.equal((await json(session)).code, "ACTIVE_ORGANIZATION_REQUIRED");
+  });
+});
+
+test("fix round 1 personal updates restore the derived organization and member source", async () => {
+  await withServer(async (baseUrl, dbPath) => {
+    const ordinary = await loginAs(baseUrl, "13800000001", "123456");
+    await mutateDb(dbPath, (db) => {
+      db.events[0].registrationMode = "force_open";
+      const row = db.registrations.find((item) => item.id === "R20260627001");
+      row.organizationId = "O1002";
+      row.organization = "Stale organization";
+      row.source = "legacy_personal";
+    });
+
+    const response = await fetch(`${baseUrl}/api/me/events/wz-aerospace-2026/registrations/R20260627001`, withSession(ordinary.cookie, {
+      method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ instructor: "Updated" })
+    }));
+    assert.equal(response.status, 200);
+    const row = (await json(response)).row;
+    assert.equal(row.organizationId, "O1001");
+    assert.equal(row.organization, "温州市实验小学");
+    assert.equal(row.source, "member_registration");
   });
 });
 

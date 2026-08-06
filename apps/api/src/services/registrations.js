@@ -196,7 +196,7 @@ export function prepareOrdinaryRegistrationUpdate(db, row, input, userId) {
   const next = { ...row, athlete, group, projectId, organizationId, instructor: input.instructor ?? row.instructor };
   const validation = validateRegistration(next, db.registrations, project, row.eventId, row.id);
   if (!validation.ok) throw Object.assign(businessError(422, validation.errors[0]), { validation });
-  return { athlete, group, project, organizationId, organization, instructor: next.instructor || "", validation };
+  return { athlete, group, project, organizationId, organization, source: "member_registration", instructor: next.instructor || "", validation };
 }
 
 export function updateRegistrationStatus(db, row, input, user) {
@@ -382,10 +382,19 @@ export function createOrMergeRegistration(db, input, actor, channel, {
   // Validate both prospective ownerships before changing either field.
   const addPersonal = personalUserId ? checkPersonalOwnership(existing, personalUserId) : false;
   const addOrganization = organizationId ? checkOrganizationOwnership(existing, organizationId) : false;
-  const merged = addPersonal || addOrganization;
+  const normalizePersonal = channel === "personal" && (
+    existing.organizationId !== organizationId
+    || existing.organization !== prepared.organization.name
+    || existing.source !== "member_registration"
+  );
+  const merged = addPersonal || addOrganization || normalizePersonal;
   if (merged) {
     if (addPersonal) existing.personalUserId = personalUserId;
-    if (addOrganization) {
+    if (channel === "personal") {
+      existing.organizationId = organizationId;
+      existing.organization = prepared.organization.name;
+      existing.source = "member_registration";
+    } else if (addOrganization) {
       existing.organizationId = organizationId;
       existing.organization = prepared.organization.name;
     }

@@ -26,15 +26,15 @@ export function organizationAccessState(db, user) {
 }
 
 export function ordinaryRegistrationEligibility(db, userId) {
-  const membership = db.memberships.find((row) => (
-    row.userId === userId && row.role === "member" && row.status === "active"
-  )) || null;
-  const organization = membership
-    ? db.organizations.find((row) => row.id === membership.organizationId) || null
-    : null;
-  const eligible = Boolean(
-    membership && organization?.reviewStatus === "approved" && organization?.status === "active"
-  );
+  const candidates = db.memberships.flatMap((membership) => {
+    if (membership.userId !== userId || membership.role !== "member" || membership.status !== "active") return [];
+    const organization = db.organizations.find((row) => row.id === membership.organizationId);
+    return organization?.reviewStatus === "approved" && organization?.status === "active"
+      ? [{ membership, organization }]
+      : [];
+  });
+  const eligible = candidates.length === 1;
+  const { membership = null, organization = null } = eligible ? candidates[0] : {};
   return {
     eligible,
     code: eligible ? "OK" : "ACTIVE_ORGANIZATION_REQUIRED",

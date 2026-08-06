@@ -18,7 +18,7 @@ import {
   registrationContextPayload,
   updateRegistrationStatus
 } from "../services/registrations.js";
-import { requireOrganizationEventParticipation, requireOrganizationOwner, requireOrdinaryUser, requireWritableEvent } from "../services/access-control.js";
+import { requireOrganizationAccess, requireOrganizationEventParticipation, requireOrdinaryRegistrationEligibility, requireOrdinaryUser, requireWritableEvent } from "../services/access-control.js";
 import { recordAudit } from "../services/audit.js";
 import {
   commitUploadSession,
@@ -49,7 +49,7 @@ export function createRegistrationsRouter({
 
   router.get("/organization/registrations", ...user, asyncRoute(async (req, res) => {
     const db = await store.readDb();
-    const organization = requireOrganizationOwner(db, req.user);
+    const organization = requireOrganizationAccess(db, req.user);
     res.json(listOrganizationRegistrations(db, organization.id, req.query, clock));
   }));
 
@@ -197,6 +197,7 @@ export function createRegistrationsRouter({
 
   function applyRegistrationUpdate(row, prepared, timestamp) {
     Object.assign(row, {
+      source: prepared.source ?? row.source,
       organizationId: prepared.organizationId,
       organization: prepared.organization?.name || "",
       athlete: prepared.athlete,
@@ -242,6 +243,7 @@ export function createRegistrationsRouter({
     requireWritableEvent(db, req.params.eventId, clock);
     const row = db.registrations.find((item) => item.id === req.params.registrationId && item.eventId === req.params.eventId && item.personalUserId === req.user.id);
     if (!row) return res.status(404).json({ error: "Registration not found" });
+    requireOrdinaryRegistrationEligibility(db, req.user.id);
     updateRegistrationStatus(db, row, req.body, req.user);
     row.updatedAt = now();
     await store.writeDb(db);

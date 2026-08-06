@@ -68,6 +68,21 @@ test("ordinary registration eligibility requires one active member relation to a
   assert.equal(ordinaryRegistrationEligibility(db, activeMember.id).code, "ACTIVE_ORGANIZATION_REQUIRED");
 });
 
+test("fix round 1 rejects ambiguous ordinary registration eligibility with two operational member relations", () => {
+  const db = fixture();
+  db.memberships.push(
+    { id: "M-active-1", userId: "U1", organizationId: "O1", role: "member", status: "active" },
+    { id: "M-active-2", userId: "U1", organizationId: "O2", role: "member", status: "active" }
+  );
+
+  assert.deepEqual(ordinaryRegistrationEligibility(db, "U1"), {
+    eligible: false,
+    code: "ACTIVE_ORGANIZATION_REQUIRED",
+    organization: null,
+    membership: null
+  });
+});
+
 test("ordinary request and owner invitation create pending member relations", () => {
   const db = fixture();
   const request = requestMembership(db, db.users[0], { organizationId: "O1", note: "申请加入" }, makeId, now);

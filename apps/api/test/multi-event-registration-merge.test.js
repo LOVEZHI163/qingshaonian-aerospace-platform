@@ -62,6 +62,8 @@ test("personal first and organization second merge into one registration", () =>
 test("organization first and personal second preserve results and certificates", () => {
   const db = fixture();
   const first = createOrMergeRegistration(db, input(), owner, "organization", context);
+  first.row.organization = "Stale organization";
+  first.row.source = "legacy_organization";
   first.row.status = "approved";
   first.row.awardName = "一等奖";
   first.row.certificates = ["C1", "C2"];
@@ -69,6 +71,9 @@ test("organization first and personal second preserve results and certificates",
   const second = createOrMergeRegistration(db, input(), actor, "personal", context);
   assert.equal(second.merged, true);
   assert.equal(second.row.personalUserId, actor.id);
+  assert.equal(second.row.organizationId, "O1");
+  assert.equal(second.row.organization, "组织一");
+  assert.equal(second.row.source, "member_registration");
   assert.equal(second.row.status, "approved");
   assert.equal(second.row.awardName, "一等奖");
   assert.deepEqual(second.row.certificates, ["C1", "C2"]);
