@@ -16,8 +16,9 @@ import RegistrationPage from "../RegistrationPage.vue";
 function context() {
   return {
     event: { id: "E2", name: "第二场公开赛事" },
-    organizations: [],
-    defaultOrganizationId: "",
+    organizations: [{ id: "O1", name: "实验小学" }],
+    defaultOrganizationId: "O1",
+    eligibility: { eligible: true, code: "OK", organization: { id: "O1", name: "实验小学" } },
     grades: [{ id: "primary_lower", name: "小学低段", grades: ["一年级", "二年级", "三年级"] }],
     projects: [{
       id: "P-E2",

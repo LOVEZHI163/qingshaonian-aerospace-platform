@@ -1,11 +1,13 @@
-import { ref } from "vue";
+import { computed, ref } from "vue";
 
 import { api, setPasswordChangeRequiredHandler, setUnauthorizedHandler } from "../lib/api.js";
+import { organizationAccessFor } from "./access.js";
 
 const user = ref(null);
 const organizations = ref([]);
 const accountEvents = ref([]);
 const restoring = ref(true);
+const organizationAccess = computed(() => organizationAccessFor(user.value, organizations.value));
 
 function setUser(nextUser, nextOrganizations = organizations.value) {
   user.value = nextUser || null;
@@ -65,5 +67,5 @@ async function logout() {
 }
 
 export function useSession() {
-  return { user, organizations, accountEvents, restoring, restore, login, logout, setUser, clear, loadAccountEvents };
+  return { user, organizations, organizationAccess, accountEvents, restoring, restore, login, logout, setUser, clear, loadAccountEvents };
 }

@@ -27,7 +27,8 @@ import RegistrationRecordsPage from "../RegistrationRecordsPage.vue";
 const context = {
   event: { id: "E2", name: "第二场公开赛事" },
   organizations: [{ id: "O1", name: "实验小学" }],
-  defaultOrganizationId: "",
+  defaultOrganizationId: "O1",
+  eligibility: { eligible: true, code: "OK", organization: { id: "O1", name: "实验小学" } },
   grades: [{ id: "primary", name: "小学低段", grades: ["二年级"] }],
   projects: [{ id: "P2", eventId: "E2", name: "纸飞机", type: "individual", allowedGroups: ["小学低段"] }]
 };
@@ -65,16 +66,64 @@ describe("ordinary user event workflow", () => {
       "/api/me/events/E2/registrations",
       expect.objectContaining({ method: "POST" })
     );
+    const createCall = apiMock.mock.calls.find(([path, options]) => path === "/api/me/events/E2/registrations" && options?.method === "POST");
+    expect(JSON.parse(createCall[1].body).organizationId).toBe("O1");
   });
 
-  it("explains why an active member cannot associate an organization that has not joined", async () => {
+  it("shows the one eligible organization read-only while leaving school editable", async () => {
     const wrapper = mount(RegistrationPage, {
-      props: { eventId: "E2", accountType: "ordinary", eventOrganizations: [{ organization: context.organizations[0], organizationJoined: false }] }
+      props: { eventId: "E2", accountType: "ordinary" }
     });
     await flushPromises();
 
-    expect(wrapper.text()).toContain("该组织尚未加入本赛事");
-    expect(wrapper.get('option[value="O1"]').attributes("disabled")).toBeDefined();
+    expect(wrapper.get('[data-testid="eligible-organization"]').text()).toContain("实验小学");
+    expect(wrapper.find('[data-field="organization-select"]').exists()).toBe(false);
+    const school = wrapper.get('[data-field="registration-school"] input');
+    expect(school.element.value).toBe("实验小学");
+    await school.setValue("实验小学分校");
+    expect(school.element.value).toBe("实验小学分校");
+  });
+
+  it("blocks the form and guides an ineligible ordinary user to My Organization", async () => {
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/me/registration-context?eventId=E2") return {
+        ...context,
+        organizations: [],
+        defaultOrganizationId: "",
+        eligibility: { eligible: false, code: "ACTIVE_ORGANIZATION_REQUIRED", organization: null }
+      };
+      throw new Error(`unexpected API path ${path}`);
+    });
+    const wrapper = mount(RegistrationPage, { props: { eventId: "E2", accountType: "ordinary" } });
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("请先加入组织");
+    expect(wrapper.text()).toContain("请先加入已通过审核的组织后再报名");
+    expect(wrapper.find("form").exists()).toBe(false);
+    await wrapper.get('[data-action="open-my-organization"]').trigger("click");
+    expect(wrapper.emitted("navigate")).toEqual([["myOrganization"]]);
+  });
+
+  it("translates a stable eligibility error returned while submitting", async () => {
+    apiMock.mockImplementation(async (path, options) => {
+      if (path === "/api/me/registration-context?eventId=E2") return context;
+      if (path.startsWith("/api/schools")) return { rows: [] };
+      if (path === "/api/me/events/E2/registrations" && options?.method === "POST") {
+        throw Object.assign(new Error("raw eligibility wording"), { code: "ACTIVE_ORGANIZATION_REQUIRED" });
+      }
+      throw new Error(`unexpected API path ${path}`);
+    });
+    const wrapper = mount(RegistrationPage, { props: { eventId: "E2", accountType: "ordinary" } });
+    await flushPromises();
+    const inputs = wrapper.findAll("form.form-panel input");
+    await inputs[0].setValue("张三");
+    await inputs[1].setValue("实验小学");
+    await inputs[2].setValue("二年级");
+    await inputs[3].setValue("13600005001");
+    await wrapper.get("form.form-panel").trigger("submit");
+    await flushPromises();
+
+    expect(wrapper.emitted("error")).toEqual([["请先加入已通过审核的组织后再报名"]]);
   });
 
   it("loads records and certificates from E2 without falling back to an implicit event", async () => {

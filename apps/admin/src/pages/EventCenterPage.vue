@@ -2,6 +2,7 @@
 import { onMounted, ref } from "vue";
 
 import { api } from "../lib/api.js";
+import { accessMessage } from "../state/access.js";
 
 const props = defineProps({ accountType: { type: String, default: "ordinary" } });
 const emit = defineEmits(["open-event"]);
@@ -30,7 +31,7 @@ async function joinEvent(row) {
     row.participationState = "joined";
     openOrganizationWorkspace(row.event.id);
   } catch (requestError) {
-    error.value = requestError.message || "加入赛事失败，请稍后重试";
+    error.value = accessMessage(requestError, "加入赛事失败，请稍后重试");
   } finally {
     joiningEventId.value = "";
   }
@@ -54,7 +55,7 @@ async function loadEvents() {
     const payload = await api("/api/me/events");
     rows.value = Array.isArray(payload?.rows) ? payload.rows.filter((row) => row?.event?.id) : [];
   } catch (requestError) {
-    error.value = requestError.message || "赛事中心加载失败，请稍后重试";
+    error.value = accessMessage(requestError, "赛事中心加载失败，请稍后重试");
   } finally {
     loading.value = false;
   }

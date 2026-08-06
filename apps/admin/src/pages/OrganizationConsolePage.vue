@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from "vue";
 
 import OrganizationRegistrationForm from "../components/OrganizationRegistrationForm.vue";
 import { api } from "../lib/api.js";
+import { accessMessage, accessMessages } from "../state/access.js";
 import { useSession } from "../state/session.js";
 
 const emit = defineEmits(["error", "organization-changed"]);
@@ -23,16 +24,23 @@ const ownerActions = {
   cancel: "撤销邀请",
   remove: "移除成员"
 };
-const ownedOrganizations = computed(() => organizations.value.filter((item) => item.ownerUserId === session.user.value?.id));
+const ownedOrganizations = computed(() => session.user.value?.type === "organization" ? organizations.value : []);
 const ownedOrganization = computed(() => ownedOrganizations.value.length === 1 ? ownedOrganizations.value[0] : null);
 const operational = computed(() => ownedOrganization.value?.status === "active" && ownedOrganization.value?.reviewStatus === "approved");
+const restrictionCode = computed(() => {
+  if (ownedOrganization.value?.reviewStatus === "pending") return "ORGANIZATION_REVIEW_PENDING";
+  if (ownedOrganization.value?.reviewStatus === "rejected") return "ORGANIZATION_REJECTED";
+  if (ownedOrganization.value && ownedOrganization.value.status !== "active") return "ORGANIZATION_DISABLED";
+  return ownedOrganization.value ? "" : "ORGANIZATION_OWNER_REQUIRED";
+});
+const restrictionMessage = computed(() => accessMessages[restrictionCode.value] || "组织资料加载中");
 const requests = computed(() => memberships.value.filter((row) => row.status === "pending" && row.direction === "user_request"));
 const invitations = computed(() => memberships.value.filter((row) => row.status === "pending" && row.direction === "organization_invite"));
 const activeMembers = computed(() => memberships.value.filter((row) => row.status === "active" && row.role === "member" && row.user?.id));
 const history = computed(() => memberships.value.filter((row) => row.status === "rejected" || row.status === "removed"));
 
 function reportError(error, fallback) {
-  message.value = error?.message || fallback;
+  message.value = accessMessage(error, fallback);
   emit("error", message.value);
 }
 
@@ -145,12 +153,13 @@ onMounted(load);
 
 <template>
   <section v-if="!operational" class="panel organization-review-progress" data-testid="organization-review-progress">
-    <h3>组织资料正在审核</h3>
+    <h3>{{ restrictionMessage }}</h3>
     <p>当前组织：{{ ownedOrganization?.name || "组织资料加载中" }}</p>
     <em :class="ownedOrganization?.reviewStatus">{{ reviewStatusText[ownedOrganization?.reviewStatus] || "待审核" }}</em>
+    <p v-if="restrictionCode === 'ORGANIZATION_DISABLED'" class="hint">该组织已由平台管理员停用，请联系平台管理员处理。</p>
     <p v-if="ownedOrganization?.rejectReason" class="hint">驳回原因：{{ ownedOrganization.rejectReason }}</p>
     <template v-if="ownedOrganization?.reviewStatus === 'rejected'">
-      <button type="button" class="dark" @click="resubmitOpen = !resubmitOpen">重新提交资质</button>
+      <button type="button" class="dark" data-action="resubmit-organization" @click="resubmitOpen = !resubmitOpen">重新提交资质</button>
       <OrganizationRegistrationForm v-if="resubmitOpen" endpoint="/api/me/organization" method="PATCH" submit-label="重新提交组织资料" resubmission :initial-form="{ name: session.user.value?.name, phone: session.user.value?.phone, organizationName: ownedOrganization?.name, creditCode: ownedOrganization?.creditCode }" @registered="resubmitted" @error="message = $event" />
     </template>
     <p v-if="message" class="message" role="alert">{{ message }}</p>

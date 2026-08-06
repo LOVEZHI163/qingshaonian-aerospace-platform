@@ -179,7 +179,7 @@ describe("OrganizationConsolePage", () => {
     const wrapper = mount(OrganizationConsolePage);
     await flushPromises();
 
-    expect(wrapper.get('[data-testid="organization-review-progress"]').text()).toContain("待审核");
+    expect(wrapper.get('[data-testid="organization-review-progress"]').text()).toContain("组织资质正在审核中");
     expect(wrapper.find('[data-field="member-phone"]').exists()).toBe(false);
     expect(apiMock).not.toHaveBeenCalledWith("/api/organization/memberships");
   });
@@ -196,7 +196,39 @@ describe("OrganizationConsolePage", () => {
 
     expect(wrapper.get('[data-testid="organization-review-progress"]').text()).toContain("已驳回");
     expect(wrapper.text()).toContain("驳回原因：资料不清晰");
+    expect(wrapper.find('[data-action="resubmit-organization"]').exists()).toBe(true);
     expect(apiMock).not.toHaveBeenCalledWith("/api/organization/memberships");
+  });
+
+  it("explains when platform administration has disabled an approved organization", async () => {
+    const disabledOrganization = { ...organization, status: "disabled", reviewStatus: "approved" };
+    session.organizations.value = [disabledOrganization];
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/me/organizations") return { rows: [disabledOrganization] };
+      return { rows: [] };
+    });
+    const wrapper = mount(OrganizationConsolePage);
+    await flushPromises();
+
+    expect(wrapper.get('[data-testid="organization-review-progress"]').text()).toContain("组织已被平台停用");
+    expect(wrapper.text()).toContain("请联系平台管理员");
+    expect(wrapper.find('[data-action="resubmit-organization"]').exists()).toBe(false);
+    expect(apiMock).not.toHaveBeenCalledWith("/api/organization/memberships");
+  });
+
+  it("uses the stable access-code message when a server guard denies member management", async () => {
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/me/organizations") return { rows: [organization] };
+      if (path === "/api/organization/memberships") {
+        throw Object.assign(new Error("raw server wording"), { code: "ORGANIZATION_DISABLED" });
+      }
+      return { rows: [] };
+    });
+    const wrapper = mount(OrganizationConsolePage);
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("组织已被平台停用");
+    expect(wrapper.text()).not.toContain("raw server wording");
   });
 
   it.each([

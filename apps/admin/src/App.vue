@@ -22,6 +22,7 @@ import RegistrationPage from "./pages/RegistrationPage.vue";
 import RegistrationRecordsPage from "./pages/RegistrationRecordsPage.vue";
 import SiteContentPage from "./pages/SiteContentPage.vue";
 import UserManagementPage from "./pages/UserManagementPage.vue";
+import { organizationAccessFor } from "./state/access.js";
 import { useSession } from "./state/session.js";
 
 const session = useSession();
@@ -35,7 +36,7 @@ const releaseBlocked = ref(false);
 const releaseMessage = ref("");
 const userSidebarOpen = ref(false);
 const certificateRegistrationId = ref("");
-const DEEP_LINK_VIEWS = new Set(["overview", "events", "siteContent", "organizations", "registration", "registrationRecords", "organizationRecords", "records", "certificates", "users", "organization", "eventCenter", "organizationWorkspace", "myOrganization", "password"]);
+const DEEP_LINK_VIEWS = new Set(["overview", "events", "siteContent", "organizations", "registration", "registrationRecords", "organizationRecords", "records", "certificates", "users", "organization", "eventCenter", "organizationWorkspace", "myOrganization", "password", "passwordSettings"]);
 const SAFE_EVENT_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 const initialParams = new URLSearchParams(window.location.search);
 const requestedView = DEEP_LINK_VIEWS.has(initialParams.get("view")) ? initialParams.get("view") : "";
@@ -64,11 +65,7 @@ const roleText = { ordinary: "普通用户", organization: "组织用户", admin
 const accountEvents = computed(() => session.accountEvents?.value || []);
 const selectedAccountEvent = computed(() => accountEvents.value.find((row) => row?.event?.id === selectedEventId.value) || null);
 
-const approvedOrganization = computed(() => (session.organizations.value || []).find((organization) => (
-  organization.status === "active"
-  && organization.reviewStatus === "approved"
-  && organization.ownerUserId === currentUser.value?.id
-)));
+const organizationAccess = computed(() => organizationAccessFor(currentUser.value, session.organizations.value));
 const adminActive = computed(() => currentView.value === "registration" ? "registrations" : currentView.value);
 const userActive = computed(() => {
   if (currentUser.value?.type === "ordinary" && currentView.value === "registration") return "eventCenter";
@@ -79,6 +76,9 @@ const userNavigation = computed(() => {
   if (currentUser.value?.type === "ordinary") {
     return [["eventCenter", "赛事中心", "赛"], ["myOrganization", "我的组织", "组"], ["registrationRecords", "报名记录", "录"], ["certificates", "证书查询", "证"], ["password", "修改密码", "密"]];
   }
+  if (!organizationAccess.value.operational) {
+    return [["organization", "审核进度", "审"], ["passwordSettings", "修改密码", "密"]];
+  }
   return [["eventCenter", "赛事工作台", "赛"], ["organizationRecords", "报名记录", "录"], ["organization", "组织与成员", "组"], ["certificates", "证书查询", "证"], ["password", "修改密码", "密"]];
 });
 const userHeaderEvent = computed(() => {
@@ -88,7 +88,7 @@ const userHeaderEvent = computed(() => {
   if (currentView.value === "organizationRecords") return { name: "报名记录", date: "", venue: "", registrationDeadline: "" };
   if (currentView.value === "registrationRecords" && !recordsEventId.value) return { name: "报名记录", date: "", venue: "", registrationDeadline: "" };
   if (currentView.value === "certificates" && !certificateEventId.value) return { name: "我的证书", date: "", venue: "", registrationDeadline: "" };
-  if (currentView.value === "password") return { name: "修改密码", date: "", venue: "", registrationDeadline: "" };
+  if (["password", "passwordSettings"].includes(currentView.value)) return { name: "修改密码", date: "", venue: "", registrationDeadline: "" };
   if (selectedAccountEvent.value?.event) {
     const event = selectedAccountEvent.value.event;
     return {
@@ -112,6 +112,7 @@ const userHeaderEvent = computed(() => {
 function defaultView(user = currentUser.value) {
   if (!user) return "login";
   if (user.type === "admin") return "overview";
+  if (user.type === "organization" && !organizationAccessFor(user, session.organizations.value).operational) return "organization";
   return "eventCenter";
 }
 
@@ -155,6 +156,10 @@ function restoreCertificateEventContext() {
 }
 
 async function loadAccountEvents() {
+  if (currentUser.value?.type === "organization" && !organizationAccess.value.operational) {
+    if (session.accountEvents) session.accountEvents.value = [];
+    return true;
+  }
   try {
     await session.loadAccountEvents?.();
     return true;
@@ -184,6 +189,11 @@ function targetView(user = currentUser.value) {
   const routeView = initialRoutePending ? initialView : "";
   initialRoutePending = false;
   if (!user || !routeView) return defaultView(user);
+  const access = organizationAccessFor(user, session.organizations.value);
+  if (user.type === "organization" && !access.operational) {
+    selectEventContext("");
+    return ["password", "passwordSettings"].includes(routeView) ? "passwordSettings" : "organization";
+  }
   if (user.type === "organization" && routeView === "organizationWorkspace") {
     if (!initialEventId) return "eventCenter";
     selectEventContext(initialEventId);
@@ -295,6 +305,11 @@ function navigateAdmin(key, section = "") {
 function navigateUser(key) {
   userSidebarOpen.value = false;
   message.value = "";
+  if (currentUser.value?.type === "organization" && !organizationAccess.value.operational) {
+    selectEventContext("");
+    currentView.value = ["password", "passwordSettings"].includes(key) ? "passwordSettings" : "organization";
+    return;
+  }
   if (key === "eventCenter") selectEventContext("");
   if ((currentUser.value?.type === "ordinary" && ["registrationRecords", "certificates"].includes(key))
     || (currentUser.value?.type === "organization" && key === "certificates")) selectEventContext("");
@@ -322,6 +337,11 @@ function setCertificateEventId(eventId) {
 }
 
 function openAccountEvent({ eventId, mode }) {
+  if (currentUser.value?.type === "organization" && !organizationAccess.value.operational) {
+    selectEventContext("");
+    currentView.value = "organization";
+    return;
+  }
   const resolvedEventId = resolveAccountEventId(eventId);
   const expectedMode = currentUser.value?.type === "organization" ? "organizationWorkspace" : "registration";
   if (!resolvedEventId || mode !== expectedMode) {
@@ -363,9 +383,12 @@ function useRegistrationEvent(event) {
   selectedRegistrationEvent.value = event || null;
 }
 
-watch(approvedOrganization, (organization) => {
+watch(organizationAccess, (access) => {
   if (currentUser.value?.type !== "organization") return;
-  if (!organization && currentView.value !== "eventCenter") currentView.value = "organization";
+  if (!access.operational && !["organization", "passwordSettings"].includes(currentView.value)) {
+    selectEventContext("");
+    currentView.value = "organization";
+  }
 });
 
 watch(currentView, (view) => {
@@ -460,7 +483,7 @@ onMounted(async () => {
       </header>
       <p v-if="message" class="message">{{ message }}</p>
       <EventCenterPage v-if="currentView === 'eventCenter'" :account-type="currentUser.type" @open-event="openAccountEvent" />
-      <RegistrationPage v-else-if="currentUser.type === 'ordinary' && currentView === 'registration'" :event-id="registrationEventId" :account-type="currentUser.type" :event-organizations="selectedAccountEvent?.organizations || []" :registration-state="selectedAccountEvent?.registrationState || ''" :fallback-context="{ projects: eventData.projects }" @context="useRegistrationEvent" @registered="message = '报名已提交，等待审核'" @error="handleError" />
+      <RegistrationPage v-else-if="currentUser.type === 'ordinary' && currentView === 'registration'" :event-id="registrationEventId" :account-type="currentUser.type" :registration-state="selectedAccountEvent?.registrationState || ''" :fallback-context="{ projects: eventData.projects }" @context="useRegistrationEvent" @registered="message = '报名已提交，等待审核'" @navigate="navigateUser" @error="handleError" />
       <MyOrganizationPage v-else-if="currentView === 'myOrganization'" @organization-changed="refreshPersonalOrganization" @error="handleError" />
       <RegistrationRecordsPage :key="`records:${recordsEventId}`" v-else-if="currentView === 'registrationRecords'" :event-id="recordsEventId" @error="handleError" />
       <OrganizationCertificatesPage v-else-if="currentUser.type === 'organization' && currentView === 'certificates'" />
@@ -468,7 +491,7 @@ onMounted(async () => {
       <OrganizationEventWorkspacePage v-else-if="currentView === 'organizationWorkspace'" :event-id="selectedEventId" @back-to-events="navigateUser('eventCenter')" @context="useRegistrationEvent" @access-denied="handleWorkspaceAccessDenied" @error="handleError" />
       <OrganizationRegistrationRecordsPage v-else-if="currentView === 'organizationRecords'" @back-to-events="navigateUser('eventCenter')" />
       <OrganizationConsolePage v-else-if="currentView === 'organization'" @error="handleError" />
-      <PasswordSettingsPage v-else-if="currentView === 'password'" @changed="passwordChanged" />
+      <PasswordSettingsPage v-else-if="['password', 'passwordSettings'].includes(currentView)" @changed="passwordChanged" />
     </main>
   </div>
 </template>

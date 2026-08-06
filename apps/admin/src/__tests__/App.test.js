@@ -47,6 +47,7 @@ describe("App session integration", () => {
     window.history.replaceState({}, "", "/");
     apiMock.mockReset();
     sessionUser.value = null;
+    session.organizations.value = [];
     restoring.value = false;
     session.restore.mockClear();
     session.loadAccountEvents.mockClear();
@@ -153,6 +154,7 @@ describe("App session integration", () => {
 
   it.each(["ordinary", "organization"])("opens the event center by default for %s accounts", async (type) => {
     sessionUser.value = { id: `${type}-1`, type, name: "账户", mustChangePassword: false };
+    if (type === "organization") session.organizations.value = [{ id: "O1", name: "组织", status: "active", reviewStatus: "approved" }];
     apiMock.mockImplementation(async (path) => {
       if (path === "/api/public/event") return publicData();
       if (path === "/api/me/events") return { rows: [] };
@@ -166,6 +168,7 @@ describe("App session integration", () => {
 
   it.each(["ordinary", "organization"])("uses the hover rail and mobile drawer for %s accounts", async (type) => {
     sessionUser.value = { id: `${type}-1`, type, name: "账户", phone: "13800000001", mustChangePassword: false };
+    if (type === "organization") session.organizations.value = [{ id: "O1", name: "组织", status: "active", reviewStatus: "approved" }];
     apiMock.mockImplementation(async (path) => {
       if (path === "/api/public/event") return publicData();
       if (path === "/api/me/events") return { rows: [] };
@@ -187,6 +190,7 @@ describe("App session integration", () => {
     ["organization", ["赛", "录", "组", "证", "密"]]
   ])("keeps every %s sidebar label aligned behind an icon slot", async (type, expectedIcons) => {
     sessionUser.value = { id: `${type}-1`, type, name: "账户", phone: "13800000001", mustChangePassword: false };
+    if (type === "organization") session.organizations.value = [{ id: "O1", name: "组织", status: "active", reviewStatus: "approved" }];
     apiMock.mockImplementation(async (path) => {
       if (path === "/api/public/event") return publicData();
       if (path === "/api/me/events") return { rows: [] };
@@ -254,6 +258,9 @@ describe("App session integration", () => {
         event: { id: "E2", name: "春季赛" },
         organizations: [{ id: "O1", name: "实验学校" }],
         defaultOrganizationId: "O1",
+        eligibility: membershipActive
+          ? { eligible: true, code: "OK", organization: { id: "O1", name: "实验学校" } }
+          : { eligible: false, code: "ACTIVE_ORGANIZATION_REQUIRED", organization: null },
         projects: [],
         grades: []
       };
@@ -285,9 +292,8 @@ describe("App session integration", () => {
     await wrapper.get('[data-event-card="E2"]').trigger("click");
     await flushPromises();
 
-    const organizationOption = wrapper.get('select option[value="O1"]');
-    expect(organizationOption.attributes("disabled")).toBeUndefined();
-    expect(wrapper.get("select").element.value).toBe("O1");
+    expect(wrapper.get('[data-testid="eligible-organization"]').text()).toContain("实验学校");
+    expect(wrapper.find('[data-field="organization-select"]').exists()).toBe(false);
   });
 
   it("restores an authorized event slug as its canonical event id", async () => {
@@ -424,6 +430,55 @@ describe("App session integration", () => {
     expect(wrapper.find('[data-testid="organization-console-page"]').exists()).toBe(true);
     expect(new URLSearchParams(window.location.search).has("eventId")).toBe(false);
     expect(wrapper.find('[data-user-nav="organizationWorkspace"]').exists()).toBe(false);
+  });
+
+  it.each(["eventCenter", "organizationWorkspace", "organizationRecords", "certificates"])(
+    "routes a pending organization owner away from %s to qualification review",
+    async (view) => {
+      window.history.replaceState({}, "", `/admin/?view=${view}&eventId=E2`);
+      sessionUser.value = { id: "O-PENDING", type: "organization", name: "待审核负责人", mustChangePassword: false };
+      session.organizations.value = [{ id: "O1", name: "待审核学校", status: "active", reviewStatus: "pending" }];
+      apiMock.mockImplementation(async (path) => {
+        if (path === "/api/public/event") return publicData();
+        if (path === "/api/me/organizations") return { rows: session.organizations.value };
+        if (path === "/api/me/events") throw new Error("restricted owners must not load event operations");
+        return { rows: [] };
+      });
+
+      const wrapper = mount(App);
+      await flushPromises();
+
+      expect(wrapper.findAll("[data-user-nav]").map((item) => item.attributes("data-user-nav"))).toEqual(["organization", "passwordSettings"]);
+      expect(wrapper.find('[data-testid="organization-review-progress"]').exists()).toBe(true);
+      expect(wrapper.text()).toContain("组织资质正在审核中");
+      expect(new URLSearchParams(window.location.search).get("view")).toBe("organization");
+      expect(apiMock).not.toHaveBeenCalledWith("/api/me/events");
+      wrapper.unmount();
+    }
+  );
+
+  it("opens My Organization from the ineligible registration guidance", async () => {
+    window.history.replaceState({}, "", "/admin/?view=registration&eventId=E1");
+    sessionUser.value = { id: "U1", type: "ordinary", name: "普通用户", mustChangePassword: false };
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/public/event") return publicData();
+      if (path === "/api/me/events") return { rows: [{ event: { id: "E1", name: "测试赛事" }, registrationState: "open" }] };
+      if (path === "/api/me/registration-context?eventId=E1") return {
+        event: { id: "E1", name: "测试赛事" }, organizations: [], defaultOrganizationId: "",
+        eligibility: { eligible: false, code: "ACTIVE_ORGANIZATION_REQUIRED", organization: null }, projects: [], grades: []
+      };
+      if (path === "/api/me/organization-relations") return { active: [], requests: [], invitations: [] };
+      if (path === "/api/organizations/search") return { rows: [] };
+      return { rows: [] };
+    });
+    const wrapper = mount(App);
+    await flushPromises();
+    await wrapper.get('[data-action="open-my-organization"]').trigger("click");
+    await flushPromises();
+
+    expect(wrapper.find('[data-testid="my-organization-page"]').exists()).toBe(true);
+    expect(new URLSearchParams(window.location.search).get("view")).toBe("myOrganization");
+    expect(new URLSearchParams(window.location.search).has("eventId")).toBe(false);
   });
 
   it("filters all certificate history without retaining an active event context", async () => {
@@ -697,7 +752,9 @@ describe("App session integration", () => {
       if (path === "/api/public/features") return { smsPasswordResetEnabled: false };
       if (path === "/api/me/events") return { rows: [{ event: { id: "E1", name: "测试赛事" }, registrationState: "open", organizations: [] }] };
       if (path === "/api/me/registration-context?eventId=E1") return {
-        event: { id: "E1", name: "测试赛事" }, organizations: [],
+        event: { id: "E1", name: "测试赛事" }, organizations: [{ id: "O1", name: "温州市实验小学" }],
+        defaultOrganizationId: "O1",
+        eligibility: { eligible: true, code: "OK", organization: { id: "O1", name: "温州市实验小学" } },
         grades: [{ id: "primary", name: "小学低段", grades: ["三年级"] }],
         projects: [{ id: "P1", eventId: "E1", name: "纸飞机", type: "individual", allowedGroups: ["小学低段"] }]
       };

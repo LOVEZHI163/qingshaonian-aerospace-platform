@@ -94,6 +94,27 @@ describe("EventCenterPage", () => {
     expect(wrapper.emitted("open-event")[0][0]).toEqual({ eventId: "E-DATED", mode: "organizationWorkspace" });
   });
 
+  it("translates stable organization access codes instead of exposing server wording", async () => {
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/me/events") return { rows: [{
+        event: { id: "E-BLOCKED", name: "受限赛事" },
+        registrationState: "open",
+        participationState: "available"
+      }] };
+      if (path === "/api/organization/events/E-BLOCKED/join") {
+        throw Object.assign(new Error("raw server wording"), { code: "ORGANIZATION_REVIEW_PENDING" });
+      }
+      return { rows: [] };
+    });
+    const wrapper = mount(EventCenterPage, { props: { accountType: "organization" } });
+    await flushPromises();
+    await wrapper.get('[data-event-card="E-BLOCKED"]').trigger("click");
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("组织资质正在审核中");
+    expect(wrapper.text()).not.toContain("raw server wording");
+  });
+
   it("opens a joined organization event when the card itself is clicked", async () => {
     apiMock.mockResolvedValue({ rows: [{
       event: { id: "E-JOINED", name: "已加入赛事", date: "2026年10月1日" },

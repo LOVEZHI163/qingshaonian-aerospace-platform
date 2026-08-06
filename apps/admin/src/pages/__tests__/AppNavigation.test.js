@@ -287,7 +287,7 @@ describe("role based application navigation", () => {
       if (path === "/api/public/features") return { smsPasswordResetEnabled: false };
       if (path === "/api/me/registration-context?eventId=E2") return {
         event: { id: "E2", name: "目标赛事 E2", dateLabel: "2027-02-02", venue: "E2 场地", registrationEndAt: "2027-01-20T15:59:59.000Z" },
-        organizations: [], projects: [], grades: []
+        organizations: [], eligibility: { eligible: false, code: "ACTIVE_ORGANIZATION_REQUIRED", organization: null }, projects: [], grades: []
       };
       return { rows: [] };
     });
@@ -444,18 +444,19 @@ describe("role based application navigation", () => {
     expect(apiMock.mock.calls.some(([path]) => path.includes("%3Cscript%3E") || path.includes("<script>"))).toBe(false);
   });
 
-  it("shows an event center and review navigation to a pending organization", async () => {
+  it("shows only review and password navigation to a pending organization", async () => {
     const organization = { id: "O1", ownerUserId: "O1U", name: "待审核学校", reviewStatus: "pending", status: "active", membershipRole: "owner" };
     const wrapper = await mountFor({ id: "O1U", type: "organization", name: "负责人", phone: "13800000002", mustChangePassword: false }, organization); mounted.push(wrapper);
-    expect(wrapper.find('[data-testid="event-center-page"]').exists()).toBe(true);
+    expect(wrapper.find('[data-testid="organization-review-progress"]').exists()).toBe(true);
     expect(wrapper.text()).not.toContain("邀请成员");
-    expect(wrapper.findAll("[data-user-nav]").map((item) => item.get(".user-nav-label").text())).toEqual(["赛事工作台", "报名记录", "组织与成员", "证书查询", "修改密码"]);
-    expect(wrapper.text()).not.toContain("审核进度");
+    expect(wrapper.findAll("[data-user-nav]").map((item) => item.get(".user-nav-label").text())).toEqual(["审核进度", "修改密码"]);
+    expect(wrapper.text()).toContain("组织资质正在审核中");
     expect(wrapper.find('[data-user-nav="myOrganization"]').exists()).toBe(false);
     expect(apiMock.mock.calls.some(([path]) => path.includes("/registrations") || path.includes("/certificates"))).toBe(false);
   });
 
-  it.each(["pending", "approved"])("keeps organization navigation stable and opens cross-event records for a %s organization", async (reviewStatus) => {
+  it("keeps organization navigation stable and opens cross-event records for an approved organization", async () => {
+    const reviewStatus = "approved";
     const organization = { id: "O1", ownerUserId: "O1U", name: "组织学校", reviewStatus, status: "active", membershipRole: "owner" };
     const wrapper = await mountFor({ id: "O1U", type: "organization", name: "负责人", phone: "13800000002", mustChangePassword: false }, organization); mounted.push(wrapper);
 
