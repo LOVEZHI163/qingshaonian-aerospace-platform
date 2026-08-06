@@ -9,5 +9,5 @@ dev-server*.log
 !.env.example
 
 .worktrees/
-auth/
-backups/
+/auth/
+/backups/

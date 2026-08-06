@@ -1,0 +1,8 @@
+aerogp.cn {
+	encode zstd gzip
+	reverse_proxy web:80
+}
+
+www.aerogp.cn {
+	redir https://aerogp.cn{uri} permanent
+}

@@ -1,20 +1,46 @@
 import express from "express";
 import cors from "cors";
-import fs from "node:fs/promises";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-import multer from "multer";
-import AdmZip from "adm-zip";
+import { hashPassword, isLegacyPassword, validatePassword, verifyLoginPassword } from "./auth/passwords.js";
+import { createSmsPasswordResetService, sendPasswordResetError } from "./auth/password-reset.js";
+import { asyncRoute, createSessionMiddleware, requireAdmin, requirePasswordReady, requireUser } from "./auth/session.js";
+import { createAliyunSmsProvider } from "./auth/sms.js";
 import { createDataStore } from "./data/index.js";
-import { EVENT, GRADES, PROJECTS } from "./data/seed.js";
+import { createMutationAsyncRoute } from "./data/mutation-lock.js";
+import { createEventsRouter } from "./routes/events.js";
+import { createOrganizationsRouter } from "./routes/organizations.js";
+import { createRegistrationsRouter } from "./routes/registrations.js";
+import { createCertificateImportsRouter } from "./routes/certificate-imports.js";
+import { cleanupExpiredCertificateImportPreviews } from "./services/certificate-imports.js";
+import { createCertificatesRouter } from "./routes/certificates.js";
+import { createDashboardRouter } from "./routes/dashboard.js";
+import { createResourcesRouter } from "./routes/resources.js";
+import { createSiteMediaRouter } from "./routes/site-media.js";
+import { createSiteAdminRouter } from "./routes/site-admin.js";
+import { createPublicSiteRouter } from "./routes/public-site.js";
+import { createAccountEventsRouter } from "./routes/account-events.js";
+import { createSystemRouter } from "./routes/system.js";
+import { createSubmissionAssetsRouter } from "./routes/submission-assets.js";
+import { createMembershipsRouter } from "./routes/memberships.js";
+import { startSubmissionSessionExpiryCleanup } from "./services/submission-assets.js";
+import { registrationContext } from "./services/events.js";
+import { replayFileCleanupJournal } from "./services/organizations.js";
+import { organizationForOwner } from "./services/access-control.js";
+import { publishDueScheduledContent, startScheduledContentPublisher } from "./services/scheduled-content-publisher.js";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const uploadRoot = process.env.UPLOAD_ROOT ? path.resolve(process.env.UPLOAD_ROOT) : path.resolve(__dirname, "../uploads");
-const certificateUploadDir = path.join(uploadRoot, "certificates");
 const PORT = Number(process.env.PORT || 4300);
 const dataStore = createDataStore();
+const mutationAsyncRoute = createMutationAsyncRoute(dataStore);
 const readDb = () => dataStore.readDb();
 const writeDb = (db) => dataStore.writeDb(db);
+const smsProvider = createAliyunSmsProvider(process.env);
+const smsPasswordReset = createSmsPasswordResetService({
+  secret: process.env.SESSION_SECRET || "test-session-secret-32-characters",
+  readDb,
+  writeDb,
+  smsProvider,
+  authState: dataStore.authState,
+  withMutationLock: (handler) => dataStore.withMutationLock(handler)
+});
 
 function id(prefix) {
   return `${prefix}${Date.now()}${Math.floor(Math.random() * 1000)}`;
@@ -32,6 +58,16 @@ function normalizePhone(value) {
   return String(value || "").replace(/[^\d]/g, "");
 }
 
+const SAFE_EVENT_FILTER = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+
+function eventFilter(value) {
+  if (value === undefined) return null;
+  if (typeof value !== "string" || !SAFE_EVENT_FILTER.test(value)) {
+    throw Object.assign(new Error("赛事筛选不合法"), { status: 422 });
+  }
+  return value;
+}
+
 function athleteKey(athlete) {
   return [
     normalizeText(athlete.name),
@@ -41,31 +77,34 @@ function athleteKey(athlete) {
   ].join("|");
 }
 
-function projectType(projectId) {
-  return PROJECTS.find((item) => item.id === projectId)?.type || "individual";
-}
-
 function publicUser(user) {
   if (!user) return null;
-  const { password, ...safe } = user;
-  return safe;
+  return {
+    id: user.id,
+    name: user.name,
+    phone: user.phone,
+    type: user.type,
+    status: user.status,
+    mustChangePassword: Boolean(user.mustChangePassword),
+    createdAt: user.createdAt
+  };
+}
+
+function isOrganizationOperational(db, organizationId) {
+  const organization = db.organizations.find((item) => item.id === organizationId);
+  return organization?.status === "active" && organization.reviewStatus === "approved";
 }
 
 function canManageOrganization(db, userId, organizationId) {
   const user = db.users.find((item) => item.id === userId);
-  if (user?.type === "admin") return true;
-  return db.memberships.some(
-    (item) => item.userId === userId && item.organizationId === organizationId && item.status === "active" && ["owner", "manager"].includes(item.role)
-  );
+  return user?.type === "organization"
+    && organizationForOwner(db, userId)?.id === organizationId
+    && isOrganizationOperational(db, organizationId);
 }
 
-function isAdmin(db, userId) {
-  return db.users.some((item) => item.id === userId && item.type === "admin");
-}
-
-function activeMemberIdsForManagedOrganizations(db, actorUserId, organizationId = null) {
+function activeMemberIdsForManagedOrganizations(db, userId, organizationId = null) {
   const orgIds = db.organizations
-    .filter((organization) => (!organizationId || organization.id === organizationId) && canManageOrganization(db, actorUserId, organization.id))
+    .filter((organization) => (!organizationId || organization.id === organizationId) && canManageOrganization(db, userId, organization.id))
     .map((organization) => organization.id);
   const memberIds = db.memberships
     .filter((membership) => orgIds.includes(membership.organizationId) && membership.status === "active" && membership.userId)
@@ -73,95 +112,24 @@ function activeMemberIdsForManagedOrganizations(db, actorUserId, organizationId 
   return [...new Set(memberIds)];
 }
 
-function canAccessRegistration(db, actorUserId, registration) {
-  if (!registration) return false;
-  if (isAdmin(db, actorUserId)) return true;
-  if (registration.userId === actorUserId) return true;
-  return activeMemberIdsForManagedOrganizations(db, actorUserId).includes(registration.userId);
-}
-
-function canAccessCertificate(db, actorUserId, certificate, { includeDraft = false } = {}) {
-  if (!certificate) return false;
-  if (!includeDraft && certificate.status !== "published") return false;
-  const registration = db.registrations.find((row) => row.id === certificate.registrationId);
-  return canAccessRegistration(db, actorUserId, registration);
-}
-
-function certificatePayload(certificate, registration) {
-  return {
-    ...certificate,
-    registration,
-    athlete: registration?.athlete,
-    projectName: registration?.projectName,
-    organization: registration?.organization || ""
-  };
-}
-
-function safeFileName(fileName) {
-  return path.basename(String(fileName || "certificate.pdf")).replace(/[^\w.\-\u4e00-\u9fa5]/g, "_");
-}
-
-async function saveCertificateFile({ fileName, buffer }) {
-  await fs.mkdir(certificateUploadDir, { recursive: true });
-  const storedName = `${Date.now()}-${Math.floor(Math.random() * 1000)}-${safeFileName(fileName)}`;
-  const filePath = path.join(certificateUploadDir, storedName);
-  await fs.writeFile(filePath, buffer);
-  return { storedName, filePath };
-}
-
-function updateCertificateFromRegistration(certificate, registration) {
-  certificate.userId = registration.userId || null;
-  certificate.organizationId = registration.organizationId || null;
-  certificate.awardName = registration.awardName || certificate.awardName || "";
-  certificate.rank = registration.rank || certificate.rank || "";
-  certificate.score = registration.score || certificate.score || "";
-}
-
-function findCertificateByRegistration(db, registrationId) {
-  return db.certificates.find((item) => item.registrationId === registrationId);
-}
-
-function organizationForOwner(db, userId) {
-  return db.organizations.find((item) => item.ownerUserId === userId);
-}
-
-function createOrganizationForUser(db, user, { organizationName, organizationCode } = {}) {
-  const organization = {
-    id: id("O"),
-    name: organizationName || `${user.name}组织`,
-    code: organizationCode || `ORG-${normalizePhone(user.phone).slice(-4)}`,
-    ownerUserId: user.id,
-    contactName: user.name,
-    contactPhone: user.phone,
-    status: "active",
-    createdAt: now()
-  };
-  db.organizations.push(organization);
-  db.memberships.push({
-    id: id("M"),
-    userId: user.id,
-    organizationId: organization.id,
-    role: "owner",
-    status: "active",
-    direction: "system",
-    note: "管理员创建组织用户",
-    createdAt: now(),
-    updatedAt: now()
-  });
-  return organization;
-}
-
 function userOrganizations(db, userId) {
+  const user = db.users.find((item) => item.id === userId);
+  if (user?.type === "organization") {
+    const organization = organizationForOwner(db, userId);
+    return organization ? [{ id: organization.id, name: organization.name, code: organization.code, status: organization.status, reviewStatus: organization.reviewStatus }] : [];
+  }
+  if (user?.type !== "ordinary") return [];
   const memberships = db.memberships.filter((item) => item.userId === userId && item.status === "active");
   return memberships
-    .map((membership) => ({
-      ...db.organizations.find((organization) => organization.id === membership.organizationId),
-      membershipRole: membership.role
-    }))
+    .filter((membership) => membership.role === "member")
+    .map((membership) => {
+      const organization = db.organizations.find((item) => item.id === membership.organizationId);
+      return organization && { id: organization.id, name: organization.name, code: organization.code, status: organization.status, membershipRole: "member" };
+    })
     .filter(Boolean);
 }
 
-function validateRegistration(input, existingRows, ignoreId = null) {
+function validateRegistration(input, existingRows, project, eventId, ignoreId = null) {
   const errors = [];
   const athlete = input.athlete || {};
   const required = [
@@ -177,12 +145,9 @@ function validateRegistration(input, existingRows, ignoreId = null) {
     if (!String(input[key] ?? athlete[key] ?? "").trim()) errors.push(`${label}不能为空`);
   }
 
-  if (!GRADES.includes(input.group)) errors.push("组别不在赛事规程范围内");
-  if (!PROJECTS.some((project) => project.id === input.projectId)) errors.push("赛项不存在");
-
   const nextKey = athleteKey(athlete);
-  const nextType = projectType(input.projectId);
-  const activeRows = existingRows.filter((row) => row.id !== ignoreId && row.status !== "cancelled");
+  const nextType = project?.type || "individual";
+  const activeRows = existingRows.filter((row) => row.id !== ignoreId && row.eventId === eventId && row.status !== "cancelled");
   const sameAthleteRows = activeRows.filter((row) => row.athleteKey === nextKey);
   const hasSameType = sameAthleteRows.some((row) => row.projectType === nextType);
 
@@ -194,101 +159,318 @@ function validateRegistration(input, existingRows, ignoreId = null) {
 }
 
 const app = express();
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
+app.set("trust proxy", 1);
 app.use(cors());
-app.use(express.json({ limit: "5mb" }));
+app.use(express.json({ limit: "5mb", strict: false }));
+app.use((req, res, next) => {
+  if (req.is("application/json") && req.body !== undefined
+    && (!req.body || typeof req.body !== "object" || Array.isArray(req.body))) {
+    return res.status(422).json({ error: "请求内容必须是 JSON 对象" });
+  }
+  next();
+});
+app.use("/api", createSystemRouter({ releaseSha: process.env.RELEASE_SHA }));
+app.use(createSessionMiddleware({ env: process.env, dataStore }));
+app.use(asyncRoute(async (req, _res, next) => {
+  if (req.session.userId) {
+    const db = await readDb();
+    req.user = db.users.find((user) =>
+      user.id === req.session.userId
+      && user.status === "active"
+      && user.sessionVersion === req.session.sessionVersion
+    );
+  }
+  next();
+}));
+app.use("/api", createOrganizationsRouter({
+  store: dataStore,
+  requireUser,
+  requireAdmin,
+  requirePasswordReady,
+  asyncRoute: mutationAsyncRoute,
+  hashPassword,
+  validatePassword,
+  makeId: id,
+  now,
+  publicUser
+}));
 
-app.get("/api/public/event", (_req, res) => {
-  res.json({ event: EVENT, projects: PROJECTS, grades: GRADES });
+app.use("/api", createMembershipsRouter({
+  store: dataStore,
+  requireUser,
+  requirePasswordReady,
+  asyncRoute,
+  mutationAsyncRoute,
+  makeId: id,
+  now
+}));
+
+app.use("/api", createAccountEventsRouter({
+  store: dataStore,
+  requireUser,
+  requirePasswordReady,
+  asyncRoute: mutationAsyncRoute,
+  now
+}));
+
+app.use("/api", createEventsRouter({
+  store: dataStore,
+  requireAdmin,
+  requirePasswordReady,
+  asyncRoute: mutationAsyncRoute,
+  makeId: id
+}));
+
+app.use("/api", createResourcesRouter({
+  store: dataStore,
+  requireAdmin,
+  requirePasswordReady,
+  asyncRoute,
+  mutationAsyncRoute,
+  makeId: id,
+  now
+}));
+
+app.use("/api", createRegistrationsRouter({
+  store: dataStore,
+  requireUser,
+  requireAdmin,
+  requirePasswordReady,
+  asyncRoute: mutationAsyncRoute,
+  makeId: id,
+  now
+}));
+
+app.use("/api", createSubmissionAssetsRouter({
+  store: dataStore,
+  requireUser,
+  requireAdmin,
+  requirePasswordReady,
+  asyncRoute: mutationAsyncRoute,
+  makeId: id,
+  now
+}));
+
+app.use("/api", createCertificateImportsRouter({
+  store: dataStore,
+  requireAdmin,
+  requirePasswordReady,
+  asyncRoute: mutationAsyncRoute,
+  makeId: id,
+  now
+}));
+
+app.use("/api", createCertificatesRouter({
+  store: dataStore,
+  requireUser,
+  requireAdmin,
+  requirePasswordReady,
+  asyncRoute,
+  mutationAsyncRoute,
+  makeId: id,
+  now
+}));
+
+app.use("/api", createDashboardRouter({
+  store: dataStore,
+  requireAdmin,
+  requirePasswordReady,
+  asyncRoute,
+  uploadRoot: process.env.UPLOAD_ROOT || "/data/uploads"
+}));
+
+app.use("/api", createSiteMediaRouter({
+  store: dataStore,
+  requireAdmin,
+  requirePasswordReady,
+  asyncRoute,
+  mutationAsyncRoute,
+  makeId: id,
+  now
+}));
+
+app.use("/api", createSiteAdminRouter({
+  store: dataStore,
+  requireAdmin,
+  requirePasswordReady,
+  asyncRoute,
+  mutationAsyncRoute,
+  makeId: id,
+  now
+}));
+
+let nextScheduledPublishingCheckAt = 0;
+let scheduledPublishingCheck = null;
+app.use("/api/public", asyncRoute(async (_req, _res, next) => {
+  const timestamp = Date.now();
+  if (timestamp >= nextScheduledPublishingCheckAt) {
+    nextScheduledPublishingCheckAt = timestamp + 1_000;
+    scheduledPublishingCheck = publishDueScheduledContent({ store: dataStore })
+      .finally(() => { scheduledPublishingCheck = null; });
+  }
+  if (scheduledPublishingCheck) await scheduledPublishingCheck;
+  next();
+}));
+
+app.use("/api", createPublicSiteRouter({
+  store: dataStore,
+  asyncRoute
+}));
+
+app.get("/api/public/features", (_req, res) => {
+  res.json({ smsPasswordResetEnabled: smsPasswordReset.enabled });
 });
 
-app.post("/api/auth/register", async (req, res) => {
+app.post("/api/auth/register", mutationAsyncRoute(async (req, res) => {
   const db = await readDb();
-  const { name, phone, password, type = "ordinary", organizationName, organizationCode } = req.body;
+  const { name, phone, password, type = "ordinary" } = req.body;
   if (!name || !phone || !password) return res.status(422).json({ error: "姓名、手机号和密码不能为空" });
+  if (type === "organization") return res.status(422).json({ error: "组织注册请使用资质上传接口" });
+  if (type !== "ordinary") return res.status(422).json({ error: "账号类型不合法" });
+  const passwordError = validatePassword(password);
+  if (passwordError) return res.status(422).json({ error: passwordError });
   const normalizedPhone = normalizePhone(phone);
   if (db.users.some((user) => normalizePhone(user.phone) === normalizedPhone)) return res.status(409).json({ error: "该手机号已注册" });
 
-  const user = { id: id("U"), name, phone: normalizedPhone, password, type, status: "active", createdAt: now() };
+  const user = {
+    id: id("U"), name, phone: normalizedPhone, password: await hashPassword(password), type, status: "active",
+    sessionVersion: 0, mustChangePassword: false, createdAt: now()
+  };
   db.users.push(user);
 
-  let organization = null;
-  if (type === "organization") {
-    if (!organizationName) return res.status(422).json({ error: "组织用户注册时必须填写组织名称" });
-    organization = {
-      id: id("O"),
-      name: organizationName,
-      code: organizationCode || `ORG-${normalizedPhone.slice(-4)}`,
-      ownerUserId: user.id,
-      contactName: user.name,
-      contactPhone: user.phone,
-      status: "active",
-      createdAt: now()
-    };
-    db.organizations.push(organization);
-    db.memberships.push({
-      id: id("M"),
-      userId: user.id,
-      organizationId: organization.id,
-      role: "owner",
-      status: "active",
-      direction: "system",
-      note: "组织注册自动创建",
-      createdAt: now(),
-      updatedAt: now()
-    });
+  await writeDb(db);
+  res.status(201).json({ user: publicUser(user), organization: null });
+}));
+
+app.post("/api/auth/login", asyncRoute(async (req, res) => {
+  const phone = normalizePhone(req.body.phone);
+  const attemptTime = Date.now();
+  const rateKeys = [`login:phone:${phone}`, `login:ip:${req.ip}`];
+  const allowed = await dataStore.authState.consumeRateLimits([
+    { key: rateKeys[0], limit: 5, windowMs: 15 * 60 * 1000 },
+    { key: rateKeys[1], limit: 20, windowMs: 15 * 60 * 1000 }
+  ], attemptTime);
+  if (!allowed) return res.status(429).json({ error: "登录尝试过于频繁，请稍后再试" });
+  const authenticated = await dataStore.withMutationLock(async () => {
+    const db = await readDb();
+    const user = db.users.find((item) => normalizePhone(item.phone) === phone && item.status === "active");
+    if (!(await verifyLoginPassword(req.body.password, user?.password))) return null;
+    if (isLegacyPassword(user.password)) {
+      user.password = await hashPassword(req.body.password);
+      await writeDb(db);
+    }
+    return { db, user };
+  });
+  if (!authenticated) {
+    return res.status(401).json({ error: "手机号或密码错误" });
   }
-
-  await writeDb(db);
-  res.status(201).json({ user: publicUser(user), organization });
-});
-
-app.post("/api/auth/login", async (req, res) => {
-  const db = await readDb();
-  const phone = normalizePhone(req.body.phone);
-  const user = db.users.find((item) => normalizePhone(item.phone) === phone && item.password === req.body.password);
-  if (!user) return res.status(401).json({ error: "手机号或密码错误" });
+  await dataStore.authState.releaseRateLimits(rateKeys, attemptTime);
+  const { db, user } = authenticated;
+  await new Promise((resolve, reject) => req.session.regenerate((error) => error ? reject(error) : resolve()));
+  req.session.userId = user.id;
+  req.session.sessionVersion = user.sessionVersion;
+  await new Promise((resolve, reject) => req.session.save((error) => error ? reject(error) : resolve()));
   res.json({ user: publicUser(user), organizations: userOrganizations(db, user.id) });
-});
+}));
 
-app.post("/api/auth/reset-password", async (req, res) => {
+app.get("/api/auth/me", requireUser, asyncRoute(async (req, res) => {
   const db = await readDb();
-  const phone = normalizePhone(req.body.phone);
-  const user = db.users.find((item) => normalizePhone(item.phone) === phone && normalizeText(item.name) === normalizeText(req.body.name));
-  if (!user) return res.status(404).json({ error: "未找到匹配的账号，请确认姓名和手机号" });
-  if (!req.body.password || String(req.body.password).length < 6) return res.status(422).json({ error: "新密码至少 6 位" });
-  user.password = String(req.body.password);
-  await writeDb(db);
-  res.json({ user: publicUser(user), message: "密码已重置，请使用新密码登录" });
-});
+  res.json({ user: publicUser(req.user), organizations: userOrganizations(db, req.user.id) });
+}));
 
-app.get("/api/users", async (_req, res) => {
+app.post("/api/auth/change-password", requireUser, asyncRoute(async (req, res) => {
+  const result = await dataStore.withMutationLock(async () => {
+    const db = await readDb();
+    const user = db.users.find((item) => item.id === req.user.id);
+    if (!user || !(await verifyLoginPassword(req.body.currentPassword, user.password))) return { status: 401, error: "当前密码错误" };
+    const passwordError = validatePassword(req.body.newPassword);
+    if (passwordError) return { status: 422, error: passwordError };
+    if (await verifyLoginPassword(req.body.newPassword, user.password)) return { status: 422, error: "新密码不能与当前密码相同" };
+    user.password = await hashPassword(req.body.newPassword);
+    user.sessionVersion += 1;
+    user.mustChangePassword = false;
+    await writeDb(db);
+    return { user };
+  });
+  if (result.error) {
+    return res.status(result.status).json({ error: result.error });
+  }
+  const { user } = result;
+  req.session.sessionVersion = user.sessionVersion;
+  await new Promise((resolve, reject) => req.session.save((error) => error ? reject(error) : resolve()));
+  res.json({ user: publicUser(user) });
+}));
+
+app.post("/api/auth/logout", asyncRoute(async (req, res) => {
+  await new Promise((resolve, reject) => req.session.destroy((error) => error ? reject(error) : resolve()));
+  res.clearCookie("aerogp.sid", { path: "/", httpOnly: true, sameSite: "lax", secure: req.secure });
+  res.json({ ok: true });
+}));
+
+app.post("/api/auth/password-reset/sms/request", asyncRoute(async (req, res) => {
+  try {
+    res.json(await smsPasswordReset.request({ phone: req.body.phone, ip: req.ip }));
+  } catch (error) {
+    return sendPasswordResetError(error, res);
+  }
+}));
+
+app.post("/api/auth/password-reset/sms/confirm", asyncRoute(async (req, res) => {
+  try {
+    res.json(await smsPasswordReset.confirm(req.body));
+  } catch (error) {
+    return sendPasswordResetError(error, res);
+  }
+}));
+
+app.get("/api/users", requireAdmin, requirePasswordReady, asyncRoute(async (_req, res) => {
   const db = await readDb();
   res.json({ rows: db.users.map(publicUser) });
-});
+}));
 
-app.post("/api/admin/users", async (req, res) => {
+app.post("/api/admin/users/:id/reset-password", requireAdmin, requirePasswordReady, mutationAsyncRoute(async (req, res) => {
+  const passwordError = validatePassword(req.body.password);
+  if (passwordError) return res.status(422).json({ error: passwordError });
   const db = await readDb();
-  if (!isAdmin(db, req.body.actorUserId)) return res.status(403).json({ error: "只有管理员可以创建用户" });
-  const { name, phone, password = "123456", type = "ordinary", organizationName, organizationCode } = req.body;
+  const user = db.users.find((item) => item.id === req.params.id);
+  if (!user) return res.status(404).json({ error: "用户不存在" });
+  user.password = await hashPassword(req.body.password);
+  user.sessionVersion += 1;
+  user.mustChangePassword = true;
+  await writeDb(db);
+  res.json({ user: publicUser(user) });
+}));
+
+app.post("/api/admin/users", requireAdmin, requirePasswordReady, mutationAsyncRoute(async (req, res) => {
+  const db = await readDb();
+  const { name, phone, password, type = "ordinary" } = req.body;
   if (!name || !phone || !password) return res.status(422).json({ error: "姓名、手机号和密码不能为空" });
-  if (!["ordinary", "organization"].includes(type)) return res.status(422).json({ error: "账号类型不合法" });
+  if (type === "organization") return res.status(422).json({ error: "组织必须通过资质注册并审核" });
+  if (type !== "ordinary") return res.status(422).json({ error: "账号类型不合法" });
+  const passwordError = validatePassword(password);
+  if (passwordError) return res.status(422).json({ error: passwordError });
   const normalizedPhone = normalizePhone(phone);
   if (db.users.some((user) => normalizePhone(user.phone) === normalizedPhone)) return res.status(409).json({ error: "该手机号已注册" });
 
-  const user = { id: id("U"), name, phone: normalizedPhone, password, type, status: req.body.status || "active", createdAt: now() };
+  const user = {
+    id: id("U"), name, phone: normalizedPhone, password: await hashPassword(password), type, status: req.body.status || "active",
+    sessionVersion: 0, mustChangePassword: false, createdAt: now()
+  };
   db.users.push(user);
-  const organization = type === "organization" ? createOrganizationForUser(db, user, { organizationName, organizationCode }) : null;
   await writeDb(db);
-  res.status(201).json({ row: publicUser(user), organization });
-});
+  res.status(201).json({ row: publicUser(user), organization: null });
+}));
 
-app.patch("/api/admin/users/:id", async (req, res) => {
+app.patch("/api/admin/users/:id", requireAdmin, requirePasswordReady, mutationAsyncRoute(async (req, res) => {
   const db = await readDb();
-  if (!isAdmin(db, req.body.actorUserId)) return res.status(403).json({ error: "只有管理员可以修改用户" });
   const user = db.users.find((item) => item.id === req.params.id);
   if (!user) return res.status(404).json({ error: "用户不存在" });
+  let organization = organizationForOwner(db, user.id);
+  if (user.type === "organization" && !organization) {
+    return res.status(422).json({ error: "历史组织账号缺少资质组织，请重新注册并审核" });
+  }
   if (user.type === "admin" && req.body.type && req.body.type !== "admin") return res.status(422).json({ error: "不能修改超级管理员账号类型" });
+  if (req.body.type === "organization" && user.type !== "organization") return res.status(422).json({ error: "组织必须通过资质注册并审核" });
 
   if (req.body.phone) {
     const normalizedPhone = normalizePhone(req.body.phone);
@@ -297,13 +479,11 @@ app.patch("/api/admin/users/:id", async (req, res) => {
     user.phone = normalizedPhone;
   }
   if (req.body.name) user.name = String(req.body.name);
-  if (req.body.password) user.password = String(req.body.password);
+  if (req.body.password) return res.status(422).json({ error: "请使用管理员密码重置接口" });
   if (req.body.status) user.status = String(req.body.status);
   if (req.body.type && ["ordinary", "organization"].includes(req.body.type)) user.type = req.body.type;
 
-  let organization = organizationForOwner(db, user.id);
   if (user.type === "organization" && (req.body.organizationName || req.body.organizationCode)) {
-    if (!organization) organization = createOrganizationForUser(db, user, { organizationName: req.body.organizationName, organizationCode: req.body.organizationCode });
     organization.name = req.body.organizationName || organization.name;
     organization.code = req.body.organizationCode || organization.code;
     organization.contactName = user.name;
@@ -312,452 +492,84 @@ app.patch("/api/admin/users/:id", async (req, res) => {
 
   await writeDb(db);
   res.json({ row: publicUser(user), organization });
-});
+}));
 
-app.delete("/api/admin/users/:id", async (req, res) => {
+app.delete("/api/admin/users/:id", requireAdmin, requirePasswordReady, mutationAsyncRoute(async (req, res) => {
   const db = await readDb();
-  if (!isAdmin(db, req.query.actorUserId)) return res.status(403).json({ error: "只有管理员可以删除用户" });
   const user = db.users.find((item) => item.id === req.params.id);
   if (!user) return res.status(404).json({ error: "用户不存在" });
   if (user.type === "admin") return res.status(422).json({ error: "不能删除超级管理员" });
 
   const ownedOrganizationIds = db.organizations.filter((org) => org.ownerUserId === user.id).map((org) => org.id);
+  if (db.organizationDocuments.some((document) => ownedOrganizationIds.includes(document.organizationId) && !document.cleanedAt)) {
+    return res.status(409).json({ error: "组织仍有资质文件，请先完成资源清理流程" });
+  }
+  if (db.registrations.some((registration) => registration.createdByUserId === user.id || registration.personalUserId === user.id)) {
+    return res.status(409).json({ error: "用户仍有关联报名，不能删除" });
+  }
   db.users = db.users.filter((item) => item.id !== user.id);
   db.organizations = db.organizations.filter((org) => org.ownerUserId !== user.id);
   db.memberships = db.memberships.filter((membership) => membership.userId !== user.id && !ownedOrganizationIds.includes(membership.organizationId));
-  db.registrations = db.registrations.map((registration) => registration.userId === user.id ? { ...registration, userId: null } : registration);
-  db.certificates = db.certificates.map((certificate) => certificate.userId === user.id ? { ...certificate, userId: null } : certificate);
   await writeDb(db);
   res.json({ ok: true });
-});
+}));
 
-app.get("/api/organizations", async (_req, res) => {
-  const db = await readDb();
-  res.json({ rows: db.organizations, memberships: db.memberships });
-});
-
-app.get("/api/me/:userId", async (req, res, next) => {
+app.get("/api/me/:userId", requireUser, requirePasswordReady, asyncRoute(async (req, res, next) => {
   if (["registrations", "certificates"].includes(req.params.userId)) return next();
   const db = await readDb();
   const user = db.users.find((item) => item.id === req.params.userId);
   if (!user) return res.status(404).json({ error: "用户不存在" });
+  if (req.user.type !== "admin" && user.id !== req.user.id) return res.status(403).json({ error: "无权查看该用户" });
   res.json({
     user: publicUser(user),
     organizations: userOrganizations(db, user.id),
-    memberships: db.memberships.filter((item) => item.userId === user.id || item.invitedPhone === user.phone),
-    registrations: db.registrations.filter((item) => item.userId === user.id)
+    memberships: db.memberships
+      .filter((item) => item.userId === user.id || item.invitedPhone === user.phone)
+      .map((item) => ({ id: item.id, userId: item.userId, organizationId: item.organizationId, role: item.role, status: item.status, direction: item.direction, note: item.note, createdAt: item.createdAt, updatedAt: item.updatedAt })),
+    ...(req.user.type === "admin" ? {
+      registrations: db.registrations.filter((item) => item.createdByUserId === user.id || item.personalUserId === user.id)
+        .map((item) => ({ id: item.id, eventId: item.eventId, eventName: db.events.find((event) => event.id === item.eventId)?.name || "未知赛事", organizationId: item.organizationId, status: item.status, athlete: { name: item.athlete?.name, school: item.athlete?.school, grade: item.athlete?.grade }, group: item.group, projectId: item.projectId, projectName: db.projects.find((project) => project.id === item.projectId && project.eventId === item.eventId)?.name || "未知项目", createdAt: item.createdAt }))
+    } : {})
   });
-});
+}));
 
-app.post("/api/organizations/request", async (req, res) => {
-  const db = await readDb();
-  const user = db.users.find((item) => item.id === req.body.userId);
-  const organization = db.organizations.find((item) => item.id === req.body.organizationId);
-  if (!user || !organization) return res.status(404).json({ error: "用户或组织不存在" });
-  const existing = db.memberships.find((item) => item.userId === user.id && item.organizationId === organization.id && ["active", "pending"].includes(item.status));
-  if (existing) return res.status(409).json({ error: "已经存在成员关系或待审核申请" });
-
-  const membership = {
-    id: id("M"),
-    userId: user.id,
-    organizationId: organization.id,
-    role: "member",
-    status: "pending",
-    direction: "user_request",
-    note: req.body.note || "",
-    createdAt: now(),
-    updatedAt: now()
-  };
-  db.memberships.unshift(membership);
-  await writeDb(db);
-  res.status(201).json({ row: membership });
-});
-
-app.post("/api/organizations/invite", async (req, res) => {
-  const db = await readDb();
-  if (!canManageOrganization(db, req.body.senderUserId, req.body.organizationId)) return res.status(403).json({ error: "无权邀请该组织成员" });
-  const phone = normalizePhone(req.body.phone);
-  const user = db.users.find((item) => normalizePhone(item.phone) === phone);
-  const existing = db.memberships.find(
-    (item) => item.organizationId === req.body.organizationId && ((user && item.userId === user.id) || normalizePhone(item.invitedPhone) === phone) && ["active", "invited", "pending"].includes(item.status)
-  );
-  if (existing) return res.status(409).json({ error: "该用户已在组织中或已有邀请/申请" });
-
-  const membership = {
-    id: id("M"),
-    userId: user?.id || null,
-    invitedPhone: phone,
-    invitedName: req.body.name || user?.name || "",
-    organizationId: req.body.organizationId,
-    role: req.body.role || "member",
-    status: "invited",
-    direction: "org_invite",
-    note: req.body.note || "",
-    createdAt: now(),
-    updatedAt: now()
-  };
-  db.memberships.unshift(membership);
-  await writeDb(db);
-  res.status(201).json({ row: membership });
-});
-
-app.patch("/api/memberships/:id", async (req, res) => {
-  const db = await readDb();
-  const row = db.memberships.find((item) => item.id === req.params.id);
-  if (!row) return res.status(404).json({ error: "成员关系不存在" });
-
-  const actor = db.users.find((item) => item.id === req.body.actorUserId);
-  const approvingSelfInvite = row.direction === "org_invite" && actor && (row.userId === actor.id || normalizePhone(row.invitedPhone) === normalizePhone(actor.phone));
-  const managingOrg = canManageOrganization(db, req.body.actorUserId, row.organizationId);
-  if (!approvingSelfInvite && !managingOrg) return res.status(403).json({ error: "无权处理该关系" });
-
-  if (!["active", "rejected", "removed"].includes(req.body.status)) return res.status(422).json({ error: "状态不合法" });
-  row.status = req.body.status;
-  if (!row.userId && actor && normalizePhone(row.invitedPhone) === normalizePhone(actor.phone) && req.body.status === "active") row.userId = actor.id;
-  row.updatedAt = now();
-  await writeDb(db);
-  res.json({ row });
-});
-
-app.get("/api/registrations", async (_req, res) => {
-  const db = await readDb();
-  res.json({ rows: db.registrations });
-});
-
-app.get("/api/admin/certificates", async (req, res) => {
-  const db = await readDb();
-  if (!isAdmin(db, req.query.actorUserId)) return res.status(403).json({ error: "只有管理员可以查看全部证书" });
-  const rows = db.certificates.map((certificate) => certificatePayload(certificate, db.registrations.find((row) => row.id === certificate.registrationId)));
-  res.json({ rows });
-});
-
-app.get("/api/me/registrations", async (req, res) => {
-  const db = await readDb();
-  const user = db.users.find((item) => item.id === req.query.userId);
-  if (!user) return res.status(404).json({ error: "用户不存在" });
-  res.json({ rows: db.registrations.filter((item) => item.userId === user.id) });
-});
-
-app.get("/api/me/certificates", async (req, res) => {
-  const db = await readDb();
-  const user = db.users.find((item) => item.id === req.query.userId);
-  if (!user) return res.status(404).json({ error: "用户不存在" });
-  const rows = db.certificates
-    .filter((certificate) => canAccessCertificate(db, user.id, certificate))
-    .map((certificate) => certificatePayload(certificate, db.registrations.find((row) => row.id === certificate.registrationId)));
-  res.json({ rows });
-});
-
-app.get("/api/organizations/:id/registrations", async (req, res) => {
-  const db = await readDb();
-  if (!canManageOrganization(db, req.query.actorUserId, req.params.id)) return res.status(403).json({ error: "无权查看该组织记录" });
-  const memberIds = activeMemberIdsForManagedOrganizations(db, req.query.actorUserId, req.params.id);
-  res.json({ rows: db.registrations.filter((row) => memberIds.includes(row.userId)) });
-});
-
-app.get("/api/organizations/:id/certificates", async (req, res) => {
-  const db = await readDb();
-  if (!canManageOrganization(db, req.query.actorUserId, req.params.id)) return res.status(403).json({ error: "无权查看该组织证书" });
-  const memberIds = activeMemberIdsForManagedOrganizations(db, req.query.actorUserId, req.params.id);
-  const registrationIds = db.registrations.filter((row) => memberIds.includes(row.userId)).map((row) => row.id);
-  const rows = db.certificates
-    .filter((certificate) => certificate.status === "published" && registrationIds.includes(certificate.registrationId))
-    .map((certificate) => certificatePayload(certificate, db.registrations.find((row) => row.id === certificate.registrationId)));
-  res.json({ rows });
-});
-
-app.post("/api/registrations/check", async (req, res) => {
-  const db = await readDb();
-  const athlete = req.body.athlete || req.body;
-  const key = athleteKey(athlete);
-  const matches = db.registrations.filter((row) => row.athleteKey === key && row.status !== "cancelled");
-  res.json({
-    athleteKey: key,
-    duplicate: matches.length > 0,
-    individualUsed: matches.some((row) => row.projectType === "individual"),
-    teamUsed: matches.some((row) => row.projectType === "team"),
-    matches
-  });
-});
-
-app.post("/api/registrations", async (req, res) => {
-  const db = await readDb();
-  const validation = validateRegistration(req.body, db.registrations);
-  if (!validation.ok) return res.status(422).json(validation);
-
-  const project = PROJECTS.find((item) => item.id === req.body.projectId);
-  const organization = db.organizations.find((item) => item.id === req.body.organizationId);
-  const row = {
-    id: id("R"),
-    source: req.body.source || "普通用户",
-    userId: req.body.userId || null,
-    organizationId: req.body.organizationId || null,
-    organization: organization?.name || req.body.organization || "",
-    athlete: req.body.athlete,
-    athleteKey: validation.athleteKey,
-    group: req.body.group,
-    projectId: project.id,
-    projectName: project.name,
-    projectType: validation.projectType,
-    instructor: req.body.instructor || "",
-    status: "pending",
-    rejectReason: "",
-    createdAt: now(),
-    updatedAt: now()
-  };
-
-  db.registrations.unshift(row);
-  await writeDb(db);
-  res.status(201).json({ row, duplicateCount: validation.duplicateCount });
-});
-
-app.post("/api/admin/registrations/:id/result", async (req, res) => {
-  const db = await readDb();
-  if (!isAdmin(db, req.body.actorUserId)) return res.status(403).json({ error: "只有管理员可以录入成绩奖项" });
-  const row = db.registrations.find((item) => item.id === req.params.id);
-  if (!row) return res.status(404).json({ error: "报名记录不存在" });
-  row.awardName = String(req.body.awardName || "");
-  row.rank = String(req.body.rank || "");
-  row.score = String(req.body.score || "");
-  row.resultRecordedAt = now();
-  row.updatedAt = now();
-  const certificate = findCertificateByRegistration(db, row.id);
-  if (certificate) updateCertificateFromRegistration(certificate, row);
-  await writeDb(db);
-  res.json({ row, certificate });
-});
-
-app.patch("/api/admin/registrations/:id", async (req, res) => {
-  const db = await readDb();
-  if (!isAdmin(db, req.body.actorUserId)) return res.status(403).json({ error: "只有管理员可以修改报名信息" });
-  const row = db.registrations.find((item) => item.id === req.params.id);
-  if (!row) return res.status(404).json({ error: "报名记录不存在" });
-
-  const next = {
-    ...row,
-    organizationId: req.body.organizationId || null,
-    athlete: req.body.athlete || row.athlete,
-    group: req.body.group || row.group,
-    projectId: req.body.projectId || row.projectId,
-    instructor: req.body.instructor ?? row.instructor
-  };
-  const validation = validateRegistration(next, db.registrations, row.id);
-  if (!validation.ok) return res.status(422).json(validation);
-
-  const project = PROJECTS.find((item) => item.id === next.projectId);
-  const organization = db.organizations.find((item) => item.id === next.organizationId);
-  row.organizationId = next.organizationId;
-  row.organization = organization?.name || "";
-  row.athlete = next.athlete;
-  row.athleteKey = validation.athleteKey;
-  row.group = next.group;
-  row.projectId = project.id;
-  row.projectName = project.name;
-  row.projectType = validation.projectType;
-  row.instructor = next.instructor || "";
-  row.updatedAt = now();
-
-  const certificate = findCertificateByRegistration(db, row.id);
-  if (certificate) {
-    certificate.userId = row.userId || null;
-    certificate.organizationId = row.organizationId || null;
-  }
-  await writeDb(db);
-  res.json({ row });
-});
-
-app.post("/api/admin/registrations/:id/certificate", upload.single("certificate"), async (req, res) => {
-  const db = await readDb();
-  if (!isAdmin(db, req.body.actorUserId)) return res.status(403).json({ error: "只有管理员可以上传证书" });
-  const registration = db.registrations.find((item) => item.id === req.params.id);
-  if (!registration) return res.status(404).json({ error: "报名记录不存在" });
-
-  const incomingBuffer = req.file?.buffer || (req.body.fileContentBase64 ? Buffer.from(req.body.fileContentBase64, "base64") : null);
-  if (!incomingBuffer) return res.status(422).json({ error: "请上传证书 PDF 文件" });
-  const originalName = req.file?.originalname || req.body.fileName || `${registration.id}.pdf`;
-  const { storedName, filePath } = await saveCertificateFile({ fileName: originalName, buffer: incomingBuffer });
-
-  let certificate = findCertificateByRegistration(db, registration.id);
-  if (!certificate) {
-    certificate = {
-      id: id("C"),
-      registrationId: registration.id,
-      userId: registration.userId || null,
-      organizationId: registration.organizationId || null,
-      certificateNo: req.body.certificateNo || `CERT-${registration.id}`,
-      fileName: originalName,
-      storedName,
-      filePath,
-      awardName: registration.awardName || "",
-      rank: registration.rank || "",
-      score: registration.score || "",
-      status: "draft",
-      uploadedAt: now(),
-      publishedAt: ""
-    };
-    db.certificates.unshift(certificate);
-  } else {
-    Object.assign(certificate, {
-      certificateNo: req.body.certificateNo || certificate.certificateNo,
-      fileName: originalName,
-      storedName,
-      filePath,
-      uploadedAt: now(),
-      status: "draft",
-      publishedAt: ""
+app.use((error, req, res, next) => {
+  if (res.headersSent) return next(error);
+  const status = Number.isInteger(error.status) ? error.status : 500;
+  if (status === 500) {
+    console.error("Unhandled API request error", {
+      method: req.method,
+      path: req.originalUrl,
+      message: error?.message || "Unknown error",
+      stack: error?.stack || ""
     });
-    updateCertificateFromRegistration(certificate, registration);
   }
-
-  await writeDb(db);
-  res.status(201).json({ row: certificatePayload(certificate, registration) });
-});
-
-function matchCertificateFile(db, fileName) {
-  const baseName = path.basename(fileName, path.extname(fileName));
-  const [name = "", school = "", projectKeyword = ""] = baseName.split("_");
-  const nameKey = normalizeText(name);
-  const schoolKey = normalizeText(school);
-  const projectKey = normalizeText(projectKeyword);
-  if (!nameKey || !schoolKey || !projectKey) return [];
-  return db.registrations.filter((row) => {
-    return (
-      normalizeText(row.athlete?.name) === nameKey &&
-      normalizeText(row.athlete?.school) === schoolKey &&
-      normalizeText(row.projectName).includes(projectKey)
-    );
+  const contentRange = error?.headers?.["Content-Range"];
+  if (typeof contentRange === "string" && /^bytes \*\/\d+$/.test(contentRange)) {
+    res.setHeader("Content-Range", contentRange);
+  }
+  res.status(status).json({
+    error: status === 500 ? "服务器内部错误" : error.message,
+    ...(error.code ? { code: error.code } : {}),
+    ...(error.relation ? { relation: error.relation } : {})
   });
-}
-
-app.post("/api/admin/certificates/batch", upload.single("zip"), async (req, res) => {
-  const db = await readDb();
-  if (!isAdmin(db, req.body.actorUserId)) return res.status(403).json({ error: "只有管理员可以批量上传证书" });
-  if (!req.file?.buffer) return res.status(422).json({ error: "请上传 ZIP 文件" });
-
-  const zip = new AdmZip(req.file.buffer);
-  const entries = zip.getEntries().filter((entry) => !entry.isDirectory && entry.entryName.toLowerCase().endsWith(".pdf"));
-  const matched = [];
-  const unmatched = [];
-  const ambiguous = [];
-
-  for (const entry of entries) {
-    const matches = matchCertificateFile(db, entry.entryName);
-    if (matches.length === 0) {
-      unmatched.push({ fileName: entry.entryName, reason: "未找到姓名、学校、赛项匹配的报名记录" });
-      continue;
-    }
-    if (matches.length > 1) {
-      ambiguous.push({ fileName: entry.entryName, registrations: matches.map((row) => ({ id: row.id, athlete: row.athlete, projectName: row.projectName })) });
-      continue;
-    }
-
-    const registration = matches[0];
-    const { storedName, filePath } = await saveCertificateFile({ fileName: entry.entryName, buffer: entry.getData() });
-    let certificate = findCertificateByRegistration(db, registration.id);
-    if (!certificate) {
-      certificate = {
-        id: id("C"),
-        registrationId: registration.id,
-        userId: registration.userId || null,
-        organizationId: registration.organizationId || null,
-        certificateNo: `CERT-${registration.id}`,
-        fileName: path.basename(entry.entryName),
-        storedName,
-        filePath,
-        awardName: registration.awardName || "",
-        rank: registration.rank || "",
-        score: registration.score || "",
-        status: "draft",
-        uploadedAt: now(),
-        publishedAt: ""
-      };
-      db.certificates.unshift(certificate);
-    } else {
-      Object.assign(certificate, {
-        fileName: path.basename(entry.entryName),
-        storedName,
-        filePath,
-        status: "draft",
-        uploadedAt: now(),
-        publishedAt: ""
-      });
-      updateCertificateFromRegistration(certificate, registration);
-    }
-    matched.push({ fileName: entry.entryName, registrationId: registration.id, certificateId: certificate.id });
-  }
-
-  await writeDb(db);
-  res.json({ matched, unmatched, ambiguous });
-});
-
-app.patch("/api/admin/certificates/:id/publish", async (req, res) => {
-  const db = await readDb();
-  if (!isAdmin(db, req.body.actorUserId)) return res.status(403).json({ error: "只有管理员可以发布证书" });
-  const certificate = db.certificates.find((item) => item.id === req.params.id);
-  if (!certificate) return res.status(404).json({ error: "证书不存在" });
-  if (!["draft", "published"].includes(req.body.status)) return res.status(422).json({ error: "状态不合法" });
-  certificate.status = req.body.status;
-  certificate.publishedAt = req.body.status === "published" ? now() : "";
-  await writeDb(db);
-  res.json({ row: certificatePayload(certificate, db.registrations.find((row) => row.id === certificate.registrationId)) });
-});
-
-app.get("/api/certificates/:id/download", async (req, res) => {
-  const db = await readDb();
-  const certificate = db.certificates.find((item) => item.id === req.params.id);
-  if (!canAccessCertificate(db, req.query.actorUserId, certificate, { includeDraft: isAdmin(db, req.query.actorUserId) })) {
-    return res.status(403).json({ error: "无权下载该证书" });
-  }
-  res.download(certificate.filePath, certificate.fileName);
-});
-
-app.patch("/api/registrations/:id/status", async (req, res) => {
-  const db = await readDb();
-  const row = db.registrations.find((item) => item.id === req.params.id);
-  if (!row) return res.status(404).json({ error: "报名记录不存在" });
-
-  const allowed = ["approved", "rejected", "cancelled", "pending"];
-  if (!allowed.includes(req.body.status)) return res.status(422).json({ error: "状态不合法" });
-
-  row.status = req.body.status;
-  row.rejectReason = req.body.status === "rejected" ? String(req.body.rejectReason || "信息需补充") : "";
-  row.updatedAt = now();
-  await writeDb(db);
-  res.json({ row });
-});
-
-app.get("/api/registrations/export.csv", async (_req, res) => {
-  const db = await readDb();
-  const header = ["编号", "来源", "组织", "姓名", "学校", "年级", "手机号", "组别", "赛项", "类别", "指导老师", "状态"];
-  const lines = db.registrations.map((row) => [
-    row.id,
-    row.source,
-    row.organization,
-    row.athlete.name,
-    row.athlete.school,
-    row.athlete.grade,
-    row.athlete.phone,
-    row.group,
-    row.projectName,
-    row.projectType === "individual" ? "个人赛" : "团体赛",
-    row.instructor,
-    row.status
-  ]);
-  const csv = [header, ...lines]
-    .map((line) => line.map((cell) => `"${String(cell ?? "").replace(/"/g, '""')}"`).join(","))
-    .join("\n");
-  res.setHeader("Content-Type", "text/csv; charset=utf-8");
-  res.setHeader("Content-Disposition", "attachment; filename=registrations.csv");
-  res.send(`\uFEFF${csv}`);
 });
 
 await dataStore.initialize();
+await cleanupExpiredCertificateImportPreviews({ store: dataStore, makeId: id, now });
+await replayFileCleanupJournal({ store: dataStore, now });
+const stopScheduledContentPublisher = startScheduledContentPublisher({ store: dataStore });
+const stopSubmissionSessionExpiryCleanup = process.env.NODE_ENV === "production"
+  ? startSubmissionSessionExpiryCleanup({ store: dataStore })
+  : () => {};
 
 const server = app.listen(PORT, () => {
-  console.log(`API listening on http://localhost:${PORT}`);
+  console.log(`API listening on http://localhost:${server.address().port}`);
 });
 
 async function shutdown() {
+  stopScheduledContentPublisher();
+  stopSubmissionSessionExpiryCleanup();
   server.close(async () => {
     await dataStore.close();
   });

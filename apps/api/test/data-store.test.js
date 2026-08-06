@@ -5,7 +5,41 @@ import path from "node:path";
 import test from "node:test";
 
 import { createDataStore } from "../src/data/index.js";
-import { seedDb } from "../src/data/seed.js";
+import { ensureDbShape, seedDb } from "../src/data/seed.js";
+
+test("website data shape fills missing public site collections and default settings", () => {
+  const db = ensureDbShape({});
+
+  assert.deepEqual(db.siteSettings, {
+    id: "default",
+    platformName: "温州市青少年航空航天创新比赛",
+    featuredEventId: null,
+    platformIntro: "",
+    organizers: [],
+    contact: "",
+    icp: "",
+    seoTitle: "温州市青少年航空航天创新比赛",
+    seoDescription: "",
+    defaultHeroMediaId: null,
+    shareMediaId: null,
+    version: 1
+  });
+  assert.deepEqual(db.eventPublicProfiles, []);
+  assert.deepEqual(db.contentPosts, []);
+  assert.deepEqual(db.mediaAssets, []);
+  assert.deepEqual(db.contentAttachments, []);
+  assert.deepEqual(db.organizationEventParticipations, []);
+  assert.equal(db.registrations.every((row) => "createdByUserId" in row), true);
+  assert.equal(db.registrations.every((row) => !("userId" in row)), true);
+});
+
+test("seed organization registrations are created by their organization owner", () => {
+  for (const registration of seedDb.registrations.filter((row) => row.createdVia === "organization")) {
+    const organization = seedDb.organizations.find((row) => row.id === registration.organizationId);
+    assert.ok(organization, registration.id);
+    assert.equal(registration.createdByUserId, organization.ownerUserId, registration.id);
+  }
+});
 
 test("data store selects file persistence and keeps mutations", async () => {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "aerogp-store-"));
@@ -35,6 +69,50 @@ test("data store selects file persistence and keeps mutations", async () => {
     assert.equal(persisted.registrations[0].awardName, "");
   } finally {
     await store.close();
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("file auth state persists rate limits and one-time challenges across store instances", async () => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "aerogp-auth-state-"));
+  const dbPath = path.join(tempDir, "db.json");
+  const now = Date.parse("2026-07-17T00:00:00.000Z");
+
+  try {
+    const first = createDataStore({ DB_PATH: dbPath });
+    await first.initialize();
+    assert.equal(await first.authState.consumeRateLimits([
+      { key: "sms:phone:13800000001", limit: 1, windowMs: 60_000 }
+    ], now), true);
+    await first.authState.saveChallenge({ phone: "13800000001", digest: "a".repeat(64), expiresAt: now + 300_000 });
+    await first.close();
+
+    const second = createDataStore({ DB_PATH: dbPath });
+    await second.initialize();
+    assert.equal(await second.authState.consumeRateLimits([
+      { key: "sms:phone:13800000001", limit: 1, windowMs: 60_000 }
+    ], now + 1), false);
+    assert.equal(await second.authState.consumeRateLimits([
+      { key: "sms:phone:13800000001", limit: 1, windowMs: 60_000 }
+    ], now + 60_001), true);
+    const persistedAuth = JSON.parse(await fs.readFile(`${dbPath}.auth.json`, "utf8"));
+    assert.deepEqual(persistedAuth.rateBuckets["sms:phone:13800000001"], [now + 60_001]);
+    const concurrent = await Promise.all(Array.from({ length: 6 }, () => second.authState.consumeRateLimits([
+      { key: "login:ip:127.0.0.1", limit: 5, windowMs: 60_000 }
+    ], now)));
+    assert.equal(concurrent.filter(Boolean).length, 5);
+    assert.equal(await second.authState.consumeChallenge({
+      phone: "13800000001", digest: "a".repeat(64), now: now + 1, maxAttempts: 5
+    }), true);
+    assert.equal(await second.authState.consumeChallenge({
+      phone: "13800000001", digest: "a".repeat(64), now: now + 1, maxAttempts: 5
+    }), false);
+    await second.authState.saveChallenge({ phone: "13800000002", digest: "c".repeat(64), expiresAt: now + 10 });
+    await second.authState.consumeChallenge({ phone: "13800000003", digest: "d".repeat(64), now: now + 11, maxAttempts: 5 });
+    const cleanedAuth = JSON.parse(await fs.readFile(`${dbPath}.auth.json`, "utf8"));
+    assert.equal("13800000002" in cleanedAuth.challenges, false);
+    await second.close();
+  } finally {
     await fs.rm(tempDir, { recursive: true, force: true });
   }
 });

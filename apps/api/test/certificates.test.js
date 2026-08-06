@@ -1,159 +1,185 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
-import fs from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
 import test from "node:test";
-import AdmZip from "adm-zip";
 
-const rootDir = path.resolve(import.meta.dirname, "../../..");
-const serverPath = path.resolve(import.meta.dirname, "../src/server.js");
+import { CERTIFICATE_POLICY, validateUpload } from "../src/files/policy.js";
+import { ensureDbShape } from "../src/data/seed.js";
+import {
+  CertificateError,
+  canReadCertificate,
+  removeCertificate,
+  setCertificateStatuses,
+  updateCertificateMetadata,
+  upsertCertificate
+} from "../src/services/certificates.js";
 
-async function waitForServer(baseUrl, child) {
-  const started = Date.now();
-  while (Date.now() - started < 5000) {
-    if (child.exitCode !== null) throw new Error("API server exited before becoming ready");
-    try {
-      const res = await fetch(`${baseUrl}/api/public/event`);
-      if (res.ok) return;
-    } catch {
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
-  }
-  throw new Error("API server did not start in time");
+function fixture() {
+  return {
+    registrations: [{
+      id: "R1",
+      userId: "U1",
+      organizationId: "O1",
+      awardName: "",
+      rank: "",
+      score: ""
+    }],
+    certificates: []
+  };
 }
 
-async function withServer(fn) {
-  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "wz-cert-api-"));
-  const port = 4600 + Math.floor(Math.random() * 1000);
-  const baseUrl = `http://127.0.0.1:${port}`;
-  const child = spawn(process.execPath, [serverPath], {
-    cwd: rootDir,
-    env: {
-      ...process.env,
-      PORT: String(port),
-      DB_PATH: path.join(tempDir, "db.json"),
-      UPLOAD_ROOT: path.join(tempDir, "uploads")
-    },
-    stdio: ["ignore", "pipe", "pipe"]
-  });
-
-  try {
-    await waitForServer(baseUrl, child);
-    await fn(baseUrl, tempDir);
-  } finally {
-    child.kill();
-    await new Promise((resolve) => child.once("exit", resolve));
-    await fs.rm(tempDir, { recursive: true, force: true });
-  }
-}
-
-async function json(res) {
-  return res.json();
-}
-
-test("published certificates are visible to the owner but drafts are hidden", async () => {
-  await withServer(async (baseUrl) => {
-    const draftRes = await fetch(`${baseUrl}/api/admin/registrations/R20260627002/certificate`, {
-      method: "POST",
-      body: JSON.stringify({
-        actorUserId: "U9001",
-        fileName: "zhou.pdf",
-        fileContentBase64: Buffer.from("%PDF-1.4 draft").toString("base64"),
-        certificateNo: "CERT-001"
-      }),
-      headers: { "Content-Type": "application/json" }
-    });
-    assert.equal(draftRes.status, 201);
-
-    const hiddenRes = await fetch(`${baseUrl}/api/me/certificates?userId=U2001`);
-    assert.equal(hiddenRes.status, 200);
-    assert.deepEqual((await json(hiddenRes)).rows, []);
-
-    const certificate = (await json(draftRes)).row;
-    const publishRes = await fetch(`${baseUrl}/api/admin/certificates/${certificate.id}/publish`, {
-      method: "PATCH",
-      body: JSON.stringify({ actorUserId: "U9001", status: "published" }),
-      headers: { "Content-Type": "application/json" }
-    });
-    assert.equal(publishRes.status, 200);
-
-    const visibleRes = await fetch(`${baseUrl}/api/me/certificates?userId=U2001`);
-    const visible = await json(visibleRes);
-    assert.equal(visible.rows.length, 1);
-    assert.equal(visible.rows[0].certificateNo, "CERT-001");
-  });
+const storedFile = (suffix) => ({
+  originalName: `${suffix}.png`,
+  storedName: `${suffix}.png`,
+  filePath: `/safe/certificates/${suffix}.png`
 });
 
-test("organization certificate query includes active members and excludes pending members", async () => {
-  await withServer(async (baseUrl) => {
-    const pendingUserRes = await fetch(`${baseUrl}/api/auth/register`, {
-      method: "POST",
-      body: JSON.stringify({ name: "待审核家长", phone: "13600000001", password: "123456" }),
-      headers: { "Content-Type": "application/json" }
-    });
-    const pendingUser = (await json(pendingUserRes)).user;
-    await fetch(`${baseUrl}/api/organizations/request`, {
-      method: "POST",
-      body: JSON.stringify({ userId: pendingUser.id, organizationId: "O1001", note: "测试待审核成员" }),
-      headers: { "Content-Type": "application/json" }
-    });
+const png = Buffer.from("89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000a49444154789c63600000020001e221bc330000000049454e44ae426082", "hex");
+const pdf = Buffer.from("%PDF-1.7\n1 0 obj\n<<>>\nendobj\n%%EOF\n");
+const jpeg = Buffer.from("/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////2wBDAf//////////////////////////////////////////////////////////////////////////////////////wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAf/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIQAxAAAAFcf//EABQQAQAAAAAAAAAAAAAAAAAAABD/2gAIAQEAAQUCq//EABQRAQAAAAAAAAAAAAAAAAAAABD/2gAIAQMBAT8QH//EABQRAQAAAAAAAAAAAAAAAAAAABD/2gAIAQIBAT8QH//EABQQAQAAAAAAAAAAAAAAAAAAABD/2gAIAQEABj8Cp//EABQQAQAAAAAAAAAAAAAAAAAAABD/2gAIAQEAAT8h/9oADAMBAAIAAwAAABD/xAAUEQEAAAAAAAAAAAAAAAAAAAAQ/9oACAEDAQE/EH//xAAUEQEAAAAAAAAAAAAAAAAAAAAQ/9oACAECAQE/EH//xAAUEAEAAAAAAAAAAAAAAAAAAAAQ/9oACAEBAAE/EP/Z", "base64");
+const webp = Buffer.concat([Buffer.from("RIFF"), Buffer.from([0x18, 0, 0, 0]), Buffer.from("WEBPVP8 "), Buffer.alloc(20)]);
 
-    const uploadRes = await fetch(`${baseUrl}/api/admin/registrations/R20260627001/certificate`, {
-      method: "POST",
-      body: JSON.stringify({
-        actorUserId: "U9001",
-        fileName: "chen.pdf",
-        fileContentBase64: Buffer.from("%PDF-1.4 active").toString("base64"),
-        certificateNo: "CERT-ACTIVE"
-      }),
-      headers: { "Content-Type": "application/json" }
-    });
-    const certificate = (await json(uploadRes)).row;
-    await fetch(`${baseUrl}/api/admin/certificates/${certificate.id}/publish`, {
-      method: "PATCH",
-      body: JSON.stringify({ actorUserId: "U9001", status: "published" }),
-      headers: { "Content-Type": "application/json" }
-    });
-
-    const orgRes = await fetch(`${baseUrl}/api/organizations/O1001/certificates?actorUserId=U2001`);
-    assert.equal(orgRes.status, 200);
-    const rows = (await json(orgRes)).rows;
-    assert.deepEqual(rows.map((row) => row.certificateNo), ["CERT-ACTIVE"]);
-  });
+test("certificate file policy accepts real PDF, PNG, JPEG, and WebP content", async () => {
+  assert.deepEqual([...CERTIFICATE_POLICY.extensions], ["pdf", "png", "jpg", "jpeg", "webp"]);
+  assert.equal(CERTIFICATE_POLICY.maxBytes, 10 * 1024 * 1024);
+  for (const buffer of [pdf, png, jpeg, webp]) {
+    await assert.doesNotReject(() => validateUpload({ buffer }, CERTIFICATE_POLICY));
+  }
 });
 
-test("batch certificate upload reports matched, unmatched, and ambiguous files", async () => {
-  await withServer(async (baseUrl) => {
-    const duplicateRegistration = {
-      userId: "U1001",
-      organizationId: "O1001",
-      source: "普通用户",
-      athlete: { name: "陈宇航", school: "温州市实验小学", grade: "五年级", phone: "13800000099" },
-      group: "小学中高组（4-6年级）",
-      projectId: "rocket-duration",
-      instructor: "林老师"
-    };
-    const createRes = await fetch(`${baseUrl}/api/registrations`, {
-      method: "POST",
-      body: JSON.stringify(duplicateRegistration),
-      headers: { "Content-Type": "application/json" }
-    });
-    assert.equal(createRes.status, 201);
-
-    const zip = new AdmZip();
-    zip.addFile("周星言_温州市第二实验中学_无人机竞速接力比赛.pdf", Buffer.from("%PDF matched"));
-    zip.addFile("不存在_未知学校_无人机竞速接力比赛.pdf", Buffer.from("%PDF unmatched"));
-    zip.addFile("陈宇航_温州市实验小学_比赛.pdf", Buffer.from("%PDF ambiguous"));
-    const form = new FormData();
-    form.append("actorUserId", "U9001");
-    form.append("zip", new Blob([zip.toBuffer()], { type: "application/zip" }), "certificates.zip");
-
-    const batchRes = await fetch(`${baseUrl}/api/admin/certificates/batch`, { method: "POST", body: form });
-    assert.equal(batchRes.status, 200);
-    const result = await json(batchRes);
-    assert.equal(result.matched.length, 1);
-    assert.equal(result.unmatched.length, 1);
-    assert.equal(result.ambiguous.length, 1);
+test("certificate JSON normalization removes the legacy camel-case number field", () => {
+  const legacyKey = ["certificate", "No"].join("");
+  const db = ensureDbShape({
+    certificates: [{
+      id: "C-LEGACY-FIELD",
+      registrationId: "R1",
+      slot: 1,
+      title: "旧证书",
+      [legacyKey]: "LEGACY-001"
+    }]
   });
+
+  assert.equal(Object.hasOwn(db.certificates[0], legacyKey), false);
+});
+
+test("certificate reads derive merged ownership from its registration", () => {
+  const db = {
+    registrations: [{ id: "R1", eventId: "E1", personalUserId: "U1", organizationId: "O1" }],
+    certificates: [{ id: "C1", registrationId: "R1", status: "published", filePath: "/safe/c1.png" }],
+    organizations: [{ id: "O1", ownerUserId: "OWNER1" }],
+    organizationEventParticipations: [{ organizationId: "O1", eventId: "E1" }]
+  };
+  const certificate = db.certificates[0];
+
+  assert.equal(canReadCertificate(db, { id: "U1", type: "ordinary" }, certificate), true);
+  assert.equal(canReadCertificate(db, { id: "OWNER1", type: "organization" }, certificate), true);
+  assert.equal(canReadCertificate(db, { id: "U2", type: "ordinary" }, certificate), false);
+  assert.equal(canReadCertificate(db, { id: "MANAGER1", type: "organization" }, certificate), false);
+
+  db.organizationEventParticipations = [];
+  assert.equal(canReadCertificate(db, { id: "OWNER1", type: "organization" }, certificate), true);
+});
+
+test("certificate service upserts the two slots and resets replacements to draft", () => {
+  const db = fixture();
+  const registration = db.registrations[0];
+  const first = upsertCertificate(db, {
+    registration,
+    slot: 1,
+    title: "  一等奖  ",
+    storedFile: storedFile("first"),
+    source: "manual",
+    now: "2026-07-17T00:00:00.000Z"
+  });
+  const second = upsertCertificate(db, {
+    registration,
+    slot: 2,
+    title: "二等奖",
+    storedFile: storedFile("second"),
+    source: "manual",
+    now: "2026-07-17T00:01:00.000Z"
+  });
+  first.status = "published";
+  first.publishedAt = "2026-07-17T00:02:00.000Z";
+  const replaced = upsertCertificate(db, {
+    registration,
+    slot: 1,
+    title: "替换证书",
+    storedFile: storedFile("replacement"),
+    source: "manual",
+    now: "2026-07-17T00:03:00.000Z"
+  });
+
+  assert.equal(first.title, "替换证书");
+  assert.equal(replaced.id, first.id);
+  assert.equal(replaced.status, "draft");
+  assert.equal(replaced.publishedAt, "");
+  assert.deepEqual(db.certificates.map((row) => row.slot).sort(), [1, 2]);
+  assert.equal(second.slot, 2);
+});
+
+test("certificate service validates metadata, bulk status, and removal atomically", () => {
+  const db = fixture();
+  const certificate = upsertCertificate(db, {
+    registration: db.registrations[0],
+    slot: 1,
+    title: "初始标题",
+    storedFile: storedFile("certificate"),
+    source: "manual",
+    now: "2026-07-17T00:00:00.000Z"
+  });
+
+  assert.throws(() => upsertCertificate(db, {
+    registration: db.registrations[0], slot: 3, title: "非法", storedFile: storedFile("invalid"), now: "now"
+  }), (error) => error instanceof CertificateError && error.status === 422);
+  assert.throws(() => updateCertificateMetadata(db, {
+    certificateId: certificate.id, title: "   ", now: "now"
+  }), (error) => error instanceof CertificateError && error.status === 422);
+
+  const updated = updateCertificateMetadata(db, {
+    certificateId: certificate.id,
+    title: "  金奖证书  ",
+    awardName: "一等奖",
+    rank: "1",
+    score: "100",
+    now: "2026-07-17T00:01:00.000Z"
+  });
+  assert.deepEqual({ title: updated.title, awardName: updated.awardName, rank: updated.rank, score: updated.score }, {
+    title: "金奖证书", awardName: "一等奖", rank: "1", score: "100"
+  });
+
+  assert.throws(() => setCertificateStatuses(db, [certificate.id], "archived", "now"), (error) => error.status === 422);
+  assert.throws(() => setCertificateStatuses(db, [certificate.id, "missing"], "published", "now"), (error) => error.status === 404);
+  assert.equal(certificate.status, "draft");
+  setCertificateStatuses(db, [certificate.id], "published", "2026-07-17T00:02:00.000Z");
+  assert.equal(certificate.publishedAt, "2026-07-17T00:02:00.000Z");
+  setCertificateStatuses(db, [certificate.id], "draft", "2026-07-17T00:03:00.000Z");
+  assert.equal(certificate.publishedAt, "");
+
+  assert.equal(removeCertificate(db, certificate.id), certificate);
+  assert.deepEqual(db.certificates, []);
+  assert.throws(() => removeCertificate(db, certificate.id), (error) => error.status === 404);
+});
+
+test("certificate service rejects publishing any cleaned or fileless certificate without partially changing a bulk request", () => {
+  const db = {
+    certificates: [
+      {
+        id: "C-READY", registrationId: "R1", slot: 1, title: "ready", fileName: "ready.png", storedName: "ready.png",
+        filePath: "/safe/ready.png", status: "draft", cleanedAt: ""
+      },
+      {
+        id: "C-CLEANED", registrationId: "R2", slot: 1, title: "cleaned", fileName: "cleaned.png", storedName: "cleaned.png",
+        filePath: "/safe/cleaned.png", status: "draft", cleanedAt: "2026-07-18T00:00:00.000Z"
+      },
+      {
+        id: "C-FILELESS", registrationId: "R3", slot: 1, title: "fileless", fileName: "", storedName: "",
+        filePath: "", status: "draft", cleanedAt: ""
+      }
+    ]
+  };
+  const before = structuredClone(db.certificates);
+
+  for (const invalidId of ["C-CLEANED", "C-FILELESS"]) {
+    assert.throws(() => setCertificateStatuses(db, ["C-READY", invalidId], "published", "2026-07-18T01:00:00.000Z"), (error) => error.status === 409);
+    assert.deepEqual(db.certificates, before);
+  }
 });
