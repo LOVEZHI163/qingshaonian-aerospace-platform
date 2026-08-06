@@ -43,10 +43,22 @@ export function createBlobPreviewManager() {
   }
 
   return {
-    open(blob) {
+    reserve() {
+      const popup = window.open("", "_blank", "noopener,noreferrer");
+      if (!popup) return null;
+      try { popup.opener = null; } catch { /* noopener is already requested */ }
+      return { popup, url: "" };
+    },
+    navigate(reservation, blob) {
       const url = URL.createObjectURL(blob);
-      window.open(url, "_blank", "noopener,noreferrer");
+      reservation.url = url;
       pending.set(url, setTimeout(() => release(url), PREVIEW_RELEASE_DELAY_MS));
+      reservation.popup.location.href = url;
+    },
+    close(reservation) {
+      if (!reservation) return;
+      if (reservation.url) release(reservation.url);
+      try { reservation.popup.close(); } catch { /* the popup may already be closed */ }
     },
     dispose() {
       for (const url of [...pending.keys()]) release(url);

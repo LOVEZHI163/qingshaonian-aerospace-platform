@@ -44,9 +44,15 @@ async function loadCertificates() {
 async function preview(certificate) {
   if (certificate.cleanedAt || !certificate.previewUrl) return;
   error.value = "";
+  const reservation = previews.reserve();
+  if (!reservation) {
+    error.value = "浏览器阻止了证书预览窗口，请允许弹窗或使用下载按钮";
+    return;
+  }
   try {
-    previews.open(await apiBlob(certificate.previewUrl));
+    previews.navigate(reservation, await apiBlob(certificate.previewUrl));
   } catch (requestError) {
+    previews.close(reservation);
     if (isOrganizationRestrictionError(requestError)) emit("access-denied", requestError);
     error.value = safeError(requestError, "证书预览失败，请重试");
   }
@@ -54,6 +60,7 @@ async function preview(certificate) {
 
 async function download(certificate) {
   if (certificate.cleanedAt || !certificate.downloadUrl) return;
+  error.value = "";
   try {
     const blob = await apiBlob(certificate.downloadUrl);
     downloads.save(blob, certificate.fileName || certificate.title || "证书");
@@ -78,7 +85,7 @@ onBeforeUnmount(() => {
     </label>
     <p v-if="error" class="message" role="alert">{{ error }} <button type="button" class="mini" data-action="retry-organization-certificates" @click="loadCertificates">重试</button></p>
     <p v-if="loading" class="hint">正在加载证书…</p>
-    <div v-else-if="!error" class="table-wrap"><table class="certificate-table"><thead><tr><th>赛事</th><th>姓名</th><th>学校/年级</th><th>赛项</th><th>证书名称</th><th>发布时间</th><th>操作</th></tr></thead><tbody>
+    <div v-else class="table-wrap"><table class="certificate-table"><thead><tr><th>赛事</th><th>姓名</th><th>学校/年级</th><th>赛项</th><th>证书名称</th><th>发布时间</th><th>操作</th></tr></thead><tbody>
       <tr v-for="certificate in certificates" :key="certificate.id"><td>{{ certificate.eventName || certificate.eventId || "-" }}</td><td>{{ certificate.athlete?.name || "-" }}</td><td>{{ certificate.athlete?.school || "-" }}<br /><span>{{ certificate.athlete?.grade || "-" }}</span></td><td>{{ certificate.projectName || "-" }}</td><td>{{ certificate.title || certificate.awardName || "证书" }}</td><td>{{ certificate.publishedAt?.slice(0, 10) || "-" }}</td><td><span v-if="certificate.cleanedAt" class="unavailable-file">原文件已清理</span><template v-else><button v-if="certificate.previewUrl" type="button" class="mini" :data-action="`preview-organization-certificate-${certificate.id}`" @click="preview(certificate)">预览</button><button v-if="certificate.downloadUrl" type="button" class="mini" :data-action="`download-organization-certificate-${certificate.id}`" @click="download(certificate)">下载</button></template></td></tr>
     </tbody></table><p v-if="certificates.length === 0" class="hint empty-state">暂无可查询证书。</p></div>
   </section>

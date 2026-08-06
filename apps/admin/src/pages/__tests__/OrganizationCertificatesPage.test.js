@@ -23,6 +23,13 @@ const rows = [
   }
 ];
 
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((nextResolve, nextReject) => { resolve = nextResolve; reject = nextReject; });
+  return { promise, resolve, reject };
+}
+
 describe("OrganizationCertificatesPage", () => {
   beforeEach(() => {
     apiMock.mockReset();
@@ -47,14 +54,24 @@ describe("OrganizationCertificatesPage", () => {
     expect(wrapper.get("tbody").text()).toContain("往届赛事");
   });
 
-  it("previews and downloads only through the certificate file URLs", async () => {
+  it("opens a placeholder synchronously, then navigates it only after the preview blob resolves", async () => {
+    const pending = deferred();
+    const popup = { location: { href: "about:blank" }, close: vi.fn(), opener: {} };
+    window.open.mockReturnValue(popup);
+    apiBlobMock.mockReturnValueOnce(pending.promise);
     const wrapper = mount(OrganizationCertificatesPage);
     await flushPromises();
 
     await wrapper.get('[data-action="preview-organization-certificate-C1"]').trigger("click");
-    await flushPromises();
+    expect(window.open).toHaveBeenCalledWith("", "_blank", "noopener,noreferrer");
     expect(apiBlobMock).toHaveBeenCalledWith("/api/certificates/C1/file");
-    expect(window.open).toHaveBeenCalledWith("blob:certificate-1", "_blank", "noopener,noreferrer");
+    expect(popup.location.href).toBe("about:blank");
+    expect(popup.opener).toBeNull();
+
+    pending.resolve(new Blob(["certificate"]));
+    await flushPromises();
+    expect(popup.location.href).toBe("blob:certificate-1");
+
     await wrapper.get('[data-action="download-organization-certificate-C1"]').trigger("click");
     await flushPromises();
     expect(apiBlobMock).toHaveBeenCalledWith("/api/certificates/C1/file?download=1");
@@ -63,7 +80,9 @@ describe("OrganizationCertificatesPage", () => {
     expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:certificate-1");
   });
 
-  it("reports a stable restriction from controlled certificate preview", async () => {
+  it("closes the placeholder and reports a stable restriction when controlled preview fails", async () => {
+    const popup = { location: { href: "about:blank" }, close: vi.fn(), opener: {} };
+    window.open.mockReturnValue(popup);
     apiBlobMock.mockRejectedValueOnce(Object.assign(new Error("stale preview"), { code: "ORGANIZATION_REJECTED" }));
     const wrapper = mount(OrganizationCertificatesPage);
     await flushPromises();
@@ -71,7 +90,50 @@ describe("OrganizationCertificatesPage", () => {
     await flushPromises();
 
     expect(wrapper.emitted("access-denied")?.[0]?.[0]).toMatchObject({ code: "ORGANIZATION_REJECTED" });
-    expect(window.open).not.toHaveBeenCalled();
+    expect(popup.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("releases the object URL and closes the placeholder if popup navigation fails", async () => {
+    const location = {};
+    Object.defineProperty(location, "href", { configurable: true, set: () => { throw new Error("navigation failed"); } });
+    const popup = { location, close: vi.fn(), opener: {} };
+    window.open.mockReturnValue(popup);
+    const wrapper = mount(OrganizationCertificatesPage);
+    await flushPromises();
+
+    await wrapper.get('[data-action="preview-organization-certificate-C1"]').trigger("click");
+    await flushPromises();
+
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:certificate-1");
+    expect(popup.close).toHaveBeenCalledTimes(1);
+    expect(wrapper.get('[role="alert"]').text()).toContain("navigation failed");
+  });
+
+  it("shows an actionable message without fetching when the browser blocks the preview popup", async () => {
+    const wrapper = mount(OrganizationCertificatesPage);
+    await flushPromises();
+
+    await wrapper.get('[data-action="preview-organization-certificate-C1"]').trigger("click");
+
+    expect(apiBlobMock).not.toHaveBeenCalled();
+    expect(wrapper.get('[role="alert"]').text()).toContain("允许弹窗");
+    expect(wrapper.get('[role="alert"]').text()).toContain("下载按钮");
+  });
+
+  it("clears an earlier certificate error when a download starts and succeeds", async () => {
+    const popup = { location: { href: "about:blank" }, close: vi.fn(), opener: {} };
+    window.open.mockReturnValue(popup);
+    apiBlobMock.mockRejectedValueOnce(new Error("预览暂时失败")).mockResolvedValueOnce(new Blob(["certificate"]));
+    const wrapper = mount(OrganizationCertificatesPage);
+    await flushPromises();
+
+    await wrapper.get('[data-action="preview-organization-certificate-C1"]').trigger("click");
+    await flushPromises();
+    expect(wrapper.get('[role="alert"]').text()).toContain("预览暂时失败");
+
+    await wrapper.get('[data-action="download-organization-certificate-C1"]').trigger("click");
+    await flushPromises();
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false);
   });
 
   it("shows a safe error and retries the global query", async () => {

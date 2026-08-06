@@ -46,6 +46,7 @@ function reportError(error, fallback) {
 
 function handleResubmissionError(error) {
   message.value = accessMessage(error, "组织资料重新提交失败");
+  emit("error", error);
 }
 
 function calculateSummary(rows) {

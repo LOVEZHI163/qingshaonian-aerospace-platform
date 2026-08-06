@@ -222,6 +222,7 @@ describe("OrganizationConsolePage", () => {
 
     expect(wrapper.text()).toContain("组织已被平台停用");
     expect(wrapper.text()).not.toContain("raw server wording");
+    expect(wrapper.emitted("error")?.[0]?.[0]).toMatchObject({ code: "ORGANIZATION_DISABLED" });
   });
 
   it("explains when platform administration has disabled an approved organization", async () => {

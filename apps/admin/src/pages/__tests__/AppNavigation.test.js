@@ -554,6 +554,43 @@ describe("role based application navigation", () => {
     expect(wrapper.findAll("[data-user-nav]").map((item) => item.attributes("data-user-nav"))).toEqual(["organization", "passwordSettings"]);
   });
 
+  it("refreshes the session and collapses navigation when organization resubmission is denied", async () => {
+    window.history.replaceState({}, "", "/admin/?view=organization");
+    const organization = { id: "O1", ownerUserId: "O1U", name: "Organization", reviewStatus: "rejected", status: "active", membershipRole: "owner", rejectReason: "资料不清晰", creditCode: "123456789012345678" };
+    session.user.value = { id: "O1U", type: "organization", name: "Owner", phone: "13800000002", mustChangePassword: false };
+    session.organizations.value = [organization];
+    session.restore
+      .mockImplementationOnce(async () => session.user.value)
+      .mockImplementationOnce(async () => {
+        session.organizations.value = [{ ...organization, reviewStatus: "pending" }];
+        return session.user.value;
+      });
+    apiMock.mockImplementation(async (path, options) => {
+      if (path === "/api/public/event") return { event: { name: "Event" }, projects: [], grades: [] };
+      if (path === "/api/me/organizations") return { rows: session.organizations.value };
+      if (path === "/api/me/organization" && options?.method === "PATCH") {
+        throw Object.assign(new Error("stale organization"), { code: "ORGANIZATION_REVIEW_PENDING" });
+      }
+      return { rows: [] };
+    });
+
+    const wrapper = mount(App); mounted.push(wrapper);
+    await flushPromises();
+    await wrapper.get('[data-action="resubmit-organization"]').trigger("click");
+    await wrapper.get('[data-testid="organization-credit-code"]').setValue("123456789012345678");
+    const fileInput = wrapper.get('input[type="file"]');
+    Object.defineProperty(fileInput.element, "files", { configurable: true, value: [new File(["credential"], "credential.png", { type: "image/png" })] });
+    await fileInput.trigger("change");
+    await wrapper.get('form[data-register="organization"]').trigger("submit");
+    await flushPromises();
+    await flushPromises();
+
+    expect(session.restore).toHaveBeenCalledTimes(2);
+    expect(wrapper.find('[data-testid="organization-review-progress"]').exists()).toBe(true);
+    expect(wrapper.findAll("[data-user-nav]").map((item) => item.attributes("data-user-nav"))).toEqual(["organization", "passwordSettings"]);
+    expect(new URLSearchParams(window.location.search).get("view")).toBe("organization");
+  });
+
   it("opens the organization console for an approved owner", async () => {
     const organization = { id: "O1", ownerUserId: "O1U", name: "实验学校", reviewStatus: "approved", status: "active", membershipRole: "owner" };
     const wrapper = await mountFor({ id: "O1U", type: "organization", name: "负责人", phone: "13800000002", mustChangePassword: false }, organization); mounted.push(wrapper);
