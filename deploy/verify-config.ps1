@@ -56,7 +56,8 @@ foreach ($content in @($apiDockerfile, $webDockerfile)) {
   if ($content -match '(?im)^COPY\s+.*\.env') { $failures.Add("Dockerfiles must not copy .env files") }
 }
 
-Require-Match $compose '(?ms)^\s*ports:\s*\r?\n\s*-\s*"80:80"' "Only the web service may publish port 80"
+Require-Match $compose '(?ms)^\s*caddy:\s*.*?^\s*ports:\s*\r?\n\s*-\s*"80:80"\s*\r?\n\s*-\s*"443:443"' "Caddy must publish HTTPS ports 80 and 443"
+Require-NoMatch $compose '(?ms)^\s{2}web:\s*$(?:(?!^\s{2}\S).)*^\s{4}ports:' "Web must remain internal behind Caddy"
 if ($compose -match '(?m)["''](?:4300|5432):') { $failures.Add("API and PostgreSQL ports must not be published") }
 Require-Match $compose 'postgres_data:/var/lib/postgresql/data' "PostgreSQL data must use a named volume"
 Require-Match $compose 'uploads_data:/data/uploads' "Uploads must use a named volume"

@@ -192,7 +192,9 @@ test("backup and preflight cover site media, capacity, health, and port boundari
   }
   assert.match(preflight, /API port 4300 must not be published/);
   assert.match(preflight, /PostgreSQL port 5432 must not be published/);
-  assert.match(preflight, /web port 80 must be published/);
+  assert.match(preflight, /web port 80 must not be published directly/);
+  assert.match(preflight, /Caddy port 80 must be published/);
+  assert.match(preflight, /Caddy port 443 must be published/);
   assert.doesNotMatch(preflight, /docker compose up/);
 });
 

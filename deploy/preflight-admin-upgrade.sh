@@ -96,6 +96,10 @@ fi
 if compose_port_is_published postgres 5432; then
   fail "PostgreSQL port 5432 must not be published"
 fi
-compose_port_is_published web 80 || fail "web port 80 must be published"
+if compose_port_is_published web 80; then
+  fail "web port 80 must not be published directly"
+fi
+compose_port_is_published caddy 80 || fail "Caddy port 80 must be published"
+compose_port_is_published caddy 443 || fail "Caddy port 443 must be published"
 
 printf '%s\n' "Upgrade preflight passed."
