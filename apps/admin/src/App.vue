@@ -49,7 +49,10 @@ const initialEventId = initialEventContext;
 const adminEvents = ref([]);
 const adminProjects = ref([]);
 const adminEventId = ref(initialEventId);
+const adminContextMessage = ref("");
 let adminEventsRequestSequence = 0;
+let publicEventRequestSequence = 0;
+let adminContextRefreshSequence = 0;
 const initialContentId = initialView === "siteContent" && SAFE_EVENT_ID.test(initialParams.get("contentId") || "")
   ? initialParams.get("contentId")
   : "";
@@ -175,18 +178,28 @@ async function loadAccountEvents() {
   }
 }
 
-async function loadAdminEvents() {
-  if (currentUser.value?.type !== "admin") return;
+async function loadAdminEvents({ reconcileSelection = true } = {}) {
+  if (currentUser.value?.type !== "admin") return { applied: false, skipped: true };
   const requestSequence = ++adminEventsRequestSequence;
   try {
     const payload = await api("/api/admin/events");
-    if (requestSequence !== adminEventsRequestSequence) return;
+    if (requestSequence !== adminEventsRequestSequence) return { applied: false, stale: true };
     adminEvents.value = payload.rows || [];
     adminProjects.value = payload.projects || [];
-    if (adminEventId.value && !adminEvents.value.some((event) => event.id === adminEventId.value)) setAdminEventId("");
+    if (reconcileSelection && adminEventId.value && !adminEvents.value.some((event) => event.id === adminEventId.value)) setAdminEventId("");
+    return { applied: true };
   } catch (error) {
-    if (requestSequence !== adminEventsRequestSequence) return;
-    message.value = error.message || "赛事列表加载失败，请稍后重试";
+    if (requestSequence !== adminEventsRequestSequence) return { applied: false, stale: true };
+    throw error;
+  }
+}
+
+async function loadAdminEventsSafely() {
+  try {
+    return await loadAdminEvents();
+  } catch {
+    message.value = "管理员赛事目录加载失败，请稍后重试";
+    return { applied: false, failed: true };
   }
 }
 
@@ -234,13 +247,42 @@ function targetView(user = currentUser.value) {
 }
 
 async function loadEvent() {
-  eventData.value = await api("/api/public/event");
+  const requestSequence = ++publicEventRequestSequence;
+  try {
+    const payload = await api("/api/public/event");
+    if (requestSequence !== publicEventRequestSequence) return { applied: false, stale: true };
+    eventData.value = payload;
+    return { applied: true };
+  } catch (error) {
+    if (requestSequence !== publicEventRequestSequence) return { applied: false, stale: true };
+    throw error;
+  }
 }
 
 async function refreshAdminEventContext() {
-  await Promise.all([loadEvent(), loadAdminEvents()]);
-  if (adminEventId.value && !adminEvents.value.some((event) => event.id === adminEventId.value)) {
+  const refreshSequence = ++adminContextRefreshSequence;
+  const [publicResult, adminResult] = await Promise.allSettled([
+    loadEvent(),
+    loadAdminEvents({ reconcileSelection: false })
+  ]);
+  if (refreshSequence !== adminContextRefreshSequence) return;
+
+  const publicFailed = publicResult.status === "rejected";
+  const adminFailed = adminResult.status === "rejected";
+  const adminApplied = adminResult.status === "fulfilled" && adminResult.value?.applied;
+
+  if (adminApplied && adminEventId.value && !adminEvents.value.some((event) => event.id === adminEventId.value)) {
     setAdminEventId("");
+  }
+
+  if (publicFailed && adminFailed) {
+    adminContextMessage.value = "赛事上下文刷新失败，已保留上次内容和当前赛事选择，请稍后重试。";
+  } else if (adminFailed) {
+    adminContextMessage.value = "管理员赛事目录刷新失败，已保留当前赛事选择，请稍后重试。";
+  } else if (publicFailed) {
+    adminContextMessage.value = "公开赛事信息刷新失败，已保留上次显示内容；赛事目录已更新。";
+  } else {
+    adminContextMessage.value = "";
   }
 }
 
@@ -261,10 +303,11 @@ async function verifyRelease() {
 
 async function login(credentials) {
   message.value = "";
+  adminContextMessage.value = "";
   try {
     const user = await session.login(credentials);
     await loadAccountEvents();
-    await loadAdminEvents();
+    await loadAdminEventsSafely();
     currentView.value = user.mustChangePassword ? "password" : targetView(user);
   } catch (error) {
     message.value = error?.message || "登录失败，请稍后重试";
@@ -276,7 +319,7 @@ async function passwordChanged(user) {
   session.setUser(user, session.organizations.value);
   if (wasForced) {
     await loadAccountEvents();
-    await loadAdminEvents();
+    await loadAdminEventsSafely();
     currentView.value = targetView(user);
   }
 }
@@ -287,6 +330,7 @@ async function performLogout() {
   selectEventContext("");
   currentView.value = "login";
   message.value = "";
+  adminContextMessage.value = "";
   const url = new URL(window.location.href);
   ["view", "eventId", "eventSlug", "contentId", "panel"].forEach((key) => url.searchParams.delete(key));
   window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
@@ -456,7 +500,7 @@ onMounted(async () => {
   await session.restore();
   if (currentUser.value && !currentUser.value.mustChangePassword) {
     await loadAccountEvents();
-    await loadAdminEvents();
+    await loadAdminEventsSafely();
     currentView.value = targetView();
   }
 });
@@ -484,6 +528,7 @@ onMounted(async () => {
     <template #header><div><strong>{{ currentUser.name }}</strong><span>{{ eventData.event.name || "赛事管理平台" }}</span></div></template>
     <template #sidebar-footer><button type="button" class="ghost admin-logout-button" data-action="logout" aria-label="退出登录" title="退出登录" @click="logout"><span class="admin-nav-label">退出登录</span></button></template>
     <p v-if="message" class="message">{{ message }}</p>
+    <p v-if="adminContextMessage" class="message">{{ adminContextMessage }}</p>
     <DashboardPage v-if="currentView === 'overview'" :event-id="adminEventId" :events="adminEvents" @update:event-id="setAdminEventId" @navigate="navigateAdmin" />
     <EventManagementPage v-else-if="currentView === 'events'" :events="adminEvents" :projects="adminProjects" @event-changed="refreshAdminEventContext" />
     <SiteContentPage v-else-if="currentView === 'siteContent'" ref="siteContentPage" :initial-content-id="siteContentId" @content-id="siteContentId = $event || ''" @navigate="navigateAdmin" />

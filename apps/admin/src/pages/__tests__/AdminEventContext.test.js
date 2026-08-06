@@ -146,6 +146,188 @@ describe("administrator event context", () => {
     expect(wrapper.find('option[value="E2"]').exists()).toBe(false);
   });
 
+  it("keeps the newest public event when an older refresh resolves last", async () => {
+    const oldRefresh = deferred();
+    const newRefresh = deferred();
+    let publicEventLoads = 0;
+    apiMock.mockImplementation((path) => {
+      if (path === "/api/public/event") {
+        publicEventLoads += 1;
+        if (publicEventLoads === 1) return Promise.resolve({ event: { name: "Initial public event" }, projects: [], grades: [] });
+        return publicEventLoads === 2 ? oldRefresh.promise : newRefresh.promise;
+      }
+      if (path === "/api/admin/events") return Promise.resolve({ rows: [{ id: "E1", name: "Event A", isCurrent: true }], projects: [] });
+      return Promise.resolve({ rows: [], total: 0, page: 1, pageSize: 25 });
+    });
+
+    const wrapper = mount(App);
+    await flushPromises();
+    await wrapper.get('[data-nav="events"]').trigger("click");
+    await flushPromises();
+    const eventPage = wrapper.findComponent(EventManagementPage);
+
+    eventPage.vm.$emit("event-changed");
+    await Promise.resolve();
+    eventPage.vm.$emit("event-changed");
+    await Promise.resolve();
+    newRefresh.resolve({ event: { name: "Newest public event" }, projects: [], grades: [] });
+    await flushPromises();
+    oldRefresh.resolve({ event: { name: "Stale public event" }, projects: [], grades: [] });
+    await flushPromises();
+
+    expect(wrapper.get(".admin-header").text()).toContain("Newest public event");
+    expect(wrapper.get(".admin-header").text()).not.toContain("Stale public event");
+  });
+
+  it("preserves the selected event when the administrator directory refresh fails and recovers on the next success", async () => {
+    let adminEventLoads = 0;
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/public/event") return { event: { name: "Public event" }, projects: [], grades: [] };
+      if (path === "/api/admin/events") {
+        adminEventLoads += 1;
+        if (adminEventLoads === 2) throw new Error("directory unavailable");
+        return adminEventLoads >= 3
+          ? { rows: [{ id: "E1", name: "Event A", isCurrent: true }], projects: [] }
+          : { rows: [{ id: "E1", name: "Event A", isCurrent: true }, { id: "E2", name: "Event B" }], projects: [] };
+      }
+      return { rows: [], total: 0, page: 1, pageSize: 25 };
+    });
+
+    const wrapper = mount(App);
+    await flushPromises();
+    await wrapper.get("[data-event-switcher]").setValue("E2");
+    await wrapper.get('[data-nav="events"]').trigger("click");
+    await flushPromises();
+
+    wrapper.findComponent(EventManagementPage).vm.$emit("event-changed");
+    await flushPromises();
+    await wrapper.get('[data-nav="overview"]').trigger("click");
+    await flushPromises();
+
+    expect(wrapper.get("[data-event-switcher]").element.value).toBe("E2");
+    expect(new URL(window.location.href).searchParams.get("eventId")).toBe("E2");
+    expect(wrapper.text()).toContain("管理员赛事目录刷新失败");
+    expect(wrapper.text()).toContain("已保留当前赛事选择");
+
+    await wrapper.get('[data-nav="events"]').trigger("click");
+    await flushPromises();
+    wrapper.findComponent(EventManagementPage).vm.$emit("event-changed");
+    await flushPromises();
+    await wrapper.get('[data-nav="overview"]').trigger("click");
+    await flushPromises();
+
+    expect(wrapper.find('option[value="E2"]').exists()).toBe(false);
+    expect(wrapper.get("[data-event-switcher]").element.value).toBe("");
+    expect(new URL(window.location.href).searchParams.has("eventId")).toBe(false);
+    expect(wrapper.text()).not.toContain("管理员赛事目录刷新失败");
+  });
+
+  it("updates the directory but keeps the last public header when only the public refresh fails", async () => {
+    let publicEventLoads = 0;
+    let adminEventLoads = 0;
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/public/event") {
+        publicEventLoads += 1;
+        if (publicEventLoads === 2) throw new Error("public unavailable");
+        return { event: { name: "Last known public event" }, projects: [], grades: [] };
+      }
+      if (path === "/api/admin/events") {
+        adminEventLoads += 1;
+        return adminEventLoads >= 2
+          ? { rows: [{ id: "E1", name: "Event A", isCurrent: true }], projects: [] }
+          : { rows: [{ id: "E1", name: "Event A", isCurrent: true }, { id: "E2", name: "Event B" }], projects: [] };
+      }
+      return { rows: [], total: 0, page: 1, pageSize: 25 };
+    });
+
+    const wrapper = mount(App);
+    await flushPromises();
+    await wrapper.get("[data-event-switcher]").setValue("E2");
+    await wrapper.get('[data-nav="events"]').trigger("click");
+    await flushPromises();
+    wrapper.findComponent(EventManagementPage).vm.$emit("event-changed");
+    await flushPromises();
+    await wrapper.get('[data-nav="overview"]').trigger("click");
+    await flushPromises();
+
+    expect(wrapper.find('option[value="E2"]').exists()).toBe(false);
+    expect(wrapper.get("[data-event-switcher]").element.value).toBe("");
+    expect(new URL(window.location.href).searchParams.has("eventId")).toBe(false);
+    expect(wrapper.get(".admin-header").text()).toContain("Last known public event");
+    expect(wrapper.text()).toContain("公开赛事信息刷新失败");
+    expect(wrapper.text()).toContain("赛事目录已更新");
+  });
+
+  it("handles both refresh failures without clearing the selected event", async () => {
+    let publicEventLoads = 0;
+    let adminEventLoads = 0;
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/public/event") {
+        publicEventLoads += 1;
+        if (publicEventLoads === 2) throw new Error("public unavailable");
+        return { event: { name: "Last known public event" }, projects: [], grades: [] };
+      }
+      if (path === "/api/admin/events") {
+        adminEventLoads += 1;
+        if (adminEventLoads === 2) throw new Error("directory unavailable");
+        return { rows: [{ id: "E1", name: "Event A", isCurrent: true }, { id: "E2", name: "Event B" }], projects: [] };
+      }
+      return { rows: [], total: 0, page: 1, pageSize: 25 };
+    });
+
+    const wrapper = mount(App);
+    await flushPromises();
+    await wrapper.get("[data-event-switcher]").setValue("E2");
+    await wrapper.get('[data-nav="events"]').trigger("click");
+    await flushPromises();
+    wrapper.findComponent(EventManagementPage).vm.$emit("event-changed");
+    await flushPromises();
+    await wrapper.get('[data-nav="overview"]').trigger("click");
+    await flushPromises();
+
+    expect(wrapper.get("[data-event-switcher]").element.value).toBe("E2");
+    expect(new URL(window.location.href).searchParams.get("eventId")).toBe("E2");
+    expect(wrapper.get(".admin-header").text()).toContain("Last known public event");
+    expect(wrapper.text()).toContain("赛事上下文刷新失败");
+  });
+
+  it("does not restore an error from an older failed refresh after a newer refresh succeeds", async () => {
+    const oldPublicRefresh = deferred();
+    const oldAdminRefresh = deferred();
+    let publicEventLoads = 0;
+    let adminEventLoads = 0;
+    apiMock.mockImplementation((path) => {
+      if (path === "/api/public/event") {
+        publicEventLoads += 1;
+        if (publicEventLoads === 2) return oldPublicRefresh.promise;
+        return Promise.resolve({ event: { name: publicEventLoads >= 3 ? "Newest public event" : "Initial public event" }, projects: [], grades: [] });
+      }
+      if (path === "/api/admin/events") {
+        adminEventLoads += 1;
+        if (adminEventLoads === 2) return oldAdminRefresh.promise;
+        return Promise.resolve({ rows: [{ id: "E1", name: "Event A", isCurrent: true }], projects: [] });
+      }
+      return Promise.resolve({ rows: [], total: 0, page: 1, pageSize: 25 });
+    });
+
+    const wrapper = mount(App);
+    await flushPromises();
+    await wrapper.get('[data-nav="events"]').trigger("click");
+    await flushPromises();
+    const eventPage = wrapper.findComponent(EventManagementPage);
+
+    eventPage.vm.$emit("event-changed");
+    await Promise.resolve();
+    eventPage.vm.$emit("event-changed");
+    await flushPromises();
+    oldPublicRefresh.reject(new Error("stale public failure"));
+    oldAdminRefresh.reject(new Error("stale directory failure"));
+    await flushPromises();
+
+    expect(wrapper.get(".admin-header").text()).toContain("Newest public event");
+    expect(wrapper.text()).not.toContain("刷新失败");
+  });
+
   it("performs one unified administrator refresh after a successful event mutation", async () => {
     let adminEventLoads = 0;
     let publicEventLoads = 0;
