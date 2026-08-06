@@ -12,7 +12,7 @@ const typeFilter = ref("all");
 const statusFilter = ref("all");
 const message = ref("");
 const temporaryPasswordDialog = ref(null);
-const form = reactive({ id: "", name: "", phone: "", password: "", type: "ordinary", status: "active", organizationName: "", organizationCode: "" });
+const form = reactive({ id: "", name: "", phone: "", type: "ordinary", status: "active", organizationName: "", organizationCode: "" });
 
 const roleText = { ordinary: "普通用户", organization: "组织用户", admin: "超级管理员" };
 const filteredUsers = computed(() => {
@@ -31,13 +31,13 @@ function ownerOrganization(userId) {
 }
 
 function resetForm() {
-  Object.assign(form, { id: "", name: "", phone: "", password: "", type: "ordinary", status: "active", organizationName: "", organizationCode: "" });
+  Object.assign(form, { id: "", name: "", phone: "", type: "ordinary", status: "active", organizationName: "", organizationCode: "" });
 }
 
 function editUser(user) {
   const organization = ownerOrganization(user.id);
   Object.assign(form, {
-    id: user.id, name: user.name, phone: user.phone, password: "", type: user.type, status: user.status || "active",
+    id: user.id, name: user.name, phone: user.phone, type: user.type, status: user.status || "active",
     organizationName: organization?.name || "", organizationCode: organization?.code || ""
   });
 }
@@ -57,21 +57,19 @@ async function load() {
 
 async function save() {
   message.value = "";
-  if (!form.id && !form.password) {
-    message.value = "创建用户时请设置至少 8 位、包含字母和数字的初始密码";
-    return;
-  }
   try {
     const body = {
       name: form.name, phone: form.phone, type: form.type, status: form.status,
       organizationName: form.organizationName, organizationCode: form.organizationCode
     };
-    if (form.password) body.password = form.password;
-    await api(form.id ? `/api/admin/users/${form.id}` : "/api/admin/users", {
+    const result = await api(form.id ? `/api/admin/users/${form.id}` : "/api/admin/users", {
       method: form.id ? "PATCH" : "POST",
       body: JSON.stringify(body)
     });
-    message.value = form.id ? "用户已更新" : "用户已创建";
+    if (!form.id) {
+      temporaryPasswordDialog.value = { userName: result.row.name, password: result.temporaryPassword };
+    }
+    message.value = form.id ? "用户已更新" : "用户已创建，请将系统生成的临时密码交给用户";
     resetForm();
     await load();
   } catch (error) {
@@ -135,7 +133,6 @@ onMounted(load);
       <div class="two"><label>姓名<input v-model="form.name" required /></label><label>手机号<input v-model="form.phone" required /></label></div>
       <div class="two"><label>账号类型<select v-model="form.type" :disabled="Boolean(form.id)"><option value="ordinary">普通用户</option><option v-if="form.type === 'organization'" value="organization">组织用户</option></select></label><label>状态<select v-model="form.status"><option value="active">启用</option><option value="disabled">停用</option></select></label></div>
       <template v-if="form.type === 'organization'"><label>组织名称<input v-model="form.organizationName" /></label><label>组织代码<input v-model="form.organizationCode" /></label></template>
-      <label v-if="!form.id">初始密码<input v-model="form.password" type="password" placeholder="至少 8 位，含字母和数字" required /></label>
       <button class="primary">{{ form.id ? "保存修改" : "创建用户" }}</button>
       <p v-if="message" class="message">{{ message }}</p>
     </form>

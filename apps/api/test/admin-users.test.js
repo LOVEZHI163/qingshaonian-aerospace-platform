@@ -50,17 +50,43 @@ test("administrator temporary-password reset and read audits contain no secret m
   });
 });
 
-test("admin can create, update, and delete an ordinary user", async () => {
-  await withServer(async (baseUrl) => {
+test("admin creates an ordinary user with a system-generated repeat-viewable temporary password", async () => {
+  await withServer(async (baseUrl, { dbPath }) => {
     const admin = await loginAs(baseUrl, "13900000000", "admin123");
     const createRes = await fetch(`${baseUrl}/api/admin/users`, withSession(admin.cookie, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: "测试家长", phone: "13600001111", password: "Strong123", type: "ordinary" })
+      body: JSON.stringify({ name: "测试家长", phone: "13600001111", password: "CallerChosen9", type: "ordinary" })
     }));
     assert.equal(createRes.status, 201);
-    const created = (await asJson(createRes)).row;
+    const createPayload = await asJson(createRes);
+    const created = createPayload.row;
     assert.equal(created.type, "ordinary");
+    assert.equal(created.mustChangePassword, true);
+    assert.match(createPayload.temporaryPassword, /[A-Za-z]/);
+    assert.notEqual(createPayload.temporaryPassword, "CallerChosen9");
+
+    const persisted = JSON.parse(await fs.readFile(dbPath, "utf8")).users.find((row) => row.id === created.id);
+    assert.equal(persisted.sessionVersion, 1);
+    assert.equal(persisted.mustChangePassword, true);
+    assert.match(persisted.password, /^\$2/);
+    assert.ok(persisted.temporaryPasswordCiphertext);
+
+    const callerChosenLogin = await fetch(`${baseUrl}/api/auth/login`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ phone: "13600001111", password: "CallerChosen9" })
+    });
+    assert.equal(callerChosenLogin.status, 401);
+    const temporaryLogin = await fetch(`${baseUrl}/api/auth/login`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ phone: "13600001111", password: createPayload.temporaryPassword })
+    });
+    assert.equal(temporaryLogin.status, 200);
+    assert.equal((await temporaryLogin.json()).user.mustChangePassword, true);
+
+    const viewed = await fetch(`${baseUrl}/api/admin/users/${created.id}/temporary-password`, withSession(admin.cookie));
+    assert.equal(viewed.status, 200);
+    assert.equal((await viewed.json()).temporaryPassword, createPayload.temporaryPassword);
 
     const updateRes = await fetch(`${baseUrl}/api/admin/users/${created.id}`, {
       ...withSession(admin.cookie),
@@ -83,6 +109,20 @@ test("admin can create, update, and delete an ordinary user", async () => {
     const users = (await asJson(usersRes)).rows;
     assert.equal(users.some((user) => user.id === created.id), false);
   });
+});
+
+test("admin user creation fails closed without a temporary-password key and creates no partial user", async () => {
+  await withTestServer(async ({ baseUrl, dbPath }) => {
+    const admin = await loginAs(baseUrl, "13900000000", "admin123");
+    const response = await fetch(`${baseUrl}/api/admin/users`, withSession(admin.cookie, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "不得创建", phone: "13600009999", type: "ordinary" })
+    }));
+    assert.equal(response.status, 503);
+    assert.equal((await response.json()).code, "TEMP_PASSWORD_KEY_UNAVAILABLE");
+    const persisted = JSON.parse(await fs.readFile(dbPath, "utf8"));
+    assert.equal(persisted.users.some((row) => row.phone === "13600009999"), false);
+  }, { prefix: "wz-admin-create-no-key-", env: { TEMP_PASSWORD_ENCRYPTION_KEY: "" } });
 });
 
 test("admin user management rejects organization creation and conversion without credential review", async () => {

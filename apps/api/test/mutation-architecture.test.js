@@ -8,6 +8,8 @@ import express from "express";
 import { newDb } from "pg-mem";
 
 import * as mutationLock from "../src/data/mutation-lock.js";
+import { requireAdmin, requirePasswordReady } from "../src/auth/session.js";
+import { resetUserTemporaryPassword } from "../src/services/account-passwords.js";
 import { createFileStore } from "../src/data/file-store.js";
 import { createPostgresStore } from "../src/data/postgres-store.js";
 import { createOrganizationsRouter } from "../src/routes/organizations.js";
@@ -56,6 +58,151 @@ const withTimeout = (promise, milliseconds = 2_000) => Promise.race([
   promise,
   new Promise((_, reject) => setTimeout(() => reject(new Error("operation timed out")), milliseconds))
 ]);
+
+test("a queued authenticated mutation revalidates the session inside the lock after an administrator reset", async () => {
+  const admin = {
+    id: "U-STALE-ADMIN", name: "Queued Admin", phone: "13900000099", password: "hash",
+    type: "admin", status: "active", sessionVersion: 0, mustChangePassword: false
+  };
+  const db = { users: [admin], sentinelWrites: 0 };
+  let releaseQueued;
+  const store = {
+    readDb: async () => db,
+    withMutationLock(handler) {
+      return new Promise((resolve, reject) => {
+        releaseQueued = () => Promise.resolve(handler()).then(resolve, reject);
+      });
+    }
+  };
+  const route = mutationLock.createMutationAsyncRoute(store);
+  const req = {
+    method: "POST", aborted: false,
+    user: { ...admin },
+    session: { userId: admin.id, sessionVersion: 0 }
+  };
+  const res = new EventEmitter();
+  res.destroyed = false;
+  let requestPromise;
+  let forwarded;
+
+  requireAdmin(req, res, () => requirePasswordReady(req, res, () => {
+    requestPromise = route(async () => { db.sentinelWrites += 1; })(req, res, (error) => { forwarded = error; });
+  }));
+  assert.equal(typeof releaseQueued, "function");
+
+  // A password reset wins while the already-authorized write is waiting.
+  await resetUserTemporaryPassword(db, admin, {
+    vault: {
+      generate: () => "GeneratedPass2",
+      seal: () => ({ ciphertext: "sealed", iv: "iv", tag: "tag" })
+    },
+    hashPassword: async () => "new-hash",
+    now: () => "2026-08-06T00:00:00.000Z"
+  });
+  await releaseQueued();
+  await requestPromise;
+
+  assert.equal(db.sentinelWrites, 0);
+  assert.equal(forwarded?.status, 401);
+  assert.equal(forwarded?.code, "SESSION_INVALIDATED");
+});
+
+test("a queued password-ready mutation rechecks mustChangePassword inside the lock", async () => {
+  const user = {
+    id: "U-FORCED", name: "Forced User", phone: "13800000099", password: "hash",
+    type: "ordinary", status: "active", sessionVersion: 0, mustChangePassword: false
+  };
+  const db = { users: [user], sentinelWrites: 0 };
+  let releaseQueued;
+  const store = {
+    readDb: async () => db,
+    withMutationLock(handler) {
+      return new Promise((resolve, reject) => {
+        releaseQueued = () => Promise.resolve(handler()).then(resolve, reject);
+      });
+    }
+  };
+  const route = mutationLock.createMutationAsyncRoute(store);
+  const req = {
+    method: "PATCH", aborted: false,
+    user: { ...user },
+    session: { userId: user.id, sessionVersion: 0 }
+  };
+  const res = new EventEmitter();
+  res.destroyed = false;
+  let requestPromise;
+  let forwarded;
+
+  requirePasswordReady(req, res, () => {
+    requestPromise = route(async () => { db.sentinelWrites += 1; })(req, res, (error) => { forwarded = error; });
+  });
+  user.mustChangePassword = true;
+  await releaseQueued();
+  await requestPromise;
+
+  assert.equal(db.sentinelWrites, 0);
+  assert.equal(forwarded?.status, 428);
+  assert.equal(forwarded?.code, "PASSWORD_CHANGE_REQUIRED");
+});
+
+test("an unauthenticated public mutation is not subjected to password-ready revalidation", async () => {
+  const store = {
+    readDb: async () => ({ users: [] }),
+    withMutationLock: (handler) => handler()
+  };
+  const route = mutationLock.createMutationAsyncRoute(store);
+  const req = { method: "POST", aborted: false, session: {} };
+  const res = new EventEmitter();
+  res.destroyed = false;
+  let executed = false;
+  let forwarded;
+
+  await route(async () => { executed = true; })(req, res, (error) => { forwarded = error; });
+
+  assert.equal(executed, true);
+  assert.ifError(forwarded);
+});
+
+for (const [label, changeUser, expectedStatus, expectedCode] of [
+  ["disabled account", (user) => { user.status = "disabled"; }, 401, "SESSION_INVALIDATED"],
+  ["lost administrator role", (user) => { user.type = "ordinary"; }, 403, "ADMIN_REQUIRED"]
+]) test(`a queued administrator mutation rejects a ${label} inside the lock`, async () => {
+  const user = {
+    id: "U-ADMIN-RECHECK", name: "Queued Admin", phone: "13900000098", password: "hash",
+    type: "admin", status: "active", sessionVersion: 0, mustChangePassword: false
+  };
+  const db = { users: [user], sentinelWrites: 0 };
+  let releaseQueued;
+  const store = {
+    readDb: async () => db,
+    withMutationLock(handler) {
+      return new Promise((resolve, reject) => {
+        releaseQueued = () => Promise.resolve(handler()).then(resolve, reject);
+      });
+    }
+  };
+  const route = mutationLock.createMutationAsyncRoute(store);
+  const req = {
+    method: "DELETE", aborted: false,
+    user: { ...user },
+    session: { userId: user.id, sessionVersion: 0 }
+  };
+  const res = new EventEmitter();
+  res.destroyed = false;
+  let requestPromise;
+  let forwarded;
+
+  requireAdmin(req, res, () => requirePasswordReady(req, res, () => {
+    requestPromise = route(async () => { db.sentinelWrites += 1; })(req, res, (error) => { forwarded = error; });
+  }));
+  changeUser(user);
+  await releaseQueued();
+  await requestPromise;
+
+  assert.equal(db.sentinelWrites, 0);
+  assert.equal(forwarded?.status, expectedStatus);
+  assert.equal(forwarded?.code, expectedCode);
+});
 
 test("PostgreSQL mutations with pool size one bind all snapshot reads and writes to the advisory-lock client", async () => {
   const memory = newDb({ autoCreateForeignKeyIndices: true });

@@ -490,23 +490,23 @@ app.get("/api/admin/users/:id/temporary-password", requireAdmin, requirePassword
 }));
 
 app.post("/api/admin/users", requireAdmin, requirePasswordReady, mutationAsyncRoute(async (req, res) => {
-  const db = await readDb();
-  const { name, phone, password, type = "ordinary" } = req.body;
-  if (!name || !phone || !password) return res.status(422).json({ error: "姓名、手机号和密码不能为空" });
+  const { name, phone, type = "ordinary" } = req.body;
+  if (!name || !phone) return res.status(422).json({ error: "姓名和手机号不能为空" });
   if (type === "organization") return res.status(422).json({ error: "组织必须通过资质注册并审核" });
   if (type !== "ordinary") return res.status(422).json({ error: "账号类型不合法" });
-  const passwordError = validatePassword(password);
-  if (passwordError) return res.status(422).json({ error: passwordError });
+  const vault = requireTemporaryPasswordVault();
+  const db = await readDb();
   const normalizedPhone = normalizePhone(phone);
   if (db.users.some((user) => normalizePhone(user.phone) === normalizedPhone)) return res.status(409).json({ error: "该手机号已注册" });
 
   const user = {
-    id: id("U"), name, phone: normalizedPhone, password: await hashPassword(password), type, status: req.body.status || "active",
+    id: id("U"), name, phone: normalizedPhone, password: "", type, status: req.body.status || "active",
     sessionVersion: 0, mustChangePassword: false, createdAt: now()
   };
+  const { temporaryPassword } = await resetUserTemporaryPassword(db, user, { vault, hashPassword, now });
   db.users.push(user);
   await writeDb(db);
-  res.status(201).json({ row: publicUser(user), organization: null });
+  res.status(201).json({ row: publicUser(user), organization: null, temporaryPassword });
 }));
 
 app.patch("/api/admin/users/:id", requireAdmin, requirePasswordReady, mutationAsyncRoute(async (req, res) => {

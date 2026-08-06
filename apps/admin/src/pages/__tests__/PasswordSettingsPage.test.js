@@ -20,6 +20,22 @@ describe("PasswordSettingsPage", () => {
     expect(wrapper.text()).toContain("两次输入的新密码不一致");
   });
 
+  it.each([
+    ["Short1", "密码至少 8 位"],
+    ["12345678", "密码必须同时包含字母和数字"],
+    ["OnlyLetters", "密码必须同时包含字母和数字"],
+    [`A1${"x".repeat(63)}`, "密码最多 64 位"]
+  ])("rejects an invalid new password before calling the API: %s", async (newPassword, expectedMessage) => {
+    const wrapper = mount(PasswordSettingsPage);
+    await wrapper.get('[name="currentPassword"]').setValue("OldPass1");
+    await wrapper.get('[name="newPassword"]').setValue(newPassword);
+    await wrapper.get('[name="confirmPassword"]').setValue(newPassword);
+    await wrapper.get("form").trigger("submit");
+
+    expect(apiMock).not.toHaveBeenCalled();
+    expect(wrapper.text()).toContain(expectedMessage);
+  });
+
   it("submits only current and new passwords, clears fields, and reports the changed user", async () => {
     const user = { id: "U1", type: "ordinary", mustChangePassword: false };
     apiMock.mockResolvedValue({ user });
