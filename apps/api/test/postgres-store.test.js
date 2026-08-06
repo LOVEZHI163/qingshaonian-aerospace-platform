@@ -924,6 +924,12 @@ test("PostgreSQL store upgrades a legacy schema without losing existing records"
     assert.equal(legacyCertificate.slot, 1);
     assert.equal(legacyCertificate.title, "获奖证书");
     assert.equal(data.events.filter((event) => event.isCurrent).length, 1);
+
+    await pool.query("ALTER TABLE certificates DROP CONSTRAINT IF EXISTS certificates_organization_id_fk");
+    await pool.query("DELETE FROM memberships WHERE organization_id = 'OLEGACY'");
+    await pool.query("DELETE FROM organizations WHERE id = 'OLEGACY'");
+    const snapshot = await pool.query("SELECT organization_id, organization_name FROM registrations WHERE id = 'RLEGACY'");
+    assert.deepEqual(snapshot.rows[0], { organization_id: null, organization_name: "Legacy Org" });
   } finally {
     await store.close();
   }

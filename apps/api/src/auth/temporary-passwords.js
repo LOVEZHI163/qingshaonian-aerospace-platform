@@ -6,10 +6,14 @@ const UPPERCASE = "ABCDEFGHJKLMNPQRSTUVWXYZ";
 const LOWERCASE = "abcdefghijkmnopqrstuvwxyz";
 const DIGITS = "23456789";
 const PASSWORD_CHARACTERS = `${UPPERCASE}${LOWERCASE}${DIGITS}`;
+const BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
 
 function readKey(secret) {
   if (!secret) throw new Error("TEMP_PASSWORD_ENCRYPTION_KEY is required");
-  const key = Buffer.from(String(secret), "base64");
+  const encoded = String(secret);
+  if (!BASE64.test(encoded)) throw new Error("TEMP_PASSWORD_ENCRYPTION_KEY must be valid base64");
+  const key = Buffer.from(encoded, "base64");
+  if (key.toString("base64") !== encoded) throw new Error("TEMP_PASSWORD_ENCRYPTION_KEY must be valid base64");
   if (key.length !== 32) throw new Error("TEMP_PASSWORD_ENCRYPTION_KEY must decode to exactly 32 bytes");
   return key;
 }

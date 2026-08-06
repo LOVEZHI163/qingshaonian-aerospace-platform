@@ -35,4 +35,5 @@ test("temporary password is encrypted, decryptable, and clearable", () => {
 test("temporary password vault rejects a missing or non-32-byte key", () => {
   assert.throws(() => createTemporaryPasswordVault(""), /TEMP_PASSWORD_ENCRYPTION_KEY/);
   assert.throws(() => createTemporaryPasswordVault(Buffer.alloc(16).toString("base64")), /32 bytes/);
+  assert.throws(() => createTemporaryPasswordVault(`!!!!${Buffer.alloc(32, 7).toString("base64")}`), /base64/i);
 });
