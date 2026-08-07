@@ -4,6 +4,7 @@ import { GRADE_GROUPS } from "../domain/grades.js";
 import { buildBoundRegistrationWorkbook, contentDisposition } from "../exports/registration-workbook.js";
 import { listAccountEvents, joinOrganizationEvent } from "../services/account-events.js";
 import { listActiveOrganizationMembers } from "../services/memberships.js";
+import { attachAuthorizedIdentity } from "../services/registrations.js";
 import { requireOrganizationEventParticipation } from "../services/access-control.js";
 import { recordAudit } from "../services/audit.js";
 
@@ -56,7 +57,9 @@ export function createAccountEventsRouter({ store, requireUser, requirePasswordR
   router.get("/organization/events/:eventId/export", ...user, asyncRoute(async (req, res) => {
     const db = await store.readDb();
     const { organization, event } = requireOrganizationEventParticipation(db, req.user, req.params.eventId);
-    const registrations = db.registrations.filter((row) => row.organizationId === organization.id && row.eventId === event.id);
+    const registrations = db.registrations
+      .filter((row) => row.organizationId === organization.id && row.eventId === event.id)
+      .map((row) => attachAuthorizedIdentity(db, row, req.user));
     const workbook = buildBoundRegistrationWorkbook(registrations);
     res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
     res.setHeader("Content-Disposition", contentDisposition(`${event.name}_${organization.name}_报名名单.xlsx`));

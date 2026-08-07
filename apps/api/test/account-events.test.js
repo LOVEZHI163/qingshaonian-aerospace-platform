@@ -2,8 +2,26 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import test from "node:test";
 
+import ExcelJS from "exceljs";
+
 import { withTestServer } from "../test-support/server.js";
 import { loginAs, withSession } from "./helpers/api-client.js";
+
+const validId = "11010519491231002X";
+
+async function loadWorkbook(response) {
+  assert.equal(response.status, 200);
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(Buffer.from(await response.arrayBuffer()));
+  return workbook;
+}
+
+function rowNumberForRegistration(sheet, registrationId) {
+  for (let rowNumber = 2; rowNumber <= sheet.rowCount; rowNumber += 1) {
+    if (sheet.getCell(`A${rowNumber}`).value === registrationId) return rowNumber;
+  }
+  return null;
+}
 
 async function setOrganization(dbPath, organizationId, changes) {
   const db = JSON.parse(await fs.readFile(dbPath, "utf8"));
@@ -136,6 +154,47 @@ test("an organization workspace and export are scoped to its joined event", asyn
     assert.equal(exported.status, 200);
     assert.match(exported.headers.get("content-type") || "", /spreadsheetml/);
   }, { prefix: "account-events-workspace-" });
+});
+
+test("legacy organization export decorates identities for only the session organization", async () => {
+  await withTestServer(async ({ baseUrl }) => {
+    const personal = await loginAs(baseUrl, "13800000001", "123456");
+    const organization = await loginAs(baseUrl, "13800000011", "123456");
+    const otherOrganization = await loginAs(baseUrl, "13800000012", "123456");
+    const admin = await loginAs(baseUrl, "13900000000", "admin123");
+    assert.equal((await fetch(`${baseUrl}/api/admin/events/wz-aerospace-2026`, withSession(admin.cookie, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ registrationMode: "force_open" })
+    }))).status, 200);
+    assert.equal((await fetch(`${baseUrl}/api/organization/events/wz-aerospace-2026/join`, withSession(organization.cookie, { method: "POST" }))).status, 201);
+    assert.equal((await fetch(`${baseUrl}/api/organization/events/wz-aerospace-2026/join`, withSession(otherOrganization.cookie, { method: "POST" }))).status, 201);
+    const created = await fetch(`${baseUrl}/api/me/events/wz-aerospace-2026/registrations`, withSession(personal.cookie, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        projectId: "rotor-race",
+        athlete: { name: "Legacy Export Identity", school: "Export School", grade: "五年级", phone: "13600008102" },
+        studentIdNumber: validId
+      })
+    }));
+    assert.equal(created.status, 201);
+    const createdRegistrationId = (await created.json()).row.id;
+
+    const workbook = await loadWorkbook(await fetch(
+      `${baseUrl}/api/organization/events/wz-aerospace-2026/export?organizationId=O1002`,
+      withSession(organization.cookie)
+    ));
+    const sheet = workbook.getWorksheet("报名名单");
+    const createdRow = rowNumberForRegistration(sheet, createdRegistrationId);
+    const legacyRow = rowNumberForRegistration(sheet, "R20260627001");
+    assert.notEqual(createdRow, null);
+    assert.notEqual(legacyRow, null);
+    assert.equal(sheet.getCell("I1").value, "学生身份证号");
+    assert.equal(sheet.getCell(`I${createdRow}`).text, validId);
+    assert.equal(sheet.getCell(`I${legacyRow}`).text, "");
+    assert.equal(rowNumberForRegistration(sheet, "R20260627002"), null);
+  }, { prefix: "account-events-legacy-export-" });
 });
 
 test("join rejects unapproved and disabled organizations, ordinary users, drafts, and archived events", async () => {
