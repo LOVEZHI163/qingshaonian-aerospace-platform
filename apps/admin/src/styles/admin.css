@@ -2564,3 +2564,216 @@ em.invited {
     -webkit-overflow-scrolling: touch;
   }
 }
+
+/* Organization leader submission and platform review */
+.leader-management-page {
+  display: grid;
+  gap: 18px;
+}
+
+.leader-guidance {
+  border-left: 4px solid var(--blue);
+  background: #f7fbff;
+}
+
+.leader-guidance h3,
+.leader-guidance ul,
+.leader-card h4,
+.leader-card p {
+  margin: 0;
+}
+
+.leader-guidance ul {
+  display: grid;
+  gap: 7px;
+  margin-top: 10px;
+  padding-left: 20px;
+  color: #334155;
+}
+
+.leader-form,
+.leader-list-panel {
+  min-width: 0;
+}
+
+.leader-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.leader-form-grid label,
+.leader-document-row label,
+.leader-filter label,
+.leader-dialog label {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  color: #334155;
+  font-weight: 700;
+}
+
+.leader-document-row {
+  display: flex;
+  align-items: end;
+  gap: 14px;
+  margin-top: 14px;
+}
+
+.leader-document-row label {
+  flex: 1;
+}
+
+.leader-document-row label span {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 400;
+}
+
+.leader-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 14px;
+}
+
+.leader-card {
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fbfdff;
+}
+
+.leader-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.leader-card-header h4 {
+  margin-bottom: 6px;
+  font-size: 18px;
+}
+
+.leader-card-header p,
+.leader-notes {
+  color: #475569;
+}
+
+.leader-notes,
+.leader-rejection {
+  margin-top: 12px !important;
+  overflow-wrap: anywhere;
+}
+
+.leader-rejection {
+  color: var(--red);
+}
+
+.leader-statuses,
+.leader-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.leader-statuses {
+  justify-content: flex-end;
+}
+
+.leader-actions {
+  margin-top: 14px;
+}
+
+.leader-filter {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(160px, 220px) auto;
+  align-items: end;
+  gap: 12px;
+}
+
+.leader-review-table {
+  min-width: 980px;
+}
+
+.leader-review-table td:last-child {
+  min-width: 250px;
+}
+
+.leader-dialog {
+  width: min(100%, 720px);
+  max-height: calc(100vh - 40px);
+  overflow: auto;
+}
+
+.leader-history-list {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.leader-history-list li {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 5px 14px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.leader-history-list span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.leader-history-list p {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: #475569;
+}
+
+.leader-preview-dialog embed,
+.leader-preview-dialog img {
+  display: block;
+  width: 100%;
+  min-height: 60vh;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  object-fit: contain;
+  background: #f8fafc;
+}
+
+@media (max-width: 760px) {
+  .leader-form-grid,
+  .leader-filter {
+    grid-template-columns: 1fr;
+  }
+
+  .leader-document-row,
+  .leader-card-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .leader-document-row > button,
+  .leader-filter > button {
+    width: 100%;
+  }
+
+  .leader-statuses {
+    justify-content: flex-start;
+  }
+
+  .leader-dialog {
+    width: 96vw;
+    padding: 16px;
+  }
+
+  .leader-history-list li {
+    grid-template-columns: 1fr;
+  }
+}

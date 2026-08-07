@@ -73,12 +73,17 @@ describe("role based application navigation", () => {
   it("shows the website module to administrators and opens it from navigation", async () => {
     const wrapper = await mountFor({ id: "A1", type: "admin", name: "管理员", mustChangePassword: false }); mounted.push(wrapper);
     const labels = wrapper.findAll("[data-nav]").map((item) => item.text());
-    expect(labels).toEqual(["概览", "赛事设置", "报名管理", "证书管理", "官网内容", "组织用户", "普通用户管理"]);
+    expect(labels).toEqual(["概览", "赛事设置", "报名管理", "证书管理", "官网内容", "组织用户", "领队审核", "普通用户管理"]);
     expect(wrapper.find('[data-user-nav="myOrganization"]').exists()).toBe(false);
 
     await wrapper.get('[data-nav="siteContent"]').trigger("click");
     await flushPromises();
     expect(wrapper.find('[data-testid="site-content-page"]').exists()).toBe(true);
+
+    await wrapper.get('[data-nav="leaders"]').trigger("click");
+    await flushPromises();
+    expect(wrapper.find('[data-testid="admin-leader-review-page"]').exists()).toBe(true);
+    expect(new URLSearchParams(window.location.search).get("view")).toBe("leaders");
   });
 
   it("opens event settings from a draft event website state", async () => {
@@ -220,6 +225,7 @@ describe("role based application navigation", () => {
     const labels = wrapper.findAll("[data-user-nav]").map((item) => item.get(".user-nav-label").text());
     expect(labels).toEqual(["赛事中心", "我的组织", "报名记录", "证书查询", "修改密码"]);
     expect(wrapper.text()).not.toContain("普通用户管理");
+    expect(wrapper.find('[data-user-nav="leaders"]').exists()).toBe(false);
     expect(apiMock.mock.calls.some(([path]) => path === "/api/users" || path.startsWith("/api/admin/"))).toBe(false);
 
     await wrapper.get('[data-user-nav="myOrganization"]').trigger("click");
@@ -452,6 +458,7 @@ describe("role based application navigation", () => {
     expect(wrapper.findAll("[data-user-nav]").map((item) => item.get(".user-nav-label").text())).toEqual(["审核进度", "修改密码"]);
     expect(wrapper.text()).toContain("组织资质正在审核中");
     expect(wrapper.find('[data-user-nav="myOrganization"]').exists()).toBe(false);
+    expect(wrapper.find('[data-user-nav="leaders"]').exists()).toBe(false);
     expect(apiMock.mock.calls.some(([path]) => path.includes("/registrations") || path.includes("/certificates"))).toBe(false);
   });
 
@@ -461,9 +468,14 @@ describe("role based application navigation", () => {
     const wrapper = await mountFor({ id: "O1U", type: "organization", name: "负责人", phone: "13800000002", mustChangePassword: false }, organization); mounted.push(wrapper);
 
     expect(wrapper.findAll("[data-user-nav]").map((item) => item.get(".user-nav-label").text())).toEqual([
-      "赛事工作台", "报名记录", "组织与成员", "证书查询", "修改密码"
+      "赛事工作台", "报名记录", "组织与成员", "领队管理", "证书查询", "修改密码"
     ]);
     expect(wrapper.text()).not.toContain("审核进度");
+
+    await wrapper.get('[data-user-nav="leaders"]').trigger("click");
+    await flushPromises();
+    expect(wrapper.find('[data-testid="organization-leaders-page"]').exists()).toBe(true);
+    expect(new URLSearchParams(window.location.search).get("view")).toBe("leaders");
 
     await wrapper.get('[data-user-nav="organizationRecords"]').trigger("click");
     await flushPromises();
@@ -594,7 +606,7 @@ describe("role based application navigation", () => {
   it("opens the organization console for an approved owner", async () => {
     const organization = { id: "O1", ownerUserId: "O1U", name: "实验学校", reviewStatus: "approved", status: "active", membershipRole: "owner" };
     const wrapper = await mountFor({ id: "O1U", type: "organization", name: "负责人", phone: "13800000002", mustChangePassword: false }, organization); mounted.push(wrapper);
-    expect(wrapper.findAll("[data-user-nav]").map((item) => item.get(".user-nav-label").text())).toEqual(["赛事工作台", "报名记录", "组织与成员", "证书查询", "修改密码"]);
+    expect(wrapper.findAll("[data-user-nav]").map((item) => item.get(".user-nav-label").text())).toEqual(["赛事工作台", "报名记录", "组织与成员", "领队管理", "证书查询", "修改密码"]);
     expect(wrapper.find('[data-user-nav="myOrganization"]').exists()).toBe(false);
     expect(wrapper.find('[data-testid="event-center-page"]').exists()).toBe(true);
   });

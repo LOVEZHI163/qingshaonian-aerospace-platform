@@ -187,7 +187,7 @@ describe("App session integration", () => {
 
   it.each([
     ["ordinary", ["赛", "组", "录", "证", "密"]],
-    ["organization", ["赛", "录", "组", "证", "密"]]
+    ["organization", ["赛", "录", "组", "领", "证", "密"]]
   ])("keeps every %s sidebar label aligned behind an icon slot", async (type, expectedIcons) => {
     sessionUser.value = { id: `${type}-1`, type, name: "账户", phone: "13800000001", mustChangePassword: false };
     if (type === "organization") session.organizations.value = [{ id: "O1", name: "组织", status: "active", reviewStatus: "approved" }];
@@ -411,7 +411,7 @@ describe("App session integration", () => {
     const wrapper = mount(App);
     await flushPromises();
 
-    expect(wrapper.findAll("[data-user-nav]").map((item) => item.attributes("data-user-nav"))).toEqual(["eventCenter", "organizationRecords", "organization", "certificates", "password"]);
+    expect(wrapper.findAll("[data-user-nav]").map((item) => item.attributes("data-user-nav"))).toEqual(["eventCenter", "organizationRecords", "organization", "leaders", "certificates", "password"]);
     expect(wrapper.find('[data-user-nav="organizationWorkspace"]').exists()).toBe(false);
 
     await wrapper.get('[data-event-card="E2"]').trigger("click");

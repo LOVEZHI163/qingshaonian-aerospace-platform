@@ -10,7 +10,7 @@ const emit = defineEmits(["navigate"]);
 const groups = [
   { label: "工作台", items: [["overview", "概览"]] },
   { label: "赛事运营", items: [["events", "赛事设置"], ["registrations", "报名管理"], ["certificates", "证书管理"]] },
-  { label: "内容与用户", items: [["siteContent", "官网内容"], ["organizations", "组织用户"], ["users", "普通用户管理"]] }
+  { label: "内容与用户", items: [["siteContent", "官网内容"], ["organizations", "组织用户"], ["leaders", "领队审核"], ["users", "普通用户管理"]] }
 ];
 
 const mobileSidebarOpen = ref(false);
