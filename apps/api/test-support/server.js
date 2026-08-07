@@ -39,6 +39,7 @@ export async function withTestServer(fn, { prefix = "aerogp-api-", env = {} } = 
       DB_PATH: dbPath,
       UPLOAD_ROOT: path.join(tempDir, "uploads"),
       TEMP_PASSWORD_ENCRYPTION_KEY: Buffer.alloc(32, 7).toString("base64"),
+      REGISTRATION_ID_ENCRYPTION_KEY: Buffer.alloc(32, 8).toString("base64"),
       ...env
     },
     stdio: ["ignore", "pipe", "pipe"]

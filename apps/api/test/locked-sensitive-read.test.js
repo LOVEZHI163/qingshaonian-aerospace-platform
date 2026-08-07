@@ -16,7 +16,7 @@ const withTimeout = (promise, milliseconds = 5_000) => Promise.race([
 test("a queued temporary-password read revalidates the administrator session inside the shared store lock", async () => {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "aerogp-locked-secret-read-"));
   const previousEnv = Object.fromEntries([
-    "NODE_ENV", "PORT", "DB_PATH", "UPLOAD_ROOT", "TEMP_PASSWORD_ENCRYPTION_KEY", "SESSION_SECRET"
+    "NODE_ENV", "PORT", "DB_PATH", "UPLOAD_ROOT", "TEMP_PASSWORD_ENCRYPTION_KEY", "REGISTRATION_ID_ENCRYPTION_KEY", "SESSION_SECRET"
   ].map((name) => [name, process.env[name]]));
   Object.assign(process.env, {
     NODE_ENV: "test",
@@ -24,6 +24,7 @@ test("a queued temporary-password read revalidates the administrator session ins
     DB_PATH: path.join(tempDir, "db.json"),
     UPLOAD_ROOT: path.join(tempDir, "uploads"),
     TEMP_PASSWORD_ENCRYPTION_KEY: Buffer.alloc(32, 7).toString("base64"),
+    REGISTRATION_ID_ENCRYPTION_KEY: Buffer.alloc(32, 8).toString("base64"),
     SESSION_SECRET: "locked-secret-read-session-secret"
   });
 
