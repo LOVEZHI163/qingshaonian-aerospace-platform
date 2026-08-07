@@ -23,7 +23,7 @@ const event = { id: "E1", name: "2026 航空赛事", isCurrent: true };
 const project = { id: "P1", eventId: "E1", name: "纸飞机", allowedGroups: ["小学低段"] };
 const registration = {
   id: "R1", eventId: "E1", organizationId: "O1", organization: "实验小学", athlete: { name: "张三", school: "实验小学", grade: "三年级", phone: "13800000000" },
-  group: "小学低段", projectId: "P1", projectName: "纸飞机", projectType: "individual", instructor: "林老师", status: "pending"
+  studentIdNumber: "11010520140101123X", group: "小学低段", projectId: "P1", projectName: "纸飞机", projectType: "individual", instructor: "林老师", status: "pending"
 };
 
 function mockLoads() {
@@ -54,6 +54,24 @@ describe("RegistrationManagementPage", () => {
     expect(wrapper.find('[data-action="export-filtered"]').exists()).toBe(true);
     expect(wrapper.find('[data-action="export-all"]').exists()).toBe(true);
     expect(wrapper.find('[data-action="certificate-template"]').exists()).toBe(true);
+  });
+
+  it("shows authorized identities and marks historical empty values without a collection prompt", async () => {
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/admin/events") return { rows: [event], projects: [project] };
+      if (path === "/api/admin/organizations") return { rows: [{ id: "O1", name: "实验小学" }] };
+      if (path.startsWith("/api/admin/events/E1/registrations?")) return {
+        rows: [registration, { ...registration, id: "R0", athlete: { ...registration.athlete, name: "历史学生" }, studentIdNumber: null }], total: 2, page: 1, pageSize: 25
+      };
+      return { row: registration };
+    });
+    const wrapper = mount(RegistrationManagementPage);
+    await flushPromises();
+
+    expect(wrapper.findAll("thead th").map((cell) => cell.text())).toContain("学生身份证号");
+    expect(wrapper.text()).toContain("11010520140101123X");
+    expect(wrapper.text()).toContain("—（历史报名）");
+    expect(wrapper.text()).not.toContain("待补录");
   });
 
   it("shows an approved registration as reviewed in Chinese and disables repeat approval", async () => {

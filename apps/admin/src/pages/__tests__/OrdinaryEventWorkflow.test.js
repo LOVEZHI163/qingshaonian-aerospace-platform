@@ -59,6 +59,7 @@ describe("ordinary user event workflow", () => {
     await inputs[1].setValue("实验小学");
     await inputs[2].setValue("二年级");
     await inputs[3].setValue("13600005001");
+    await wrapper.get('[data-field="student-id-number"]').setValue("11010520140101123X");
     await wrapper.get("form.form-panel").trigger("submit");
     await flushPromises();
 
@@ -120,6 +121,7 @@ describe("ordinary user event workflow", () => {
     await inputs[1].setValue("实验小学");
     await inputs[2].setValue("二年级");
     await inputs[3].setValue("13600005001");
+    await wrapper.get('[data-field="student-id-number"]').setValue("11010520140101123X");
     await wrapper.get("form.form-panel").trigger("submit");
     await flushPromises();
 

@@ -111,12 +111,13 @@ describe("OrganizationEventWorkspacePage", () => {
     await wrapper.get('[data-field="athlete-name"]').setValue("Student A");
     await wrapper.get('[data-field="athlete-grade"]').setValue("Grade 5");
     await wrapper.get('[data-field="athlete-phone"]').setValue("13800000000");
+    await wrapper.get('[data-field="student-id-number"]').setValue("11010520140101123X");
     await wrapper.get('[data-testid="organization-registration-form"]').trigger("submit");
     await flushPromises();
 
     expect(apiMock).toHaveBeenCalledWith("/api/organization/events/E2/registrations", expect.objectContaining({
       method: "POST",
-      body: JSON.stringify({ registrationSource: "organization_proxy", athlete: { name: "Student A", school: "Aviation School", grade: "Grade 5", phone: "13800000000" }, projectId: "P1", instructor: "" })
+      body: JSON.stringify({ registrationSource: "organization_proxy", studentIdNumber: "11010520140101123X", athlete: { name: "Student A", school: "Aviation School", grade: "Grade 5", phone: "13800000000" }, projectId: "P1", instructor: "" })
     }));
   });
 
@@ -138,13 +139,34 @@ describe("OrganizationEventWorkspacePage", () => {
     expect(wrapper.get('[data-field="athlete-name"]').attributes("readonly")).toBeDefined();
     expect(wrapper.get('[data-field="athlete-phone"]').attributes("readonly")).toBeDefined();
     await wrapper.get('[data-field="athlete-grade"]').setValue("Grade 5");
+    await wrapper.get('[data-field="student-id-number"]').setValue("11010520140101123x");
     await wrapper.get('[data-testid="organization-registration-form"]').trigger("submit");
     await flushPromises();
 
     expect(apiMock).toHaveBeenCalledWith("/api/organization/events/E2/registrations", expect.objectContaining({
       method: "POST",
-      body: JSON.stringify({ registrationSource: "member_registration", memberUserId: "U1", athlete: { name: "Student Member", school: "Aviation School", grade: "Grade 5", phone: "13800000001" }, projectId: "P1", instructor: "" })
+      body: JSON.stringify({ registrationSource: "member_registration", memberUserId: "U1", studentIdNumber: "11010520140101123x", athlete: { name: "Student Member", school: "Aviation School", grade: "Grade 5", phone: "13800000001" }, projectId: "P1", instructor: "" })
     }));
+  });
+
+  it("requires a valid student identity and shows the approved purpose for new organization registrations", async () => {
+    const wrapper = mount(OrganizationEventWorkspacePage, { props: { eventId: "E2" } });
+    await flushPromises();
+
+    const identity = wrapper.get('[data-field="student-id-number"]');
+    expect(identity.attributes("required")).toBeDefined();
+    expect(identity.attributes("minlength")).toBe("18");
+    expect(identity.attributes("maxlength")).toBe("18");
+    expect(identity.attributes("pattern")).toBe("[0-9]{17}[0-9Xx]");
+    expect(identity.attributes("placeholder")).toBe("18 位居民身份证号，末位可为 X");
+    expect(wrapper.text()).toContain("学生身份证号是报名资料，将用于名单导出和证书信息核对，请本人或监护人确认填写正确。");
+
+    await wrapper.get('[data-registration-source="organization_proxy"]').setValue();
+    await identity.setValue("11010520140101123A");
+    await wrapper.get('[data-testid="organization-registration-form"]').trigger("submit");
+    await flushPromises();
+    expect(apiMock.mock.calls.some(([path, options]) => path === "/api/organization/events/E2/registrations" && options?.method === "POST")).toBe(false);
+    expect(wrapper.emitted("error")?.at(-1)).toEqual(["请输入 18 位居民身份证号，末位可为 X"]);
   });
 
   it("keeps proxy identity editable while member identity is derived and read-only", async () => {

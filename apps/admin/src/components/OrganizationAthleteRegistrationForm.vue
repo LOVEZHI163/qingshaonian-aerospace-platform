@@ -19,10 +19,12 @@ const memberSearch = ref("");
 const form = reactive({
   registrationSource: "",
   memberUserId: "",
+  studentIdNumber: "",
   athlete: { name: "", school: "", grade: "", phone: "" },
   projectId: "",
   instructor: ""
 });
+const studentIdPattern = /^[0-9]{17}[0-9Xx]$/;
 const submitting = ref(false);
 const message = ref("");
 const uploadSession = ref(null);
@@ -65,6 +67,7 @@ watch(() => props.registration, (registration) => {
     ? (registration.source === "organization_proxy" ? "organization_proxy" : "member_registration")
     : "";
   form.memberUserId = registration?.personalUserId || "";
+  form.studentIdNumber = "";
   form.projectId = registration?.projectId || props.projects[0]?.id || "";
   form.instructor = registration?.instructor || "";
   message.value = "";
@@ -87,6 +90,7 @@ watch(() => form.registrationSource, (source, previous) => {
   if (source === previous) return;
   memberSearch.value = "";
   form.memberUserId = "";
+  form.studentIdNumber = "";
   form.athlete.name = "";
   form.athlete.phone = "";
 });
@@ -137,6 +141,11 @@ watch(() => [form.projectId, editing.value], () => {
 
 async function submit() {
   if (!hasEventContext.value || props.disabled || submitDisabled.value) return;
+  const studentIdNumber = form.studentIdNumber.trim();
+  if (!editing.value && !studentIdPattern.test(studentIdNumber)) {
+    emit("error", new Error("请输入 18 位居民身份证号，末位可为 X"));
+    return;
+  }
   submitting.value = true;
   message.value = "";
   try {
@@ -148,6 +157,7 @@ async function submit() {
       : {
           registrationSource: form.registrationSource,
           ...(memberMode.value ? { memberUserId: form.memberUserId } : {}),
+          studentIdNumber,
           athlete: form.athlete,
           projectId: form.projectId,
           instructor: form.instructor,
@@ -164,6 +174,7 @@ async function submit() {
       form.projectId = "";
       form.registrationSource = "";
       form.memberUserId = "";
+      form.studentIdNumber = "";
       clearUploadSession();
     }
     emit("registered", payload);
@@ -200,6 +211,7 @@ async function submit() {
     <p class="hint">报名将自动归属当前组织；不支持切换个人身份或其他组织。</p>
     <div class="two"><label>姓名<input v-model="form.athlete.name" data-field="athlete-name" :readonly="memberMode" required /></label><label>学校<SchoolCombobox v-model="form.athlete.school" /></label></div>
     <div class="two"><label>年级<select v-model="form.athlete.grade" data-field="athlete-grade" required><option value="" disabled>请选择年级</option><option v-for="grade in gradeOptions" :key="grade" :value="grade">{{ grade }}</option></select></label><label>手机/监护人手机<input v-model="form.athlete.phone" data-field="athlete-phone" :readonly="memberMode" required /></label></div>
+    <label v-if="!editing">学生身份证号<input v-model="form.studentIdNumber" data-field="student-id-number" inputmode="text" autocomplete="off" minlength="18" maxlength="18" pattern="[0-9]{17}[0-9Xx]" placeholder="18 位居民身份证号，末位可为 X" required /></label>
     <div class="two"><label>赛项<select v-model="form.projectId" :disabled="editing" required><option v-for="project in projects" :key="project.id" :value="project.id">{{ project.name }}</option></select></label><label>指导老师<input v-model="form.instructor" data-field="instructor" /></label></div>
     <p v-if="editing" class="hint">赛项在报名创建后不可修改；如需更换赛项，请取消后重新报名。</p>
     <section v-if="requiresSubmission" class="registration-submission" aria-label="作品材料">
@@ -210,6 +222,7 @@ async function submit() {
       </template>
       <p v-else class="message" role="alert">{{ uploadSessionError || "作品上传会话不可用" }} <button type="button" class="mini" @click="retryUploadSession">重试</button></p>
     </section>
+    <p v-if="!editing" class="hint registration-identity-notice">学生身份证号是报名资料，将用于名单导出和证书信息核对，请本人或监护人确认填写正确。</p>
     <button class="primary" :disabled="submitDisabled">{{ submitting ? "正在提交…" : editing ? "保存修改" : "提交组织报名" }}</button>
     <p v-if="message" class="message">{{ message }}</p>
   </form>

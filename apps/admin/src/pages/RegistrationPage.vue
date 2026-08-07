@@ -21,7 +21,8 @@ const uploadSessionLoading = ref(false);
 const uploadSessionError = ref("");
 const assetsComplete = ref(false);
 let uploadSessionRequest = 0;
-const form = reactive({ eventId: props.eventId, athlete: { name: "", school: "", grade: "", phone: "" }, projectId: "", instructor: "" });
+const form = reactive({ eventId: props.eventId, studentIdNumber: "", athlete: { name: "", school: "", grade: "", phone: "" }, projectId: "", instructor: "" });
+const studentIdPattern = /^[0-9]{17}[0-9Xx]$/;
 const ordinaryUser = computed(() => props.accountType === "ordinary");
 const eligibility = computed(() => context.value?.eligibility || { eligible: false, code: "ACTIVE_ORGANIZATION_REQUIRED", organization: null });
 const registrationEligible = computed(() => eligibility.value.eligible === true && Boolean(String(eligibility.value.organization?.id || "").trim()));
@@ -106,11 +107,17 @@ async function submit() {
     emit("error", eligibilityMessage.value);
     return;
   }
+  const studentIdNumber = form.studentIdNumber.trim();
+  if (!studentIdPattern.test(studentIdNumber)) {
+    emit("error", "请输入 18 位居民身份证号，末位可为 X");
+    return;
+  }
   if (submitDisabled.value) return;
   submitting.value = true;
   try {
     const payload = {
       organizationId: eligibleOrganization.value.id,
+      studentIdNumber,
       athlete: form.athlete,
       projectId: form.projectId,
       instructor: form.instructor
@@ -118,6 +125,7 @@ async function submit() {
     if (requiresSubmission.value) payload.uploadSessionId = uploadSession.value.id;
     await api(`/api/me/events/${encodeURIComponent(props.eventId)}/registrations`, { method: "POST", body: JSON.stringify(payload) });
     Object.assign(form.athlete, { name: "", school: eligibleOrganization.value?.name || "", grade: "", phone: "" });
+    form.studentIdNumber = "";
     form.instructor = "";
     form.projectId = "";
     clearUploadSession();
@@ -158,6 +166,7 @@ onMounted(async () => {
     <div v-if="eligibleOrganization" class="registration-organization-readonly" data-testid="eligible-organization"><span>所属组织</span><strong>{{ eligibleOrganization.name }}</strong><small>报名将自动归属该组织</small></div>
       <div class="two"><label>姓名<input v-model="form.athlete.name" required /></label><label data-field="registration-school">学校<SchoolCombobox v-model="form.athlete.school" /></label></div>
       <div class="two"><label>年级<input v-model="form.athlete.grade" list="grade-options" placeholder="请选择实际年级" required /><datalist id="grade-options"><template v-for="group in context.grades" :key="group.id"><option v-for="grade in group.grades" :key="grade" :value="grade">{{ group.name }}</option></template></datalist></label><label>手机号/家长手机号<input v-model="form.athlete.phone" required /></label></div>
+      <label>学生身份证号<input v-model="form.studentIdNumber" data-field="student-id-number" inputmode="text" autocomplete="off" minlength="18" maxlength="18" pattern="[0-9]{17}[0-9Xx]" placeholder="18 位居民身份证号，末位可为 X" required /></label>
       <div class="two"><label>组别<input :value="selectedGroup" readonly /></label><label>赛项<select v-model="form.projectId" required :disabled="!selectedGroup"><option v-for="project in eligibleProjects" :key="project.id" :value="project.id">{{ project.name }}（{{ project.type === 'team' ? '团体赛' : '个人赛' }}）</option></select></label></div>
       <label>指导老师<input v-model="form.instructor" placeholder="选填" /></label>
       <section v-if="requiresSubmission" class="registration-submission" aria-label="作品材料">
@@ -168,6 +177,7 @@ onMounted(async () => {
         </template>
         <p v-else class="message" role="alert">{{ uploadSessionError || "作品上传会话不可用" }} <button type="button" class="mini" @click="retryUploadSession">重试</button></p>
       </section>
+    <p class="hint registration-identity-notice">学生身份证号是报名资料，将用于名单导出和证书信息核对，请本人或监护人确认填写正确。</p>
     <button class="primary" :disabled="submitDisabled">{{ submitting ? "正在提交…" : "提交报名" }}</button>
   </form></section>
 </template>

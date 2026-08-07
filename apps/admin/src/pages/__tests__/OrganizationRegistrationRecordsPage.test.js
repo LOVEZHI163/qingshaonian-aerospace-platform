@@ -30,7 +30,7 @@ const payload = {
   rows: [
     {
       id: "R1", eventId: "E1", eventName: "春季航空赛", projectId: "P1", projectName: "纸飞机",
-      athlete: { name: "张三", school: "实验小学", grade: "五年级" }, instructor: "林老师", status: "pending", score: "98", awardName: "一等奖",
+      athlete: { name: "张三", school: "实验小学", grade: "五年级" }, studentIdNumber: "11010520140101123X", instructor: "林老师", status: "pending", score: "98", awardName: "一等奖",
       submission: { required: true, complete: true, assets: {
         artwork_image: { originalName: "作品.png", sizeBytes: 100 },
         creation_video: { originalName: "作画.mp4", sizeBytes: 200 }
@@ -38,7 +38,7 @@ const payload = {
     },
     {
       id: "R2", eventId: "E2", eventName: "夏季无人机赛", projectId: "P2", projectName: "无人机",
-      athlete: { name: "李四", school: "航空学校", grade: "六年级" }, instructor: "", status: "pending", score: "", awardName: ""
+      athlete: { name: "李四", school: "航空学校", grade: "六年级" }, studentIdNumber: null, instructor: "", status: "pending", score: "", awardName: ""
     }
   ],
   total: 27,
@@ -114,6 +114,19 @@ describe("OrganizationRegistrationRecordsPage", () => {
     const rows = wrapper.findAll("tbody tr");
     expect(rows[0].text()).toContain("林老师");
     expect(rows[1].text()).toContain("-");
+  });
+
+  it("shows authorized identities and marks historical empty values without a collection prompt", async () => {
+    apiMock.mockResolvedValue(payload);
+    const wrapper = mount(OrganizationRegistrationRecordsPage);
+    await flushPromises();
+
+    expect(wrapper.findAll("thead th").map((cell) => cell.text())).toContain("学生身份证号");
+    expect(wrapper.text()).toContain("11010520140101123X");
+    expect(wrapper.text()).toContain("—（历史报名）");
+    expect(wrapper.text()).not.toContain("待补录");
+    expect(apiMock).toHaveBeenCalledTimes(1);
+    expect(apiMock).toHaveBeenCalledWith("/api/organization/registrations?page=1&pageSize=25");
   });
 
   it("shows Chinese source labels for member and organization proxy registrations", async () => {

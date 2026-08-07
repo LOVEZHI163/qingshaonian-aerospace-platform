@@ -774,6 +774,7 @@ describe("App session integration", () => {
     await inputs[1].setValue("温州市实验小学");
     await inputs[2].setValue("三年级");
     await inputs[3].setValue("13800000001");
+    await wrapper.get('[data-field="student-id-number"]').setValue("11010520140101123X");
     await wrapper.get("form.form-panel").trigger("submit");
     await flushPromises();
 

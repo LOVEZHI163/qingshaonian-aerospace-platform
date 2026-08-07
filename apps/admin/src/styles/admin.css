@@ -1801,7 +1801,16 @@ select:focus {
 }
 
 .registration-record-table {
-  min-width: 1040px;
+  min-width: 1220px;
+}
+
+.registration-identity-value {
+  min-width: 170px;
+  white-space: nowrap;
+}
+
+.registration-identity-notice {
+  margin: 4px 0 0;
 }
 
 .user-table {
