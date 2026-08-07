@@ -3,6 +3,7 @@ import multer from "multer";
 import crypto from "node:crypto";
 
 import { buildLeaderAuthorizationDocx } from "../exports/leader-authorization-docx.js";
+import { appendLeaderCleanupFallback } from "../files/cleanup-fallback-journal.js";
 import { deletePrivateFile, readPrivateFile } from "../files/storage.js";
 import { requireOrganizationAccess } from "../services/access-control.js";
 import {
@@ -13,6 +14,9 @@ import {
   setOrganizationLeaderEnabled,
   updateOrganizationLeader
 } from "../services/organization-leaders.js";
+
+const AUTHORIZED_ORGANIZATION = Symbol("authorizedOrganization");
+const AUTHORIZED_LEADER = Symbol("authorizedLeader");
 
 function publicDocument(document) {
   if (!document) return null;
@@ -45,6 +49,22 @@ function organizationLeaderOrError(db, organization, leaderId) {
   const leader = leaderOrError(db, leaderId);
   if (leader.organizationId !== organization.id) {
     throw new OrganizationLeaderError(403, "无权管理其他组织的领队");
+  }
+  return leader;
+}
+
+function revalidateOrganizationAccess(db, req) {
+  const organization = requireOrganizationAccess(db, req.user);
+  if (organization.id !== req[AUTHORIZED_ORGANIZATION]?.id) {
+    throw new OrganizationLeaderError(403, "组织访问权限已发生变化");
+  }
+  return organization;
+}
+
+function revalidateOrganizationLeaderAccess(db, organization, req) {
+  const leader = organizationLeaderOrError(db, organization, req.params.leaderId);
+  if (leader.id !== req[AUTHORIZED_LEADER]?.id) {
+    throw new OrganizationLeaderError(403, "领队访问权限已发生变化");
   }
   return leader;
 }
@@ -92,10 +112,19 @@ async function removeNewFile(file, removePrivateFile) {
   return { error: lastError };
 }
 
-async function persistOrphanJournal({ store, rollbackDb, file, cleanupResult, makeId, now }) {
+async function persistOrphanJournal({
+  store,
+  rollbackDb,
+  file,
+  cleanupResult,
+  databaseError,
+  writeCleanupFallback,
+  makeId,
+  now
+}) {
   if (!file?.filePath || cleanupResult === true) return;
   rollbackDb.fileCleanupJournal ||= [];
-  rollbackDb.fileCleanupJournal.push({
+  const marker = {
     id: makeId("CLN"),
     filePath: file.filePath,
     category: "organization-leader-documents",
@@ -103,11 +132,26 @@ async function persistOrphanJournal({ store, rollbackDb, file, cleanupResult, ma
     lastError: String(cleanupResult?.error?.message || "授权书文件清理失败"),
     createdAt: now(),
     lastAttemptAt: now()
-  });
-  try { await store.writeDb(rollbackDb); } catch { /* original database failure stays authoritative */ }
+  };
+  rollbackDb.fileCleanupJournal.push(marker);
+  try {
+    await store.writeDb(rollbackDb);
+  } catch (journalError) {
+    try {
+      databaseError.cleanupFallback = await writeCleanupFallback(marker);
+    } catch (fallbackError) {
+      const untracked = new AggregateError(
+        [databaseError, cleanupResult.error, journalError, fallbackError],
+        `${databaseError.message}; cleanup fallback persistence failed: ${fallbackError.message}`
+      );
+      untracked.code = "ORPHAN_CLEANUP_UNTRACKED";
+      untracked.cleanupTarget = { filePath: file.filePath, category: marker.category };
+      throw untracked;
+    }
+  }
 }
 
-async function persistLeaderMutation({ store, db, rollbackDb, mutation, removePrivateFile, makeId, now }) {
+async function persistLeaderMutation({ store, db, rollbackDb, mutation, removePrivateFile, writeCleanupFallback, makeId, now }) {
   let result;
   try {
     result = await mutation();
@@ -117,7 +161,16 @@ async function persistLeaderMutation({ store, db, rollbackDb, mutation, removePr
     const newDocument = result?.document;
     if (newDocument?.filePath) {
       const cleanupResult = await removeNewFile(newDocument, removePrivateFile);
-      await persistOrphanJournal({ store, rollbackDb, file: newDocument, cleanupResult, makeId, now });
+      await persistOrphanJournal({
+        store,
+        rollbackDb,
+        file: newDocument,
+        cleanupResult,
+        databaseError: error,
+        writeCleanupFallback,
+        makeId,
+        now
+      });
     }
     throw error;
   }
@@ -130,19 +183,31 @@ export function createOrganizationLeadersRouter({
   requirePasswordReady,
   asyncRoute,
   removePrivateFile = deletePrivateFile,
+  writeCleanupFallback = appendLeaderCleanupFallback,
   makeId = (prefix) => `${prefix}-${crypto.randomUUID()}`,
   now = () => new Date().toISOString()
 }) {
   const router = express.Router();
   const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
   const uploadAuthorization = (req, res, next) => upload.single("authorization")(req, res, (error) => uploadError(error, res, next));
-  const organizationAccess = [requireUser, requirePasswordReady];
+  const preauthorizeOrganization = ({ leader = false, allowAdmin = false } = {}) => (req, res, next) => {
+    Promise.resolve().then(async () => {
+      if (allowAdmin && req.user?.type === "admin") return;
+      const db = await store.readDb();
+      const organization = requireOrganizationAccess(db, req.user);
+      req[AUTHORIZED_ORGANIZATION] = organization;
+      if (leader) req[AUTHORIZED_LEADER] = organizationLeaderOrError(db, organization, req.params.leaderId);
+    }).then(next, (error) => respondError(error, res, next));
+  };
+  const organizationAccess = [requireUser, preauthorizeOrganization(), requirePasswordReady];
+  const organizationLeaderAccess = [requireUser, preauthorizeOrganization({ leader: true }), requirePasswordReady];
+  const authorizationDownloadAccess = [requireUser, preauthorizeOrganization({ leader: true, allowAdmin: true }), requirePasswordReady];
   const adminAccess = [requireAdmin, requirePasswordReady];
 
   router.get("/organization/leaders", ...organizationAccess, asyncRoute(async (req, res, next) => {
     try {
       const db = await store.readDb();
-      const organization = requireOrganizationAccess(db, req.user);
+      const organization = revalidateOrganizationAccess(db, req);
       const rows = listOrganizationLeaders(db, organization.id).map((leader) => leaderPayload(db, leader));
       res.json({ rows });
     } catch (error) { respondError(error, res, next); }
@@ -151,7 +216,7 @@ export function createOrganizationLeadersRouter({
   router.post("/organization/leaders/authorization-template.docx", ...organizationAccess, asyncRoute(async (req, res, next) => {
     try {
       const db = await store.readDb();
-      const organization = requireOrganizationAccess(db, req.user);
+      const organization = revalidateOrganizationAccess(db, req);
       const buffer = await buildLeaderAuthorizationDocx({
         organizationName: organization.name,
         leaderName: req.body?.name,
@@ -167,9 +232,9 @@ export function createOrganizationLeadersRouter({
     try {
       const db = await store.readDb();
       const rollbackDb = structuredClone(db);
-      const organization = requireOrganizationAccess(db, req.user);
+      const organization = revalidateOrganizationAccess(db, req);
       const result = await persistLeaderMutation({
-        store, db, rollbackDb, removePrivateFile, makeId, now,
+        store, db, rollbackDb, removePrivateFile, writeCleanupFallback, makeId, now,
         mutation: () => createOrganizationLeader(db, {
           ...(req.body || {}),
           organizationId: organization.id,
@@ -184,18 +249,18 @@ export function createOrganizationLeadersRouter({
     } catch (error) { respondError(error, res, next); }
   }));
 
-  router.patch("/organization/leaders/:leaderId", ...organizationAccess, uploadAuthorization, asyncRoute(async (req, res, next) => {
+  router.patch("/organization/leaders/:leaderId", ...organizationLeaderAccess, uploadAuthorization, asyncRoute(async (req, res, next) => {
     try {
       const db = await store.readDb();
       const rollbackDb = structuredClone(db);
-      const organization = requireOrganizationAccess(db, req.user);
-      const leader = organizationLeaderOrError(db, organization, req.params.leaderId);
+      const organization = revalidateOrganizationAccess(db, req);
+      const leader = revalidateOrganizationLeaderAccess(db, organization, req);
       const input = { ...(req.body || {}), ...(req.file ? { authorizationFile: req.file } : {}) };
       if (sensitiveDetailsChanged(leader, input) && !req.file) {
         throw new OrganizationLeaderError(422, "修改姓名或手机号时必须上传新的授权书");
       }
       const result = await persistLeaderMutation({
-        store, db, rollbackDb, removePrivateFile, makeId, now,
+        store, db, rollbackDb, removePrivateFile, writeCleanupFallback, makeId, now,
         mutation: () => updateOrganizationLeader(db, leader.id, input, req.user)
       });
       res.json({
@@ -206,22 +271,24 @@ export function createOrganizationLeadersRouter({
     } catch (error) { respondError(error, res, next); }
   }));
 
-  router.patch("/organization/leaders/:leaderId/enabled", ...organizationAccess, asyncRoute(async (req, res, next) => {
+  router.patch("/organization/leaders/:leaderId/enabled", ...organizationLeaderAccess, asyncRoute(async (req, res, next) => {
     try {
       const db = await store.readDb();
-      const organization = requireOrganizationAccess(db, req.user);
-      const leader = organizationLeaderOrError(db, organization, req.params.leaderId);
+      const organization = revalidateOrganizationAccess(db, req);
+      const leader = revalidateOrganizationLeaderAccess(db, organization, req);
       const result = setOrganizationLeaderEnabled(db, leader.id, req.body?.enabled, req.user);
       await store.writeDb(db);
       res.json({ row: leaderPayload(db, result.leader), review: publicReview(result.review) });
     } catch (error) { respondError(error, res, next); }
   }));
 
-  router.get("/organization/leaders/:leaderId/authorization/:documentId", ...organizationAccess, asyncRoute(async (req, res, next) => {
+  router.get("/organization/leaders/:leaderId/authorization/:documentId", ...authorizationDownloadAccess, asyncRoute(async (req, res, next) => {
     try {
       const db = await store.readDb();
-      const organization = req.user.type === "admin" ? null : requireOrganizationAccess(db, req.user);
-      const leader = leaderOrError(db, req.params.leaderId);
+      const organization = req.user.type === "admin" ? null : revalidateOrganizationAccess(db, req);
+      const leader = req.user.type === "admin"
+        ? leaderOrError(db, req.params.leaderId)
+        : revalidateOrganizationLeaderAccess(db, organization, req);
       if (req.user.type !== "admin") {
         if (leader.organizationId !== organization.id) {
           throw new OrganizationLeaderError(403, "无权下载其他组织的授权书");
@@ -237,11 +304,11 @@ export function createOrganizationLeadersRouter({
     } catch (error) { respondError(error, res, next); }
   }));
 
-  router.get("/organization/leaders/:leaderId/reviews", ...organizationAccess, asyncRoute(async (req, res, next) => {
+  router.get("/organization/leaders/:leaderId/reviews", ...organizationLeaderAccess, asyncRoute(async (req, res, next) => {
     try {
       const db = await store.readDb();
-      const organization = requireOrganizationAccess(db, req.user);
-      const leader = organizationLeaderOrError(db, organization, req.params.leaderId);
+      const organization = revalidateOrganizationAccess(db, req);
+      const leader = revalidateOrganizationLeaderAccess(db, organization, req);
       const rows = (db.organizationLeaderReviews || [])
         .filter((review) => review.leaderId === leader.id)
         .map(publicReview);

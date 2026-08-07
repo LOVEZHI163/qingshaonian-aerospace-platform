@@ -6,6 +6,7 @@ import { createTemporaryPasswordVault } from "./auth/temporary-passwords.js";
 import { asyncRoute, createSessionMiddleware, requireAdmin, requirePasswordReady, requireUser } from "./auth/session.js";
 import { createAliyunSmsProvider } from "./auth/sms.js";
 import { createDataStore } from "./data/index.js";
+import { importLeaderCleanupFallbackJournal } from "./files/cleanup-fallback-journal.js";
 import { createLockedAsyncRoute, createMutationAsyncRoute } from "./data/mutation-lock.js";
 import { createEventsRouter } from "./routes/events.js";
 import { createOrganizationsRouter } from "./routes/organizations.js";
@@ -626,6 +627,7 @@ app.use((error, req, res, next) => {
 });
 
 await dataStore.initialize();
+await importLeaderCleanupFallbackJournal({ store: dataStore });
 await cleanupExpiredCertificateImportPreviews({ store: dataStore, makeId: id, now });
 await replayFileCleanupJournal({ store: dataStore, now });
 const stopScheduledContentPublisher = startScheduledContentPublisher({ store: dataStore });

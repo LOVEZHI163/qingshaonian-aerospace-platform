@@ -20,6 +20,13 @@ function authorizationForm(input = {}) {
   return form;
 }
 
+function oversizedAuthorizationForm(input = {}) {
+  const form = new FormData();
+  for (const [key, value] of Object.entries(input)) form.set(key, String(value));
+  form.set("authorization", new Blob([Buffer.alloc(10 * 1024 * 1024 + 1)], { type: "application/pdf" }), "oversized.pdf");
+  return form;
+}
+
 async function json(response) {
   const payload = await response.json();
   return { response, payload };
@@ -57,9 +64,10 @@ function testRouter(store, options = {}) {
     },
     requirePasswordReady: (_req, _res, next) => next(),
     asyncRoute: (handler) => (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next),
-    removePrivateFile: options.removePrivateFile
+    removePrivateFile: options.removePrivateFile,
+    writeCleanupFallback: options.writeCleanupFallback
   }));
-  app.use((error, _req, res, _next) => res.status(500).json({ error: error.message }));
+  app.use((error, _req, res, _next) => res.status(500).json({ error: error.message, ...(error.code ? { code: error.code } : {}) }));
   return app;
 }
 
@@ -84,6 +92,54 @@ test("ordinary users receive 403 from every organization-leader API", async () =
       assert.equal(response.status, 403, `${method} ${pathname}`);
     }
   }, { prefix: "organization-leader-ordinary-permissions-" });
+});
+
+test("organization authorization rejects temporary-password and oversized ordinary requests before password and multipart processing", async () => {
+  await withTestServer(async ({ baseUrl, dbPath }) => {
+    const ordinary = await loginAs(baseUrl, "13800000001", "123456");
+    const db = JSON.parse(await fs.readFile(dbPath, "utf8"));
+    db.users.find((row) => row.id === "U1001").mustChangePassword = true;
+    await fs.writeFile(dbPath, JSON.stringify(db), "utf8");
+
+    const requests = [
+      ["GET", "/api/organization/leaders"],
+      ["POST", "/api/organization/leaders/authorization-template.docx"],
+      ["POST", "/api/organization/leaders"],
+      ["PATCH", "/api/organization/leaders/leader-1"],
+      ["PATCH", "/api/organization/leaders/leader-1/enabled"],
+      ["GET", "/api/organization/leaders/leader-1/authorization/document-1"],
+      ["GET", "/api/organization/leaders/leader-1/reviews"],
+      ["GET", "/api/admin/organization-leaders"],
+      ["PATCH", "/api/admin/organization-leaders/leader-1/review"],
+      ["PATCH", "/api/admin/organization-leaders/leader-1/enabled"]
+    ];
+    for (const [method, pathname] of requests) {
+      const response = await fetch(`${baseUrl}${pathname}`, withSession(ordinary.cookie, { method }));
+      assert.equal(response.status, 403, `${method} ${pathname}`);
+    }
+
+    db.users.find((row) => row.id === "U1001").mustChangePassword = false;
+    await fs.writeFile(dbPath, JSON.stringify(db), "utf8");
+    const oversized = await fetch(`${baseUrl}/api/organization/leaders`, withSession(ordinary.cookie, {
+      method: "POST",
+      body: oversizedAuthorizationForm({ name: "无权领队", phone: "13800000000" })
+    }));
+    assert.equal(oversized.status, 403);
+  }, { prefix: "organization-leader-authorization-order-" });
+});
+
+test("cross-organization leader authorization rejects an oversized replacement before multipart processing", async () => {
+  await withTestServer(async ({ baseUrl }) => {
+    const owner = await loginAs(baseUrl, "13800000011", "123456");
+    const otherOwner = await loginAs(baseUrl, "13800000012", "123456");
+    const created = await createLeader(baseUrl, owner, { name: "所属领队", phone: "13800009777" });
+
+    const response = await fetch(`${baseUrl}/api/organization/leaders/${created.row.id}`, withSession(otherOwner.cookie, {
+      method: "PATCH",
+      body: oversizedAuthorizationForm({ name: "越权修改" })
+    }));
+    assert.equal(response.status, 403);
+  }, { prefix: "organization-leader-cross-organization-upload-" });
 });
 
 test("authorization template takes the approved operational organization name from the session", async () => {
@@ -265,6 +321,140 @@ test("leader creation journals its new private file when database persistence an
     await fs.access(marker.filePath);
   } finally {
     await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    if (previousUploadRoot === undefined) delete process.env.UPLOAD_ROOT;
+    else process.env.UPLOAD_ROOT = previousUploadRoot;
+    await fs.rm(uploadRoot, { recursive: true, force: true });
+  }
+});
+
+test("persistent database and cleanup failures leave an independent durable orphan marker", async () => {
+  const uploadRoot = await fs.mkdtemp(path.join(os.tmpdir(), "organization-leader-durable-fallback-"));
+  const previousUploadRoot = process.env.UPLOAD_ROOT;
+  process.env.UPLOAD_ROOT = uploadRoot;
+  const persisted = ensureDbShape(structuredClone(seedDb));
+  let writeAttempts = 0;
+  let removeAttempts = 0;
+  const store = {
+    currentUser: () => persisted.users.find((row) => row.id === "U2001"),
+    readDb: async () => structuredClone(persisted),
+    writeDb: async () => {
+      writeAttempts += 1;
+      throw new Error("persistent database failure");
+    }
+  };
+  const server = await listen(testRouter(store, {
+    removePrivateFile: async () => {
+      removeAttempts += 1;
+      throw new Error("persistent cleanup failure");
+    }
+  }));
+  try {
+    const response = await fetch(`http://127.0.0.1:${server.address().port}/api/organization/leaders`, {
+      method: "POST",
+      body: authorizationForm({ name: "持续失败领队", phone: "13800009888" })
+    });
+    assert.equal(response.status, 500);
+    assert.match((await response.json()).error, /persistent database failure/);
+    assert.equal(writeAttempts, 2);
+    assert.equal(removeAttempts, 3);
+
+    const entries = await fs.readdir(uploadRoot, { recursive: true });
+    const authorizationFiles = entries.filter((entry) => String(entry).endsWith(".pdf"));
+    const fallbackFiles = entries.filter((entry) => String(entry).endsWith(".jsonl"));
+    assert.equal(authorizationFiles.length, 1);
+    assert.equal(fallbackFiles.length, 1);
+    const lines = (await fs.readFile(path.join(uploadRoot, fallbackFiles[0]), "utf8")).trim().split("\n");
+    assert.equal(lines.length, 1);
+    const marker = JSON.parse(lines[0]);
+    assert.equal(marker.category, "organization-leader-documents");
+    assert.equal(marker.attempts, 3);
+    assert.equal(path.resolve(marker.filePath), path.resolve(uploadRoot, authorizationFiles[0]));
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    if (previousUploadRoot === undefined) delete process.env.UPLOAD_ROOT;
+    else process.env.UPLOAD_ROOT = previousUploadRoot;
+    await fs.rm(uploadRoot, { recursive: true, force: true });
+  }
+});
+
+test("an unavailable durable fallback surfaces the untracked orphan failure instead of swallowing it", async () => {
+  const uploadRoot = await fs.mkdtemp(path.join(os.tmpdir(), "organization-leader-fallback-failure-"));
+  const previousUploadRoot = process.env.UPLOAD_ROOT;
+  process.env.UPLOAD_ROOT = uploadRoot;
+  const persisted = ensureDbShape(structuredClone(seedDb));
+  let fallbackAttempts = 0;
+  const store = {
+    currentUser: () => persisted.users.find((row) => row.id === "U2001"),
+    readDb: async () => structuredClone(persisted),
+    writeDb: async () => { throw new Error("persistent database failure"); }
+  };
+  const server = await listen(testRouter(store, {
+    removePrivateFile: async () => { throw new Error("persistent cleanup failure"); },
+    writeCleanupFallback: async () => {
+      fallbackAttempts += 1;
+      throw new Error("fallback persistence failure");
+    }
+  }));
+  try {
+    const response = await fetch(`http://127.0.0.1:${server.address().port}/api/organization/leaders`, {
+      method: "POST",
+      body: authorizationForm({ name: "兜底失败领队", phone: "13800009889" })
+    });
+    assert.equal(response.status, 500);
+    const payload = await response.json();
+    assert.equal(payload.code, "ORPHAN_CLEANUP_UNTRACKED");
+    assert.match(payload.error, /persistent database failure/);
+    assert.match(payload.error, /fallback persistence failure/);
+    assert.equal(fallbackAttempts, 1);
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    if (previousUploadRoot === undefined) delete process.env.UPLOAD_ROOT;
+    else process.env.UPLOAD_ROOT = previousUploadRoot;
+    await fs.rm(uploadRoot, { recursive: true, force: true });
+  }
+});
+
+test("durable orphan markers survive a failed import and move into the database journal after recovery", async () => {
+  const uploadRoot = await fs.mkdtemp(path.join(os.tmpdir(), "organization-leader-fallback-import-"));
+  const previousUploadRoot = process.env.UPLOAD_ROOT;
+  process.env.UPLOAD_ROOT = uploadRoot;
+  try {
+    const fallback = await import("../src/files/cleanup-fallback-journal.js");
+    assert.equal(typeof fallback.importLeaderCleanupFallbackJournal, "function");
+    const orphanPath = path.join(uploadRoot, "organization-leader-documents", "leader-fallback", "orphan.pdf");
+    await fs.mkdir(path.dirname(orphanPath), { recursive: true });
+    await fs.writeFile(orphanPath, authorizationPdf);
+    const marker = {
+      id: "CLN-FALLBACK-IMPORT",
+      filePath: orphanPath,
+      category: "organization-leader-documents",
+      attempts: 3,
+      lastError: "cleanup failed",
+      createdAt: "2026-08-07T10:00:00.000Z",
+      lastAttemptAt: "2026-08-07T10:00:00.000Z"
+    };
+    await fallback.appendLeaderCleanupFallback(marker);
+
+    let persisted = ensureDbShape(structuredClone(seedDb));
+    let databaseAvailable = false;
+    const store = {
+      readDb: async () => structuredClone(persisted),
+      writeDb: async (db) => {
+        if (!databaseAvailable) throw new Error("database remains unavailable");
+        persisted = structuredClone(db);
+      }
+    };
+    await assert.rejects(
+      fallback.importLeaderCleanupFallbackJournal({ store }),
+      /database remains unavailable/
+    );
+    assert.equal((await fs.readdir(uploadRoot, { recursive: true })).filter((entry) => String(entry).endsWith(".jsonl")).length, 1);
+
+    databaseAvailable = true;
+    assert.deepEqual(await fallback.importLeaderCleanupFallbackJournal({ store }), { imported: 1, duplicates: 0 });
+    assert.ok(persisted.fileCleanupJournal.some((row) => row.id === marker.id && row.filePath === orphanPath));
+    assert.equal((await fs.readdir(uploadRoot, { recursive: true })).filter((entry) => String(entry).endsWith(".jsonl")).length, 0);
+  } finally {
     if (previousUploadRoot === undefined) delete process.env.UPLOAD_ROOT;
     else process.env.UPLOAD_ROOT = previousUploadRoot;
     await fs.rm(uploadRoot, { recursive: true, force: true });
