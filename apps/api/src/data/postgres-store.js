@@ -74,6 +74,28 @@ async function runMigrations(pool) {
       if (applied.rowCount > 0) continue;
 
       let migration = await fs.readFile(new URL(name, migrationsUrl), "utf8");
+      if (name === "015-registration-identities-and-organization-leaders.sql") {
+        const tables = await Promise.all([
+          "registration_identities",
+          "organization_leaders",
+          "organization_leader_documents",
+          "organization_leader_reviews"
+        ].map((tableName) => client.query(`
+          SELECT 1 FROM information_schema.tables
+          WHERE table_schema = 'public' AND table_name = $1
+        `, [tableName])));
+        if (tables.every((table) => table.rowCount > 0)) {
+          migration = migration
+            .replace(/CREATE TABLE IF NOT EXISTS registration_identities \([\s\S]*?\);\s*/, "")
+            .replace(/CREATE TABLE IF NOT EXISTS organization_leaders \([\s\S]*?\);\s*/, "")
+            .replace(/CREATE TABLE IF NOT EXISTS organization_leader_documents \([\s\S]*?\);\s*/, "")
+            .replace(/CREATE TABLE IF NOT EXISTS organization_leader_reviews \([\s\S]*?\);\s*/, "")
+            .replace(/CREATE INDEX IF NOT EXISTS organization_leaders_organization_id_idx[\s\S]*?;\s*/, "")
+            .replace(/CREATE INDEX IF NOT EXISTS organization_leaders_review_status_idx[\s\S]*?;\s*/, "")
+            .replace(/CREATE INDEX IF NOT EXISTS organization_leader_documents_leader_id_idx[\s\S]*?;\s*/, "")
+            .replace(/CREATE INDEX IF NOT EXISTS organization_leader_reviews_leader_id_idx[\s\S]*?;\s*/, "");
+        }
+      }
       if (name === "007-multi-event-accounts.sql") {
         migration = migration.replace(
           "CREATE INDEX registrations_personal_user_id_idx",
@@ -216,6 +238,12 @@ async function runSchema(pool) {
   `);
   for (const { table_name: tableName } of tableRows.rows) {
     schema = schema.replace(new RegExp(`CREATE TABLE IF NOT EXISTS ${tableName} \\([\\s\\S]*?\\);\\s*`, "g"), "");
+    if (tableName === "organization_leaders") {
+      schema = schema.replace(
+        /ALTER TABLE organization_leaders\s+DROP CONSTRAINT IF EXISTS organization_leaders_current_document_id_fkey;\s*ALTER TABLE organization_leaders\s+ADD CONSTRAINT organization_leaders_current_document_id_fkey\s+FOREIGN KEY \(current_document_id\) REFERENCES organization_leader_documents\(id\) ON DELETE SET NULL;\s*/,
+        ""
+      );
+    }
     if (tableName === "registrations") {
       schema = schema.replace(/CREATE INDEX IF NOT EXISTS registrations_personal_user_id_idx ON registrations\(personal_user_id\);\s*/, "");
     }
@@ -402,7 +430,7 @@ export function createPostgresStore(pool, { seedOnEmpty = true } = {}) {
     },
     async readDb() {
       const executor = activeContext()?.client || pool;
-      const [events, projects, projectGroups, users, organizations, memberships, organizationEventParticipations, registrations, certificates, certificateImportBatches, certificateImportErrors, organizationDocuments, fileCleanupJournal, auditLogs, siteSettings, eventPublicProfiles, contentPosts, mediaAssets, contentAttachments, registrationUploadSessions, registrationSubmissionAssets] = await Promise.all([
+      const [events, projects, projectGroups, users, organizations, memberships, organizationEventParticipations, registrations, registrationIdentities, organizationLeaders, organizationLeaderDocuments, organizationLeaderReviews, certificates, certificateImportBatches, certificateImportErrors, organizationDocuments, fileCleanupJournal, auditLogs, siteSettings, eventPublicProfiles, contentPosts, mediaAssets, contentAttachments, registrationUploadSessions, registrationSubmissionAssets] = await Promise.all([
         executor.query("SELECT * FROM events ORDER BY created_at, id"),
         executor.query("SELECT * FROM projects ORDER BY display_order, id"),
         executor.query("SELECT * FROM project_groups ORDER BY project_id, group_name"),
@@ -416,6 +444,10 @@ export function createPostgresStore(pool, { seedOnEmpty = true } = {}) {
           LEFT JOIN results x ON x.registration_id = r.id
           ORDER BY r.created_at, r.id
         `),
+        executor.query("SELECT * FROM registration_identities ORDER BY created_at, registration_id"),
+        executor.query("SELECT * FROM organization_leaders ORDER BY created_at, id"),
+        executor.query("SELECT * FROM organization_leader_documents ORDER BY uploaded_at, id"),
+        executor.query("SELECT * FROM organization_leader_reviews ORDER BY created_at, id"),
         executor.query("SELECT * FROM certificates ORDER BY uploaded_at DESC, id"),
         executor.query("SELECT * FROM certificate_import_batches ORDER BY created_at, id"),
         executor.query("SELECT * FROM certificate_import_errors ORDER BY batch_id, row_number, id"),
@@ -546,6 +578,57 @@ export function createPostgresStore(pool, { seedOnEmpty = true } = {}) {
           resultRecordedAt: iso(row.recorded_at),
           createdAt: iso(row.created_at),
           updatedAt: iso(row.updated_at)
+        })),
+        registrationIdentities: registrationIdentities.rows.map((row) => ({
+          registrationId: row.registration_id,
+          ciphertext: row.ciphertext,
+          iv: row.iv,
+          authTag: row.auth_tag,
+          keyVersion: row.key_version,
+          idFingerprint: row.id_fingerprint,
+          createdAt: iso(row.created_at),
+          updatedAt: iso(row.updated_at)
+        })),
+        organizationLeaders: organizationLeaders.rows.map((row) => ({
+          id: row.id,
+          organizationId: row.organization_id,
+          name: row.name,
+          phone: row.phone,
+          email: row.email,
+          notes: row.notes,
+          currentDocumentId: row.current_document_id || null,
+          reviewStatus: row.review_status,
+          rejectionReason: row.rejection_reason,
+          enabled: row.enabled,
+          submissionVersion: row.submission_version,
+          reviewedBy: row.reviewed_by || null,
+          reviewedAt: row.reviewed_at ? iso(row.reviewed_at) : null,
+          createdAt: iso(row.created_at),
+          updatedAt: iso(row.updated_at)
+        })),
+        organizationLeaderDocuments: organizationLeaderDocuments.rows.map((row) => ({
+          id: row.id,
+          leaderId: row.leader_id,
+          version: row.version,
+          originalName: row.original_name,
+          storedName: row.stored_name,
+          filePath: row.file_path,
+          mimeType: row.mime_type,
+          sizeBytes: Number(row.size_bytes),
+          uploadedAt: iso(row.uploaded_at),
+          cleanedAt: row.cleaned_at ? iso(row.cleaned_at) : null
+        })),
+        organizationLeaderReviews: organizationLeaderReviews.rows.map((row) => ({
+          id: row.id,
+          leaderId: row.leader_id,
+          organizationId: row.organization_id,
+          submissionVersion: row.submission_version,
+          action: row.action,
+          actorId: row.actor_id || null,
+          reason: row.reason ?? null,
+          snapshot: row.snapshot,
+          documentId: row.document_id || null,
+          createdAt: iso(row.created_at)
         })),
         certificates: certificates.rows.map((row) => ({
           id: row.id,
@@ -956,6 +1039,103 @@ export function createPostgresStore(pool, { seedOnEmpty = true } = {}) {
           }
         }
 
+        for (const row of db.registrationIdentities) {
+          await client.query(
+            `INSERT INTO registration_identities
+              (registration_id, ciphertext, iv, auth_tag, key_version, id_fingerprint, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+             ON CONFLICT (registration_id) DO UPDATE SET
+               ciphertext = EXCLUDED.ciphertext,
+               iv = EXCLUDED.iv,
+               auth_tag = EXCLUDED.auth_tag,
+               key_version = EXCLUDED.key_version,
+               id_fingerprint = EXCLUDED.id_fingerprint,
+               created_at = EXCLUDED.created_at,
+               updated_at = EXCLUDED.updated_at`,
+            [row.registrationId, row.ciphertext, row.iv, row.authTag, row.keyVersion, row.idFingerprint, row.createdAt, row.updatedAt]
+          );
+        }
+
+        for (const row of db.organizationLeaders) {
+          await client.query(
+            `INSERT INTO organization_leaders
+              (id, organization_id, name, phone, email, notes, current_document_id, review_status,
+               rejection_reason, enabled, submission_version, reviewed_by, reviewed_at, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, NULL, $7, $8, $9, $10, $11, $12, $13, $14)
+             ON CONFLICT (id) DO UPDATE SET
+               organization_id = EXCLUDED.organization_id,
+               name = EXCLUDED.name,
+               phone = EXCLUDED.phone,
+               email = EXCLUDED.email,
+               notes = EXCLUDED.notes,
+               current_document_id = NULL,
+               review_status = EXCLUDED.review_status,
+               rejection_reason = EXCLUDED.rejection_reason,
+               enabled = EXCLUDED.enabled,
+               submission_version = EXCLUDED.submission_version,
+               reviewed_by = EXCLUDED.reviewed_by,
+               reviewed_at = EXCLUDED.reviewed_at,
+               created_at = EXCLUDED.created_at,
+               updated_at = EXCLUDED.updated_at`,
+            [
+              row.id, row.organizationId, row.name, row.phone, row.email || "", row.notes || "", row.reviewStatus,
+              row.rejectionReason || "", row.enabled, row.submissionVersion, row.reviewedBy || null, row.reviewedAt || null,
+              row.createdAt, row.updatedAt
+            ]
+          );
+        }
+
+        for (const row of db.organizationLeaderDocuments) {
+          await client.query(
+            `INSERT INTO organization_leader_documents
+              (id, leader_id, version, original_name, stored_name, file_path, mime_type, size_bytes, uploaded_at, cleaned_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+             ON CONFLICT (id) DO UPDATE SET
+               leader_id = EXCLUDED.leader_id,
+               version = EXCLUDED.version,
+               original_name = EXCLUDED.original_name,
+               stored_name = EXCLUDED.stored_name,
+               file_path = EXCLUDED.file_path,
+               mime_type = EXCLUDED.mime_type,
+               size_bytes = EXCLUDED.size_bytes,
+               uploaded_at = EXCLUDED.uploaded_at,
+               cleaned_at = EXCLUDED.cleaned_at`,
+            [
+              row.id, row.leaderId, row.version, row.originalName, row.storedName, row.filePath,
+              row.mimeType, row.sizeBytes, row.uploadedAt, row.cleanedAt || null
+            ]
+          );
+        }
+
+        for (const row of db.organizationLeaders) {
+          await client.query(
+            "UPDATE organization_leaders SET current_document_id = $1 WHERE id = $2",
+            [row.currentDocumentId || null, row.id]
+          );
+        }
+
+        for (const row of db.organizationLeaderReviews) {
+          await client.query(
+            `INSERT INTO organization_leader_reviews
+              (id, leader_id, organization_id, submission_version, action, actor_id, reason, snapshot, document_id, created_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10)
+             ON CONFLICT (id) DO UPDATE SET
+               leader_id = EXCLUDED.leader_id,
+               organization_id = EXCLUDED.organization_id,
+               submission_version = EXCLUDED.submission_version,
+               action = EXCLUDED.action,
+               actor_id = EXCLUDED.actor_id,
+               reason = EXCLUDED.reason,
+               snapshot = EXCLUDED.snapshot,
+               document_id = EXCLUDED.document_id,
+               created_at = EXCLUDED.created_at`,
+            [
+              row.id, row.leaderId, row.organizationId, row.submissionVersion, row.action, row.actorId || null,
+              row.reason ?? null, JSON.stringify(row.snapshot), row.documentId || null, row.createdAt
+            ]
+          );
+        }
+
         for (const row of db.registrationUploadSessions) {
           await client.query(
             `INSERT INTO registration_upload_sessions
@@ -1287,6 +1467,10 @@ export function createPostgresStore(pool, { seedOnEmpty = true } = {}) {
         await deleteMissing(client, "certificate_import_batches", "id", db.certificateImportBatches.map((row) => row.id));
         await deleteMissing(client, "registration_submission_assets", "id", db.registrationSubmissionAssets.map((row) => row.id));
         await deleteMissing(client, "registration_upload_sessions", "id", db.registrationUploadSessions.map((row) => row.id));
+        await deleteMissing(client, "organization_leader_reviews", "id", db.organizationLeaderReviews.map((row) => row.id));
+        await deleteMissing(client, "organization_leader_documents", "id", db.organizationLeaderDocuments.map((row) => row.id));
+        await deleteMissing(client, "organization_leaders", "id", db.organizationLeaders.map((row) => row.id));
+        await deleteMissing(client, "registration_identities", "registration_id", db.registrationIdentities.map((row) => row.registrationId));
         await deleteMissing(client, "registrations", "id", db.registrations.map((row) => row.id));
         await deleteMissing(client, "projects", "id", db.projects.map((row) => row.id));
         await deleteMissing(client, "organization_event_participations", "organization_id || ':' || event_id", db.organizationEventParticipations.map((row) => `${row.organizationId}:${row.eventId}`));

@@ -150,6 +150,68 @@ CREATE TABLE IF NOT EXISTS registrations (
   UNIQUE (event_id, project_id, athlete_key)
 );
 
+CREATE TABLE IF NOT EXISTS registration_identities (
+  registration_id TEXT PRIMARY KEY REFERENCES registrations(id) ON DELETE CASCADE,
+  ciphertext TEXT NOT NULL,
+  iv TEXT NOT NULL,
+  auth_tag TEXT NOT NULL,
+  key_version INTEGER NOT NULL DEFAULT 1,
+  id_fingerprint TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS organization_leaders (
+  id TEXT PRIMARY KEY,
+  organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  phone TEXT NOT NULL,
+  email TEXT NOT NULL DEFAULT '',
+  notes TEXT NOT NULL DEFAULT '',
+  current_document_id TEXT,
+  review_status TEXT NOT NULL CHECK (review_status IN ('pending','approved','rejected')),
+  rejection_reason TEXT NOT NULL DEFAULT '',
+  enabled BOOLEAN NOT NULL DEFAULT TRUE,
+  submission_version INTEGER NOT NULL DEFAULT 1,
+  reviewed_by TEXT,
+  reviewed_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS organization_leader_documents (
+  id TEXT PRIMARY KEY,
+  leader_id TEXT NOT NULL REFERENCES organization_leaders(id) ON DELETE CASCADE,
+  version INTEGER NOT NULL CHECK (version > 0),
+  original_name TEXT NOT NULL,
+  stored_name TEXT NOT NULL,
+  file_path TEXT NOT NULL,
+  mime_type TEXT NOT NULL,
+  size_bytes BIGINT NOT NULL,
+  uploaded_at TIMESTAMPTZ NOT NULL,
+  cleaned_at TIMESTAMPTZ,
+  UNIQUE (leader_id, version)
+);
+
+CREATE TABLE IF NOT EXISTS organization_leader_reviews (
+  id TEXT PRIMARY KEY,
+  leader_id TEXT NOT NULL REFERENCES organization_leaders(id) ON DELETE CASCADE,
+  organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  submission_version INTEGER NOT NULL,
+  action TEXT NOT NULL CHECK (action IN ('submitted','approved','rejected','enabled','disabled')),
+  actor_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  reason TEXT,
+  snapshot JSONB NOT NULL,
+  document_id TEXT REFERENCES organization_leader_documents(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL
+);
+
+ALTER TABLE organization_leaders
+  DROP CONSTRAINT IF EXISTS organization_leaders_current_document_id_fkey;
+ALTER TABLE organization_leaders
+  ADD CONSTRAINT organization_leaders_current_document_id_fkey
+  FOREIGN KEY (current_document_id) REFERENCES organization_leader_documents(id) ON DELETE SET NULL;
+
 CREATE TABLE IF NOT EXISTS registration_upload_sessions (
   id TEXT PRIMARY KEY,
   event_id TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
@@ -257,6 +319,10 @@ CREATE INDEX IF NOT EXISTS audit_logs_target_idx ON audit_logs(target_type, targ
 
 CREATE INDEX IF NOT EXISTS registrations_personal_user_id_idx ON registrations(personal_user_id);
 CREATE INDEX IF NOT EXISTS registrations_organization_id_idx ON registrations(organization_id);
+CREATE INDEX IF NOT EXISTS organization_leaders_organization_id_idx ON organization_leaders(organization_id);
+CREATE INDEX IF NOT EXISTS organization_leaders_review_status_idx ON organization_leaders(review_status);
+CREATE INDEX IF NOT EXISTS organization_leader_documents_leader_id_idx ON organization_leader_documents(leader_id);
+CREATE INDEX IF NOT EXISTS organization_leader_reviews_leader_id_idx ON organization_leader_reviews(leader_id);
 CREATE INDEX IF NOT EXISTS memberships_organization_id_idx ON memberships(organization_id);
 CREATE INDEX IF NOT EXISTS organization_event_participations_event_id_idx ON organization_event_participations(event_id);
 CREATE INDEX IF NOT EXISTS registration_upload_sessions_owner_expires_at_idx ON registration_upload_sessions(owner_user_id, expires_at);

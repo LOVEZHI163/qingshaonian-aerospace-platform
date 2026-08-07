@@ -28,6 +28,7 @@ const REGISTRATION_START_AT = "2026-10-01T00:00:00.000Z";
 const REGISTRATION_END_AT = "2026-11-01T15:59:59.000Z";
 export const APPROVED_GROUP_NAMES = ["小学低段", "小学高段", "中学组", "职高/高中组"];
 export const REGISTRATION_MODES = ["automatic", "force_open", "force_closed"];
+const ORGANIZATION_LEADER_REVIEW_ACTIONS = ["submitted", "approved", "rejected", "enabled", "disabled"];
 
 export function normalizeSubmissionWarnings(value) {
   if (!Array.isArray(value)) return [];
@@ -164,7 +165,11 @@ Object.assign(seedDb, {
   mediaAssets: [],
   contentAttachments: [],
   registrationUploadSessions: [],
-  registrationSubmissionAssets: []
+  registrationSubmissionAssets: [],
+  registrationIdentities: [],
+  organizationLeaders: [],
+  organizationLeaderDocuments: [],
+  organizationLeaderReviews: []
 });
 for (const organization of seedDb.organizations) {
   Object.assign(organization, {
@@ -196,6 +201,15 @@ export function ensureDbShape(db) {
   for (const session of db.registrationUploadSessions) session.channel ||= session.organizationId ? "organization" : "personal";
   db.registrationSubmissionAssets ||= [];
   for (const asset of db.registrationSubmissionAssets) asset.warnings = normalizeSubmissionWarnings(asset.warnings);
+  db.registrationIdentities ||= [];
+  db.organizationLeaders ||= [];
+  db.organizationLeaderDocuments ||= [];
+  db.organizationLeaderReviews ||= [];
+  for (const review of db.organizationLeaderReviews) {
+    if (!ORGANIZATION_LEADER_REVIEW_ACTIONS.includes(review.action)) {
+      throw new Error(`Invalid organization leader review action: ${review.action}`);
+    }
+  }
   db.users ||= [];
   for (const user of db.users) {
     user.sessionVersion ??= 0;
