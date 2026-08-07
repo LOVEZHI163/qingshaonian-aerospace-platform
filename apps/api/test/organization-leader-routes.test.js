@@ -296,6 +296,25 @@ test("platform administrators filter, review, and enable leaders globally", asyn
   }, { prefix: "organization-leader-admin-routes-" });
 });
 
+test("platform administrators read any organization leader review history without private document storage details", async () => {
+  await withTestServer(async ({ baseUrl }) => {
+    const owner = await loginAs(baseUrl, "13800000012", "123456");
+    const admin = await loginAs(baseUrl, "13900000000", "admin123");
+    const created = await createLeader(baseUrl, owner, { name: "历史领队", phone: "13800009223" });
+    const reviewed = await fetch(`${baseUrl}/api/admin/organization-leaders/${created.row.id}/review`, withSession(admin.cookie, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ decision: "approved" })
+    }));
+    assert.equal(reviewed.status, 200);
+
+    const history = await json(await fetch(`${baseUrl}/api/organization/leaders/${created.row.id}/reviews`, withSession(admin.cookie)));
+    assert.equal(history.response.status, 200);
+    assert.deepEqual(history.payload.rows.map((row) => row.action), ["submitted", "approved"]);
+    assert.doesNotMatch(JSON.stringify(history.payload), /filePath|storedName/);
+  }, { prefix: "organization-leader-admin-review-history-" });
+});
+
 test("leader creation journals its new private file when database persistence and immediate cleanup fail", async () => {
   const uploadRoot = await fs.mkdtemp(path.join(os.tmpdir(), "organization-leader-create-rollback-"));
   const previousUploadRoot = process.env.UPLOAD_ROOT;

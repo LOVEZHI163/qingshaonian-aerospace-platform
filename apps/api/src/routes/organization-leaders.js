@@ -207,7 +207,7 @@ export function createOrganizationLeadersRouter({
   };
   const organizationAccess = [requireUser, preauthorizeOrganization(), requirePasswordReady];
   const organizationLeaderAccess = [requireUser, preauthorizeOrganization({ leader: true }), requirePasswordReady];
-  const authorizationDownloadAccess = [requireUser, preauthorizeOrganization({ leader: true, allowAdmin: true }), requirePasswordReady];
+  const organizationLeaderReadAccess = [requireUser, preauthorizeOrganization({ leader: true, allowAdmin: true }), requirePasswordReady];
   const adminAccess = [requireAdmin, requirePasswordReady];
 
   router.get("/organization/leaders", ...organizationAccess, asyncRoute(async (req, res, next) => {
@@ -288,7 +288,7 @@ export function createOrganizationLeadersRouter({
     } catch (error) { respondError(error, res, next); }
   }));
 
-  router.get("/organization/leaders/:leaderId/authorization/:documentId", ...authorizationDownloadAccess, asyncRoute(async (req, res, next) => {
+  router.get("/organization/leaders/:leaderId/authorization/:documentId", ...organizationLeaderReadAccess, asyncRoute(async (req, res, next) => {
     try {
       const db = await store.readDb();
       const organization = req.user.type === "admin" ? null : revalidateOrganizationAccess(db, req);
@@ -310,11 +310,13 @@ export function createOrganizationLeadersRouter({
     } catch (error) { respondError(error, res, next); }
   }));
 
-  router.get("/organization/leaders/:leaderId/reviews", ...organizationLeaderAccess, asyncRoute(async (req, res, next) => {
+  router.get("/organization/leaders/:leaderId/reviews", ...organizationLeaderReadAccess, asyncRoute(async (req, res, next) => {
     try {
       const db = await store.readDb();
-      const organization = revalidateOrganizationAccess(db, req);
-      const leader = revalidateOrganizationLeaderAccess(db, organization, req);
+      const organization = req.user.type === "admin" ? null : revalidateOrganizationAccess(db, req);
+      const leader = req.user.type === "admin"
+        ? leaderOrError(db, req.params.leaderId)
+        : revalidateOrganizationLeaderAccess(db, organization, req);
       const rows = (db.organizationLeaderReviews || [])
         .filter((review) => review.leaderId === leader.id)
         .map(publicReview);
