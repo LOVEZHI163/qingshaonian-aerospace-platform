@@ -10,6 +10,7 @@ import { createMutationAsyncRoute } from "../src/data/mutation-lock.js";
 import { ensureDbShape, seedDb } from "../src/data/seed.js";
 import { createOrganizationsRouter } from "../src/routes/organizations.js";
 import { deleteOrganizationAccount, organizationHistoryFields } from "../src/services/organization-account-lifecycle.js";
+import { replayFileCleanupJournal } from "../src/services/organizations.js";
 import { withTestServer } from "../test-support/server.js";
 import { loginAs, withSession } from "./helpers/api-client.js";
 
@@ -373,4 +374,76 @@ test("delete organization account leaves persisted data unchanged when its atomi
   } finally {
     await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
   }
+});
+
+test("organization deletion cascades leader data and retains a cleanup marker while another leader references the same file", async () => {
+  const { db, organization } = lifecycleFixture();
+  const actor = db.users.find((row) => row.type === "admin");
+  const now = "2026-08-07T09:00:00.000Z";
+  db.organizationLeaders.push(
+    {
+      id: "leader-deleted", organizationId: organization.id, name: "待删领队", phone: "13800009555",
+      email: "", notes: "", currentDocumentId: "leader-document-shared", reviewStatus: "approved",
+      rejectionReason: "", enabled: true, submissionVersion: 1, reviewedBy: actor.id, reviewedAt: now,
+      createdAt: now, updatedAt: now
+    },
+    {
+      id: "leader-retained", organizationId: "O1002", name: "保留领队", phone: "13800009666",
+      email: "", notes: "", currentDocumentId: "leader-document-retained", reviewStatus: "approved",
+      rejectionReason: "", enabled: true, submissionVersion: 1, reviewedBy: actor.id, reviewedAt: now,
+      createdAt: now, updatedAt: now
+    }
+  );
+  db.organizationLeaderDocuments.push(
+    {
+      id: "leader-document-deleted", leaderId: "leader-deleted", version: 1,
+      originalName: "deleted.pdf", storedName: "deleted.pdf", filePath: "/private/deleted-leader.pdf",
+      mimeType: "application/pdf", sizeBytes: 100, uploadedAt: now, cleanedAt: null
+    },
+    {
+      id: "leader-document-shared", leaderId: "leader-deleted", version: 2,
+      originalName: "shared.pdf", storedName: "shared.pdf", filePath: "/private/shared-leader.pdf",
+      mimeType: "application/pdf", sizeBytes: 100, uploadedAt: now, cleanedAt: null
+    },
+    {
+      id: "leader-document-retained", leaderId: "leader-retained", version: 1,
+      originalName: "shared.pdf", storedName: "shared.pdf", filePath: "/private/shared-leader.pdf",
+      mimeType: "application/pdf", sizeBytes: 100, uploadedAt: now, cleanedAt: null
+    }
+  );
+  db.organizationLeaderReviews.push({
+    id: "leader-review-deleted", leaderId: "leader-deleted", organizationId: organization.id,
+    submissionVersion: 1, action: "approved", actorId: actor.id, reason: "", snapshot: {},
+    documentId: "leader-document-shared", createdAt: now
+  });
+
+  deleteOrganizationAccount(db, {
+    organizationId: organization.id,
+    actor,
+    makeId: (prefix) => `${prefix}-${db.fileCleanupJournal.length + 1}`,
+    now: () => now
+  });
+
+  assert.equal(db.organizationLeaders.some((row) => row.id === "leader-deleted"), false);
+  assert.equal(db.organizationLeaderDocuments.some((row) => row.leaderId === "leader-deleted"), false);
+  assert.equal(db.organizationLeaderReviews.some((row) => row.leaderId === "leader-deleted"), false);
+  assert.ok(db.organizationLeaders.some((row) => row.id === "leader-retained"));
+  const sharedMarker = db.fileCleanupJournal.find((row) => row.filePath === "/private/shared-leader.pdf");
+  assert.ok(sharedMarker);
+  assert.ok(db.fileCleanupJournal.some((row) => row.filePath === "/private/deleted-leader.pdf"));
+
+  const removed = [];
+  const store = {
+    readDb: async () => db,
+    writeDb: async () => {},
+    withMutationLock: async (handler) => handler()
+  };
+  const replay = await replayFileCleanupJournal({
+    store,
+    markerIds: [sharedMarker.id],
+    removePrivateFile: async (marker) => { removed.push(marker.filePath); }
+  });
+  assert.deepEqual(replay, { removed: 0, retained: 1 });
+  assert.deepEqual(removed, []);
+  assert.ok(db.fileCleanupJournal.some((row) => row.id === sharedMarker.id));
 });

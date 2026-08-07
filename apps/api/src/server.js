@@ -9,6 +9,7 @@ import { createDataStore } from "./data/index.js";
 import { createLockedAsyncRoute, createMutationAsyncRoute } from "./data/mutation-lock.js";
 import { createEventsRouter } from "./routes/events.js";
 import { createOrganizationsRouter } from "./routes/organizations.js";
+import { createOrganizationLeadersRouter } from "./routes/organization-leaders.js";
 import { createRegistrationsRouter } from "./routes/registrations.js";
 import { createCertificateImportsRouter } from "./routes/certificate-imports.js";
 import { cleanupExpiredCertificateImportPreviews } from "./services/certificate-imports.js";
@@ -213,6 +214,16 @@ app.use("/api", createOrganizationsRouter({
   makeId: id,
   now,
   publicUser
+}));
+
+app.use("/api", createOrganizationLeadersRouter({
+  store: dataStore,
+  requireUser,
+  requireAdmin,
+  requirePasswordReady,
+  asyncRoute: mutationAsyncRoute,
+  makeId: id,
+  now
 }));
 
 app.use("/api", createMembershipsRouter({

@@ -6,7 +6,7 @@ function timestamp(now) {
   return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
 }
 
-function uniquePendingCleanupFiles(db, organizationId, removableAssets) {
+function uniquePendingCleanupFiles(db, organizationId, removableAssets, leaderIds) {
   const known = new Set((db.fileCleanupJournal || []).map((row) => row.filePath));
   const paths = [];
   for (const document of db.organizationDocuments || []) {
@@ -19,6 +19,12 @@ function uniquePendingCleanupFiles(db, organizationId, removableAssets) {
     if (asset.cleanedAt || !asset.filePath || known.has(asset.filePath)) continue;
     known.add(asset.filePath);
     paths.push(asset.filePath);
+  }
+  for (const document of db.organizationLeaderDocuments || []) {
+    if (!leaderIds.has(document.leaderId) || document.cleanedAt || !document.filePath) continue;
+    if (known.has(document.filePath)) continue;
+    known.add(document.filePath);
+    paths.push(document.filePath);
   }
   return paths;
 }
@@ -64,7 +70,10 @@ export function deleteOrganizationAccount(db, {
     && !preservedAssetIds.has(row.id)
   ));
   const removableAssetIds = new Set(removableAssets.map((row) => row.id));
-  const cleanupPaths = uniquePendingCleanupFiles(db, organization.id, removableAssets);
+  const leaderIds = new Set((db.organizationLeaders || [])
+    .filter((row) => row.organizationId === organization.id)
+    .map((row) => row.id));
+  const cleanupPaths = uniquePendingCleanupFiles(db, organization.id, removableAssets, leaderIds);
   db.fileCleanupJournal ||= [];
   for (const filePath of cleanupPaths) {
     db.fileCleanupJournal.push({
@@ -109,6 +118,9 @@ export function deleteOrganizationAccount(db, {
   }
   db.organizationEventParticipations = (db.organizationEventParticipations || []).filter((row) => row.organizationId !== organization.id);
   db.memberships = (db.memberships || []).filter((row) => row.organizationId !== organization.id && row.userId !== owner.id);
+  db.organizationLeaderReviews = (db.organizationLeaderReviews || []).filter((row) => !leaderIds.has(row.leaderId));
+  db.organizationLeaderDocuments = (db.organizationLeaderDocuments || []).filter((row) => !leaderIds.has(row.leaderId));
+  db.organizationLeaders = (db.organizationLeaders || []).filter((row) => !leaderIds.has(row.id));
   db.organizationDocuments = (db.organizationDocuments || []).filter((row) => row.organizationId !== organization.id);
   db.organizations = (db.organizations || []).filter((row) => row.id !== organization.id);
   db.users = (db.users || []).filter((row) => row.id !== owner.id);

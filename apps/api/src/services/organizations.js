@@ -1,5 +1,6 @@
 import { deletePrivateFile, readPrivateFile, savePrivateFile } from "../files/storage.js";
 import { validateUpload } from "../files/policy.js";
+import { cleanupPathIsReferenced } from "../files/cleanup-references.js";
 
 export const DOCUMENT_TYPES = new Set([
   "business_license",
@@ -237,17 +238,6 @@ export async function resubmitOrganization({ input, file, userId, readDb, writeD
     if (error?.code === "23505") throw new OrganizationError(409, "统一社会信用代码已注册");
     throw error;
   }
-}
-
-function cleanupPathIsReferenced(db, filePath) {
-  const referencedByDocument = (db.organizationDocuments || []).some((document) => {
-    if (document.filePath !== filePath) return false;
-    const organization = (db.organizations || []).find((row) => row.id === document.organizationId);
-    return !document.cleanedAt || organization?.currentDocumentId === document.id;
-  });
-  return referencedByDocument
-    || (db.certificates || []).some((row) => row.filePath === filePath)
-    || (db.registrationSubmissionAssets || []).some((row) => row.filePath === filePath && !row.cleanedAt);
 }
 
 export async function replayFileCleanupJournal({
