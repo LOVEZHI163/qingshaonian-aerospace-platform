@@ -40,6 +40,9 @@ export function normalizeStudentId(value) {
   if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) {
     throw identityValidationError();
   }
+  const now = new Date();
+  const currentUtcDate = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  if (date.getTime() > currentUtcDate) throw identityValidationError();
   const checksum = CHECKSUM_WEIGHTS.reduce((total, weight, index) => total + Number(normalized[index]) * weight, 0);
   if (CHECKSUM_CHARACTERS[checksum % 11] !== normalized.at(-1)) throw identityValidationError();
   return normalized;

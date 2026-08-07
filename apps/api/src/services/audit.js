@@ -54,9 +54,9 @@ export function recordAudit(db, {
     id: `A${crypto.randomUUID()}`,
     actorUserId: actor?.id || null,
     actorName: sanitizeAuditText(actor?.name || "系统", 120) || "系统",
-    action: String(action || "").trim(),
-    targetType: String(targetType || "").trim(),
-    targetId: String(targetId || "").trim(),
+    action: sanitizeAuditText(action, 120),
+    targetType: sanitizeAuditText(targetType, 120),
+    targetId: sanitizeAuditText(targetId, 120),
     summary: sanitizeAuditSummary(summary),
     createdAt: new Date(createdAt).toISOString()
   };

@@ -13,6 +13,15 @@ import { recordAudit } from "../src/services/audit.js";
 const validId = "11010519491231002X";
 const testKey = Buffer.alloc(32, 19).toString("base64");
 const previousKey = process.env.REGISTRATION_ID_ENCRYPTION_KEY;
+const checksumWeights = [7, 9, 10, 5, 8, 4, 2, 1, 6, 3, 7, 9, 10, 5, 8, 4, 2];
+const checksumCharacters = "10X98765432";
+
+function identityNumberForDate(date) {
+  const datePart = date.toISOString().slice(0, 10).replaceAll("-", "");
+  const firstSeventeen = `110105${datePart}002`;
+  const checksum = checksumWeights.reduce((total, weight, index) => total + Number(firstSeventeen[index]) * weight, 0);
+  return `${firstSeventeen}${checksumCharacters[checksum % 11]}`;
+}
 
 after(() => {
   if (previousKey === undefined) delete process.env.REGISTRATION_ID_ENCRYPTION_KEY;
@@ -24,6 +33,13 @@ test("normalizes a valid identity number and rejects invalid length, date, and c
   assert.throws(() => normalizeStudentId("11010519491231002"), /身份证号校验失败/);
   assert.throws(() => normalizeStudentId("110105199902290021"), /身份证号校验失败/);
   assert.throws(() => normalizeStudentId("110105194912310021"), /身份证号校验失败/);
+});
+
+test("rejects a checksum-valid identity number whose birth date is in the UTC future", () => {
+  const nextUtcYear = new Date().getUTCFullYear() + 1;
+  const futureIdentity = identityNumberForDate(new Date(Date.UTC(nextUtcYear, 0, 1)));
+
+  assert.throws(() => normalizeStudentId(futureIdentity), /身份证号校验失败/);
 });
 
 test("encrypts each identity number with a fresh IV and decrypts it without serializing plaintext", () => {
