@@ -89,15 +89,14 @@ async function storeAuthorizationFile(leaderId, file) {
   if (!file) throw validationError("授权书不能为空");
   try {
     await validateUpload(file, ORGANIZATION_LEADER_DOCUMENT_POLICY);
-    return await savePrivateFile({
-      category: "organization-leader-documents",
-      ownerId: leaderId,
-      file
-    });
   } catch (error) {
-    if (error instanceof OrganizationLeaderError) throw error;
     throw validationError(`授权书无效：${error.message}`);
   }
+  return savePrivateFile({
+    category: "organization-leader-documents",
+    ownerId: leaderId,
+    file
+  });
 }
 
 function nextDocumentVersion(db, leaderId) {

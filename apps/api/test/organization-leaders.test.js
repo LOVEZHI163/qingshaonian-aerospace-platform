@@ -107,6 +107,60 @@ test("leader authorization policy accepts PDF, JPEG and PNG signatures up to 10 
   );
 });
 
+test("leader creation maps forged and oversized authorization documents to 422 without partial state", async () => {
+  await withUploadRoot(async () => {
+    for (const authorizationFile of [
+      file(Buffer.from("not an image"), "伪造授权书.png"),
+      file(Buffer.alloc(10 * 1024 * 1024 + 1), "超大授权书.pdf")
+    ]) {
+      const db = dbFixture();
+      await assert.rejects(
+        () => createOrganizationLeader(db, {
+          organizationId: "organization-1",
+          name: "张老师",
+          phone: "13800000000",
+          authorizationFile
+        }, actor),
+        (error) => error.status === 422 && /授权书无效/.test(error.message)
+      );
+      assert.deepEqual(db.organizationLeaders, []);
+      assert.deepEqual(db.organizationLeaderDocuments, []);
+      assert.deepEqual(db.organizationLeaderReviews, []);
+    }
+  });
+});
+
+test("leader creation propagates private storage I/O errors without partial state", async () => {
+  const parent = await fs.mkdtemp(path.join(os.tmpdir(), "organization-leader-storage-error-"));
+  const blockedRoot = path.join(parent, "upload-root-is-a-file");
+  await fs.writeFile(blockedRoot, "blocks child directories");
+  const previous = process.env.UPLOAD_ROOT;
+  process.env.UPLOAD_ROOT = blockedRoot;
+  try {
+    const db = dbFixture();
+    await assert.rejects(
+      () => createOrganizationLeader(db, {
+        organizationId: "organization-1",
+        name: "张老师",
+        phone: "13800000000",
+        authorizationFile: file()
+      }, actor),
+      (error) => {
+        assert.equal(error.status, undefined);
+        assert.match(error.code, /^(ENOTDIR|EACCES|EPERM)$/);
+        return true;
+      }
+    );
+    assert.deepEqual(db.organizationLeaders, []);
+    assert.deepEqual(db.organizationLeaderDocuments, []);
+    assert.deepEqual(db.organizationLeaderReviews, []);
+  } finally {
+    if (previous === undefined) delete process.env.UPLOAD_ROOT;
+    else process.env.UPLOAD_ROOT = previous;
+    await fs.rm(parent, { recursive: true, force: true });
+  }
+});
+
 test("only name, phone, or authorization changes create a new pending submission", async () => {
   await withUploadRoot(async () => {
     const db = dbFixture();
