@@ -161,6 +161,19 @@ export function createRegistrationsRouter({
     )).map((row) => registrationResponse(db, row, req.user)) });
   }));
 
+  router.get("/organization/events/:eventId/export.xlsx", ...user, asyncRoute(async (req, res) => {
+    const db = await store.readDb();
+    const { organization, event } = requireOrganizationEventParticipation(db, req.user, req.params.eventId);
+    const rows = db.registrations
+      .filter((row) => row.eventId === event.id && row.organizationId === organization.id)
+      .map((row) => attachAuthorizedIdentity(db, row, req.user));
+    const workbook = buildBoundRegistrationWorkbook(rows);
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader("Content-Disposition", contentDisposition(`${event.name}_${organization.name}_报名名单.xlsx`));
+    await workbook.xlsx.write(res);
+    res.end();
+  }));
+
   router.post("/organization/events/:eventId/registrations", ...user, asyncRoute(async (req, res) => {
     const db = await store.readDb();
     const input = eventScopedInput(req);
@@ -339,7 +352,7 @@ export function createRegistrationsRouter({
     const db = await store.readDb();
     requireEventId(db, req.params.eventId);
     const query = { ...req.query, eventId: req.params.eventId };
-    const workbook = buildBoundRegistrationWorkbook(filterAdminRegistrations(db, query));
+    const workbook = buildBoundRegistrationWorkbook(filterAdminRegistrations(db, query).map((row) => attachAuthorizedIdentity(db, row, req.user)));
     const suffix = scope === "all" ? "全部名单" : "筛选名单";
     const fileName = `报名${suffix}.xlsx`;
     res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
