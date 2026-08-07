@@ -25,7 +25,7 @@ function decodePercentEncodedText(value) {
   return decoded.replace(PERCENT_ENCODED_TEXT, "[已隐藏编码]");
 }
 
-function sanitizeAuditText(value, maximumLength) {
+function sanitizeAuditText(value, maximumLength = Number.POSITIVE_INFINITY) {
   return decodePercentEncodedText(String(value || ""))
     .replace(PHONE_NUMBER, (phone) => `${phone.slice(0, 3)}****${phone.slice(-4)}`)
     .replace(IDENTITY_NUMBER, "[身份证号已隐藏]")
@@ -56,7 +56,7 @@ export function recordAudit(db, {
     actorName: sanitizeAuditText(actor?.name || "系统", 120) || "系统",
     action: sanitizeAuditText(action, 120),
     targetType: sanitizeAuditText(targetType, 120),
-    targetId: sanitizeAuditText(targetId, 120),
+    targetId: sanitizeAuditText(targetId),
     summary: sanitizeAuditSummary(summary),
     createdAt: new Date(createdAt).toISOString()
   };
