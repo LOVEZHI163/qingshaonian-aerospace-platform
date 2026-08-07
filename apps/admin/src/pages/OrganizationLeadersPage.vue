@@ -1,8 +1,10 @@
 <script setup>
 import { onBeforeUnmount, onMounted, reactive, ref } from "vue";
 
+import AccessibleDialog from "../components/AccessibleDialog.vue";
 import { api, apiBlob } from "../lib/api.js";
 import { createBlobDownloadManager } from "../lib/download.js";
+import { userFacingError } from "../lib/user-facing-error.js";
 
 const leaders = ref([]);
 const loading = ref(false);
@@ -55,7 +57,7 @@ async function loadLeaders() {
     const payload = await api("/api/organization/leaders");
     leaders.value = payload.rows || [];
   } catch (cause) {
-    error.value = cause.message || "领队资料加载失败";
+    error.value = userFacingError(cause, "领队资料加载失败，请稍后重试");
   } finally {
     loading.value = false;
   }
@@ -75,7 +77,7 @@ async function downloadTemplate() {
     });
     downloads.save(blob, "组织领队授权书.docx");
   } catch (cause) {
-    error.value = cause.message || "授权书模板下载失败";
+    error.value = userFacingError(cause, "授权书模板下载失败，请稍后重试");
   }
 }
 
@@ -86,7 +88,7 @@ async function downloadAuthorization(row) {
     const blob = await apiBlob(`/api/organization/leaders/${row.id}/authorization/${row.document.id}`);
     downloads.save(blob, row.document.originalName || "领队授权书");
   } catch (cause) {
-    error.value = cause.message || "授权书下载失败";
+    error.value = userFacingError(cause, "授权书下载失败，请稍后重试");
   }
 }
 
@@ -116,7 +118,7 @@ async function submitLeader() {
     success.value = leaderId ? "领队资料已更新" : "领队资料已提交审核";
     resetForm();
   } catch (cause) {
-    error.value = cause.message || "领队资料提交失败";
+    error.value = userFacingError(cause, "领队资料提交失败，请稍后重试");
   } finally {
     saving.value = false;
   }
@@ -135,7 +137,7 @@ async function setEnabled(row, enabled) {
     replaceLeader(payload.row);
     success.value = enabled ? "领队已启用" : "领队已停用";
   } catch (cause) {
-    error.value = cause.message || "领队启停操作失败";
+    error.value = userFacingError(cause, "领队启停操作失败，请稍后重试");
   } finally {
     saving.value = false;
   }
@@ -150,7 +152,7 @@ async function openHistory(row) {
     const payload = await api(`/api/organization/leaders/${row.id}/reviews`);
     historyRows.value = payload.rows || [];
   } catch (cause) {
-    error.value = cause.message || "审核历史加载失败";
+    error.value = userFacingError(cause, "审核历史加载失败，请稍后重试");
   } finally {
     historyLoading.value = false;
   }
@@ -228,13 +230,11 @@ onBeforeUnmount(() => downloads.dispose());
       </div>
     </section>
 
-    <div v-if="historyTarget" class="dialog-backdrop" @click.self="closeHistory">
-      <section class="panel leader-dialog" data-testid="leader-review-history">
-        <div class="panel-title"><h3>{{ historyTarget.name }}的审核历史</h3><button type="button" class="mini reject" data-action="close-history" @click="closeHistory">关闭</button></div>
+    <AccessibleDialog :open="Boolean(historyTarget)" labelled-by="organization-leader-history-title" initial-focus="[data-action='close-history']" class="panel leader-dialog" data-testid="leader-review-history" @close="closeHistory">
+        <div class="panel-title"><h3 id="organization-leader-history-title">{{ historyTarget?.name }}的审核历史</h3><button type="button" class="mini reject" data-action="close-history" @click="closeHistory">关闭</button></div>
         <p v-if="historyLoading" class="hint">正在加载审核历史…</p>
         <p v-else-if="historyRows.length === 0" class="hint">暂无审核记录。</p>
         <ol v-else class="leader-history-list"><li v-for="row in historyRows" :key="row.id"><strong>{{ actionText[row.action] || row.action }}</strong><span>{{ displayTime(row.createdAt) }}</span><p v-if="row.reason">{{ row.reason }}</p></li></ol>
-      </section>
-    </div>
+    </AccessibleDialog>
   </section>
 </template>

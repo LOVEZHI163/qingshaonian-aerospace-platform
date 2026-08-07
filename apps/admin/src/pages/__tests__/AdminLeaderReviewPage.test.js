@@ -1,8 +1,11 @@
 import { flushPromises, mount } from "@vue/test-utils";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { apiMock, apiBlobMock } = vi.hoisted(() => ({ apiMock: vi.fn(), apiBlobMock: vi.fn() }));
-vi.mock("../../lib/api.js", () => ({ api: apiMock, apiBlob: apiBlobMock }));
+const { apiMock, apiBlobMock, ApiErrorMock } = vi.hoisted(() => {
+  class ApiErrorMock extends Error { constructor(message) { super(message); this.name = "ApiError"; } }
+  return { apiMock: vi.fn(), apiBlobMock: vi.fn(), ApiErrorMock };
+});
+vi.mock("../../lib/api.js", () => ({ api: apiMock, apiBlob: apiBlobMock, ApiError: ApiErrorMock }));
 
 import AdminLeaderReviewPage from "../AdminLeaderReviewPage.vue";
 
@@ -64,14 +67,24 @@ describe("AdminLeaderReviewPage", () => {
   });
 
   it("previews, downloads and closes a protected authorization document", async () => {
-    const wrapper = mount(AdminLeaderReviewPage);
+    const wrapper = mount(AdminLeaderReviewPage, { attachTo: document.body });
     await flushPromises();
 
-    await wrapper.get('[data-action="preview-OL-9"]').trigger("click");
+    const opener = wrapper.get('[data-action="preview-OL-9"]');
+    opener.element.focus();
+    await opener.trigger("click");
     await flushPromises();
     expect(apiBlobMock).toHaveBeenCalledWith("/api/organization/leaders/OL-9/authorization/OLD-9", expect.objectContaining({ signal: expect.any(AbortSignal) }));
+    const dialog = wrapper.get('[data-testid="leader-document-dialog"]');
+    expect(dialog.attributes("role")).toBe("dialog");
+    expect(dialog.attributes("aria-modal")).toBe("true");
+    expect(dialog.attributes("aria-labelledby")).toBe("admin-leader-preview-title");
+    expect(document.activeElement).toBe(wrapper.get('[data-action="close-preview"]').element);
     expect(wrapper.get('[data-testid="leader-document-preview"]').attributes("src")).toBe("blob:leader");
-    await wrapper.get('[data-action="close-preview"]').trigger("click");
+    expect(wrapper.get('[data-testid="leader-document-preview"]').attributes("title")).toBe("王老师的授权书预览");
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    await flushPromises();
+    expect(document.activeElement).toBe(opener.element);
     expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:leader");
 
     await wrapper.get('[data-action="download-OL-9"]').trigger("click");
@@ -81,14 +94,20 @@ describe("AdminLeaderReviewPage", () => {
   });
 
   it("loads review history and approves or disables a leader", async () => {
-    const wrapper = mount(AdminLeaderReviewPage);
+    const wrapper = mount(AdminLeaderReviewPage, { attachTo: document.body });
     await flushPromises();
 
-    await wrapper.get('[data-action="history-OL-9"]').trigger("click");
+    const historyOpener = wrapper.get('[data-action="history-OL-9"]');
+    historyOpener.element.focus();
+    await historyOpener.trigger("click");
     await flushPromises();
     expect(apiMock).toHaveBeenCalledWith("/api/organization/leaders/OL-9/reviews");
-    expect(wrapper.get('[data-testid="leader-review-history"]').text()).toContain("提交审核");
-    await wrapper.get('[data-action="close-history"]').trigger("click");
+    const historyDialog = wrapper.get('[data-testid="leader-review-history"]');
+    expect(historyDialog.attributes("role")).toBe("dialog");
+    expect(historyDialog.attributes("aria-labelledby")).toBe("admin-leader-history-title");
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    await flushPromises();
+    expect(document.activeElement).toBe(historyOpener.element);
 
     await wrapper.get('[data-action="approve-OL-9"]').trigger("click");
     await flushPromises();
@@ -103,12 +122,26 @@ describe("AdminLeaderReviewPage", () => {
       method: "PATCH",
       body: JSON.stringify({ enabled: false })
     });
+    wrapper.unmount();
   });
 
   it("does not submit a rejection without a reason", async () => {
-    const wrapper = mount(AdminLeaderReviewPage);
+    const wrapper = mount(AdminLeaderReviewPage, { attachTo: document.body });
     await flushPromises();
-    await wrapper.get('[data-action="reject-OL-9"]').trigger("click");
+    const opener = wrapper.get('[data-action="reject-OL-9"]');
+    opener.element.focus();
+    await opener.trigger("click");
+    const dialog = wrapper.get('[data-testid="reject-form"]');
+    expect(dialog.attributes("role")).toBe("dialog");
+    expect(dialog.attributes("aria-modal")).toBe("true");
+    expect(dialog.attributes("aria-labelledby")).toBe("admin-leader-reject-title");
+    expect(document.activeElement).toBe(wrapper.get('[data-testid="reject-reason"]').element);
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    await flushPromises();
+    expect(wrapper.find('[data-testid="reject-form"]').exists()).toBe(false);
+    expect(document.activeElement).toBe(opener.element);
+
+    await opener.trigger("click");
     await wrapper.get('[data-testid="reject-form"]').trigger("submit");
     await flushPromises();
 
@@ -122,5 +155,27 @@ describe("AdminLeaderReviewPage", () => {
       method: "PATCH",
       body: JSON.stringify({ decision: "rejected", reason: "授权书缺少公章" })
     });
+    wrapper.unmount();
+  });
+
+  it("maps unknown list and review failures to operation-specific Chinese messages", async () => {
+    apiMock.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+    const wrapper = mount(AdminLeaderReviewPage);
+    await flushPromises();
+    expect(wrapper.text()).toContain("领队审核列表加载失败，请稍后重试");
+    expect(wrapper.text()).not.toContain("Failed to fetch");
+    wrapper.unmount();
+
+    apiMock.mockImplementation(async (path, options = {}) => {
+      if (path === "/api/admin/organization-leaders" && !options.method) return { rows: [pendingLeader] };
+      if (path === "/api/admin/organization-leaders/OL-9/review") throw new Error("Network request failed");
+      return { rows: [] };
+    });
+    const reviewPage = mount(AdminLeaderReviewPage);
+    await flushPromises();
+    await reviewPage.get('[data-action="approve-OL-9"]').trigger("click");
+    await flushPromises();
+    expect(reviewPage.text()).toContain("领队审核失败，请稍后重试");
+    expect(reviewPage.text()).not.toContain("Network request failed");
   });
 });

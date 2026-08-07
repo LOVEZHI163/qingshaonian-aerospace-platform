@@ -1,8 +1,10 @@
 <script setup>
 import { onBeforeUnmount, onMounted, reactive, ref } from "vue";
 
+import AccessibleDialog from "../components/AccessibleDialog.vue";
 import { api, apiBlob } from "../lib/api.js";
 import { createBlobDownloadManager } from "../lib/download.js";
+import { userFacingError } from "../lib/user-facing-error.js";
 
 const leaders = ref([]);
 const loading = ref(false);
@@ -47,7 +49,7 @@ async function loadLeaders() {
     const payload = await api(queryPath());
     leaders.value = payload.rows || [];
   } catch (cause) {
-    error.value = cause.message || "领队审核列表加载失败";
+    error.value = userFacingError(cause, "领队审核列表加载失败，请稍后重试");
   } finally {
     loading.value = false;
   }
@@ -69,7 +71,7 @@ async function review(row, decision, reason = "") {
     rejectError.value = "";
     success.value = decision === "approved" ? "领队审核已通过" : "领队资料已驳回";
   } catch (cause) {
-    error.value = cause.message || "领队审核失败";
+    error.value = userFacingError(cause, "领队审核失败，请稍后重试");
   } finally {
     saving.value = false;
   }
@@ -77,6 +79,12 @@ async function review(row, decision, reason = "") {
 
 function openReject(row) {
   rejectTarget.value = row;
+  rejectReason.value = "";
+  rejectError.value = "";
+}
+
+function closeReject() {
+  rejectTarget.value = null;
   rejectReason.value = "";
   rejectError.value = "";
 }
@@ -103,7 +111,7 @@ async function setEnabled(row, enabled) {
     replaceLeader(payload.row);
     success.value = enabled ? "领队已启用" : "领队已停用";
   } catch (cause) {
-    error.value = cause.message || "领队启停操作失败";
+    error.value = userFacingError(cause, "领队启停操作失败，请稍后重试");
   } finally {
     saving.value = false;
   }
@@ -118,7 +126,7 @@ async function openHistory(row) {
     const payload = await api(`/api/organization/leaders/${row.id}/reviews`);
     historyRows.value = payload.rows || [];
   } catch (cause) {
-    error.value = cause.message || "审核历史加载失败";
+    error.value = userFacingError(cause, "审核历史加载失败，请稍后重试");
   } finally {
     historyLoading.value = false;
   }
@@ -140,7 +148,7 @@ async function downloadAuthorization(row) {
     const blob = await apiBlob(documentPath(row));
     downloads.save(blob, row.document.originalName || "领队授权书");
   } catch (cause) {
-    error.value = cause.message || "授权书下载失败";
+    error.value = userFacingError(cause, "授权书下载失败，请稍后重试");
   }
 }
 
@@ -179,7 +187,7 @@ async function openPreview(row) {
     if (requestId !== previewRequestId || controller.signal.aborted) return URL.revokeObjectURL(objectUrl);
     previewUrl.value = objectUrl;
   } catch (cause) {
-    if (requestId === previewRequestId && cause?.name !== "AbortError") previewError.value = cause.message || "授权书预览失败";
+    if (requestId === previewRequestId && cause?.name !== "AbortError") previewError.value = userFacingError(cause, "授权书预览失败，请稍后重试");
   } finally {
     if (requestId === previewRequestId) {
       previewLoading.value = false;
@@ -213,10 +221,10 @@ onBeforeUnmount(() => { closePreview(); downloads.dispose(); });
       <div v-else class="table-wrap"><table class="leader-review-table"><thead><tr><th>组织</th><th>领队</th><th>状态</th><th>授权书</th><th>操作</th></tr></thead><tbody><tr v-for="row in leaders" :key="row.id"><td><strong>{{ row.organization?.name || row.organizationId }}</strong><br /><span>{{ row.organizationId }}</span></td><td>{{ row.name }}<br /><span>{{ row.phone }}<template v-if="row.email"> · {{ row.email }}</template></span><p v-if="row.notes" class="hint">{{ row.notes }}</p></td><td><em :class="row.reviewStatus">{{ statusText[row.reviewStatus] || row.reviewStatus }}</em><br /><em :class="row.enabled ? 'approved' : 'disabled'">{{ row.enabled ? "已启用" : "已停用" }}</em><p v-if="row.rejectionReason" class="leader-rejection">{{ row.rejectionReason }}</p></td><td>{{ row.document?.originalName || "未上传" }}</td><td><div class="leader-actions"><button v-if="row.document" type="button" class="mini" :data-action="`preview-${row.id}`" @click="openPreview(row)">预览</button><button v-if="row.document" type="button" class="mini" :data-action="`download-${row.id}`" @click="downloadAuthorization(row)">下载</button><button type="button" class="mini" :data-action="`history-${row.id}`" @click="openHistory(row)">历史</button><button v-if="row.reviewStatus === 'pending'" type="button" class="mini" :data-action="`approve-${row.id}`" :disabled="saving" @click="review(row, 'approved')">通过</button><button v-if="row.reviewStatus === 'pending'" type="button" class="mini reject" :data-action="`reject-${row.id}`" :disabled="saving" @click="openReject(row)">驳回</button><button v-if="row.enabled" type="button" class="mini reject" :data-action="`disable-${row.id}`" :disabled="saving" @click="setEnabled(row, false)">停用</button><button v-else type="button" class="mini" :data-action="`enable-${row.id}`" :disabled="saving" @click="setEnabled(row, true)">启用</button></div></td></tr></tbody></table></div>
     </section>
 
-    <div v-if="rejectTarget" class="dialog-backdrop" @click.self="rejectTarget = null"><form class="panel leader-dialog" data-testid="reject-form" @submit.prevent="submitReject"><h3>驳回{{ rejectTarget.name }}的领队资料</h3><p class="hint">驳回原因会显示给组织负责人，请明确说明需要修改的内容。</p><label>驳回原因<textarea v-model="rejectReason" data-testid="reject-reason" rows="4" required /></label><p v-if="rejectError" class="message" data-testid="reject-error">{{ rejectError }}</p><div class="form-actions"><button class="primary" :disabled="saving">确认驳回</button><button type="button" @click="rejectTarget = null">取消</button></div></form></div>
+    <AccessibleDialog as="form" :open="Boolean(rejectTarget)" labelled-by="admin-leader-reject-title" initial-focus="[data-testid='reject-reason']" class="panel leader-dialog" data-testid="reject-form" @submit.prevent="submitReject" @close="closeReject"><h3 id="admin-leader-reject-title">驳回{{ rejectTarget?.name }}的领队资料</h3><p class="hint">驳回原因会显示给组织负责人，请明确说明需要修改的内容。</p><label>驳回原因<textarea v-model="rejectReason" data-testid="reject-reason" rows="4" required /></label><p v-if="rejectError" class="message" data-testid="reject-error">{{ rejectError }}</p><div class="form-actions"><button class="primary" :disabled="saving">确认驳回</button><button type="button" @click="closeReject">取消</button></div></AccessibleDialog>
 
-    <div v-if="historyTarget" class="dialog-backdrop" @click.self="closeHistory"><section class="panel leader-dialog" data-testid="leader-review-history"><div class="panel-title"><h3>{{ historyTarget.name }}的审核历史</h3><button type="button" class="mini reject" data-action="close-history" @click="closeHistory">关闭</button></div><p v-if="historyLoading" class="hint">正在加载审核历史…</p><p v-else-if="historyRows.length === 0" class="hint">暂无审核记录。</p><ol v-else class="leader-history-list"><li v-for="row in historyRows" :key="row.id"><strong>{{ actionText[row.action] || row.action }}</strong><span>{{ displayTime(row.createdAt) }}</span><p v-if="row.reason">{{ row.reason }}</p></li></ol></section></div>
+    <AccessibleDialog :open="Boolean(historyTarget)" labelled-by="admin-leader-history-title" initial-focus="[data-action='close-history']" class="panel leader-dialog" data-testid="leader-review-history" @close="closeHistory"><div class="panel-title"><h3 id="admin-leader-history-title">{{ historyTarget?.name }}的审核历史</h3><button type="button" class="mini reject" data-action="close-history" @click="closeHistory">关闭</button></div><p v-if="historyLoading" class="hint">正在加载审核历史…</p><p v-else-if="historyRows.length === 0" class="hint">暂无审核记录。</p><ol v-else class="leader-history-list"><li v-for="row in historyRows" :key="row.id"><strong>{{ actionText[row.action] || row.action }}</strong><span>{{ displayTime(row.createdAt) }}</span><p v-if="row.reason">{{ row.reason }}</p></li></ol></AccessibleDialog>
 
-    <div v-if="preview" class="dialog-backdrop" @click.self="closePreview"><section class="panel leader-dialog leader-preview-dialog"><div class="panel-title"><h3>授权书预览：{{ preview.document.originalName }}</h3><button type="button" class="mini reject" data-action="close-preview" @click="closePreview">关闭</button></div><p v-if="previewLoading" class="hint">正在安全加载授权书…</p><p v-else-if="previewError" class="message">{{ previewError }}</p><embed v-else-if="preview.document.mimeType === 'application/pdf' && previewUrl" data-testid="leader-document-preview" :src="previewUrl" type="application/pdf" /><img v-else-if="previewUrl" data-testid="leader-document-preview" :src="previewUrl" :alt="preview.document.originalName" /></section></div>
+    <AccessibleDialog :open="Boolean(preview)" labelled-by="admin-leader-preview-title" initial-focus="[data-action='close-preview']" class="panel leader-dialog leader-preview-dialog" data-testid="leader-document-dialog" @close="closePreview"><div class="panel-title"><h3 id="admin-leader-preview-title">授权书预览：{{ preview?.document?.originalName }}</h3><button type="button" class="mini reject" data-action="close-preview" @click="closePreview">关闭</button></div><p v-if="previewLoading" class="hint">正在安全加载授权书…</p><p v-else-if="previewError" class="message">{{ previewError }}</p><embed v-else-if="preview?.document?.mimeType === 'application/pdf' && previewUrl" data-testid="leader-document-preview" :src="previewUrl" type="application/pdf" :title="`${preview.name}的授权书预览`" /><img v-else-if="previewUrl" data-testid="leader-document-preview" :src="previewUrl" :alt="preview.document.originalName" /></AccessibleDialog>
   </section>
 </template>

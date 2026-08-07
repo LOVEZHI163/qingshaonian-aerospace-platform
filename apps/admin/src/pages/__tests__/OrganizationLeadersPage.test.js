@@ -1,8 +1,11 @@
 import { flushPromises, mount } from "@vue/test-utils";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { apiMock, apiBlobMock } = vi.hoisted(() => ({ apiMock: vi.fn(), apiBlobMock: vi.fn() }));
-vi.mock("../../lib/api.js", () => ({ api: apiMock, apiBlob: apiBlobMock }));
+const { apiMock, apiBlobMock, ApiErrorMock } = vi.hoisted(() => {
+  class ApiErrorMock extends Error { constructor(message) { super(message); this.name = "ApiError"; } }
+  return { apiMock: vi.fn(), apiBlobMock: vi.fn(), ApiErrorMock };
+});
+vi.mock("../../lib/api.js", () => ({ api: apiMock, apiBlob: apiBlobMock, ApiError: ApiErrorMock }));
 
 import OrganizationLeadersPage from "../OrganizationLeadersPage.vue";
 
@@ -67,7 +70,7 @@ describe("OrganizationLeadersPage", () => {
   });
 
   it("shows leader status, rejection reason, review history and modification guidance", async () => {
-    const wrapper = mount(OrganizationLeadersPage);
+    const wrapper = mount(OrganizationLeadersPage, { attachTo: document.body });
     await flushPromises();
 
     expect(wrapper.text()).toContain("张老师");
@@ -77,11 +80,42 @@ describe("OrganizationLeadersPage", () => {
     expect(wrapper.text()).toContain("邮箱、备注变化不会影响已通过状态");
     expect(wrapper.text()).toContain("只要仍有其他已通过且启用的领队，报名不受影响");
 
-    await wrapper.get('[data-action="history-OL-1"]').trigger("click");
+    const opener = wrapper.get('[data-action="history-OL-1"]');
+    opener.element.focus();
+    await opener.trigger("click");
     await flushPromises();
     expect(apiMock).toHaveBeenCalledWith("/api/organization/leaders/OL-1/reviews");
-    expect(wrapper.get('[data-testid="leader-review-history"]').text()).toContain("提交审核");
-    expect(wrapper.get('[data-testid="leader-review-history"]').text()).toContain("授权书缺少盖章");
+    const dialog = wrapper.get('[data-testid="leader-review-history"]');
+    expect(dialog.attributes("role")).toBe("dialog");
+    expect(dialog.attributes("aria-modal")).toBe("true");
+    expect(dialog.attributes("aria-labelledby")).toBe("organization-leader-history-title");
+    expect(wrapper.get("#organization-leader-history-title").text()).toContain("张老师");
+    expect(dialog.text()).toContain("提交审核");
+    expect(dialog.text()).toContain("授权书缺少盖章");
+    const close = wrapper.get('[data-action="close-history"]');
+    expect(document.activeElement).toBe(close.element);
+    const tab = new KeyboardEvent("keydown", { key: "Tab", cancelable: true });
+    document.dispatchEvent(tab);
+    expect(tab.defaultPrevented).toBe(true);
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    await flushPromises();
+    expect(wrapper.find('[data-testid="leader-review-history"]').exists()).toBe(false);
+    expect(document.activeElement).toBe(opener.element);
+    wrapper.unmount();
+  });
+
+  it("maps unknown loading failures to Chinese while preserving trusted API business errors", async () => {
+    apiMock.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+    const wrapper = mount(OrganizationLeadersPage);
+    await flushPromises();
+    expect(wrapper.text()).toContain("领队资料加载失败，请稍后重试");
+    expect(wrapper.text()).not.toContain("Failed to fetch");
+    wrapper.unmount();
+
+    apiMock.mockRejectedValueOnce(new ApiErrorMock("组织访问权限已发生变化"));
+    const trusted = mount(OrganizationLeadersPage);
+    await flushPromises();
+    expect(trusted.text()).toContain("组织访问权限已发生变化");
   });
 
   it("downloads a prefilled DOCX and submits all leader fields with an authorization file", async () => {
@@ -140,5 +174,37 @@ describe("OrganizationLeadersPage", () => {
       body: JSON.stringify({ enabled: false })
     });
     expect(wrapper.text()).toContain("已停用");
+  });
+
+  it("includes a newly selected authorization document in an edit PATCH", async () => {
+    const wrapper = mount(OrganizationLeadersPage);
+    await flushPromises();
+    await wrapper.get('[data-action="edit-OL-1"]').trigger("click");
+    await wrapper.get('[data-testid="leader-name"]').setValue("张老师（新）");
+    const replacement = new File(["png"], "replacement.png", { type: "image/png" });
+    await attachFile(wrapper, '[data-testid="leader-authorization"]', replacement);
+    await wrapper.get('[data-testid="leader-form"]').trigger("submit");
+    await flushPromises();
+
+    const [, update] = apiMock.mock.calls.find(([path, request]) => path === "/api/organization/leaders/OL-1" && request?.method === "PATCH");
+    expect(update.body.get("name")).toBe("张老师（新）");
+    expect(update.body.get("authorization").name).toBe("replacement.png");
+  });
+
+  it("does not expose an unknown upload failure", async () => {
+    apiMock.mockImplementation(async (path, options = {}) => {
+      if (path === "/api/organization/leaders" && !options.method) return { rows: [] };
+      if (path === "/api/organization/leaders" && options.method === "POST") throw new Error("Failed to fetch");
+      return { rows: [] };
+    });
+    const wrapper = mount(OrganizationLeadersPage);
+    await flushPromises();
+    await wrapper.get('[data-testid="leader-name"]').setValue("李老师");
+    await wrapper.get('[data-testid="leader-phone"]').setValue("13900000002");
+    await attachFile(wrapper, '[data-testid="leader-authorization"]', new File(["pdf"], "leader.pdf", { type: "application/pdf" }));
+    await wrapper.get('[data-testid="leader-form"]').trigger("submit");
+    await flushPromises();
+    expect(wrapper.text()).toContain("领队资料提交失败，请稍后重试");
+    expect(wrapper.text()).not.toContain("Failed to fetch");
   });
 });
