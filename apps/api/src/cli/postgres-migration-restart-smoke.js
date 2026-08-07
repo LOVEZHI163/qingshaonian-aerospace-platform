@@ -1,8 +1,11 @@
 import pg from "pg";
 
 import { createPostgresStore } from "../data/postgres-store.js";
+import {
+  assertEmptySmokeDatabase,
+  parseIsolatedSmokeTarget
+} from "./postgres-migration-smoke-safety.js";
 
-const DATABASE_PREFIX = "aerogp_migration_smoke_";
 const REQUIRED_TABLES = [
   "registration_identities",
   "organization_leaders",
@@ -10,18 +13,6 @@ const REQUIRED_TABLES = [
   "organization_leader_reviews"
 ];
 const MIGRATION_NAME = "015-registration-identities-and-organization-leaders.sql";
-
-function requireIsolatedDatabase(connectionString, expectedDatabase) {
-  let actualDatabase = "";
-  try {
-    actualDatabase = decodeURIComponent(new URL(connectionString).pathname.slice(1));
-  } catch {
-    throw new Error("DATABASE_URL must identify an isolated migration smoke database");
-  }
-  if (!expectedDatabase?.startsWith(DATABASE_PREFIX) || actualDatabase !== expectedDatabase) {
-    throw new Error("DATABASE_URL must identify an isolated migration smoke database");
-  }
-}
 
 async function openStore(connectionString) {
   const pool = new pg.Pool({ connectionString, max: 2 });
@@ -36,9 +27,14 @@ async function openStore(connectionString) {
 }
 
 export async function runPostgresMigrationRestartSmoke(environment = process.env) {
-  const connectionString = environment.DATABASE_URL || "";
-  const expectedDatabase = environment.MIGRATION_SMOKE_DATABASE || "";
-  requireIsolatedDatabase(connectionString, expectedDatabase);
+  const { connectionString, databaseName } = parseIsolatedSmokeTarget(environment);
+
+  const safetyPool = new pg.Pool({ connectionString, max: 1 });
+  try {
+    await assertEmptySmokeDatabase(safetyPool, databaseName);
+  } finally {
+    await safetyPool.end();
+  }
 
   const marker = `migration-smoke-${Date.now()}-${process.pid}`;
   let first;

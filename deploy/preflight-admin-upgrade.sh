@@ -106,7 +106,24 @@ required_kb="$((uploads_kb * 2 + 1048576))"
 test "$available_kb" -gt "$required_kb" \
   || fail "available disk space must exceed twice the uploads size plus 1 GiB"
 
-smoke_database="aerogp_migration_smoke_$(date +%s)_$$"
+smoke_database_suffix="$(openssl rand -hex 16)" \
+  || fail "could not generate isolated PostgreSQL migration smoke database name"
+test "${#smoke_database_suffix}" -eq 32 \
+  || fail "isolated PostgreSQL migration smoke database suffix must contain 32 hex characters"
+case "$smoke_database_suffix" in
+  *[!0-9a-f]*) fail "isolated PostgreSQL migration smoke database suffix must contain only lowercase hex" ;;
+esac
+smoke_database="aerogp_migration_smoke_${smoke_database_suffix}"
+unset smoke_database_suffix
+
+database_names="$(docker compose exec -T postgres sh -c \
+  'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atqc "SELECT datname FROM pg_database"')" \
+  || fail "could not inspect PostgreSQL databases before migration smoke"
+if printf '%s\n' "$database_names" | grep -Fx "$smoke_database" >/dev/null; then
+  fail "isolated PostgreSQL migration smoke database already exists"
+fi
+unset database_names
+
 smoke_database_created=0
 cleanup_smoke_database() {
   if test "$smoke_database_created" = "1"; then

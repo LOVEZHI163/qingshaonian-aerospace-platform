@@ -119,7 +119,8 @@ test("upgrade preflight runs the candidate migration twice against a disposable 
     fs.readFile(path.join(root, "docs/deployment/aliyun-test.md"), "utf8")
   ]);
 
-  assert.match(preflight, /aerogp_migration_smoke_/);
+  assert.match(preflight, /openssl rand -hex 16/);
+  assert.match(preflight, /SELECT datname FROM pg_database/);
   assert.match(preflight, /createdb/);
   assert.match(preflight, /postgres-migration-restart-smoke\.js/);
   assert.match(preflight, /dropdb[^\r\n]*--force/);
@@ -131,6 +132,17 @@ test("upgrade preflight runs the candidate migration twice against a disposable 
   assert.match(guide, /docker compose build api/);
   assert.match(guide, /临时数据库/);
   assert.match(guide, /015-registration-identities-and-organization-leaders\.sql/);
+});
+
+test("documented upgrade bootstraps missing secrets before every Compose operation", async () => {
+  const guide = await fs.readFile(path.join(root, "docs/deployment/aliyun-test.md"), "utf8");
+  const upgradeBlock = shellBlockAfter(guide, "更新应用前必须先补齐缺失密钥");
+  const bootstrapIndex = upgradeBlock.indexOf("/bin/sh deploy/bootstrap-secrets.sh /opt/aerogp");
+  const composeIndex = upgradeBlock.indexOf("docker compose");
+
+  assert.notEqual(bootstrapIndex, -1);
+  assert.ok(bootstrapIndex < composeIndex, "secret bootstrap must precede the first Compose command");
+  assert.match(guide, /bootstrap-secrets\.sh[^。\r\n]*不会覆盖现有非空值/);
 });
 
 test("deployment passes optional Aliyun SMS configuration without generating credentials", async () => {

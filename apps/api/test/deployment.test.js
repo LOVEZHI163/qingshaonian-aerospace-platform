@@ -4,6 +4,11 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 
+import {
+  assertEmptySmokeDatabase,
+  parseIsolatedSmokeTarget
+} from "../src/cli/postgres-migration-smoke-safety.js";
+
 const root = path.resolve(import.meta.dirname, "../../..");
 
 function runNode(args, options = {}) {
@@ -40,13 +45,13 @@ test("remote smoke covers organization membership authentication boundaries", as
   assert.doesNotMatch(script, /docker compose exec -T db psql/);
 });
 
-test("PostgreSQL migration restart smoke refuses any non-isolated database before connecting", async () => {
+test("PostgreSQL migration restart smoke refuses a prefix lookalike before connecting", async () => {
   const result = await runNode([
     "apps/api/src/cli/postgres-migration-restart-smoke.js"
   ], {
     env: {
-      DATABASE_URL: "postgresql://aerogp:do-not-log@postgres:5432/aerogp",
-      MIGRATION_SMOKE_DATABASE: "aerogp"
+      DATABASE_URL: "postgresql://aerogp:do-not-log@127.0.0.1:1/aerogp_migration_smoke_business",
+      MIGRATION_SMOKE_DATABASE: "aerogp_migration_smoke_business"
     }
   });
 
@@ -54,4 +59,50 @@ test("PostgreSQL migration restart smoke refuses any non-isolated database befor
   assert.match(result.stderr, /isolated migration smoke database/i);
   assert.equal(result.stdout, "");
   assert.equal(`${result.stdout}${result.stderr}`.includes("do-not-log"), false);
+});
+
+test("migration smoke target requires the complete random database name format", () => {
+  const databaseName = "aerogp_migration_smoke_0123456789abcdef0123456789abcdef";
+  assert.equal(parseIsolatedSmokeTarget({
+    DATABASE_URL: `postgresql://aerogp:secret@postgres:5432/${databaseName}`,
+    MIGRATION_SMOKE_DATABASE: databaseName
+  }).databaseName, databaseName);
+
+  for (const invalidName of [
+    "aerogp_migration_smoke_business",
+    "aerogp_migration_smoke_0123456789abcdef",
+    "aerogp_migration_smoke_0123456789abcdef0123456789abcdeg",
+    "aerogp_migration_smoke_0123456789ABCDEF0123456789ABCDEF"
+  ]) {
+    assert.throws(() => parseIsolatedSmokeTarget({
+      DATABASE_URL: `postgresql://aerogp:secret@postgres:5432/${invalidName}`,
+      MIGRATION_SMOKE_DATABASE: invalidName
+    }), /isolated migration smoke database/i, invalidName);
+  }
+});
+
+test("migration smoke rejects a non-empty target before schema initialization", async () => {
+  const databaseName = "aerogp_migration_smoke_0123456789abcdef0123456789abcdef";
+  const result = (overrides = {}) => ({
+    rows: [{
+      database_name: databaseName,
+      user_table_count: 0,
+      has_schema_migrations: false,
+      ...overrides
+    }]
+  });
+
+  await assert.doesNotReject(assertEmptySmokeDatabase({ query: async () => result() }, databaseName));
+  await assert.rejects(
+    assertEmptySmokeDatabase({ query: async () => result({ user_table_count: 1 }) }, databaseName),
+    /must be empty/i
+  );
+  await assert.rejects(
+    assertEmptySmokeDatabase({ query: async () => result({ has_schema_migrations: true }) }, databaseName),
+    /must be empty/i
+  );
+  await assert.rejects(
+    assertEmptySmokeDatabase({ query: async () => result({ database_name: "aerogp" }) }, databaseName),
+    /unexpected database/i
+  );
 });

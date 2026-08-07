@@ -105,10 +105,11 @@ docker compose ps
 docker compose logs --tail=200 api web
 ```
 
-更新应用前必须先备份数据库和上传文件，构建已审核的候选 API 镜像，再运行升级预检。预检不会替换或重启当前业务容器；它会在当前 PostgreSQL 服务内创建一个随机命名的临时数据库，用候选 API 镜像执行两次初始化以模拟进程重启，验证 `015-registration-identities-and-organization-leaders.sql`、四张新增表和加密行持久化，然后无论成功失败都删除临时数据库。该 smoke 不连接或修改业务数据库：
+更新应用前必须先补齐缺失密钥、备份数据库和上传文件，构建已审核的候选 API 镜像，再运行升级预检。`bootstrap-secrets.sh` 只补齐缺失或空值，不会覆盖现有非空值。预检不会替换或重启当前业务容器；它会在当前 PostgreSQL 服务内创建一个强随机命名的临时数据库，用候选 API 镜像执行两次初始化以模拟进程重启，验证 `015-registration-identities-and-organization-leaders.sql`、四张新增表和加密行持久化，然后无论成功失败都删除临时数据库。该 smoke 不连接或修改业务数据库：
 
 ```bash
 cd /opt/aerogp
+/bin/sh deploy/bootstrap-secrets.sh /opt/aerogp
 docker compose run --rm backup /bin/sh /scripts/backup-postgres.sh once
 docker compose run --rm backup /bin/sh /scripts/backup-uploads.sh once
 docker compose build api
