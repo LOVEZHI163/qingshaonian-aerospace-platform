@@ -36,7 +36,9 @@ import {
 import { recordAudit } from "./services/audit.js";
 import { organizationForOwner } from "./services/access-control.js";
 import { publishDueScheduledContent, startScheduledContentPublisher } from "./services/scheduled-content-publisher.js";
+import { requireRegistrationIdentityEncryptionKey } from "./security/registration-identities.js";
 
+requireRegistrationIdentityEncryptionKey(process.env);
 const PORT = Number(process.env.PORT || 4300);
 const dataStore = createDataStore();
 const mutationAsyncRoute = createMutationAsyncRoute(dataStore);

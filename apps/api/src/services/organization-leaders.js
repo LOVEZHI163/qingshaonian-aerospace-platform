@@ -6,13 +6,14 @@ import { savePrivateFile } from "../files/storage.js";
 const REVIEW_DECISIONS = new Set(["approved", "rejected"]);
 
 export class OrganizationLeaderError extends Error {
-  constructor(status, message) {
+  constructor(status, message, code = "") {
     super(message);
     this.status = status;
+    if (code) this.code = code;
   }
 }
 
-const validationError = (message) => new OrganizationLeaderError(422, message);
+const validationError = (message, code = "") => new OrganizationLeaderError(422, message, code);
 
 function ensureCollections(db) {
   db.organizationLeaders ||= [];
@@ -86,7 +87,7 @@ function appendReview(db, leader, action, actor, reason = "", createdAt = timest
 }
 
 async function storeAuthorizationFile(leaderId, file) {
-  if (!file) throw validationError("授权书不能为空");
+  if (!file) throw validationError("授权书不能为空", "LEADER_AUTHORIZATION_REQUIRED");
   try {
     await validateUpload(file, ORGANIZATION_LEADER_DOCUMENT_POLICY);
   } catch (error) {
@@ -201,6 +202,10 @@ export async function updateOrganizationLeader(db, leaderId, input, actor) {
 export function reviewOrganizationLeader(db, leaderId, decision, actor) {
   ensureCollections(db);
   const leader = findLeader(db, leaderId);
+  if (decision?.submissionVersion !== undefined
+    && Number(decision.submissionVersion) !== Number(leader.submissionVersion)) {
+    throw new OrganizationLeaderError(409, "领队资料已更新，请刷新后重新审核", "LEADER_REVIEW_PENDING");
+  }
   const status = String(decision?.status || decision?.action || "").trim();
   if (!REVIEW_DECISIONS.has(status)) throw validationError("审核状态无效");
   const reason = optionalText(decision?.reason);

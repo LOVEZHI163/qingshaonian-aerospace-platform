@@ -93,6 +93,28 @@ test("leader name, phone, and authorization document are required", async () => 
   });
 });
 
+test("leader domain errors expose stable authorization and pending-review codes", async () => {
+  await withUploadRoot(async () => {
+    await assert.rejects(
+      () => createOrganizationLeader(dbFixture(), {
+        organizationId: "organization-1", name: "张老师", phone: "13800000000"
+      }, actor),
+      (error) => error.status === 422 && error.code === "LEADER_AUTHORIZATION_REQUIRED"
+    );
+
+    const db = dbFixture();
+    const { leader } = await createOrganizationLeader(db, {
+      organizationId: "organization-1", name: "张老师", phone: "13800000000", authorizationFile: file()
+    }, actor);
+    assert.throws(
+      () => reviewOrganizationLeader(db, leader.id, {
+        status: "approved", submissionVersion: leader.submissionVersion - 1
+      }, reviewer),
+      (error) => error.status === 409 && error.code === "LEADER_REVIEW_PENDING"
+    );
+  });
+});
+
 test("leader authorization policy accepts PDF, JPEG and PNG signatures up to 10 MB", async () => {
   await assert.doesNotReject(() => validateUpload(file(pdfBuffer), ORGANIZATION_LEADER_DOCUMENT_POLICY));
   await assert.doesNotReject(() => validateUpload(file(pngBuffer, "授权书.png"), ORGANIZATION_LEADER_DOCUMENT_POLICY));

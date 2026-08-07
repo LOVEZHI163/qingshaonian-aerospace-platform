@@ -11,14 +11,18 @@ function identityValidationError() {
   return new Error("身份证号校验失败");
 }
 
-function readEncryptionKey() {
-  const encoded = process.env.REGISTRATION_ID_ENCRYPTION_KEY;
+export function requireRegistrationIdentityEncryptionKey(env = process.env) {
+  const encoded = env.REGISTRATION_ID_ENCRYPTION_KEY;
   if (!encoded) throw new Error("REGISTRATION_ID_ENCRYPTION_KEY is required");
   if (!BASE64.test(encoded)) throw new Error("REGISTRATION_ID_ENCRYPTION_KEY must be valid base64");
   const key = Buffer.from(encoded, "base64");
   if (key.toString("base64") !== encoded) throw new Error("REGISTRATION_ID_ENCRYPTION_KEY must be valid base64");
   if (key.length !== 32) throw new Error("REGISTRATION_ID_ENCRYPTION_KEY must decode to exactly 32 bytes");
   return key;
+}
+
+function readEncryptionKey() {
+  return requireRegistrationIdentityEncryptionKey(process.env);
 }
 
 function decodeCiphertextPart(value, expectedLength) {

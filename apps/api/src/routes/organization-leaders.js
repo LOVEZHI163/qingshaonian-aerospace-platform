@@ -48,7 +48,7 @@ function leaderOrError(db, leaderId) {
 function organizationLeaderOrError(db, organization, leaderId) {
   const leader = leaderOrError(db, leaderId);
   if (leader.organizationId !== organization.id) {
-    throw new OrganizationLeaderError(403, "无权管理其他组织的领队");
+    throw new OrganizationLeaderError(403, "无权管理其他组织的领队", "LEADER_ACCESS_DENIED");
   }
   return leader;
 }
@@ -56,7 +56,7 @@ function organizationLeaderOrError(db, organization, leaderId) {
 function revalidateOrganizationAccess(db, req) {
   const organization = requireOrganizationAccess(db, req.user);
   if (organization.id !== req[AUTHORIZED_ORGANIZATION]?.id) {
-    throw new OrganizationLeaderError(403, "组织访问权限已发生变化");
+    throw new OrganizationLeaderError(403, "组织访问权限已发生变化", "LEADER_ACCESS_DENIED");
   }
   return organization;
 }
@@ -64,7 +64,7 @@ function revalidateOrganizationAccess(db, req) {
 function revalidateOrganizationLeaderAccess(db, organization, req) {
   const leader = organizationLeaderOrError(db, organization, req.params.leaderId);
   if (leader.id !== req[AUTHORIZED_LEADER]?.id) {
-    throw new OrganizationLeaderError(403, "领队访问权限已发生变化");
+    throw new OrganizationLeaderError(403, "领队访问权限已发生变化", "LEADER_ACCESS_DENIED");
   }
   return leader;
 }
@@ -263,7 +263,7 @@ export function createOrganizationLeadersRouter({
       const leader = revalidateOrganizationLeaderAccess(db, organization, req);
       const input = { ...(req.body || {}), ...(req.file ? { authorizationFile: req.file } : {}) };
       if (sensitiveDetailsChanged(leader, input) && !req.file) {
-        throw new OrganizationLeaderError(422, "修改姓名或手机号时必须上传新的授权书");
+        throw new OrganizationLeaderError(422, "修改姓名或手机号时必须上传新的授权书", "LEADER_AUTHORIZATION_REQUIRED");
       }
       const result = await persistLeaderMutation({
         store, db, rollbackDb, removePrivateFile, writeCleanupFallback, makeId, now,
@@ -297,7 +297,7 @@ export function createOrganizationLeadersRouter({
         : revalidateOrganizationLeaderAccess(db, organization, req);
       if (req.user.type !== "admin") {
         if (leader.organizationId !== organization.id) {
-          throw new OrganizationLeaderError(403, "无权下载其他组织的授权书");
+          throw new OrganizationLeaderError(403, "无权下载其他组织的授权书", "LEADER_ACCESS_DENIED");
         }
       }
       const document = (db.organizationLeaderDocuments || []).find((row) => (
@@ -332,6 +332,14 @@ export function createOrganizationLeadersRouter({
       if (req.query.organizationId) rows = rows.filter((row) => row.organizationId === req.query.organizationId);
       if (req.query.reviewStatus) rows = rows.filter((row) => row.reviewStatus === req.query.reviewStatus);
       if (enabled !== null) rows = rows.filter((row) => row.enabled === enabled);
+      const keyword = String(req.query.q || "").trim().replace(/\s+/g, "").toLowerCase();
+      if (keyword) {
+        rows = rows.filter((row) => {
+          const organization = db.organizations.find((item) => item.id === row.organizationId);
+          return [organization?.name, row.name, row.phone]
+            .some((value) => String(value || "").replace(/\s+/g, "").toLowerCase().includes(keyword));
+        });
+      }
       res.json({ rows: rows.map((leader) => leaderPayload(db, leader)) });
     } catch (error) { respondError(error, res, next); }
   }));
@@ -341,7 +349,8 @@ export function createOrganizationLeadersRouter({
       const db = await store.readDb();
       const result = reviewOrganizationLeader(db, req.params.leaderId, {
         status: req.body?.decision,
-        reason: req.body?.reason
+        reason: req.body?.reason,
+        submissionVersion: req.body?.submissionVersion
       }, req.user);
       await store.writeDb(db);
       res.json({ row: leaderPayload(db, result.leader), review: publicReview(result.review) });

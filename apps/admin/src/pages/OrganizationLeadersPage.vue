@@ -1,10 +1,10 @@
 <script setup>
-import { onBeforeUnmount, onMounted, reactive, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from "vue";
 
 import AccessibleDialog from "../components/AccessibleDialog.vue";
 import { api, apiBlob } from "../lib/api.js";
 import { createBlobDownloadManager } from "../lib/download.js";
-import { userFacingError } from "../lib/user-facing-error.js";
+import { leaderUserFacingError } from "../lib/leader-error.js";
 
 const leaders = ref([]);
 const loading = ref(false);
@@ -18,6 +18,7 @@ const historyRows = ref([]);
 const historyLoading = ref(false);
 const fileInput = ref(null);
 const downloads = createBlobDownloadManager();
+const validLeaderCount = computed(() => leaders.value.filter((row) => row.reviewStatus === "approved" && row.enabled === true).length);
 
 const emptyForm = () => ({ name: "", phone: "", email: "", notes: "" });
 const form = reactive(emptyForm());
@@ -57,7 +58,7 @@ async function loadLeaders() {
     const payload = await api("/api/organization/leaders");
     leaders.value = payload.rows || [];
   } catch (cause) {
-    error.value = userFacingError(cause, "领队资料加载失败，请稍后重试");
+    error.value = leaderUserFacingError(cause, "领队资料加载失败，请稍后重试");
   } finally {
     loading.value = false;
   }
@@ -77,7 +78,7 @@ async function downloadTemplate() {
     });
     downloads.save(blob, "组织领队授权书.docx");
   } catch (cause) {
-    error.value = userFacingError(cause, "授权书模板下载失败，请稍后重试");
+    error.value = leaderUserFacingError(cause, "授权书模板下载失败，请稍后重试");
   }
 }
 
@@ -88,7 +89,7 @@ async function downloadAuthorization(row) {
     const blob = await apiBlob(`/api/organization/leaders/${row.id}/authorization/${row.document.id}`);
     downloads.save(blob, row.document.originalName || "领队授权书");
   } catch (cause) {
-    error.value = userFacingError(cause, "授权书下载失败，请稍后重试");
+    error.value = leaderUserFacingError(cause, "授权书下载失败，请稍后重试");
   }
 }
 
@@ -118,7 +119,7 @@ async function submitLeader() {
     success.value = leaderId ? "领队资料已更新" : "领队资料已提交审核";
     resetForm();
   } catch (cause) {
-    error.value = userFacingError(cause, "领队资料提交失败，请稍后重试");
+    error.value = leaderUserFacingError(cause, "领队资料提交失败，请稍后重试");
   } finally {
     saving.value = false;
   }
@@ -137,7 +138,7 @@ async function setEnabled(row, enabled) {
     replaceLeader(payload.row);
     success.value = enabled ? "领队已启用" : "领队已停用";
   } catch (cause) {
-    error.value = userFacingError(cause, "领队启停操作失败，请稍后重试");
+    error.value = leaderUserFacingError(cause, "领队启停操作失败，请稍后重试");
   } finally {
     saving.value = false;
   }
@@ -152,7 +153,7 @@ async function openHistory(row) {
     const payload = await api(`/api/organization/leaders/${row.id}/reviews`);
     historyRows.value = payload.rows || [];
   } catch (cause) {
-    error.value = userFacingError(cause, "审核历史加载失败，请稍后重试");
+    error.value = leaderUserFacingError(cause, "审核历史加载失败，请稍后重试");
   } finally {
     historyLoading.value = false;
   }
@@ -179,6 +180,7 @@ onBeforeUnmount(() => downloads.dispose());
     </div>
 
     <section class="panel leader-guidance" aria-label="领队资料修改说明">
+      <p data-testid="leader-eligibility-summary"><strong>{{ validLeaderCount > 0 ? `已有 ${validLeaderCount} 名有效领队，可正常报名` : "当前无有效领队，暂不能新增报名" }}</strong></p>
       <h3>资料修改说明</h3>
       <ul>
         <li>姓名、手机或授权书变化会重新审核。</li>

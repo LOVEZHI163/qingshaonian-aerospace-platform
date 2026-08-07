@@ -217,6 +217,7 @@ test("organization owners manage only their own leaders and protected authorizat
     })));
     assert.equal(missingReplacement.response.status, 422);
     assert.match(missingReplacement.payload.error, /授权书/);
+    assert.equal(missingReplacement.payload.code, "LEADER_AUTHORIZATION_REQUIRED");
 
     const replacement = authorizationForm({ name: "王老师" });
     const updated = await json(await fetch(`${baseUrl}/api/organization/leaders/${leaderId}`, withSession(owner.cookie, {
@@ -240,6 +241,7 @@ test("organization owners manage only their own leaders and protected authorizat
       body: JSON.stringify({ enabled: false })
     }));
     assert.equal(foreignPatch.status, 403);
+    assert.equal((await foreignPatch.json()).code, "LEADER_ACCESS_DENIED");
 
     const reviews = await json(await fetch(`${baseUrl}/api/organization/leaders/${leaderId}/reviews`, withSession(owner.cookie)));
     assert.equal(reviews.response.status, 200);
@@ -271,6 +273,18 @@ test("platform administrators filter, review, and enable leaders globally", asyn
     assert.deepEqual(new Set(pending.payload.rows.map((row) => row.id)), new Set([first.row.id, second.row.id]));
     const byOrganization = await json(await fetch(`${baseUrl}/api/admin/organization-leaders?organizationId=O1002`, withSession(admin.cookie)));
     assert.deepEqual(byOrganization.payload.rows.map((row) => row.id), [second.row.id]);
+    const byNormalizedOrganizationName = await json(await fetch(`${baseUrl}/api/admin/organization-leaders?q=%20%E6%B8%A9%E5%B7%9E%20%E5%B8%82%20`, withSession(admin.cookie)));
+    assert.deepEqual(byNormalizedOrganizationName.payload.rows.map((row) => row.id), [first.row.id]);
+    const byNormalizedPhone = await json(await fetch(`${baseUrl}/api/admin/organization-leaders?q=138%200000%209222`, withSession(admin.cookie)));
+    assert.deepEqual(byNormalizedPhone.payload.rows.map((row) => row.id), [second.row.id]);
+
+    const staleReview = await json(await fetch(`${baseUrl}/api/admin/organization-leaders/${first.row.id}/review`, withSession(admin.cookie, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ decision: "approved", submissionVersion: 0 })
+    })));
+    assert.equal(staleReview.response.status, 409);
+    assert.equal(staleReview.payload.code, "LEADER_REVIEW_PENDING");
 
     const noReason = await json(await fetch(`${baseUrl}/api/admin/organization-leaders/${first.row.id}/review`, withSession(admin.cookie, {
       method: "PATCH",

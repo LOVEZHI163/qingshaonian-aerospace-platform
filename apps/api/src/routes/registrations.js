@@ -4,6 +4,7 @@ import { deleteSubmissionFile } from "../files/submission-storage.js";
 import { MAX_CERTIFICATE_ROWS } from "../certificates/workbook-parser.js";
 import { buildCertificateTemplate } from "../certificates/template.js";
 import { buildBoundRegistrationWorkbook, contentDisposition } from "../exports/registration-workbook.js";
+import { sendPrivateJson, setPrivateNoStore } from "../http/private-response.js";
 
 import {
   attachAuthorizedIdentity,
@@ -52,7 +53,7 @@ export function createRegistrationsRouter({
   router.get("/organization/registrations", ...user, asyncRoute(async (req, res) => {
     const db = await store.readDb();
     const organization = requireOrganizationAccess(db, req.user);
-    res.json(listOrganizationRegistrations(db, organization.id, req.query, clock));
+    sendPrivateJson(res, listOrganizationRegistrations(db, organization.id, req.query, clock));
   }));
 
   function eventScopedInput(req) {
@@ -126,7 +127,7 @@ export function createRegistrationsRouter({
     const rows = db.registrations
       .filter((row) => row.personalUserId === req.user.id)
       .map((row) => attachAuthorizedIdentity(db, withEventSummary(db, row), req.user));
-    res.json({ rows });
+    sendPrivateJson(res, { rows });
   }));
 
   router.get("/me/events/:eventId/registrations", ...user, asyncRoute(async (req, res) => {
@@ -135,7 +136,7 @@ export function createRegistrationsRouter({
     if (!db.events.some((event) => event.id === req.params.eventId)) {
       return res.status(404).json({ error: "Event not found", code: "EVENT_NOT_AVAILABLE" });
     }
-    res.json({ rows: db.registrations.filter((row) => (
+    sendPrivateJson(res, { rows: db.registrations.filter((row) => (
       row.eventId === req.params.eventId && row.personalUserId === req.user.id
     )).map((row) => registrationResponse(db, row, req.user)) });
   }));
@@ -150,13 +151,13 @@ export function createRegistrationsRouter({
       commitUploadSession({ db, sessionId: input.uploadSessionId, registration: result.row, actor: req.user, channel: "personal", now });
     }
     await store.writeDb(db);
-    res.status(result.created ? 201 : 200).json({ ...result, row: registrationResponse(db, result.row, req.user) });
+    sendPrivateJson(res, { ...result, row: registrationResponse(db, result.row, req.user) }, { status: result.created ? 201 : 200 });
   }));
 
   router.get("/organization/events/:eventId/registrations", ...user, asyncRoute(async (req, res) => {
     const db = await store.readDb();
     const { organization } = requireOrganizationEventParticipation(db, req.user, req.params.eventId);
-    res.json({ rows: db.registrations.filter((row) => (
+    sendPrivateJson(res, { rows: db.registrations.filter((row) => (
       row.eventId === req.params.eventId && row.organizationId === organization.id
     )).map((row) => registrationResponse(db, row, req.user)) });
   }));
@@ -168,6 +169,7 @@ export function createRegistrationsRouter({
       .filter((row) => row.eventId === event.id && row.organizationId === organization.id)
       .map((row) => attachAuthorizedIdentity(db, row, req.user));
     const workbook = buildBoundRegistrationWorkbook(rows);
+    setPrivateNoStore(res);
     res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
     res.setHeader("Content-Disposition", contentDisposition(`${event.name}_${organization.name}_报名名单.xlsx`));
     await workbook.xlsx.write(res);
@@ -183,7 +185,7 @@ export function createRegistrationsRouter({
       commitUploadSession({ db, sessionId: input.uploadSessionId, registration: result.row, actor: req.user, channel: "organization", now });
     }
     await store.writeDb(db);
-    res.status(result.created ? 201 : 200).json({ ...result, row: registrationResponse(db, result.row, req.user) });
+    sendPrivateJson(res, { ...result, row: registrationResponse(db, result.row, req.user) }, { status: result.created ? 201 : 200 });
   }));
 
   function replaceAsset(channel, middleware) {
@@ -206,7 +208,7 @@ export function createRegistrationsRouter({
         throw error;
       }
       await cleanOldRegistrationAsset(db, replacement.previous);
-      res.json({ row: submissionAssetSummary(replacement.asset), registration: registrationResponse(db, registration, req.user) });
+      sendPrivateJson(res, { row: submissionAssetSummary(replacement.asset), registration: registrationResponse(db, registration, req.user) });
     })];
   }
 
@@ -241,7 +243,7 @@ export function createRegistrationsRouter({
     applyRegistrationUpdate(row, prepared, timestamp);
     updateExistingRegistrationIdentity(db, row.id, req.body, timestamp);
     await store.writeDb(db);
-    res.json({ row: registrationResponse(db, row, req.user) });
+    sendPrivateJson(res, { row: registrationResponse(db, row, req.user) });
   }));
 
   router.patch("/organization/events/:eventId/registrations/:registrationId", ...user, asyncRoute(async (req, res) => {
@@ -257,7 +259,7 @@ export function createRegistrationsRouter({
     applyRegistrationUpdate(row, prepared, timestamp);
     updateExistingRegistrationIdentity(db, row.id, req.body, timestamp);
     await store.writeDb(db);
-    res.json({ row: registrationResponse(db, row, req.user) });
+    sendPrivateJson(res, { row: registrationResponse(db, row, req.user) });
   }));
 
   router.patch("/me/events/:eventId/registrations/:registrationId/status", ...user, asyncRoute(async (req, res) => {
@@ -270,7 +272,7 @@ export function createRegistrationsRouter({
     updateRegistrationStatus(db, row, req.body, req.user);
     row.updatedAt = now();
     await store.writeDb(db);
-    res.json({ row: registrationResponse(db, row, req.user) });
+    sendPrivateJson(res, { row: registrationResponse(db, row, req.user) });
   }));
 
   router.patch("/admin/events/:eventId/registrations/:registrationId/status", ...admin, asyncRoute(async (req, res) => {
@@ -295,7 +297,7 @@ export function createRegistrationsRouter({
       createdAt: row.updatedAt
     });
     await store.writeDb(db);
-    res.json({ row: registrationResponse(db, row, req.user) });
+    sendPrivateJson(res, { row: registrationResponse(db, row, req.user) });
   }));
 
   router.patch("/admin/events/:eventId/registrations/:registrationId", ...admin, asyncRoute(async (req, res) => {
@@ -308,7 +310,7 @@ export function createRegistrationsRouter({
     applyRegistrationUpdate(row, prepared, timestamp);
     updateExistingRegistrationIdentity(db, row.id, req.body, timestamp);
     await store.writeDb(db);
-    res.json({ row: registrationResponse(db, row, req.user) });
+    sendPrivateJson(res, { row: registrationResponse(db, row, req.user) });
   }));
 
   router.post("/admin/events/:eventId/registrations/:registrationId/result", ...admin, asyncRoute(async (req, res) => {
@@ -329,7 +331,7 @@ export function createRegistrationsRouter({
       certificate.updatedAt = row.updatedAt;
     }
     await store.writeDb(db);
-    res.json({
+    sendPrivateJson(res, {
       row: registrationResponse(db, row, req.user),
       certificates: certificates.map(({ filePath, storedName, ...certificate }) => certificate)
     });
@@ -343,7 +345,7 @@ export function createRegistrationsRouter({
       const submission = await registrationSubmissionAvailability(db, row);
       if (submission) row.submission = submission;
     }));
-    res.json(payload);
+    sendPrivateJson(res, payload);
   }));
 
   router.get("/admin/events/:eventId/registrations/export.xlsx", ...admin, asyncRoute(async (req, res) => {
@@ -355,6 +357,7 @@ export function createRegistrationsRouter({
     const workbook = buildBoundRegistrationWorkbook(filterAdminRegistrations(db, query).map((row) => attachAuthorizedIdentity(db, row, req.user)));
     const suffix = scope === "all" ? "全部名单" : "筛选名单";
     const fileName = `报名${suffix}.xlsx`;
+    setPrivateNoStore(res);
     res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
     res.setHeader("Content-Disposition", contentDisposition(fileName));
     await workbook.xlsx.write(res);

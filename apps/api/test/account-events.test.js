@@ -152,6 +152,7 @@ test("an organization workspace and export are scoped to its joined event", asyn
       withSession(owner.cookie)
     );
     assert.equal(exported.status, 200);
+    assert.equal(exported.headers.get("cache-control"), "private, no-store");
     assert.match(exported.headers.get("content-type") || "", /spreadsheetml/);
   }, { prefix: "account-events-workspace-" });
 });

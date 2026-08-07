@@ -2,7 +2,9 @@ import { flushPromises, mount } from "@vue/test-utils";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { apiMock, apiBlobMock, ApiErrorMock } = vi.hoisted(() => {
-  class ApiErrorMock extends Error { constructor(message) { super(message); this.name = "ApiError"; } }
+  class ApiErrorMock extends Error {
+    constructor(message, { code = "" } = {}) { super(message); this.name = "ApiError"; this.code = code; }
+  }
   return { apiMock: vi.fn(), apiBlobMock: vi.fn(), ApiErrorMock };
 });
 vi.mock("../../lib/api.js", () => ({ api: apiMock, apiBlob: apiBlobMock, ApiError: ApiErrorMock }));
@@ -20,6 +22,7 @@ const pendingLeader = {
   reviewStatus: "pending",
   rejectionReason: "",
   enabled: true,
+  submissionVersion: 3,
   document: { id: "OLD-9", originalName: "授权书.pdf", mimeType: "application/pdf", sizeBytes: 4096 }
 };
 
@@ -52,18 +55,20 @@ describe("AdminLeaderReviewPage", () => {
     vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
   });
 
-  it("filters leaders by organization and status through the platform API", async () => {
+  it("filters leaders by organization, status and normalized keyword while displaying submission versions", async () => {
     const wrapper = mount(AdminLeaderReviewPage);
     await flushPromises();
     expect(wrapper.text()).toContain("温州市实验小学");
     expect(wrapper.text()).toContain("王老师");
+    expect(wrapper.text()).toContain("第 3 版");
 
     await wrapper.get('[data-testid="organization-filter"]').setValue("O9");
     await wrapper.get('[data-testid="status-filter"]').setValue("pending");
+    await wrapper.get('[data-testid="keyword-filter"]').setValue(" 温州 市 ");
     await wrapper.get('[data-testid="leader-filter-form"]').trigger("submit");
     await flushPromises();
 
-    expect(apiMock).toHaveBeenCalledWith("/api/admin/organization-leaders?organizationId=O9&reviewStatus=pending");
+    expect(apiMock).toHaveBeenCalledWith("/api/admin/organization-leaders?organizationId=O9&reviewStatus=pending&q=%E6%B8%A9%E5%B7%9E+%E5%B8%82");
   });
 
   it("previews, downloads and closes a protected authorization document", async () => {
@@ -113,7 +118,7 @@ describe("AdminLeaderReviewPage", () => {
     await flushPromises();
     expect(apiMock).toHaveBeenCalledWith("/api/admin/organization-leaders/OL-9/review", {
       method: "PATCH",
-      body: JSON.stringify({ decision: "approved", reason: "" })
+      body: JSON.stringify({ decision: "approved", reason: "", submissionVersion: 3 })
     });
 
     await wrapper.get('[data-action="disable-OL-9"]').trigger("click");
@@ -153,7 +158,7 @@ describe("AdminLeaderReviewPage", () => {
     await flushPromises();
     expect(apiMock).toHaveBeenCalledWith("/api/admin/organization-leaders/OL-9/review", {
       method: "PATCH",
-      body: JSON.stringify({ decision: "rejected", reason: "授权书缺少公章" })
+      body: JSON.stringify({ decision: "rejected", reason: "授权书缺少公章", submissionVersion: 3 })
     });
     wrapper.unmount();
   });
@@ -177,5 +182,21 @@ describe("AdminLeaderReviewPage", () => {
     await flushPromises();
     expect(reviewPage.text()).toContain("领队审核失败，请稍后重试");
     expect(reviewPage.text()).not.toContain("Network request failed");
+  });
+
+  it("branches on stable pending-review codes instead of backend message text", async () => {
+    apiMock.mockImplementation(async (path, options = {}) => {
+      if (path === "/api/admin/organization-leaders" && !options.method) return { rows: [pendingLeader] };
+      if (path === "/api/admin/organization-leaders/OL-9/review") {
+        throw new ApiErrorMock("English backend text", { code: "LEADER_REVIEW_PENDING" });
+      }
+      return { rows: [] };
+    });
+    const wrapper = mount(AdminLeaderReviewPage);
+    await flushPromises();
+    await wrapper.get('[data-action="approve-OL-9"]').trigger("click");
+    await flushPromises();
+    expect(wrapper.text()).toContain("领队资料已更新，请刷新后重新审核");
+    expect(wrapper.text()).not.toContain("English backend text");
   });
 });

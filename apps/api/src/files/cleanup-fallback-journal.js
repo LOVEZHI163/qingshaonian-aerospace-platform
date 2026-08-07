@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { createHash } from "node:crypto";
 
 const FALLBACK_DIRECTORY = ".cleanup-journal";
 const LEADER_FALLBACK_FILE = "organization-leader-orphans.jsonl";
@@ -54,20 +55,64 @@ async function readFallbackEntries(fileSystem) {
   try {
     contents = await fileSystem.readFile(filePath, "utf8");
   } catch (error) {
-    if (error?.code === "ENOENT") return { filePath, entries: [] };
+    if (error?.code === "ENOENT") return { filePath, entries: [], corrupt: [] };
     throw error;
   }
-  const entries = contents
-    .split("\n")
-    .filter((line) => line.trim())
-    .map((line) => fallbackMarker(JSON.parse(line)));
-  return { filePath, entries };
+  const entries = [];
+  const corrupt = [];
+  for (const [index, line] of contents.split("\n").entries()) {
+    if (!line.trim()) continue;
+    try {
+      entries.push(fallbackMarker(JSON.parse(line)));
+    } catch (error) {
+      corrupt.push({ line, lineNumber: index + 1, error: String(error?.message || error) });
+    }
+  }
+  return { filePath, entries, corrupt };
 }
 
-export async function importLeaderCleanupFallbackJournal({ store, fileSystem = fs }) {
+async function quarantineCorruptEntries(fileSystem, filePath, corrupt) {
+  const evidence = `${corrupt.map((entry) => entry.line).join("\n")}\n`;
+  const digest = createHash("sha256").update(evidence).digest("hex").slice(0, 16);
+  const quarantinePath = `${filePath}.corrupt-${digest}.jsonl`;
+  let handle;
+  let created = false;
+  let writeError = null;
+  try {
+    handle = await fileSystem.open(quarantinePath, "wx", 0o600);
+    created = true;
+    await handle.writeFile(evidence, "utf8");
+    await handle.sync();
+  } catch (error) {
+    writeError = error;
+  } finally {
+    await handle?.close();
+  }
+  if (writeError?.code === "EEXIST") {
+    const existing = await fileSystem.readFile(quarantinePath, "utf8");
+    if (existing !== evidence) throw new Error("Cleanup fallback quarantine evidence mismatch");
+  } else if (writeError) {
+    if (created) await fileSystem.rm(quarantinePath, { force: true }).catch(() => {});
+    throw writeError;
+  }
+  return quarantinePath;
+}
+
+export async function importLeaderCleanupFallbackJournal({ store, fileSystem = fs, logger = console }) {
   const importEntries = async () => {
-    const { filePath, entries } = await readFallbackEntries(fileSystem);
-    if (!entries.length) return { imported: 0, duplicates: 0 };
+    const { filePath, entries, corrupt } = await readFallbackEntries(fileSystem);
+    if (!entries.length && !corrupt.length) return { imported: 0, duplicates: 0 };
+    let quarantinePath = "";
+    if (corrupt.length) {
+      quarantinePath = await quarantineCorruptEntries(fileSystem, filePath, corrupt);
+      try {
+        logger?.warn?.("Corrupt cleanup fallback records quarantined; inspect the quarantine file before deleting it", {
+          journalPath: filePath,
+          quarantinePath,
+          corruptLineNumbers: corrupt.map((entry) => entry.lineNumber)
+        });
+      } catch { /* logging must not block recovery after evidence is durable */ }
+    }
     const db = await store.readDb();
     db.fileCleanupJournal ||= [];
     const knownIds = new Set(db.fileCleanupJournal.map((row) => row.id));
@@ -86,7 +131,11 @@ export async function importLeaderCleanupFallbackJournal({ store, fileSystem = f
     }
     if (imported) await store.writeDb(db);
     await fileSystem.rm(filePath, { force: true });
-    return { imported, duplicates };
+    return {
+      imported,
+      duplicates,
+      ...(corrupt.length ? { quarantined: corrupt.length } : {})
+    };
   };
   return store.withMutationLock ? store.withMutationLock(importEntries) : importEntries();
 }

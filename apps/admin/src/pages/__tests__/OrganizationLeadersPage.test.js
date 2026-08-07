@@ -2,7 +2,9 @@ import { flushPromises, mount } from "@vue/test-utils";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { apiMock, apiBlobMock, ApiErrorMock } = vi.hoisted(() => {
-  class ApiErrorMock extends Error { constructor(message) { super(message); this.name = "ApiError"; } }
+  class ApiErrorMock extends Error {
+    constructor(message, { code = "" } = {}) { super(message); this.name = "ApiError"; this.code = code; }
+  }
   return { apiMock: vi.fn(), apiBlobMock: vi.fn(), ApiErrorMock };
 });
 vi.mock("../../lib/api.js", () => ({ api: apiMock, apiBlob: apiBlobMock, ApiError: ApiErrorMock }));
@@ -26,6 +28,14 @@ const rejectedLeader = {
     mimeType: "application/pdf",
     sizeBytes: 2048
   }
+};
+const approvedLeader = {
+  ...rejectedLeader,
+  id: "OL-APPROVED",
+  name: "李老师",
+  reviewStatus: "approved",
+  rejectionReason: "",
+  enabled: true
 };
 
 function installApi() {
@@ -102,6 +112,13 @@ describe("OrganizationLeadersPage", () => {
     expect(wrapper.find('[data-testid="leader-review-history"]').exists()).toBe(false);
     expect(document.activeElement).toBe(opener.element);
     wrapper.unmount();
+  });
+
+  it("summarizes the approved and enabled leader count and current registration eligibility", async () => {
+    apiMock.mockResolvedValueOnce({ rows: [rejectedLeader, approvedLeader] });
+    const wrapper = mount(OrganizationLeadersPage);
+    await flushPromises();
+    expect(wrapper.get('[data-testid="leader-eligibility-summary"]').text()).toContain("已有 1 名有效领队，可正常报名");
   });
 
   it("maps unknown loading failures to Chinese while preserving trusted API business errors", async () => {
@@ -206,5 +223,24 @@ describe("OrganizationLeadersPage", () => {
     await flushPromises();
     expect(wrapper.text()).toContain("领队资料提交失败，请稍后重试");
     expect(wrapper.text()).not.toContain("Failed to fetch");
+  });
+
+  it("branches on stable authorization codes instead of backend message text", async () => {
+    apiMock.mockImplementation(async (path, options = {}) => {
+      if (path === "/api/organization/leaders" && !options.method) return { rows: [] };
+      if (path === "/api/organization/leaders" && options.method === "POST") {
+        throw new ApiErrorMock("English backend text", { code: "LEADER_AUTHORIZATION_REQUIRED" });
+      }
+      return { rows: [] };
+    });
+    const wrapper = mount(OrganizationLeadersPage);
+    await flushPromises();
+    await wrapper.get('[data-testid="leader-name"]').setValue("李老师");
+    await wrapper.get('[data-testid="leader-phone"]').setValue("13900000002");
+    await attachFile(wrapper, '[data-testid="leader-authorization"]', new File(["pdf"], "leader.pdf", { type: "application/pdf" }));
+    await wrapper.get('[data-testid="leader-form"]').trigger("submit");
+    await flushPromises();
+    expect(wrapper.text()).toContain("请上传领队授权书后再提交");
+    expect(wrapper.text()).not.toContain("English backend text");
   });
 });

@@ -73,10 +73,12 @@ test("administrator and organization exports include authorized identity text wi
     assert.equal(createdResponse.status, 201);
     const createdRegistrationId = (await createdResponse.json()).row.id;
 
-    const adminWorkbook = await loadWorkbook(await fetch(
+    const adminResponse = await fetch(
       `${baseUrl}/api/admin/events/${eventId}/registrations/export.xlsx?scope=all`,
       withSession(admin.cookie)
-    ));
+    );
+    assert.equal(adminResponse.headers.get("cache-control"), "private, no-store");
+    const adminWorkbook = await loadWorkbook(adminResponse);
     const adminSheet = adminWorkbook.getWorksheet("报名名单");
     const adminCreatedRow = rowNumberForRegistration(adminSheet, createdRegistrationId);
     const adminLegacyRow = rowNumberForRegistration(adminSheet, "R20260627001");
@@ -86,6 +88,7 @@ test("administrator and organization exports include authorized identity text wi
       withSession(organization.cookie)
     );
     assert.equal(organizationResponse.status, 200);
+    assert.equal(organizationResponse.headers.get("cache-control"), "private, no-store");
     assert.notEqual(adminCreatedRow, null);
     assert.notEqual(adminLegacyRow, null);
     assert.equal(adminSheet.getCell("I1").value, "学生身份证号");

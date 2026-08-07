@@ -110,6 +110,7 @@ test("a new identity is encrypted once and visible only to the owner, its organi
       body: JSON.stringify(registrationBody(personal.user, { studentIdNumber: validId }))
     }));
     assert.equal(createdResponse.status, 201);
+    assert.equal(createdResponse.headers.get("cache-control"), "private, no-store");
     const created = await readJson(createdResponse);
     assert.equal(created.row.studentIdNumber, validId);
 
@@ -119,11 +120,17 @@ test("a new identity is encrypted once and visible only to the owner, its organi
     assert.equal(JSON.stringify(stored.registrationIdentities).includes(validId), false);
     assert.equal(Object.hasOwn(stored.registrations.find((row) => row.id === created.row.id), "studentIdNumber"), false);
 
-    const ownerRows = await readJson(await fetch(`${baseUrl}/api/me/events/${eventId}/registrations`, withSession(personal.cookie)));
+    const ownerRowsResponse = await fetch(`${baseUrl}/api/me/events/${eventId}/registrations`, withSession(personal.cookie));
+    assert.equal(ownerRowsResponse.headers.get("cache-control"), "private, no-store");
+    const ownerRows = await readJson(ownerRowsResponse);
     assert.equal(ownerRows.rows.find((row) => row.id === created.row.id).studentIdNumber, validId);
-    const organizationRows = await readJson(await fetch(`${baseUrl}/api/organization/events/${eventId}/registrations`, withSession(ownerOne.cookie)));
+    const organizationRowsResponse = await fetch(`${baseUrl}/api/organization/events/${eventId}/registrations`, withSession(ownerOne.cookie));
+    assert.equal(organizationRowsResponse.headers.get("cache-control"), "private, no-store");
+    const organizationRows = await readJson(organizationRowsResponse);
     assert.equal(organizationRows.rows.find((row) => row.id === created.row.id).studentIdNumber, validId);
-    const adminRows = await readJson(await fetch(`${baseUrl}/api/admin/events/${eventId}/registrations`, withSession(admin.cookie)));
+    const adminRowsResponse = await fetch(`${baseUrl}/api/admin/events/${eventId}/registrations`, withSession(admin.cookie));
+    assert.equal(adminRowsResponse.headers.get("cache-control"), "private, no-store");
+    const adminRows = await readJson(adminRowsResponse);
     assert.equal(adminRows.rows.find((row) => row.id === created.row.id).studentIdNumber, validId);
 
     const otherRows = await readJson(await fetch(`${baseUrl}/api/me/events/${eventId}/registrations`, withSession(otherPersonal.cookie)));
