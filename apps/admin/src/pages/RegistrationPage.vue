@@ -155,8 +155,7 @@ onMounted(async () => {
   <section v-else-if="ordinaryUser && !registrationEligible" class="content-grid registration-page"><div class="panel registration-eligibility-card" data-testid="registration-eligibility-guidance"><h3>请先加入组织</h3><p class="hint">{{ eligibilityMessage }}</p><button type="button" class="primary" data-action="open-my-organization" @click="emit('navigate', 'myOrganization')">前往“我的组织”</button></div></section>
   <section v-else class="content-grid registration-page"><form class="panel form-panel" @submit.prevent="submit">
     <div class="panel-title"><h3>报名端<span v-if="context.event?.name"> · {{ context.event.name }}</span></h3><span v-if="selectedGroup">{{ selectedGroup }}</span></div>
-    <template>
-      <div v-if="eligibleOrganization" class="registration-organization-readonly" data-testid="eligible-organization"><span>所属组织</span><strong>{{ eligibleOrganization.name }}</strong><small>报名将自动归属该组织</small></div>
+    <div v-if="eligibleOrganization" class="registration-organization-readonly" data-testid="eligible-organization"><span>所属组织</span><strong>{{ eligibleOrganization.name }}</strong><small>报名将自动归属该组织</small></div>
       <div class="two"><label>姓名<input v-model="form.athlete.name" required /></label><label data-field="registration-school">学校<SchoolCombobox v-model="form.athlete.school" /></label></div>
       <div class="two"><label>年级<input v-model="form.athlete.grade" list="grade-options" placeholder="请选择实际年级" required /><datalist id="grade-options"><template v-for="group in context.grades" :key="group.id"><option v-for="grade in group.grades" :key="grade" :value="grade">{{ group.name }}</option></template></datalist></label><label>手机号/家长手机号<input v-model="form.athlete.phone" required /></label></div>
       <div class="two"><label>组别<input :value="selectedGroup" readonly /></label><label>赛项<select v-model="form.projectId" required :disabled="!selectedGroup"><option v-for="project in eligibleProjects" :key="project.id" :value="project.id">{{ project.name }}（{{ project.type === 'team' ? '团体赛' : '个人赛' }}）</option></select></label></div>
@@ -169,7 +168,6 @@ onMounted(async () => {
         </template>
         <p v-else class="message" role="alert">{{ uploadSessionError || "作品上传会话不可用" }} <button type="button" class="mini" @click="retryUploadSession">重试</button></p>
       </section>
-      <button class="primary" :disabled="submitDisabled">{{ submitting ? "正在提交…" : "提交报名" }}</button>
-    </template>
+    <button class="primary" :disabled="submitDisabled">{{ submitting ? "正在提交…" : "提交报名" }}</button>
   </form></section>
 </template>

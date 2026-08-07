@@ -49,6 +49,16 @@ describe("RegistrationPage selected event context", () => {
     });
   });
 
+  it("renders ordinary-user registration fields as visible form controls", async () => {
+    const wrapper = mount(RegistrationPage, { props: { eventId: "E2", accountType: "ordinary" }, attachTo: document.body });
+    await flushPromises();
+
+    const nameInput = wrapper.get("form.form-panel input");
+    expect(nameInput.isVisible()).toBe(true);
+
+    wrapper.unmount();
+  });
+
   it("uses one event id for context and ordinary-user submission", async () => {
     const wrapper = mount(RegistrationPage, { props: { eventId: "E2", accountType: "ordinary" } });
     await flushPromises();
