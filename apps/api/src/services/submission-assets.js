@@ -330,7 +330,7 @@ export function createUploadSession({ db, eventId, projectId, actor, channel, no
   let organizationId = null;
   if (channel === "personal") {
     requireOrdinaryUser(actor);
-    requireOrdinaryRegistrationEligibility(db, actor.id);
+    requireOrdinaryRegistrationEligibility(db, actor.id, { requireApprovedLeader: false });
   } else if (channel === "organization") {
     organizationId = requireOrganizationEventParticipation(db, actor, eventId, { writable: true }).organization.id;
   } else if (channel === "admin") {

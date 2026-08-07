@@ -105,6 +105,29 @@ describe("ordinary user event workflow", () => {
     expect(wrapper.emitted("navigate")).toEqual([["myOrganization"]]);
   });
 
+  it("keeps event details visible but disables new registration when the organization has no approved leader", async () => {
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/me/registration-context?eventId=E2") return {
+        ...context,
+        eligibility: {
+          eligible: false,
+          code: "ORGANIZATION_LEADER_REQUIRED",
+          organization: context.organizations[0]
+        }
+      };
+      if (path.startsWith("/api/schools")) return { rows: [] };
+      throw new Error(`unexpected API path ${path}`);
+    });
+    const wrapper = mount(RegistrationPage, { props: { eventId: "E2", accountType: "ordinary" } });
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("第二场公开赛事");
+    expect(wrapper.text()).toContain("所属组织尚无审核通过且已启用的领队，请联系组织负责人");
+    expect(wrapper.find("form").exists()).toBe(true);
+    expect(wrapper.get("form button.primary").attributes("disabled")).toBeDefined();
+    expect(wrapper.find('[data-action="open-my-organization"]').exists()).toBe(false);
+  });
+
   it("translates a stable eligibility error returned while submitting", async () => {
     apiMock.mockImplementation(async (path, options) => {
       if (path === "/api/me/registration-context?eventId=E2") return context;
@@ -126,6 +149,29 @@ describe("ordinary user event workflow", () => {
     await flushPromises();
 
     expect(wrapper.emitted("error")).toEqual([["请先加入已通过审核的组织后再报名"]]);
+  });
+
+  it("translates a leader loss returned by the locked submission check", async () => {
+    apiMock.mockImplementation(async (path, options) => {
+      if (path === "/api/me/registration-context?eventId=E2") return context;
+      if (path.startsWith("/api/schools")) return { rows: [] };
+      if (path === "/api/me/events/E2/registrations" && options?.method === "POST") {
+        throw Object.assign(new Error("stale leader state"), { code: "ORGANIZATION_LEADER_REQUIRED" });
+      }
+      throw new Error(`unexpected API path ${path}`);
+    });
+    const wrapper = mount(RegistrationPage, { props: { eventId: "E2", accountType: "ordinary" } });
+    await flushPromises();
+    const inputs = wrapper.findAll("form.form-panel input");
+    await inputs[0].setValue("张三");
+    await inputs[1].setValue("实验小学");
+    await inputs[2].setValue("二年级");
+    await inputs[3].setValue("13600005001");
+    await wrapper.get('[data-field="student-id-number"]').setValue("11010520140101123X");
+    await wrapper.get("form.form-panel").trigger("submit");
+    await flushPromises();
+
+    expect(wrapper.emitted("error")?.at(-1)).toEqual(["所属组织尚无审核通过且已启用的领队，请联系组织负责人"]);
   });
 
   it("loads records and certificates from E2 without falling back to an implicit event", async () => {

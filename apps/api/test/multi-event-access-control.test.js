@@ -1,7 +1,20 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { organizationAccessState, organizationForOwner, requireOrganizationOwner, requireOrdinaryUser, requireOrganizationEventParticipation, requireWritableEvent } from "../src/services/access-control.js";
+import { organizationAccessState, organizationForOwner, requireOrganizationOwner, requireOrdinaryRegistrationEligibility, requireOrdinaryUser, requireOrganizationEventParticipation, requireWritableEvent } from "../src/services/access-control.js";
+
+test("ordinary registration requirement exposes the stable leader error code", () => {
+  const db = {
+    organizations: [{ id: "O1", status: "active", reviewStatus: "approved" }],
+    memberships: [{ id: "M1", userId: "U1", organizationId: "O1", role: "member", status: "active" }],
+    organizationLeaders: []
+  };
+
+  assert.throws(
+    () => requireOrdinaryRegistrationEligibility(db, "U1"),
+    (error) => error.status === 403 && error.code === "ORGANIZATION_LEADER_REQUIRED"
+  );
+});
 
 test("organization access state exposes stable owner review and password codes", () => {
   const pendingOrganization = { id: "O-pending", ownerUserId: "U-pending", status: "active", reviewStatus: "pending" };

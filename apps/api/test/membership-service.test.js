@@ -39,6 +39,10 @@ function fixture() {
       { id: "O1", name: "组织一", code: "ORG-001", ownerUserId: "UO1", status: "active", reviewStatus: "approved", contactName: "负责人一", contactPhone: "13700000011" },
       { id: "O2", name: "组织二", code: "ORG-002", ownerUserId: "UO2", status: "active", reviewStatus: "approved", contactName: "负责人二", contactPhone: "13700000012" }
     ],
+    organizationLeaders: [
+      { id: "OL1", organizationId: "O1", reviewStatus: "approved", enabled: true },
+      { id: "OL2", organizationId: "O2", reviewStatus: "approved", enabled: true }
+    ],
     memberships: [],
     registrations: [],
     certificates: []
@@ -66,6 +70,19 @@ test("ordinary registration eligibility requires one active member relation to a
   db.memberships[0].role = "member";
   db.organizations[0].reviewStatus = "rejected";
   assert.equal(ordinaryRegistrationEligibility(db, activeMember.id).code, "ACTIVE_ORGANIZATION_REQUIRED");
+});
+
+test("ordinary registration eligibility keeps the organization context when an approved leader is missing", () => {
+  const db = fixture();
+  db.memberships.push({ id: "M-active", userId: "U1", organizationId: "O1", role: "member", status: "active" });
+  db.organizationLeaders = [];
+
+  assert.deepEqual(ordinaryRegistrationEligibility(db, "U1"), {
+    eligible: false,
+    code: "ORGANIZATION_LEADER_REQUIRED",
+    organization: db.organizations[0],
+    membership: db.memberships[0]
+  });
 });
 
 test("fix round 1 rejects ambiguous ordinary registration eligibility with two operational member relations", () => {

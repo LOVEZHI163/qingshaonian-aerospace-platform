@@ -266,7 +266,7 @@ export function createRegistrationsRouter({
     requireWritableEvent(db, req.params.eventId, clock);
     const row = db.registrations.find((item) => item.id === req.params.registrationId && item.eventId === req.params.eventId && item.personalUserId === req.user.id);
     if (!row) return res.status(404).json({ error: "Registration not found" });
-    requireOrdinaryRegistrationEligibility(db, req.user.id);
+    requireOrdinaryRegistrationEligibility(db, req.user.id, { requireApprovedLeader: false });
     updateRegistrationStatus(db, row, req.body, req.user);
     row.updatedAt = now();
     await store.writeDb(db);

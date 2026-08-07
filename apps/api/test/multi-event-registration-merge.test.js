@@ -29,6 +29,9 @@ function fixture() {
       { id: "O2", ownerUserId: "OWNER2", name: "组织二", status: "active", reviewStatus: "approved" }
     ],
     memberships: [{ userId: "U1", organizationId: "O1", status: "active", role: "member" }],
+    organizationLeaders: [
+      { id: "OL1", organizationId: "O1", reviewStatus: "approved", enabled: true }
+    ],
     organizationEventParticipations: [
       { organizationId: "O1", eventId: "E1" },
       { organizationId: "O2", eventId: "E1" }

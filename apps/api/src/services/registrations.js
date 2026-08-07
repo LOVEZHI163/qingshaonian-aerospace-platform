@@ -2,7 +2,7 @@ import { GRADE_GROUPS, groupForGrade } from "../domain/grades.js";
 import { isRegistrationOpen } from "../domain/registration-window.js";
 import { businessError, projectForHistoricalRegistration, publishedRegistrationEvent, registrationContext } from "./events.js";
 import { organizationHistoryFields } from "./organization-account-lifecycle.js";
-import { ordinaryRegistrationEligibility, requireOrdinaryRegistrationEligibility, requireOrdinaryUser, requireOrganizationEventParticipation, requireWritableEvent } from "./access-control.js";
+import { ordinaryRegistrationEligibility, requireOrdinaryRegistrationEligibility, requireOrdinaryUser, requireOrganizationApprovedLeader, requireOrganizationEventParticipation, requireWritableEvent } from "./access-control.js";
 import { registrationSubmissionSummary, withRegistrationSubmission } from "./submission-assets.js";
 import { decryptStudentId, encryptStudentId, fingerprintStudentId, normalizeStudentId } from "../security/registration-identities.js";
 
@@ -184,7 +184,7 @@ export function findSchools(db, query) {
 }
 
 function validateOrganizationForUser(db, userId) {
-  return requireOrdinaryRegistrationEligibility(db, userId).organization;
+  return requireOrdinaryRegistrationEligibility(db, userId, { requireApprovedLeader: false }).organization;
 }
 
 function validateProjectForRegistration(db, eventId, projectId, group) {
@@ -476,7 +476,7 @@ function validateCreateForEvent(db, input, event, actor, channel) {
   let personalUserId = actor.id;
   if (channel === "personal") {
     requireOrdinaryUser(actor);
-    organization = requireOrdinaryRegistrationEligibility(db, actor.id).organization;
+    organization = requireOrdinaryRegistrationEligibility(db, actor.id, { requireApprovedLeader: false }).organization;
   } else if (channel === "organization") {
     const scope = requireOrganizationEventParticipation(db, actor, event.id, { writable: true });
     organization = requireOperationalOrganization(db, scope.organization.id);
@@ -503,13 +503,16 @@ export function createOrMergeRegistration(db, input, actor, channel, {
 } = {}) {
   const event = requireOpenRegistrationEvent(db, requireEventId(db, input?.eventId).id, clock);
   const prepared = validateCreateForEvent(db, input, event, actor, channel);
-  const studentIdNumber = requireStudentIdForNewRegistration(input);
   const existing = findRegistrationIdentity(db, event.id, prepared.project.id, prepared.key);
   const personalUserId = prepared.personalUserId;
   const organizationId = prepared.organization?.id || null;
-  const timestamp = now();
 
   if (!existing) {
+    // POST routes execute under the store mutation lock; this check therefore
+    // revalidates the current leader state immediately before the new row is made.
+    requireOrganizationApprovedLeader(db, organizationId);
+    const studentIdNumber = requireStudentIdForNewRegistration(input);
+    const timestamp = now();
     const row = {
       id: makeId("R"), eventId: event.id, source: prepared.registrationSource, createdByUserId: actor.id,
       personalUserId, organizationId, createdVia: channel, organization: prepared.organization?.name || "",
@@ -534,6 +537,7 @@ export function createOrMergeRegistration(db, input, actor, channel, {
   ) {
     throw businessError(409, "相同赛事、赛项和参赛者的报名已存在且归属不同", "REGISTRATION_IDENTITY_CONFLICT");
   }
+  const studentIdNumber = requireStudentIdForNewRegistration(input);
   assertExistingIdentityMatches(db, existing.id, studentIdNumber);
   return { row: existing, created: false, merged: false };
 }

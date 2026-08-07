@@ -26,7 +26,8 @@ const studentIdPattern = /^[0-9]{17}[0-9Xx]$/;
 const ordinaryUser = computed(() => props.accountType === "ordinary");
 const eligibility = computed(() => context.value?.eligibility || { eligible: false, code: "ACTIVE_ORGANIZATION_REQUIRED", organization: null });
 const registrationEligible = computed(() => eligibility.value.eligible === true && Boolean(String(eligibility.value.organization?.id || "").trim()));
-const eligibleOrganization = computed(() => registrationEligible.value ? eligibility.value.organization : null);
+const leaderRequired = computed(() => eligibility.value.code === "ORGANIZATION_LEADER_REQUIRED");
+const eligibleOrganization = computed(() => String(eligibility.value.organization?.id || "").trim() ? eligibility.value.organization : null);
 const eligibilityMessage = computed(() => accessMessage({ code: eligibility.value.code }, "请先加入已通过审核的组织后再报名"));
 const hasEventContext = computed(() => Boolean(String(props.eventId || "").trim()));
 const registrationOpen = computed(() => !ordinaryUser.value || props.registrationState === "" || props.registrationState === "open");
@@ -41,7 +42,7 @@ const selectedGroup = computed(() => (context.value.grades || []).find((item) =>
 const eligibleProjects = computed(() => (context.value.projects || []).filter((project) => selectedGroup.value && (!project.allowedGroups || project.allowedGroups.includes(selectedGroup.value))));
 const selectedProject = computed(() => (context.value.projects || []).find((project) => project.id === form.projectId) || null);
 const requiresSubmission = computed(() => selectedProject.value?.submissionMode === "image_video");
-const submitDisabled = computed(() => submitting.value || (requiresSubmission.value && (!uploadSession.value?.id || uploadSessionLoading.value || !assetsComplete.value)));
+const submitDisabled = computed(() => !registrationEligible.value || submitting.value || (requiresSubmission.value && (!uploadSession.value?.id || uploadSessionLoading.value || !assetsComplete.value)));
 function applyOrganization() {
   if (eligibleOrganization.value && !form.athlete.school) form.athlete.school = eligibleOrganization.value.name;
 }
@@ -56,7 +57,7 @@ function clearUploadSession() {
 
 async function createUploadSession() {
   const project = selectedProject.value;
-  if (!ordinaryUser.value || !hasEventContext.value || project?.submissionMode !== "image_video") return;
+  if (!ordinaryUser.value || !registrationEligible.value || !hasEventContext.value || project?.submissionMode !== "image_video") return;
   const request = uploadSessionRequest + 1;
   uploadSessionRequest = request;
   uploadSessionLoading.value = true;
@@ -160,9 +161,10 @@ onMounted(async () => {
   <section v-if="!hasEventContext" class="content-grid registration-page"><div class="panel event-context-empty"><h3>请先选择赛事</h3><p class="hint">报名必须在明确的赛事上下文中进行。请返回赛事中心后再继续。</p></div></section>
   <section v-else-if="!registrationOpen" class="content-grid registration-page"><div class="panel event-context-empty"><h3>当前不可报名</h3><p class="hint">{{ registrationStateMessage }}</p></div></section>
   <section v-else-if="loading" class="content-grid registration-page"><div class="panel event-context-empty"><h3>正在加载报名资料…</h3></div></section>
-  <section v-else-if="ordinaryUser && !registrationEligible" class="content-grid registration-page"><div class="panel registration-eligibility-card" data-testid="registration-eligibility-guidance"><h3>请先加入组织</h3><p class="hint">{{ eligibilityMessage }}</p><button type="button" class="primary" data-action="open-my-organization" @click="emit('navigate', 'myOrganization')">前往“我的组织”</button></div></section>
+  <section v-else-if="ordinaryUser && !registrationEligible && !leaderRequired" class="content-grid registration-page"><div class="panel registration-eligibility-card" data-testid="registration-eligibility-guidance"><h3>请先加入组织</h3><p class="hint">{{ eligibilityMessage }}</p><button type="button" class="primary" data-action="open-my-organization" @click="emit('navigate', 'myOrganization')">前往“我的组织”</button></div></section>
   <section v-else class="content-grid registration-page"><form class="panel form-panel" @submit.prevent="submit">
     <div class="panel-title"><h3>报名端<span v-if="context.event?.name"> · {{ context.event.name }}</span></h3><span v-if="selectedGroup">{{ selectedGroup }}</span></div>
+    <div v-if="leaderRequired" class="registration-eligibility-card" data-testid="registration-eligibility-guidance"><h4>当前组织暂不能新增报名</h4><p class="hint">{{ eligibilityMessage }}</p></div>
     <div v-if="eligibleOrganization" class="registration-organization-readonly" data-testid="eligible-organization"><span>所属组织</span><strong>{{ eligibleOrganization.name }}</strong><small>报名将自动归属该组织</small></div>
       <div class="two"><label>姓名<input v-model="form.athlete.name" required /></label><label data-field="registration-school">学校<SchoolCombobox v-model="form.athlete.school" /></label></div>
       <div class="two"><label>年级<input v-model="form.athlete.grade" list="grade-options" placeholder="请选择实际年级" required /><datalist id="grade-options"><template v-for="group in context.grades" :key="group.id"><option v-for="grade in group.grades" :key="grade" :value="grade">{{ group.name }}</option></template></datalist></label><label>手机号/家长手机号<input v-model="form.athlete.phone" required /></label></div>

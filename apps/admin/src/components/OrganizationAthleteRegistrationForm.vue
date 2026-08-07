@@ -1,5 +1,5 @@
 <script setup>
-import { computed, reactive, ref, watch } from "vue";
+import { computed, onMounted, reactive, ref, watch } from "vue";
 
 import SchoolCombobox from "./SchoolCombobox.vue";
 import SubmissionAssetUploader from "./SubmissionAssetUploader.vue";
@@ -31,9 +31,13 @@ const uploadSession = ref(null);
 const uploadSessionLoading = ref(false);
 const uploadSessionError = ref("");
 const assetsComplete = ref(false);
+const leaderEligibilityLoading = ref(true);
+const hasApprovedLeader = ref(false);
+const leaderEligibilityError = ref("");
 let uploadSessionRequest = 0;
 const hasEventContext = computed(() => Boolean(String(props.eventId || "").trim()));
 const editing = computed(() => Boolean(props.registration?.id));
+const newRegistrationAllowed = computed(() => editing.value || (!leaderEligibilityLoading.value && hasApprovedLeader.value));
 const gradeOptions = computed(() => props.grades.flatMap((group) => group.grades || []));
 const selectedProject = computed(() => props.projects.find((project) => project.id === form.projectId) || null);
 const selectedMember = computed(() => props.members.find((member) => member.id === form.memberUserId) || null);
@@ -48,6 +52,7 @@ const filteredMembers = computed(() => {
 });
 const requiresSubmission = computed(() => !editing.value && selectedProject.value?.submissionMode === "image_video");
 const submitDisabled = computed(() => submitting.value
+  || !newRegistrationAllowed.value
   || !form.projectId
   || (!editing.value && (!form.registrationSource || (memberMode.value && !form.memberUserId)))
   || (requiresSubmission.value && (!uploadSession.value?.id || uploadSessionLoading.value || !assetsComplete.value)));
@@ -109,7 +114,7 @@ function clearUploadSession() {
 
 async function createUploadSession() {
   const project = selectedProject.value;
-  if (!hasEventContext.value || editing.value || project?.submissionMode !== "image_video") return;
+  if (!hasEventContext.value || editing.value || !newRegistrationAllowed.value || project?.submissionMode !== "image_video") return;
   const request = uploadSessionRequest + 1;
   uploadSessionRequest = request;
   uploadSessionLoading.value = true;
@@ -179,11 +184,31 @@ async function submit() {
     }
     emit("registered", payload);
   } catch (error) {
+    if (error?.code === "ORGANIZATION_LEADER_REQUIRED") {
+      error.message = "请先在领队管理提交至少一名领队并等待平台审核通过";
+    }
     emit("error", error);
   } finally {
     submitting.value = false;
   }
 }
+
+onMounted(async () => {
+  if (editing.value) {
+    leaderEligibilityLoading.value = false;
+    return;
+  }
+  try {
+    const payload = await api("/api/organization/leaders");
+    hasApprovedLeader.value = (payload?.rows || []).some((row) => row.reviewStatus === "approved" && row.enabled === true);
+  } catch (error) {
+    leaderEligibilityError.value = "暂时无法确认领队报名资格，请稍后重试";
+    emit("error", error);
+  } finally {
+    leaderEligibilityLoading.value = false;
+    if (hasApprovedLeader.value && requiresSubmission.value) void createUploadSession();
+  }
+});
 </script>
 
 <template>
@@ -209,6 +234,10 @@ async function submit() {
     </fieldset>
     <div class="panel-title"><h3>{{ editing ? "编辑组织报名" : "组织报名" }}</h3></div>
     <p class="hint">报名将自动归属当前组织；不支持切换个人身份或其他组织。</p>
+    <div v-if="!editing && !leaderEligibilityLoading && !hasApprovedLeader" class="registration-eligibility-card" data-testid="organization-leader-guidance">
+      <p class="hint">{{ leaderEligibilityError || "请先在领队管理提交至少一名领队并等待平台审核通过" }}</p>
+      <a class="primary" data-action="open-leader-management" href="?view=leaders">前往领队管理</a>
+    </div>
     <div class="two"><label>姓名<input v-model="form.athlete.name" data-field="athlete-name" :readonly="memberMode" required /></label><label>学校<SchoolCombobox v-model="form.athlete.school" /></label></div>
     <div class="two"><label>年级<select v-model="form.athlete.grade" data-field="athlete-grade" required><option value="" disabled>请选择年级</option><option v-for="grade in gradeOptions" :key="grade" :value="grade">{{ grade }}</option></select></label><label>手机/监护人手机<input v-model="form.athlete.phone" data-field="athlete-phone" :readonly="memberMode" required /></label></div>
     <label v-if="!editing">学生身份证号<input v-model="form.studentIdNumber" data-field="student-id-number" inputmode="text" autocomplete="off" minlength="18" maxlength="18" pattern="[0-9]{17}[0-9Xx]" placeholder="18 位居民身份证号，末位可为 X" required /></label>

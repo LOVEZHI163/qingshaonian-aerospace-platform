@@ -8,8 +8,12 @@ import JSZip from "jszip";
 
 import { ensureDbShape, seedDb } from "../src/data/seed.js";
 import { createOrganizationLeadersRouter } from "../src/routes/organization-leaders.js";
-import { withTestServer } from "../test-support/server.js";
+import { withTestServer as withSeededTestServer } from "../test-support/server.js";
 import { loginAs, withSession } from "./helpers/api-client.js";
+
+async function withTestServer(run, options = {}) {
+  return withSeededTestServer(run, { ...options, approvedOrganizationLeaders: false });
+}
 
 const authorizationPdf = Buffer.from("%PDF-1.7\n1 0 obj\n<<>>\nendobj\n%%EOF\n");
 

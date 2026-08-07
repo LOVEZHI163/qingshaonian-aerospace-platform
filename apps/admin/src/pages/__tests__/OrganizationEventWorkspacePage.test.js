@@ -28,9 +28,27 @@ describe("OrganizationEventWorkspacePage", () => {
     apiMock.mockReset();
     apiMock.mockImplementation(async (path) => {
       if (path === "/api/organization/events/E2/workspace") return workspace;
+      if (path === "/api/organization/leaders") return { rows: [{ id: "OL1", reviewStatus: "approved", enabled: true }] };
       if (path === "/api/organization/events/E2/registrations") return { rows: [] };
       return { rows: [] };
     });
+  });
+
+  it("keeps the event workspace visible while disabling only new registration without an approved leader", async () => {
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/organization/events/E2/workspace") return workspace;
+      if (path === "/api/organization/leaders") return { rows: [{ id: "OL-pending", reviewStatus: "pending", enabled: true }] };
+      return { rows: [] };
+    });
+    const wrapper = mount(OrganizationEventWorkspacePage, { props: { eventId: "E2" } });
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("Event E2");
+    expect(wrapper.text()).toContain("报名 1");
+    expect(wrapper.text()).toContain("请先在领队管理提交至少一名领队并等待平台审核通过");
+    expect(wrapper.find('[data-testid="organization-registration-form"]').exists()).toBe(true);
+    expect(wrapper.get('[data-testid="organization-registration-form"] button.primary').attributes("disabled")).toBeDefined();
+    expect(wrapper.get('[data-action="open-leader-management"]').attributes("href")).toContain("view=leaders");
   });
 
   it("renders the single-event overview, guidance, and registration cards without local workspace tabs", async () => {
@@ -86,6 +104,7 @@ describe("OrganizationEventWorkspacePage", () => {
     };
     apiMock.mockImplementation(async (path) => {
       if (path === "/api/organization/events/E2/workspace") return imageWorkspace;
+      if (path === "/api/organization/leaders") return { rows: [{ id: "OL1", reviewStatus: "approved", enabled: true }] };
       if (path === "/api/organization/events/E2/projects/P-IMAGE/upload-sessions") {
         throw Object.assign(new Error("stale session"), { code: "ORGANIZATION_DISABLED" });
       }
@@ -102,6 +121,7 @@ describe("OrganizationEventWorkspacePage", () => {
   it("submits a new organization registration from the retained form", async () => {
     apiMock.mockImplementation(async (path, options) => {
       if (path === "/api/organization/events/E2/workspace") return workspace;
+      if (path === "/api/organization/leaders") return { rows: [{ id: "OL1", reviewStatus: "approved", enabled: true }] };
       if (path === "/api/organization/events/E2/registrations" && options?.method === "POST") return { row: { id: "R2" } };
       return { rows: [] };
     });
@@ -124,6 +144,7 @@ describe("OrganizationEventWorkspacePage", () => {
   it("submits member_registration with the selected active member and prefilled identity", async () => {
     apiMock.mockImplementation(async (path, options) => {
       if (path === "/api/organization/events/E2/workspace") return workspace;
+      if (path === "/api/organization/leaders") return { rows: [{ id: "OL1", reviewStatus: "approved", enabled: true }] };
       if (path === "/api/organization/events/E2/registrations" && options?.method === "POST") return { row: { id: "R-member" } };
       return { rows: [] };
     });

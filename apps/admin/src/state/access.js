@@ -1,5 +1,6 @@
 export const accessMessages = Object.freeze({
   ACTIVE_ORGANIZATION_REQUIRED: "请先加入已通过审核的组织后再报名",
+  ORGANIZATION_LEADER_REQUIRED: "所属组织尚无审核通过且已启用的领队，请联系组织负责人",
   ORGANIZATION_REVIEW_PENDING: "组织资质正在审核中",
   ORGANIZATION_REJECTED: "组织资质未通过，请按原因重新提交",
   ORGANIZATION_DISABLED: "组织已被平台停用",

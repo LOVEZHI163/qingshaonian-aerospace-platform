@@ -27,7 +27,11 @@ function waitForAddress(child) {
   });
 }
 
-export async function withTestServer(fn, { prefix = "aerogp-api-", env = {} } = {}) {
+export async function withTestServer(fn, {
+  prefix = "aerogp-api-",
+  env = {},
+  approvedOrganizationLeaders = true
+} = {}) {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
   const dbPath = path.join(tempDir, "db.json");
   const child = spawn(process.execPath, [serverPath], {
@@ -47,6 +51,27 @@ export async function withTestServer(fn, { prefix = "aerogp-api-", env = {} } = 
 
   try {
     const baseUrl = await waitForAddress(child);
+    if (approvedOrganizationLeaders) {
+      const db = JSON.parse(await fs.readFile(dbPath, "utf8"));
+      db.organizationLeaders = (db.organizations || []).map((organization, index) => ({
+        id: `OL-TEST-${index + 1}`,
+        organizationId: organization.id,
+        name: `测试领队${index + 1}`,
+        phone: `1380000090${index + 1}`,
+        email: "",
+        notes: "",
+        currentDocumentId: null,
+        reviewStatus: "approved",
+        rejectionReason: "",
+        enabled: true,
+        submissionVersion: 1,
+        reviewedBy: "U9001",
+        reviewedAt: "2026-08-07T00:00:00.000Z",
+        createdAt: "2026-08-07T00:00:00.000Z",
+        updatedAt: "2026-08-07T00:00:00.000Z"
+      }));
+      await fs.writeFile(dbPath, JSON.stringify(db, null, 2), "utf8");
+    }
     await fn({ baseUrl, dbPath, tempDir });
   } finally {
     if (child.exitCode === null) {
