@@ -862,6 +862,25 @@ test("PostgreSQL store rejects invalid registration modes and project groups", a
   });
 });
 
+test("PostgreSQL store rejects nested plaintext athlete identity fields before any snapshot rows change", async () => {
+  await withStore(async (store) => {
+    const db = await store.readDb();
+    db.registrations[0].athlete.emergencyContact = { name: "陈家长", phone: "13800000001" };
+    await store.writeDb(db);
+    const persisted = await store.readDb();
+    assert.deepEqual(persisted.registrations[0].athlete.emergencyContact, { name: "陈家长", phone: "13800000001" });
+
+    const invalid = structuredClone(persisted);
+    invalid.registrations[0].status = "approved";
+    invalid.registrations[0].athlete.profile = { identityNumber: "330000200001010001" };
+    await assert.rejects(store.writeDb(invalid), /identity field/i);
+
+    const afterRejectedWrite = await store.readDb();
+    assert.equal(afterRejectedWrite.registrations[0].status, persisted.registrations[0].status);
+    assert.equal("profile" in afterRejectedWrite.registrations[0].athlete, false);
+  });
+});
+
 test("PostgreSQL store upgrades a legacy schema without losing existing records", async () => {
   const memory = newDb({ autoCreateForeignKeyIndices: true });
   const { Pool } = memory.adapters.createPg();

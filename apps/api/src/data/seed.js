@@ -29,6 +29,29 @@ const REGISTRATION_END_AT = "2026-11-01T15:59:59.000Z";
 export const APPROVED_GROUP_NAMES = ["小学低段", "小学高段", "中学组", "职高/高中组"];
 export const REGISTRATION_MODES = ["automatic", "force_open", "force_closed"];
 const ORGANIZATION_LEADER_REVIEW_ACTIONS = ["submitted", "approved", "rejected", "enabled", "disabled"];
+const ATHLETE_IDENTITY_KEYS = new Set([
+  "studentidnumber",
+  "identitynumber",
+  "identitycard",
+  "idcardnumber",
+  "idcard",
+  "idnumber",
+  "nationalidnumber",
+  "citizenidnumber"
+]);
+
+function findAthleteIdentityKey(value, seen = new WeakSet()) {
+  if (!value || typeof value !== "object") return null;
+  if (seen.has(value)) return null;
+  seen.add(value);
+  for (const [key, nestedValue] of Object.entries(value)) {
+    const normalizedKey = key.replace(/[_-]/g, "").toLowerCase();
+    if (ATHLETE_IDENTITY_KEYS.has(normalizedKey) || key.includes("身份证")) return key;
+    const nestedKey = findAthleteIdentityKey(nestedValue, seen);
+    if (nestedKey) return nestedKey;
+  }
+  return null;
+}
 
 export function normalizeSubmissionWarnings(value) {
   if (!Array.isArray(value)) return [];
@@ -304,6 +327,8 @@ export function ensureDbShape(db) {
     }
   }
   for (const row of db.registrations) {
+    const identityKey = findAthleteIdentityKey(row.athlete);
+    if (identityKey) throw new Error(`Registration athlete contains identity field: ${identityKey}`);
     row.eventId ||= EVENT.id;
     if (!Object.hasOwn(row, "createdByUserId")) row.createdByUserId = row.userId ?? null;
     const creator = db.users.find((user) => user.id === row.createdByUserId);

@@ -3,7 +3,7 @@ import test from "node:test";
 import { newDb } from "pg-mem";
 
 import { createPostgresStore } from "../src/data/postgres-store.js";
-import { ensureDbShape } from "../src/data/seed.js";
+import { ensureDbShape, seedDb } from "../src/data/seed.js";
 
 async function withStore(fn) {
   const memory = newDb({ autoCreateForeignKeyIndices: true });
@@ -22,6 +22,15 @@ test("identity storage shape adds an empty registration identity collection", ()
   const db = ensureDbShape({});
 
   assert.deepEqual(db.registrationIdentities, []);
+});
+
+test("identity storage shape rejects plaintext identity keys nested in athlete data", () => {
+  for (const key of ["studentIdNumber", "identityNumber", "idCardNumber", "idCard"]) {
+    const db = structuredClone(seedDb);
+    db.registrations[0].athlete = { profile: { [key]: "330000200001010001" } };
+
+    assert.throws(() => ensureDbShape(db), /identity field/i, key);
+  }
 });
 
 test("identity storage round-trips encrypted registration identities through PostgreSQL", async () => {
