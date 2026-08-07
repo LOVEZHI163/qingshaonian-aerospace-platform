@@ -18,13 +18,16 @@ test -d "$backups_dir" || fail "backup directory is missing"
 test -w "$backups_dir" || fail "backup directory is not writable"
 cd "$deploy_dir"
 
-docker compose config --quiet || fail "Compose configuration is invalid"
 test -f apps/api/src/cli/cleanup-test-business-data.js \
   || fail "test-business-data cleanup command is missing"
 test -f apps/api/src/cli/bootstrap-admin.js \
   || fail "administrator bootstrap command is missing"
 test -f apps/api/src/data/migrations/007-multi-event-accounts.sql \
   || fail "multi-event migration is missing"
+test -f apps/api/src/data/migrations/015-registration-identities-and-organization-leaders.sql \
+  || fail "registration identity and organization leader migration is missing"
+test -f apps/api/src/cli/postgres-migration-restart-smoke.js \
+  || fail "PostgreSQL migration/restart smoke command is missing"
 test -s apps/web/public/brand/mark.svg || fail "public brand mark is missing"
 test -s apps/web/public/brand/wordmark.svg || fail "public brand wordmark is missing"
 grep -Eq '^ARG VITE_PUBLIC_SITE_URL$' Dockerfile.web \
@@ -41,6 +44,34 @@ session_secret="$(awk '
 ' "$env_file")"
 test "${#session_secret}" -ge 32 || fail "SESSION_SECRET must contain at least 32 characters"
 unset session_secret
+
+registration_id_encryption_key="$(awk '
+  index($0, "REGISTRATION_ID_ENCRYPTION_KEY=") == 1 {
+    sub(/^REGISTRATION_ID_ENCRYPTION_KEY=/, "")
+    value = $0
+  }
+  END { if (value != "") print value }
+' "$env_file")"
+command -v openssl >/dev/null 2>&1 \
+  || fail "openssl is required to validate REGISTRATION_ID_ENCRYPTION_KEY"
+registration_id_encryption_key_canonical="$(
+  printf '%s' "$registration_id_encryption_key" \
+    | openssl base64 -d -A 2>/dev/null \
+    | openssl base64 -A 2>/dev/null
+)"
+registration_id_encryption_key_bytes="$(
+  printf '%s' "$registration_id_encryption_key" \
+    | openssl base64 -d -A 2>/dev/null \
+    | wc -c \
+    | tr -d '[:space:]'
+)"
+test -n "$registration_id_encryption_key" \
+  && test "$registration_id_encryption_key_canonical" = "$registration_id_encryption_key" \
+  && test "$registration_id_encryption_key_bytes" = "32" \
+  || fail "REGISTRATION_ID_ENCRYPTION_KEY must be valid base64 encoding exactly 32 bytes"
+unset registration_id_encryption_key registration_id_encryption_key_canonical registration_id_encryption_key_bytes
+
+docker compose config --quiet || fail "Compose configuration is invalid"
 
 latest_dump="$(find "$backups_dir" -maxdepth 1 -type f -name 'aerogp-*.dump' -print | sort | tail -n 1)"
 test -n "$latest_dump" || fail "no database dump was found"
@@ -74,6 +105,34 @@ esac
 required_kb="$((uploads_kb * 2 + 1048576))"
 test "$available_kb" -gt "$required_kb" \
   || fail "available disk space must exceed twice the uploads size plus 1 GiB"
+
+smoke_database="aerogp_migration_smoke_$(date +%s)_$$"
+smoke_database_created=0
+cleanup_smoke_database() {
+  if test "$smoke_database_created" = "1"; then
+    docker compose exec -T -e MIGRATION_SMOKE_DATABASE="$smoke_database" postgres sh -c \
+      'dropdb -U "$POSTGRES_USER" --if-exists --force "$MIGRATION_SMOKE_DATABASE"' >/dev/null 2>&1 \
+      || return 1
+    smoke_database_created=0
+  fi
+}
+trap cleanup_smoke_database EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+smoke_database_created=1
+docker compose exec -T -e MIGRATION_SMOKE_DATABASE="$smoke_database" postgres sh -c \
+  'createdb -U "$POSTGRES_USER" "$MIGRATION_SMOKE_DATABASE"' \
+  || fail "could not create isolated PostgreSQL migration smoke database"
+docker compose run --rm --no-deps -T \
+  -e MIGRATION_SMOKE_DATABASE="$smoke_database" api sh -c '
+    DATABASE_URL="${DATABASE_URL%/*}/$MIGRATION_SMOKE_DATABASE"
+    export DATABASE_URL
+    exec node apps/api/src/cli/postgres-migration-restart-smoke.js
+  ' || fail "PostgreSQL migration/restart smoke failed"
+cleanup_smoke_database || fail "could not remove isolated PostgreSQL migration smoke database"
+trap - EXIT HUP INT TERM
 
 for service in postgres api web backup; do
   container_id="$(docker compose ps -q "$service")"

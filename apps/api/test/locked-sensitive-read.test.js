@@ -13,11 +13,21 @@ const withTimeout = (promise, milliseconds = 5_000) => Promise.race([
   new Promise((_, reject) => setTimeout(() => reject(new Error("operation timed out")), milliseconds))
 ]);
 
+const SENSITIVE_ENVIRONMENT_ALLOWLIST = [
+  "NODE_ENV",
+  "PORT",
+  "DB_PATH",
+  "UPLOAD_ROOT",
+  "TEMP_PASSWORD_ENCRYPTION_KEY",
+  "REGISTRATION_ID_ENCRYPTION_KEY",
+  "SESSION_SECRET"
+];
+
 test("a queued temporary-password read revalidates the administrator session inside the shared store lock", async () => {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "aerogp-locked-secret-read-"));
-  const previousEnv = Object.fromEntries([
-    "NODE_ENV", "PORT", "DB_PATH", "UPLOAD_ROOT", "TEMP_PASSWORD_ENCRYPTION_KEY", "REGISTRATION_ID_ENCRYPTION_KEY", "SESSION_SECRET"
-  ].map((name) => [name, process.env[name]]));
+  const previousEnv = Object.fromEntries(
+    SENSITIVE_ENVIRONMENT_ALLOWLIST.map((name) => [name, process.env[name]])
+  );
   Object.assign(process.env, {
     NODE_ENV: "test",
     PORT: "0",
