@@ -6,6 +6,7 @@ import { buildCertificateTemplate } from "../certificates/template.js";
 import { buildBoundRegistrationWorkbook, contentDisposition } from "../exports/registration-workbook.js";
 
 import {
+  attachAuthorizedIdentity,
   createOrMergeRegistration,
   findSchools,
   filterAdminRegistrations,
@@ -16,6 +17,7 @@ import {
   requireEventId,
   registrationDuplicateCheck,
   registrationContextPayload,
+  updateExistingRegistrationIdentity,
   updateRegistrationStatus
 } from "../services/registrations.js";
 import { requireOrganizationAccess, requireOrganizationEventParticipation, requireOrdinaryRegistrationEligibility, requireOrdinaryUser, requireWritableEvent } from "../services/access-control.js";
@@ -114,12 +116,16 @@ export function createRegistrationsRouter({
     };
   }
 
+  function registrationResponse(db, row, actor) {
+    return attachAuthorizedIdentity(db, withRegistrationSubmission(db, row), actor);
+  }
+
   router.get("/me/registrations", ...user, asyncRoute(async (req, res) => {
     requireOrdinaryUser(req.user);
     const db = await store.readDb();
     const rows = db.registrations
       .filter((row) => row.personalUserId === req.user.id)
-      .map((row) => withEventSummary(db, row));
+      .map((row) => attachAuthorizedIdentity(db, withEventSummary(db, row), req.user));
     res.json({ rows });
   }));
 
@@ -131,7 +137,7 @@ export function createRegistrationsRouter({
     }
     res.json({ rows: db.registrations.filter((row) => (
       row.eventId === req.params.eventId && row.personalUserId === req.user.id
-    )).map((row) => withRegistrationSubmission(db, row)) });
+    )).map((row) => registrationResponse(db, row, req.user)) });
   }));
 
   router.post("/me/events/:eventId/registrations", ...user, asyncRoute(async (req, res) => {
@@ -144,7 +150,7 @@ export function createRegistrationsRouter({
       commitUploadSession({ db, sessionId: input.uploadSessionId, registration: result.row, actor: req.user, channel: "personal", now });
     }
     await store.writeDb(db);
-    res.status(result.created ? 201 : 200).json({ ...result, row: withRegistrationSubmission(db, result.row) });
+    res.status(result.created ? 201 : 200).json({ ...result, row: registrationResponse(db, result.row, req.user) });
   }));
 
   router.get("/organization/events/:eventId/registrations", ...user, asyncRoute(async (req, res) => {
@@ -152,7 +158,7 @@ export function createRegistrationsRouter({
     const { organization } = requireOrganizationEventParticipation(db, req.user, req.params.eventId);
     res.json({ rows: db.registrations.filter((row) => (
       row.eventId === req.params.eventId && row.organizationId === organization.id
-    )).map((row) => withRegistrationSubmission(db, row)) });
+    )).map((row) => registrationResponse(db, row, req.user)) });
   }));
 
   router.post("/organization/events/:eventId/registrations", ...user, asyncRoute(async (req, res) => {
@@ -164,7 +170,7 @@ export function createRegistrationsRouter({
       commitUploadSession({ db, sessionId: input.uploadSessionId, registration: result.row, actor: req.user, channel: "organization", now });
     }
     await store.writeDb(db);
-    res.status(result.created ? 201 : 200).json({ ...result, row: withRegistrationSubmission(db, result.row) });
+    res.status(result.created ? 201 : 200).json({ ...result, row: registrationResponse(db, result.row, req.user) });
   }));
 
   function replaceAsset(channel, middleware) {
@@ -187,7 +193,7 @@ export function createRegistrationsRouter({
         throw error;
       }
       await cleanOldRegistrationAsset(db, replacement.previous);
-      res.json({ row: submissionAssetSummary(replacement.asset), registration: withRegistrationSubmission(db, registration) });
+      res.json({ row: submissionAssetSummary(replacement.asset), registration: registrationResponse(db, registration, req.user) });
     })];
   }
 
@@ -218,9 +224,11 @@ export function createRegistrationsRouter({
     const row = db.registrations.find((item) => item.id === req.params.registrationId && item.eventId === req.params.eventId);
     if (!row) return res.status(404).json({ error: "Registration not found" });
     const prepared = prepareOrdinaryRegistrationUpdate(db, row, eventScopedInput(req), req.user.id);
-    applyRegistrationUpdate(row, prepared, now());
+    const timestamp = now();
+    applyRegistrationUpdate(row, prepared, timestamp);
+    updateExistingRegistrationIdentity(db, row.id, req.body, timestamp);
     await store.writeDb(db);
-    res.json({ row: withRegistrationSubmission(db, row) });
+    res.json({ row: registrationResponse(db, row, req.user) });
   }));
 
   router.patch("/organization/events/:eventId/registrations/:registrationId", ...user, asyncRoute(async (req, res) => {
@@ -232,9 +240,11 @@ export function createRegistrationsRouter({
       throw Object.assign(new Error("Organization id does not match owner"), { status: 403 });
     }
     const prepared = prepareAdminRegistrationUpdate(db, row, { ...eventScopedInput(req), organizationId: organization.id });
-    applyRegistrationUpdate(row, prepared, now());
+    const timestamp = now();
+    applyRegistrationUpdate(row, prepared, timestamp);
+    updateExistingRegistrationIdentity(db, row.id, req.body, timestamp);
     await store.writeDb(db);
-    res.json({ row: withRegistrationSubmission(db, row) });
+    res.json({ row: registrationResponse(db, row, req.user) });
   }));
 
   router.patch("/me/events/:eventId/registrations/:registrationId/status", ...user, asyncRoute(async (req, res) => {
@@ -247,7 +257,7 @@ export function createRegistrationsRouter({
     updateRegistrationStatus(db, row, req.body, req.user);
     row.updatedAt = now();
     await store.writeDb(db);
-    res.json({ row: withRegistrationSubmission(db, row) });
+    res.json({ row: registrationResponse(db, row, req.user) });
   }));
 
   router.patch("/admin/events/:eventId/registrations/:registrationId/status", ...admin, asyncRoute(async (req, res) => {
@@ -272,7 +282,7 @@ export function createRegistrationsRouter({
       createdAt: row.updatedAt
     });
     await store.writeDb(db);
-    res.json({ row: withRegistrationSubmission(db, row) });
+    res.json({ row: registrationResponse(db, row, req.user) });
   }));
 
   router.patch("/admin/events/:eventId/registrations/:registrationId", ...admin, asyncRoute(async (req, res) => {
@@ -281,9 +291,11 @@ export function createRegistrationsRouter({
     const row = db.registrations.find((item) => item.id === req.params.registrationId && item.eventId === req.params.eventId);
     if (!row) return res.status(404).json({ error: "Registration not found" });
     const prepared = prepareAdminRegistrationUpdate(db, row, { ...eventScopedInput(req), eventId: req.params.eventId });
-    applyRegistrationUpdate(row, prepared, now());
+    const timestamp = now();
+    applyRegistrationUpdate(row, prepared, timestamp);
+    updateExistingRegistrationIdentity(db, row.id, req.body, timestamp);
     await store.writeDb(db);
-    res.json({ row: withRegistrationSubmission(db, row) });
+    res.json({ row: registrationResponse(db, row, req.user) });
   }));
 
   router.post("/admin/events/:eventId/registrations/:registrationId/result", ...admin, asyncRoute(async (req, res) => {
@@ -305,7 +317,7 @@ export function createRegistrationsRouter({
     }
     await store.writeDb(db);
     res.json({
-      row,
+      row: registrationResponse(db, row, req.user),
       certificates: certificates.map(({ filePath, storedName, ...certificate }) => certificate)
     });
   }));

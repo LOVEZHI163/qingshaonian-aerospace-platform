@@ -10,6 +10,7 @@ import { loginAs, withSession } from "./helpers/api-client.js";
 
 const EVENT_ID = "wz-aerospace-2026";
 const PROJECT_ID = "aviation-painting";
+const validStudentIdNumber = "11010519491231002X";
 
 async function mutateDb(dbPath, mutate) {
   const db = JSON.parse(await fs.readFile(dbPath, "utf8"));
@@ -19,6 +20,7 @@ async function mutateDb(dbPath, mutate) {
 
 function registrationInput(overrides = {}) {
   return {
+    studentIdNumber: validStudentIdNumber,
     athlete: { name: "素材校验学生", school: "测试学校", grade: "五年级", phone: "13600005001" },
     projectId: PROJECT_ID,
     ...overrides
@@ -205,7 +207,7 @@ test("an image-video session cannot be committed into an existing registration t
     const response = await fetch(`${baseUrl}/api/me/events/${EVENT_ID}/registrations`, withSession(ordinary.cookie, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ athlete: existing.athlete, projectId: existing.projectId, uploadSessionId: "US-new" })
+      body: JSON.stringify({ athlete: existing.athlete, projectId: existing.projectId, uploadSessionId: "US-new", studentIdNumber: validStudentIdNumber })
     }));
 
     assert.equal(response.status, 409);

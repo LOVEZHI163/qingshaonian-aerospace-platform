@@ -440,6 +440,7 @@ test("public event and registration APIs use the current database event in real 
 
     const valid = await fetch(`${baseUrl}/api/me/events/${current.id}/registrations`, jsonOptions("POST", {
       eventId: current.id,
+      studentIdNumber: "11010519491231002X",
       projectName: "伪造项目名",
       projectType: "team",
       athlete: { name: "合法学生", school: "测试学校", grade: "二年级", phone: "13600003005" },

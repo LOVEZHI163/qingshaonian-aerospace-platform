@@ -5,6 +5,9 @@ import { createOrMergeRegistration } from "../src/services/registrations.js";
 import { withTestServer } from "../test-support/server.js";
 import { loginAs, withSession } from "./helpers/api-client.js";
 
+process.env.REGISTRATION_ID_ENCRYPTION_KEY ||= Buffer.alloc(32, 8).toString("base64");
+const validStudentIdNumber = "11010519491231002X";
+
 const timestamp = "2026-07-30T08:00:00.000Z";
 const actor = { id: "U1", type: "ordinary", name: "个人用户" };
 const owner = { id: "OWNER1", type: "organization", name: "组织负责人" };
@@ -31,6 +34,7 @@ function fixture() {
       { organizationId: "O2", eventId: "E1" }
     ],
     registrations: [],
+    registrationIdentities: [],
     certificates: [],
     auditLogs: []
   };
@@ -40,6 +44,7 @@ function input(overrides = {}) {
   return {
     eventId: "E1",
     projectId: "P1",
+    studentIdNumber: validStudentIdNumber,
     athlete: { name: "张三", school: "实验小学", grade: "五年级", phone: "13800000001" },
     ...overrides
   };

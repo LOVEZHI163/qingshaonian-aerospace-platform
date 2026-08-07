@@ -4,6 +4,8 @@ import test from "node:test";
 import { withTestServer } from "../test-support/server.js";
 import { loginAs, withSession } from "./helpers/api-client.js";
 
+const validStudentIdNumber = "11010519491231002X";
+
 const CERTIFICATE_PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
   "base64"
@@ -161,6 +163,7 @@ test("session identity cannot be replaced through body, query, or path values", 
     assert.equal("athleteKey" in duplicatePayload, false);
 
     const forgedRegistration = await fetch(`${baseUrl}/api/me/events/wz-aerospace-2026/registrations`, jsonOptions("POST", {
+      studentIdNumber: validStudentIdNumber,
       userId: "U2001",
       organizationId: "O1001",
       source: "伪造来源",
@@ -173,6 +176,7 @@ test("session identity cannot be replaced through body, query, or path values", 
     assert.equal((await forgedRegistration.json()).row.personalUserId, "U1001");
 
     const unrelatedOrganization = await fetch(`${baseUrl}/api/me/events/wz-aerospace-2026/registrations`, jsonOptions("POST", {
+      studentIdNumber: validStudentIdNumber,
       organizationId: "O1002",
       athlete: { name: "测试学生乙", school: "其他学校", grade: "初二", phone: "13600001002" },
       group: "中学组",
@@ -182,6 +186,7 @@ test("session identity cannot be replaced through body, query, or path values", 
     assert.equal((await unrelatedOrganization.json()).row.organizationId, "O1001");
 
     const unknownOrganization = await fetch(`${baseUrl}/api/me/events/wz-aerospace-2026/registrations`, jsonOptions("POST", {
+      studentIdNumber: validStudentIdNumber,
       organizationId: "O-NOT-FOUND",
       athlete: { name: "测试学生丙", school: "其他学校", grade: "初二", phone: "13600001003" },
       group: "中学组",
@@ -191,6 +196,7 @@ test("session identity cannot be replaced through body, query, or path values", 
     assert.equal((await unknownOrganization.json()).row.organizationId, "O1001");
 
     const privateRegistration = await fetch(`${baseUrl}/api/me/events/wz-aerospace-2026/registrations`, jsonOptions("POST", {
+      studentIdNumber: validStudentIdNumber,
       athlete: { name: "私人参赛者", school: "个人学校", grade: "初二", phone: "13600001004" },
       group: "中学组",
       projectId: "drone-relay"
@@ -286,6 +292,7 @@ test("certificate downloads enforce ownership, publication, and organization man
     assert.equal((await fetch(`${baseUrl}/api/certificates/${foreignCertificate.id}/file`, withSession(ordinary.cookie))).status, 403);
 
     const privateRegistration = await fetch(`${baseUrl}/api/me/events/wz-aerospace-2026/registrations`, jsonOptions("POST", {
+      studentIdNumber: validStudentIdNumber,
       athlete: { name: "私人报名", school: "个人学校", grade: "初二", phone: "13600002001" },
       group: "中学组",
       projectId: "drone-relay"

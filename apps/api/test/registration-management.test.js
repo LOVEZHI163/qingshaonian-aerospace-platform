@@ -5,6 +5,8 @@ import test from "node:test";
 import { withTestServer } from "../test-support/server.js";
 import { loginAs, withSession } from "./helpers/api-client.js";
 
+const validStudentIdNumber = "11010519491231002X";
+
 async function json(response) {
   return response.json();
 }
@@ -93,6 +95,7 @@ test("ordinary registration eligibility derives the approved member organization
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           organizationId: "O1002",
+          studentIdNumber: validStudentIdNumber,
           athlete: { name: `Eligible ${suffix}`, school: "Test school", grade: "五年级", phone: `13600005${suffix === "individual" ? "101" : "102"}` },
           projectId
         })
@@ -234,6 +237,7 @@ test("event context requires an explicit selection when multiple published event
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         eventId: "E2",
+        studentIdNumber: validStudentIdNumber,
         athlete: { name: "第二场学生", school: "测试学校", grade: "二年级", phone: "13600004002" },
         projectId: "P-E2"
       })
@@ -314,6 +318,7 @@ test("registration derives the group from actual grade and rejects a project out
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         organizationId: "O1001",
+        studentIdNumber: validStudentIdNumber,
         athlete: { name: "派生组别学生", school: "温州市实验小学", grade: "五年级", phone: "13800000031" },
         group: "中学组",
         projectId: "paper-plane-gate",
@@ -511,6 +516,7 @@ test("member registration edits keep the selected account identity while proxy e
     const memberCreated = await create({
       registrationSource: "member_registration",
       memberUserId: "U1001",
+      studentIdNumber: validStudentIdNumber,
       athlete: { name: "Member Identity", school: "成员身份测试学校", grade: "五年级", phone: "13800000001" },
       projectId: "paper-plane-gate"
     });
@@ -535,6 +541,7 @@ test("member registration edits keep the selected account identity while proxy e
 
     const proxyCreated = await create({
       registrationSource: "organization_proxy",
+      studentIdNumber: validStudentIdNumber,
       athlete: { name: "代理选手", school: "代理身份测试学校", grade: "五年级", phone: "13700009999" },
       projectId: "paper-plane-gate"
     });

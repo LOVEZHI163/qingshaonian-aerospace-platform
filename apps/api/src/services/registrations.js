@@ -4,6 +4,7 @@ import { businessError, projectForHistoricalRegistration, publishedRegistrationE
 import { organizationHistoryFields } from "./organization-account-lifecycle.js";
 import { ordinaryRegistrationEligibility, requireOrdinaryRegistrationEligibility, requireOrdinaryUser, requireOrganizationEventParticipation, requireWritableEvent } from "./access-control.js";
 import { registrationSubmissionSummary, withRegistrationSubmission } from "./submission-assets.js";
+import { decryptStudentId, encryptStudentId, fingerprintStudentId, normalizeStudentId } from "../security/registration-identities.js";
 
 function normalizeText(value) {
   return String(value || "").trim().replace(/\s+/g, "").toLowerCase();
@@ -27,6 +28,62 @@ function requireText(value, label) {
   const text = String(value || "").trim();
   if (!text) throw businessError(422, `${label}不能为空`);
   return text;
+}
+
+export function requireStudentIdForNewRegistration(input) {
+  try {
+    return normalizeStudentId(input?.studentIdNumber);
+  } catch {
+    throw businessError(400, "身份证号校验失败", "INVALID_STUDENT_ID_NUMBER");
+  }
+}
+
+export function createRegistrationIdentity(db, registrationId, studentIdNumber, timestamp = new Date().toISOString()) {
+  db.registrationIdentities ||= [];
+  const row = {
+    registrationId,
+    ...encryptStudentId(studentIdNumber),
+    createdAt: timestamp,
+    updatedAt: timestamp
+  };
+  db.registrationIdentities.push(row);
+  return row;
+}
+
+export function assertExistingIdentityMatches(db, registrationId, studentIdNumber) {
+  const identity = (db.registrationIdentities || []).find((row) => row.registrationId === registrationId);
+  if (identity && identity.idFingerprint !== fingerprintStudentId(studentIdNumber)) {
+    throw businessError(409, "该报名已绑定其他身份证号", "REGISTRATION_IDENTITY_CONFLICT");
+  }
+  return identity || null;
+}
+
+function canReadRegistrationIdentity(db, registration, actor) {
+  if (actor?.type === "admin") return true;
+  if (actor?.type === "ordinary") return registration.personalUserId === actor.id;
+  if (actor?.type === "organization") {
+    const organization = db.organizations.find((row) => row.ownerUserId === actor.id);
+    return Boolean(organization && organization.id === registration.organizationId);
+  }
+  return false;
+}
+
+export function attachAuthorizedIdentity(db, registration, actor) {
+  const identity = (db.registrationIdentities || []).find((row) => row.registrationId === registration.id);
+  return {
+    ...registration,
+    studentIdNumber: canReadRegistrationIdentity(db, registration, actor) && identity
+      ? decryptStudentId(identity)
+      : null
+  };
+}
+
+export function updateExistingRegistrationIdentity(db, registrationId, input, timestamp = new Date().toISOString()) {
+  const identity = (db.registrationIdentities || []).find((row) => row.registrationId === registrationId);
+  if (!identity || !Object.hasOwn(input || {}, "studentIdNumber")) return identity || null;
+  const studentIdNumber = requireStudentIdForNewRegistration(input);
+  Object.assign(identity, encryptStudentId(studentIdNumber), { updatedAt: timestamp });
+  return identity;
 }
 
 export function activeMembershipOrganizations(db, userId) {
@@ -247,11 +304,11 @@ export function listAdminRegistrations(db, query, clock = () => new Date()) {
   const pageSize = Math.min(100, Math.max(10, requestedSize || 25));
   let rows = filterAdminRegistrations(db, query);
   const total = rows.length;
-  rows = rows.slice((page - 1) * pageSize, page * pageSize).map((row) => ({
+  rows = rows.slice((page - 1) * pageSize, page * pageSize).map((row) => attachAuthorizedIdentity(db, {
     ...withRegistrationSubmission(db, row),
     ...organizationHistoryFields(row),
     grade: row.athlete?.grade || ""
-  }));
+  }, { type: "admin" }));
   return { rows, total, page, pageSize, refreshedAt: clock().toISOString() };
 }
 
@@ -271,12 +328,12 @@ export function listOrganizationRegistrations(db, organizationId, query = {}, cl
   }).sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")) || b.id.localeCompare(a.id));
   const rows = filtered.slice((page - 1) * pageSize, page * pageSize).map((row) => {
     const event = db.events.find((item) => item.id === row.eventId);
-    return {
+    return attachAuthorizedIdentity(db, {
       ...withRegistrationSubmission(db, row),
       eventName: event?.name || row.eventId,
       eventStatus: event?.status || "",
       archivedAt: event?.archivedAt || null
-    };
+    }, { type: "organization", id: db.organizations.find((item) => item.id === organizationId)?.ownerUserId });
   });
   const events = [...new Map(owned.map((row) => {
     const event = db.events.find((item) => item.id === row.eventId);
@@ -394,6 +451,7 @@ export function createOrMergeRegistration(db, input, actor, channel, {
 } = {}) {
   const event = requireOpenRegistrationEvent(db, requireEventId(db, input?.eventId).id, clock);
   const prepared = validateCreateForEvent(db, input, event, actor, channel);
+  const studentIdNumber = requireStudentIdForNewRegistration(input);
   const existing = findRegistrationIdentity(db, event.id, prepared.project.id, prepared.key);
   const personalUserId = prepared.personalUserId;
   const organizationId = prepared.organization?.id || null;
@@ -409,6 +467,7 @@ export function createOrMergeRegistration(db, input, actor, channel, {
       createdAt: timestamp, updatedAt: timestamp
     };
     db.registrations.unshift(row);
+    createRegistrationIdentity(db, row.id, studentIdNumber, timestamp);
     return { row, created: true, merged: false };
   }
 
@@ -423,5 +482,6 @@ export function createOrMergeRegistration(db, input, actor, channel, {
   ) {
     throw businessError(409, "相同赛事、赛项和参赛者的报名已存在且归属不同", "REGISTRATION_IDENTITY_CONFLICT");
   }
+  assertExistingIdentityMatches(db, existing.id, studentIdNumber);
   return { row: existing, created: false, merged: false };
 }
