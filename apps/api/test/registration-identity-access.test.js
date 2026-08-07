@@ -3,11 +3,19 @@ import fs from "node:fs/promises";
 import test from "node:test";
 
 import { withTestServer } from "../test-support/server.js";
+import { prepareRegistrationCreate } from "../src/services/registrations.js";
 import { loginAs, withSession } from "./helpers/api-client.js";
 
 const validId = "11010519491231002X";
 const otherValidId = "110105194912310038";
 const eventId = "wz-aerospace-2026";
+
+test("legacy registration preparation shares the athlete identity boundary", () => {
+  assert.throws(
+    () => prepareRegistrationCreate({}, { athlete: { studentIdNumber: otherValidId } }, "U1"),
+    (error) => error.status === 400 && error.code === "INVALID_STUDENT_ID_NUMBER"
+  );
+});
 
 async function readJson(response) {
   return response.json();
@@ -223,5 +231,101 @@ test("authorized personal, organization, and administrator patches re-encrypt an
     const storedIdentity = JSON.parse(await fs.readFile(dbPath, "utf8")).registrationIdentities[0];
     assert.notEqual(storedIdentity.ciphertext, originalIdentity.ciphertext);
     assert.equal(JSON.stringify(storedIdentity).includes(otherValidId), false);
+  });
+});
+
+test("registration write boundaries reject top-level and nested identity aliases for create and every patch role", async () => {
+  await withTestServer(async ({ baseUrl, dbPath }) => {
+    const personal = await loginAs(baseUrl, "13800000001", "123456");
+    const owner = await loginAs(baseUrl, "13800000011", "123456");
+    const admin = await loginAs(baseUrl, "13900000000", "admin123");
+    await openEvent(baseUrl, admin.cookie);
+    assert.equal((await fetch(`${baseUrl}/api/organization/events/${eventId}/join`, withSession(owner.cookie, { method: "POST" }))).status, 201);
+
+    const safeAthlete = registrationBody(personal.user).athlete;
+    const maliciousInputs = [
+      { identityNumber: otherValidId },
+      { athlete: { ...safeAthlete, studentIdNumber: otherValidId } },
+      { athlete: { ...safeAthlete, guardian: { idCard: otherValidId } } }
+    ];
+    for (const malicious of maliciousInputs) {
+      const response = await fetch(`${baseUrl}/api/me/events/${eventId}/registrations`, withSession(personal.cookie, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...registrationBody(personal.user), ...malicious, studentIdNumber: validId })
+      }));
+      assert.equal(response.status, 400);
+      const payload = await readJson(response);
+      assert.equal(payload.code, "INVALID_STUDENT_ID_NUMBER");
+      assert.equal(JSON.stringify(payload).includes(otherValidId), false);
+    }
+
+    const createdResponse = await fetch(`${baseUrl}/api/me/events/${eventId}/registrations`, withSession(personal.cookie, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ...registrationBody(personal.user),
+        athlete: { ...safeAthlete, nickname: "must be dropped", emergencyContact: { name: "Parent", phone: "13800009999" } },
+        studentIdNumber: validId
+      })
+    }));
+    assert.equal(createdResponse.status, 201);
+    const registration = (await readJson(createdResponse)).row;
+    const patchActors = [
+      [`/api/me/events/${eventId}/registrations/${registration.id}`, personal.cookie],
+      [`/api/organization/events/${eventId}/registrations/${registration.id}`, owner.cookie],
+      [`/api/admin/events/${eventId}/registrations/${registration.id}`, admin.cookie]
+    ];
+    for (const [path, cookie] of patchActors) {
+      for (const malicious of maliciousInputs) {
+        const response = await fetch(`${baseUrl}${path}`, withSession(cookie, {
+          method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(malicious)
+        }));
+        assert.equal(response.status, 400);
+        const payload = await readJson(response);
+        assert.equal(payload.code, "INVALID_STUDENT_ID_NUMBER");
+        assert.equal(JSON.stringify(payload).includes(otherValidId), false);
+      }
+    }
+
+    const stored = JSON.parse(await fs.readFile(dbPath, "utf8"));
+    const storedRegistration = stored.registrations.find((row) => row.id === registration.id);
+    assert.deepEqual(Object.keys(storedRegistration.athlete).sort(), ["grade", "name", "phone", "school"]);
+    assert.equal(JSON.stringify(stored.registrations).includes(validId), false);
+    assert.equal(JSON.stringify(stored.registrations).includes(otherValidId), false);
+  });
+});
+
+test("existing identity retries fail closed when ciphertext, authentication tag, or fingerprint is inconsistent", async () => {
+  await withTestServer(async ({ baseUrl, dbPath }) => {
+    const personal = await loginAs(baseUrl, "13800000001", "123456");
+    const admin = await loginAs(baseUrl, "13900000000", "admin123");
+    await openEvent(baseUrl, admin.cookie);
+    const body = { ...registrationBody(personal.user), studentIdNumber: validId };
+    const createdResponse = await fetch(`${baseUrl}/api/me/events/${eventId}/registrations`, withSession(personal.cookie, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body)
+    }));
+    assert.equal(createdResponse.status, 201);
+    const registrationId = (await readJson(createdResponse)).row.id;
+    const originalDb = JSON.parse(await fs.readFile(dbPath, "utf8"));
+    const originalIdentity = structuredClone(originalDb.registrationIdentities.find((row) => row.registrationId === registrationId));
+
+    for (const tamper of [
+      (row) => { row.ciphertext = Buffer.from("tampered ciphertext").toString("base64"); },
+      (row) => { row.authTag = Buffer.alloc(16, 4).toString("base64"); },
+      (row) => { row.idFingerprint = "tampered-fingerprint"; }
+    ]) {
+      await mutateDb(dbPath, (db) => {
+        const identity = db.registrationIdentities.find((row) => row.registrationId === registrationId);
+        Object.assign(identity, structuredClone(originalIdentity));
+        tamper(identity);
+      });
+      const response = await fetch(`${baseUrl}/api/me/events/${eventId}/registrations`, withSession(personal.cookie, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body)
+      }));
+      assert.equal(response.status, 409);
+      const payload = await readJson(response);
+      assert.equal(payload.code, "REGISTRATION_IDENTITY_CONFLICT");
+      assert.equal(JSON.stringify(payload).includes(validId), false);
+      assert.equal(JSON.stringify(payload).includes("decrypt"), false);
+    }
   });
 });

@@ -6,6 +6,19 @@ import { ordinaryRegistrationEligibility, requireOrdinaryRegistrationEligibility
 import { registrationSubmissionSummary, withRegistrationSubmission } from "./submission-assets.js";
 import { decryptStudentId, encryptStudentId, fingerprintStudentId, normalizeStudentId } from "../security/registration-identities.js";
 
+const ATHLETE_FIELDS = ["name", "school", "grade", "phone"];
+const IDENTITY_FIELD_KEYS = new Set([
+  "studentidnumber",
+  "identitynumber",
+  "identitycard",
+  "identitycardnumber",
+  "idcardnumber",
+  "idcard",
+  "idnumber",
+  "nationalidnumber",
+  "citizenidnumber"
+]);
+
 function normalizeText(value) {
   return String(value || "").trim().replace(/\s+/g, "").toLowerCase();
 }
@@ -38,6 +51,36 @@ export function requireStudentIdForNewRegistration(input) {
   }
 }
 
+function normalizedFieldKey(key) {
+  return String(key).replace(/[_-]/g, "").toLowerCase();
+}
+
+function findUnexpectedIdentityField(value, path = [], seen = new WeakSet()) {
+  if (!value || typeof value !== "object" || seen.has(value)) return null;
+  seen.add(value);
+  for (const [key, nestedValue] of Object.entries(value)) {
+    const normalizedKey = normalizedFieldKey(key);
+    const canonicalRootStudentId = path.length === 0 && normalizedKey === "studentidnumber";
+    if (!canonicalRootStudentId && (IDENTITY_FIELD_KEYS.has(normalizedKey) || key.includes("身份证"))) {
+      return [...path, key].join(".");
+    }
+    const nested = findUnexpectedIdentityField(nestedValue, [...path, key], seen);
+    if (nested) return nested;
+  }
+  return null;
+}
+
+function safeRegistrationAthlete(input, fallback = {}) {
+  const unexpectedIdentityField = findUnexpectedIdentityField(input);
+  if (unexpectedIdentityField) {
+    throw businessError(400, "身份证号字段位置不合法", "INVALID_STUDENT_ID_NUMBER");
+  }
+  if (!Object.hasOwn(input || {}, "athlete")) return fallback;
+  const athlete = input.athlete;
+  if (!athlete || typeof athlete !== "object" || Array.isArray(athlete)) return {};
+  return Object.fromEntries(ATHLETE_FIELDS.filter((field) => Object.hasOwn(athlete, field)).map((field) => [field, athlete[field]]));
+}
+
 export function createRegistrationIdentity(db, registrationId, studentIdNumber, timestamp = new Date().toISOString()) {
   db.registrationIdentities ||= [];
   const row = {
@@ -52,10 +95,19 @@ export function createRegistrationIdentity(db, registrationId, studentIdNumber, 
 
 export function assertExistingIdentityMatches(db, registrationId, studentIdNumber) {
   const identity = (db.registrationIdentities || []).find((row) => row.registrationId === registrationId);
-  if (identity && identity.idFingerprint !== fingerprintStudentId(studentIdNumber)) {
-    throw businessError(409, "该报名已绑定其他身份证号", "REGISTRATION_IDENTITY_CONFLICT");
+  if (!identity) return null;
+  try {
+    const normalized = normalizeStudentId(studentIdNumber);
+    const submittedFingerprint = fingerprintStudentId(normalized);
+    const decrypted = decryptStudentId(identity);
+    const decryptedFingerprint = fingerprintStudentId(decrypted);
+    if (identity.idFingerprint === submittedFingerprint && decrypted === normalized && decryptedFingerprint === identity.idFingerprint) {
+      return identity;
+    }
+  } catch {
+    // Every storage inconsistency is exposed as one stable business conflict.
   }
-  return identity || null;
+  throw businessError(409, "该报名已绑定其他身份证号", "REGISTRATION_IDENTITY_CONFLICT");
 }
 
 function canReadRegistrationIdentity(db, registration, actor) {
@@ -174,7 +226,7 @@ export function validateRegistration(input, existingRows, project, eventId, igno
 }
 
 export function prepareRegistrationCreate(db, input, userId, clock = () => new Date()) {
-  const athlete = input?.athlete || {};
+  const athlete = safeRegistrationAthlete(input);
   requireText(athlete.name, "姓名");
   requireText(athlete.school, "学校");
   requireText(athlete.grade, "年级");
@@ -214,7 +266,7 @@ export function prepareAdminRegistrationUpdate(db, row, input) {
   }
   assertRegistrationProjectImmutable(row, input);
   if (!db.events.some((event) => event.id === row.eventId)) throw businessError(422, "赛事不存在");
-  const athlete = input.athlete || row.athlete;
+  const athlete = safeRegistrationAthlete(input, row.athlete);
   requireText(athlete.name, "姓名");
   requireText(athlete.school, "学校");
   requireText(athlete.grade, "年级");
@@ -242,7 +294,7 @@ export function prepareOrdinaryRegistrationUpdate(db, row, input, userId) {
   if (row.personalUserId !== userId) throw businessError(403, "无权修改该报名");
   assertRegistrationProjectImmutable(row, input);
   assertRegistrationWindowOpen(db, row.eventId);
-  const athlete = input.athlete || row.athlete;
+  const athlete = safeRegistrationAthlete(input, row.athlete);
   requireText(athlete.name, "姓名");
   requireText(athlete.school, "学校");
   requireText(athlete.grade, "年级");
@@ -410,7 +462,7 @@ function requireMemberIdentity(db, organizationId, memberUserId, athlete) {
 }
 
 function validateCreateForEvent(db, input, event, actor, channel) {
-  const athlete = input?.athlete || {};
+  const athlete = safeRegistrationAthlete(input);
   requireText(athlete.name, "姓名");
   requireText(athlete.school, "学校");
   requireText(athlete.grade, "年级");
