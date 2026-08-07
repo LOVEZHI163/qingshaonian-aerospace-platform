@@ -142,6 +142,23 @@ test("cross-organization leader authorization rejects an oversized replacement b
   }, { prefix: "organization-leader-cross-organization-upload-" });
 });
 
+test("temporary-password cross-organization leader authorization rejects an oversized replacement with 403", async () => {
+  await withTestServer(async ({ baseUrl, dbPath }) => {
+    const owner = await loginAs(baseUrl, "13800000011", "123456");
+    const otherOwner = await loginAs(baseUrl, "13800000012", "123456");
+    const created = await createLeader(baseUrl, owner, { name: "边界领队", phone: "13800009778" });
+    const db = JSON.parse(await fs.readFile(dbPath, "utf8"));
+    db.users.find((row) => row.id === "U2002").mustChangePassword = true;
+    await fs.writeFile(dbPath, JSON.stringify(db), "utf8");
+
+    const response = await fetch(`${baseUrl}/api/organization/leaders/${created.row.id}`, withSession(otherOwner.cookie, {
+      method: "PATCH",
+      body: oversizedAuthorizationForm({ name: "临时密码越权修改" })
+    }));
+    assert.equal(response.status, 403);
+  }, { prefix: "organization-leader-temporary-cross-organization-upload-" });
+});
+
 test("authorization template takes the approved operational organization name from the session", async () => {
   await withTestServer(async ({ baseUrl }) => {
     const owner = await loginAs(baseUrl, "13800000011", "123456");

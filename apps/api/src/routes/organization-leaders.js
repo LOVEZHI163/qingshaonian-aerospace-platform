@@ -5,7 +5,7 @@ import crypto from "node:crypto";
 import { buildLeaderAuthorizationDocx } from "../exports/leader-authorization-docx.js";
 import { appendLeaderCleanupFallback } from "../files/cleanup-fallback-journal.js";
 import { deletePrivateFile, readPrivateFile } from "../files/storage.js";
-import { requireOrganizationAccess } from "../services/access-control.js";
+import { requireOrganizationAccess, requireOrganizationOwner } from "../services/access-control.js";
 import {
   createOrganizationLeader,
   listOrganizationLeaders,
@@ -194,9 +194,15 @@ export function createOrganizationLeadersRouter({
     Promise.resolve().then(async () => {
       if (allowAdmin && req.user?.type === "admin") return;
       const db = await store.readDb();
+      if (leader) {
+        const ownedOrganization = requireOrganizationOwner(db, req.user);
+        const authorizedLeader = organizationLeaderOrError(db, ownedOrganization, req.params.leaderId);
+        req[AUTHORIZED_ORGANIZATION] = requireOrganizationAccess(db, req.user);
+        req[AUTHORIZED_LEADER] = authorizedLeader;
+        return;
+      }
       const organization = requireOrganizationAccess(db, req.user);
       req[AUTHORIZED_ORGANIZATION] = organization;
-      if (leader) req[AUTHORIZED_LEADER] = organizationLeaderOrError(db, organization, req.params.leaderId);
     }).then(next, (error) => respondError(error, res, next));
   };
   const organizationAccess = [requireUser, preauthorizeOrganization(), requirePasswordReady];
