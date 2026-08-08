@@ -134,6 +134,21 @@ test("upgrade preflight runs the candidate migration twice against a disposable 
   assert.match(guide, /015-registration-identities-and-organization-leaders\.sql/);
 });
 
+test("upgrade preflight validates host backups when the candidate lives outside the deploy directory", async () => {
+  const preflight = await fs.readFile(
+    path.join(root, "deploy/preflight-admin-upgrade.sh"),
+    "utf8"
+  );
+
+  assert.match(preflight, /backup_run\(\) \{/);
+  assert.match(
+    preflight,
+    /docker compose run --rm --no-deps -T -v "\$backups_dir:\/backups:ro" backup/
+  );
+  assert.match(preflight, /backup_run pg_restore --list/);
+  assert.match(preflight, /backup_run \/bin\/sh \/scripts\/verify-uploads-backup\.sh/);
+});
+
 test("documented upgrade bootstraps missing secrets before every Compose operation", async () => {
   const guide = await fs.readFile(path.join(root, "docs/deployment/aliyun-test.md"), "utf8");
   const upgradeBlock = shellBlockAfter(guide, "更新应用前必须先补齐缺失密钥");

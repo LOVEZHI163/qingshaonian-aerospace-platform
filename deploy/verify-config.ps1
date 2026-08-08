@@ -88,7 +88,7 @@ Require-Match $verifyUploadsBackup 'parts\[part_index\]\s*==\s*"\.\."' "Uploads 
 Require-Match $verifyUploadsBackup 'symbolic or hard link' "Uploads backup verifier must reject links"
 Require-Match $preflightUpgrade 'pg_restore\s+--list' "Upgrade preflight must verify the latest database dump"
 Require-Match $preflightUpgrade 'verify-uploads-backup\.sh' "Upgrade preflight must verify the latest uploads archive"
-Require-Match $preflightUpgrade 'docker compose run --rm --no-deps -T backup' "Upgrade preflight must inspect backups with the pending Compose mounts"
+Require-Match $preflightUpgrade 'docker compose run --rm --no-deps -T -v "\$backups_dir:/backups:ro" backup' "Upgrade preflight must inspect the selected host backup directory with the pending Compose image"
 Require-NoMatch $preflightUpgrade 'docker compose exec -T backup' "Upgrade preflight must not depend on the old running backup container mounts"
 Require-Match $preflightUpgrade 'site-media' "Upgrade preflight must verify website media backup coverage"
 Require-Match $preflightUpgrade 'SESSION_SECRET' "Upgrade preflight must validate SESSION_SECRET"

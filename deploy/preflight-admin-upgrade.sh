@@ -73,28 +73,35 @@ unset registration_id_encryption_key registration_id_encryption_key_canonical re
 
 docker compose config --quiet || fail "Compose configuration is invalid"
 
+# A release candidate may be staged outside the live deployment directory.
+# Override the Compose-relative backup mount so validation always reads the
+# host backup directory selected by BACKUPS_DIR.
+backup_run() {
+  docker compose run --rm --no-deps -T -v "$backups_dir:/backups:ro" backup "$@"
+}
+
 latest_dump="$(find "$backups_dir" -maxdepth 1 -type f -name 'aerogp-*.dump' -print | sort | tail -n 1)"
 test -n "$latest_dump" || fail "no database dump was found"
 test -s "$latest_dump" || fail "latest database dump is empty"
-docker compose run --rm --no-deps -T backup pg_restore --list "/backups/$(basename "$latest_dump")" >/dev/null \
+backup_run pg_restore --list "/backups/$(basename "$latest_dump")" >/dev/null \
   || fail "latest database dump is unreadable"
 
 latest_uploads="$(find "$backups_dir/uploads" -maxdepth 1 -type f -name 'aerogp-uploads-*.tar.gz' -print | sort | tail -n 1)"
 test -n "$latest_uploads" || fail "no uploads backup was found"
 test -s "$latest_uploads" || fail "latest uploads backup is empty"
-docker compose run --rm --no-deps -T backup /bin/sh /scripts/verify-uploads-backup.sh \
+backup_run /bin/sh /scripts/verify-uploads-backup.sh \
   "/backups/uploads/$(basename "$latest_uploads")" >/dev/null \
   || fail "latest uploads backup is unreadable or unsafe"
-site_media_state="$(docker compose run --rm --no-deps -T backup /bin/sh -c \
+site_media_state="$(backup_run /bin/sh -c \
   'if test -d /uploads/site-media; then printf present; else printf absent; fi')"
 if test "$site_media_state" = "present"; then
-  docker compose run --rm --no-deps -T backup tar -tzf \
+  backup_run tar -tzf \
     "/backups/uploads/$(basename "$latest_uploads")" \
     | grep -Eq '^\./site-media(/|$)' \
     || fail "latest uploads backup does not contain site-media"
 fi
 
-uploads_kb="$(docker compose run --rm --no-deps -T backup du -sk /uploads | awk 'NR == 1 { print $1 }')"
+uploads_kb="$(backup_run du -sk /uploads | awk 'NR == 1 { print $1 }')"
 case "$uploads_kb" in
   ''|*[!0-9]*) fail "could not measure uploads volume" ;;
 esac
