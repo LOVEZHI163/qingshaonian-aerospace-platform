@@ -19,6 +19,7 @@ const BASE_COLUMNS = [
   ["实际年级", (row) => row.athlete?.grade],
   ["组别", (row) => row.group],
   ["手机号", (row) => row.athlete?.phone],
+  ["学生身份证号", (row) => row.studentIdNumber],
   ["赛项", (row) => row.projectName],
   ["项目类型", (row) => row.projectType === "team" ? "团体赛" : "个人赛"],
   ["指导老师", (row) => row.instructor],
@@ -28,7 +29,7 @@ const BASE_COLUMNS = [
   ["成绩/分数", (row) => row.score]
 ];
 
-const TEXT_COLUMNS = new Set([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
+const TEXT_COLUMNS = new Set([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
 
 export function workbookColumnWidth(header) {
   if (header.includes("图片")) return 24;
@@ -48,6 +49,15 @@ export function styleWorkbookHeaderCell(cell, { fill = "FF1F4E78", fontColor = "
   cell.alignment = { vertical: "middle", horizontal: "center" };
 }
 
+export function registrationSourceLabel(source) {
+  return {
+    member_registration: "成员报名",
+    organization_proxy: "组织代报名",
+    personal: "成员本人报名",
+    organization: "历史组织报名"
+  }[source] || source;
+}
+
 export function buildRegistrationWorkbook(rows) {
   const workbook = createExportWorkbook();
 
@@ -61,6 +71,7 @@ export function buildRegistrationWorkbook(rows) {
 
   for (const row of rows) {
     const data = BASE_COLUMNS.map(([, value]) => value(row) ?? "");
+    data[1] = registrationSourceLabel(row.source) || "";
     const excelRow = sheet.addRow(data);
     excelRow.alignment = { vertical: "middle", wrapText: true };
   }

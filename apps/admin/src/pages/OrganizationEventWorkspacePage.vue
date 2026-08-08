@@ -3,9 +3,15 @@ import { computed, onMounted, ref } from "vue";
 
 import OrganizationAthleteRegistrationForm from "../components/OrganizationAthleteRegistrationForm.vue";
 import { api } from "../lib/api.js";
+import { isOrganizationRestrictionError } from "../state/access.js";
 
 const props = defineProps({ eventId: { type: String, default: "" } });
 const emit = defineEmits(["error", "context", "access-denied", "back-to-events"]);
+
+function reportError(error, fallback = "赛事工作台加载失败") {
+  if (isOrganizationRestrictionError(error) || [403, 404].includes(error?.status)) emit("access-denied", error);
+  else emit("error", error?.message || fallback);
+}
 const workspace = ref(null);
 const loading = ref(true);
 const event = computed(() => workspace.value?.event || {});
@@ -26,8 +32,7 @@ async function loadWorkspace() {
     workspace.value = payload || {};
     emit("context", payload?.event || null);
   } catch (error) {
-    if ([403, 404].includes(error.status)) emit("access-denied", error);
-    else emit("error", error.message || "赛事工作台加载失败");
+    reportError(error);
   } finally {
     loading.value = false;
   }
@@ -67,7 +72,7 @@ onMounted(loadWorkspace);
       </section>
 
       <section class="organization-registration-card">
-        <OrganizationAthleteRegistrationForm v-if="!archived" :event-id="props.eventId" :projects="workspace.projects || []" :grades="workspace.grades || []" :default-school="workspace.organization?.name || ''" @registered="registered" @error="emit('error', $event)" />
+        <OrganizationAthleteRegistrationForm v-if="!archived" :event-id="props.eventId" :projects="workspace.projects || []" :grades="workspace.grades || []" :members="workspace.members || []" :default-school="workspace.organization?.name || ''" @registered="registered" @error="reportError($event, '组织报名提交失败')" />
         <div v-else class="panel event-context-empty"><h3>归档赛事不可新增报名</h3><p class="hint">请在报名记录、成绩和证书页面查看历史信息。</p></div>
       </section>
     </div>

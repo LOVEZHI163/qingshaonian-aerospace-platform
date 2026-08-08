@@ -2,12 +2,15 @@ import express from "express";
 import cors from "cors";
 import { hashPassword, isLegacyPassword, validatePassword, verifyLoginPassword } from "./auth/passwords.js";
 import { createSmsPasswordResetService, sendPasswordResetError } from "./auth/password-reset.js";
+import { createTemporaryPasswordVault } from "./auth/temporary-passwords.js";
 import { asyncRoute, createSessionMiddleware, requireAdmin, requirePasswordReady, requireUser } from "./auth/session.js";
 import { createAliyunSmsProvider } from "./auth/sms.js";
 import { createDataStore } from "./data/index.js";
-import { createMutationAsyncRoute } from "./data/mutation-lock.js";
+import { importLeaderCleanupFallbackJournal } from "./files/cleanup-fallback-journal.js";
+import { createLockedAsyncRoute, createMutationAsyncRoute } from "./data/mutation-lock.js";
 import { createEventsRouter } from "./routes/events.js";
 import { createOrganizationsRouter } from "./routes/organizations.js";
+import { createOrganizationLeadersRouter } from "./routes/organization-leaders.js";
 import { createRegistrationsRouter } from "./routes/registrations.js";
 import { createCertificateImportsRouter } from "./routes/certificate-imports.js";
 import { cleanupExpiredCertificateImportPreviews } from "./services/certificate-imports.js";
@@ -24,22 +27,43 @@ import { createMembershipsRouter } from "./routes/memberships.js";
 import { startSubmissionSessionExpiryCleanup } from "./services/submission-assets.js";
 import { registrationContext } from "./services/events.js";
 import { replayFileCleanupJournal } from "./services/organizations.js";
+import {
+  clearUserTemporaryPassword,
+  readUserTemporaryPassword,
+  resetUserTemporaryPassword,
+  temporaryPasswordKeyUnavailable
+} from "./services/account-passwords.js";
+import { recordAudit } from "./services/audit.js";
 import { organizationForOwner } from "./services/access-control.js";
 import { publishDueScheduledContent, startScheduledContentPublisher } from "./services/scheduled-content-publisher.js";
+import { requireRegistrationIdentityEncryptionKey } from "./security/registration-identities.js";
 
+requireRegistrationIdentityEncryptionKey(process.env);
 const PORT = Number(process.env.PORT || 4300);
 const dataStore = createDataStore();
 const mutationAsyncRoute = createMutationAsyncRoute(dataStore);
+const lockedAsyncRoute = createLockedAsyncRoute(dataStore);
 const readDb = () => dataStore.readDb();
 const writeDb = (db) => dataStore.writeDb(db);
 const smsProvider = createAliyunSmsProvider(process.env);
+let temporaryPasswordVault = null;
+try {
+  temporaryPasswordVault = createTemporaryPasswordVault(process.env.TEMP_PASSWORD_ENCRYPTION_KEY);
+} catch {
+  // Password reset/view endpoints fail closed with a stable API error below.
+}
+function requireTemporaryPasswordVault() {
+  if (!temporaryPasswordVault) throw temporaryPasswordKeyUnavailable();
+  return temporaryPasswordVault;
+}
 const smsPasswordReset = createSmsPasswordResetService({
   secret: process.env.SESSION_SECRET || "test-session-secret-32-characters",
   readDb,
   writeDb,
   smsProvider,
   authState: dataStore.authState,
-  withMutationLock: (handler) => dataStore.withMutationLock(handler)
+  withMutationLock: (handler) => dataStore.withMutationLock(handler),
+  clearTemporaryPassword: clearUserTemporaryPassword
 });
 
 function id(prefix) {
@@ -193,6 +217,16 @@ app.use("/api", createOrganizationsRouter({
   makeId: id,
   now,
   publicUser
+}));
+
+app.use("/api", createOrganizationLeadersRouter({
+  store: dataStore,
+  requireUser,
+  requireAdmin,
+  requirePasswordReady,
+  asyncRoute: mutationAsyncRoute,
+  makeId: id,
+  now
 }));
 
 app.use("/api", createMembershipsRouter({
@@ -389,6 +423,7 @@ app.post("/api/auth/change-password", requireUser, asyncRoute(async (req, res) =
     user.password = await hashPassword(req.body.newPassword);
     user.sessionVersion += 1;
     user.mustChangePassword = false;
+    clearUserTemporaryPassword(user);
     await writeDb(db);
     return { user };
   });
@@ -428,37 +463,72 @@ app.get("/api/users", requireAdmin, requirePasswordReady, asyncRoute(async (_req
   res.json({ rows: db.users.map(publicUser) });
 }));
 
+function preventSensitiveResponseCaching(res) {
+  res.set({
+    "Cache-Control": "no-store, private",
+    Pragma: "no-cache",
+    Expires: "0"
+  });
+}
+
 app.post("/api/admin/users/:id/reset-password", requireAdmin, requirePasswordReady, mutationAsyncRoute(async (req, res) => {
-  const passwordError = validatePassword(req.body.password);
-  if (passwordError) return res.status(422).json({ error: passwordError });
+  const vault = requireTemporaryPasswordVault();
   const db = await readDb();
   const user = db.users.find((item) => item.id === req.params.id);
   if (!user) return res.status(404).json({ error: "用户不存在" });
-  user.password = await hashPassword(req.body.password);
-  user.sessionVersion += 1;
-  user.mustChangePassword = true;
+  const { temporaryPassword } = await resetUserTemporaryPassword(db, user, { vault, hashPassword, now });
+  recordAudit(db, {
+    actor: req.user,
+    action: "user.password-reset",
+    targetType: "user",
+    targetId: user.id,
+    summary: `已为用户 ${user.name} 生成新的临时密码`,
+    createdAt: now()
+  });
   await writeDb(db);
-  res.json({ user: publicUser(user) });
+  preventSensitiveResponseCaching(res);
+  res.json({ user: publicUser(user), temporaryPassword });
+}));
+
+app.get("/api/admin/users/:id/temporary-password", requireAdmin, requirePasswordReady, lockedAsyncRoute(async (req, res) => {
+  const vault = requireTemporaryPasswordVault();
+  const db = await readDb();
+  const user = db.users.find((item) => item.id === req.params.id);
+  if (!user) return res.status(404).json({ error: "用户不存在" });
+  const temporaryPassword = readUserTemporaryPassword(user, vault);
+  if (!temporaryPassword) return res.status(404).json({ error: "当前没有可查看的临时密码" });
+  recordAudit(db, {
+    actor: req.user,
+    action: "user.temporary-password-view",
+    targetType: "user",
+    targetId: user.id,
+    summary: `已查看用户 ${user.name} 的当前临时密码`,
+    createdAt: now()
+  });
+  await writeDb(db);
+  preventSensitiveResponseCaching(res);
+  res.json({ temporaryPassword });
 }));
 
 app.post("/api/admin/users", requireAdmin, requirePasswordReady, mutationAsyncRoute(async (req, res) => {
-  const db = await readDb();
-  const { name, phone, password, type = "ordinary" } = req.body;
-  if (!name || !phone || !password) return res.status(422).json({ error: "姓名、手机号和密码不能为空" });
+  const { name, phone, type = "ordinary" } = req.body;
+  if (!name || !phone) return res.status(422).json({ error: "姓名和手机号不能为空" });
   if (type === "organization") return res.status(422).json({ error: "组织必须通过资质注册并审核" });
   if (type !== "ordinary") return res.status(422).json({ error: "账号类型不合法" });
-  const passwordError = validatePassword(password);
-  if (passwordError) return res.status(422).json({ error: passwordError });
+  const vault = requireTemporaryPasswordVault();
+  const db = await readDb();
   const normalizedPhone = normalizePhone(phone);
   if (db.users.some((user) => normalizePhone(user.phone) === normalizedPhone)) return res.status(409).json({ error: "该手机号已注册" });
 
   const user = {
-    id: id("U"), name, phone: normalizedPhone, password: await hashPassword(password), type, status: req.body.status || "active",
+    id: id("U"), name, phone: normalizedPhone, password: "", type, status: req.body.status || "active",
     sessionVersion: 0, mustChangePassword: false, createdAt: now()
   };
+  const { temporaryPassword } = await resetUserTemporaryPassword(db, user, { vault, hashPassword, now });
   db.users.push(user);
   await writeDb(db);
-  res.status(201).json({ row: publicUser(user), organization: null });
+  preventSensitiveResponseCaching(res);
+  res.status(201).json({ row: publicUser(user), organization: null, temporaryPassword });
 }));
 
 app.patch("/api/admin/users/:id", requireAdmin, requirePasswordReady, mutationAsyncRoute(async (req, res) => {
@@ -471,6 +541,9 @@ app.patch("/api/admin/users/:id", requireAdmin, requirePasswordReady, mutationAs
   }
   if (user.type === "admin" && req.body.type && req.body.type !== "admin") return res.status(422).json({ error: "不能修改超级管理员账号类型" });
   if (req.body.type === "organization" && user.type !== "organization") return res.status(422).json({ error: "组织必须通过资质注册并审核" });
+  if (organization && req.body.type === "ordinary") {
+    return res.status(422).json({ error: "组织负责人不能降级为普通用户，请使用组织删除流程", code: "ORGANIZATION_OWNER_TYPE_IMMUTABLE" });
+  }
 
   if (req.body.phone) {
     const normalizedPhone = normalizePhone(req.body.phone);
@@ -556,6 +629,7 @@ app.use((error, req, res, next) => {
 });
 
 await dataStore.initialize();
+await importLeaderCleanupFallbackJournal({ store: dataStore });
 await cleanupExpiredCertificateImportPreviews({ store: dataStore, makeId: id, now });
 await replayFileCleanupJournal({ store: dataStore, now });
 const stopScheduledContentPublisher = startScheduledContentPublisher({ store: dataStore });
@@ -566,6 +640,8 @@ const stopSubmissionSessionExpiryCleanup = process.env.NODE_ENV === "production"
 const server = app.listen(PORT, () => {
   console.log(`API listening on http://localhost:${server.address().port}`);
 });
+
+export { dataStore, server };
 
 async function shutdown() {
   stopScheduledContentPublisher();

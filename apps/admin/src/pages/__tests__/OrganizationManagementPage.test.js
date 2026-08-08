@@ -13,10 +13,18 @@ const organization = {
 };
 
 function mockOrganizations() {
+  let mustChangePassword = false;
   apiMock.mockImplementation(async (path, options = {}) => {
     if (path === "/api/admin/organizations" && !options.method) return { rows: [organization] };
+    if (path === "/api/users") return { rows: [{ id: "U1", name: "负责人", phone: "13800000001", mustChangePassword }] };
     if (path === "/api/admin/registrations?pageSize=100") return { rows: [], total: 0, page: 1, pageSize: 100 };
     if (path === "/api/admin/organizations/O1/review") return { organization: { ...organization, reviewStatus: JSON.parse(options.body).status } };
+    if (path === "/api/admin/users/U1/reset-password") {
+      mustChangePassword = true;
+      return { user: { id: "U1", mustChangePassword: true }, temporaryPassword: "GeneratedPass2" };
+    }
+    if (path === "/api/admin/users/U1/temporary-password") return { temporaryPassword: "GeneratedPass2" };
+    if (path === "/api/admin/organizations/O1" && options.method === "DELETE") return { ok: true };
     return { rows: [] };
   });
 }
@@ -70,6 +78,44 @@ describe("OrganizationManagementPage", () => {
     expect(apiMock).toHaveBeenCalledWith("/api/admin/organizations/O1/status", {
       method: "PATCH", body: JSON.stringify({ status: "disabled" })
     });
+  });
+
+  it("generates a copyable temporary password and reopens it through the read endpoint", async () => {
+    const writeText = vi.fn();
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    const wrapper = mount(OrganizationManagementPage);
+    await flushPromises();
+
+    await wrapper.get('[data-action="reset-password-O1"]').trigger("click");
+    await flushPromises();
+    expect(apiMock).toHaveBeenCalledWith("/api/admin/users/U1/reset-password", { method: "POST", body: "{}", cache: "no-store" });
+    expect(wrapper.get('[data-testid="temporary-password-dialog"]').text()).toContain("GeneratedPass2");
+    await wrapper.get('[data-action="copy-temporary-password"]').trigger("click");
+    expect(writeText).toHaveBeenCalledWith("GeneratedPass2");
+    await wrapper.get('[data-action="close-temporary-password"]').trigger("click");
+
+    await wrapper.get('[data-action="view-temporary-password-O1"]').trigger("click");
+    await flushPromises();
+    expect(apiMock).toHaveBeenCalledWith("/api/admin/users/U1/temporary-password", { cache: "no-store" });
+    expect(wrapper.get('[data-testid="temporary-password-dialog"]').text()).toContain("GeneratedPass2");
+  });
+
+  it("deletes an organization only after a yes-or-no retained-history confirmation", async () => {
+    const wrapper = mount(OrganizationManagementPage);
+    await flushPromises();
+    await wrapper.get('[data-action="delete-O1"]').trigger("click");
+
+    const dialog = wrapper.get('[data-testid="delete-organization-dialog"]');
+    expect(dialog.text()).toContain("负责人账号、组织资料、成员关系和资质将删除");
+    expect(dialog.text()).toContain("历史报名、成绩和证书保留组织名称快照");
+    expect(dialog.text()).toContain("操作不可恢复");
+    await dialog.get('[data-action="cancel-delete-organization"]').trigger("click");
+    expect(apiMock).not.toHaveBeenCalledWith("/api/admin/organizations/O1", expect.anything());
+
+    await wrapper.get('[data-action="delete-O1"]').trigger("click");
+    await wrapper.get('[data-action="confirm-delete-organization"]').trigger("click");
+    await flushPromises();
+    expect(apiMock).toHaveBeenCalledWith("/api/admin/organizations/O1", { method: "DELETE" });
   });
 
   it("previews a credential through an authenticated blob and revokes it on close", async () => {

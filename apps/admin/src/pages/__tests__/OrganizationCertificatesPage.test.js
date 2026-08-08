@@ -1,5 +1,5 @@
 import { flushPromises, mount } from "@vue/test-utils";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { apiMock, apiBlobMock, apiUrlMock } = vi.hoisted(() => ({
   apiMock: vi.fn(),
@@ -23,15 +23,27 @@ const rows = [
   }
 ];
 
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((nextResolve, nextReject) => { resolve = nextResolve; reject = nextReject; });
+  return { promise, resolve, reject };
+}
+
 describe("OrganizationCertificatesPage", () => {
   beforeEach(() => {
     apiMock.mockReset();
     apiBlobMock.mockReset();
     apiMock.mockResolvedValue({ rows });
     apiBlobMock.mockResolvedValue(new Blob(["certificate"]));
-    URL.createObjectURL = vi.fn(() => "blob:certificate");
+    let objectUrl = 0;
+    URL.createObjectURL = vi.fn(() => `blob:certificate-${++objectUrl}`);
     URL.revokeObjectURL = vi.fn();
     vi.spyOn(window, "open").mockImplementation(() => null);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   it("loads cross-event organization certificates immediately and filters by event", async () => {
@@ -46,16 +58,222 @@ describe("OrganizationCertificatesPage", () => {
     expect(wrapper.get("tbody").text()).toContain("往届赛事");
   });
 
-  it("previews and downloads only through the certificate file URLs", async () => {
+  it("opens a placeholder synchronously, then navigates it only after the preview blob resolves", async () => {
+    const pending = deferred();
+    const popup = { location: { href: "about:blank" }, close: vi.fn(), opener: {} };
+    window.open.mockReturnValue(popup);
+    apiBlobMock.mockReturnValueOnce(pending.promise);
     const wrapper = mount(OrganizationCertificatesPage);
     await flushPromises();
 
     await wrapper.get('[data-action="preview-organization-certificate-C1"]').trigger("click");
-    expect(window.open).toHaveBeenCalledWith("/api/certificates/C1/file", "_blank", "noopener,noreferrer");
+    expect(window.open).toHaveBeenCalledWith("", "_blank");
+    expect(apiBlobMock).toHaveBeenCalledWith("/api/certificates/C1/file");
+    expect(window.open.mock.invocationCallOrder[0]).toBeLessThan(apiBlobMock.mock.invocationCallOrder[0]);
+    expect(popup.location.href).toBe("about:blank");
+    expect(popup.opener).toBeNull();
+
+    pending.resolve(new Blob(["certificate"]));
+    await flushPromises();
+    expect(popup.location.href).toBe("blob:certificate-1");
+
     await wrapper.get('[data-action="download-organization-certificate-C1"]').trigger("click");
     await flushPromises();
     expect(apiBlobMock).toHaveBeenCalledWith("/api/certificates/C1/file?download=1");
     expect(apiMock.mock.calls.some(([path]) => path.startsWith("/api/me/"))).toBe(false);
+    wrapper.unmount();
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:certificate-1");
+  });
+
+  it("clears the opener and registers the reservation before requesting the preview blob", async () => {
+    const sequence = [];
+    const pending = deferred();
+    let opener = {};
+    const popup = { location: { href: "about:blank" }, close: vi.fn() };
+    Object.defineProperty(popup, "opener", {
+      configurable: true,
+      get: () => opener,
+      set: (value) => { opener = value; sequence.push("opener-cleared"); }
+    });
+    window.open.mockImplementation(() => { sequence.push("open"); return popup; });
+    const originalAdd = Set.prototype.add;
+    vi.spyOn(Set.prototype, "add").mockImplementation(function add(value) {
+      if (value?.popup === popup) sequence.push("registered");
+      return originalAdd.call(this, value);
+    });
+    apiBlobMock.mockImplementationOnce(() => {
+      sequence.push("apiBlob");
+      expect(popup.opener).toBeNull();
+      return pending.promise;
+    });
+    const wrapper = mount(OrganizationCertificatesPage);
+    await flushPromises();
+
+    await wrapper.get('[data-action="preview-organization-certificate-C1"]').trigger("click");
+
+    expect(sequence.slice(0, 4)).toEqual(["open", "opener-cleared", "registered", "apiBlob"]);
+    wrapper.unmount();
+  });
+
+  it("closes an unsafe popup whose opener assignment silently fails without fetching or registering it", async () => {
+    const originalOpener = {};
+    const popup = { location: { href: "about:blank" }, close: vi.fn() };
+    Object.defineProperty(popup, "opener", {
+      configurable: true,
+      get: () => originalOpener,
+      set: vi.fn()
+    });
+    const registered = [];
+    const originalAdd = Set.prototype.add;
+    vi.spyOn(Set.prototype, "add").mockImplementation(function add(value) {
+      if (value?.popup === popup) registered.push(value);
+      return originalAdd.call(this, value);
+    });
+    window.open.mockReturnValue(popup);
+    const wrapper = mount(OrganizationCertificatesPage);
+    await flushPromises();
+
+    await wrapper.get('[data-action="preview-organization-certificate-C1"]').trigger("click");
+
+    expect(popup.close).toHaveBeenCalledTimes(1);
+    expect(apiBlobMock).not.toHaveBeenCalled();
+    expect(registered).toEqual([]);
+    expect(wrapper.get('[role="alert"]').text()).toContain("安全");
+    wrapper.unmount();
+    expect(popup.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("closes an unsafe popup when clearing its opener throws without fetching or registering it", async () => {
+    const popup = { location: { href: "about:blank" }, close: vi.fn() };
+    Object.defineProperty(popup, "opener", {
+      configurable: true,
+      get: () => ({}),
+      set: () => { throw new Error("opener denied"); }
+    });
+    const registered = [];
+    const originalAdd = Set.prototype.add;
+    vi.spyOn(Set.prototype, "add").mockImplementation(function add(value) {
+      if (value?.popup === popup) registered.push(value);
+      return originalAdd.call(this, value);
+    });
+    window.open.mockReturnValue(popup);
+    const wrapper = mount(OrganizationCertificatesPage);
+    await flushPromises();
+
+    await wrapper.get('[data-action="preview-organization-certificate-C1"]').trigger("click");
+
+    expect(popup.close).toHaveBeenCalledTimes(1);
+    expect(apiBlobMock).not.toHaveBeenCalled();
+    expect(registered).toEqual([]);
+    expect(wrapper.get('[role="alert"]').text()).toContain("安全");
+    wrapper.unmount();
+    expect(popup.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("closes a registered pending placeholder when unmounted before preview settles", async () => {
+    const pending = deferred();
+    const popup = { location: { href: "about:blank" }, close: vi.fn(), opener: {} };
+    window.open.mockReturnValue(popup);
+    apiBlobMock.mockReturnValueOnce(pending.promise);
+    const wrapper = mount(OrganizationCertificatesPage);
+    await flushPromises();
+
+    await wrapper.get('[data-action="preview-organization-certificate-C1"]').trigger("click");
+    wrapper.unmount();
+
+    expect(popup.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores a preview blob that resolves after unmount without navigating or leaking a URL", async () => {
+    const pending = deferred();
+    const popup = { location: { href: "about:blank" }, close: vi.fn(), opener: {} };
+    window.open.mockReturnValue(popup);
+    apiBlobMock.mockReturnValueOnce(pending.promise);
+    const wrapper = mount(OrganizationCertificatesPage);
+    await flushPromises();
+
+    await wrapper.get('[data-action="preview-organization-certificate-C1"]').trigger("click");
+    wrapper.unmount();
+    pending.resolve(new Blob(["late preview"]));
+    await flushPromises();
+
+    expect(popup.location.href).toBe("about:blank");
+    expect(URL.createObjectURL).not.toHaveBeenCalled();
+    expect(URL.revokeObjectURL).not.toHaveBeenCalled();
+  });
+
+  it("ignores a preview rejection after unmount without emitting or updating the disposed page", async () => {
+    const pending = deferred();
+    const popup = { location: { href: "about:blank" }, close: vi.fn(), opener: {} };
+    window.open.mockReturnValue(popup);
+    apiBlobMock.mockReturnValueOnce(pending.promise);
+    const accessDenied = vi.fn();
+    const wrapper = mount(OrganizationCertificatesPage, { attrs: { onAccessDenied: accessDenied } });
+    await flushPromises();
+
+    await wrapper.get('[data-action="preview-organization-certificate-C1"]').trigger("click");
+    wrapper.unmount();
+    pending.reject(Object.assign(new Error("late restriction"), { code: "ORGANIZATION_DISABLED" }));
+    await flushPromises();
+
+    expect(accessDenied).not.toHaveBeenCalled();
+    expect(popup.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("closes the placeholder and reports a stable restriction when controlled preview fails", async () => {
+    const popup = { location: { href: "about:blank" }, close: vi.fn(), opener: {} };
+    window.open.mockReturnValue(popup);
+    apiBlobMock.mockRejectedValueOnce(Object.assign(new Error("stale preview"), { code: "ORGANIZATION_REJECTED" }));
+    const wrapper = mount(OrganizationCertificatesPage);
+    await flushPromises();
+    await wrapper.get('[data-action="preview-organization-certificate-C1"]').trigger("click");
+    await flushPromises();
+
+    expect(wrapper.emitted("access-denied")?.[0]?.[0]).toMatchObject({ code: "ORGANIZATION_REJECTED" });
+    expect(popup.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("releases the object URL and closes the placeholder if popup navigation fails", async () => {
+    const location = {};
+    Object.defineProperty(location, "href", { configurable: true, get: () => "about:blank", set: () => { throw new Error("navigation failed"); } });
+    const popup = { location, close: vi.fn(), opener: {} };
+    window.open.mockReturnValue(popup);
+    const wrapper = mount(OrganizationCertificatesPage);
+    await flushPromises();
+
+    await wrapper.get('[data-action="preview-organization-certificate-C1"]').trigger("click");
+    await flushPromises();
+
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:certificate-1");
+    expect(popup.close).toHaveBeenCalledTimes(1);
+    expect(wrapper.get('[role="alert"]').text()).toContain("navigation failed");
+  });
+
+  it("shows an actionable message without fetching when the browser blocks the preview popup", async () => {
+    const wrapper = mount(OrganizationCertificatesPage);
+    await flushPromises();
+
+    await wrapper.get('[data-action="preview-organization-certificate-C1"]').trigger("click");
+
+    expect(apiBlobMock).not.toHaveBeenCalled();
+    expect(wrapper.get('[role="alert"]').text()).toContain("允许弹窗");
+    expect(wrapper.get('[role="alert"]').text()).toContain("下载按钮");
+  });
+
+  it("clears an earlier certificate error when a download starts and succeeds", async () => {
+    const popup = { location: { href: "about:blank" }, close: vi.fn(), opener: {} };
+    window.open.mockReturnValue(popup);
+    apiBlobMock.mockRejectedValueOnce(new Error("预览暂时失败")).mockResolvedValueOnce(new Blob(["certificate"]));
+    const wrapper = mount(OrganizationCertificatesPage);
+    await flushPromises();
+
+    await wrapper.get('[data-action="preview-organization-certificate-C1"]').trigger("click");
+    await flushPromises();
+    expect(wrapper.get('[role="alert"]').text()).toContain("预览暂时失败");
+
+    await wrapper.get('[data-action="download-organization-certificate-C1"]').trigger("click");
+    await flushPromises();
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false);
   });
 
   it("shows a safe error and retries the global query", async () => {
@@ -69,5 +287,13 @@ describe("OrganizationCertificatesPage", () => {
     await wrapper.get('[data-action="retry-organization-certificates"]').trigger("click");
     await flushPromises();
     expect(wrapper.text()).toContain("往届赛事");
+  });
+
+  it("reports a stable organization restriction to the application shell", async () => {
+    apiMock.mockRejectedValueOnce(Object.assign(new Error("stale session"), { code: "ORGANIZATION_REVIEW_PENDING" }));
+    const wrapper = mount(OrganizationCertificatesPage);
+    await flushPromises();
+
+    expect(wrapper.emitted("access-denied")?.[0]?.[0]).toMatchObject({ code: "ORGANIZATION_REVIEW_PENDING" });
   });
 });

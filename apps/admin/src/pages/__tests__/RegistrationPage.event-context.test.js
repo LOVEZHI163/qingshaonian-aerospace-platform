@@ -2,7 +2,7 @@ import { flushPromises, mount } from "@vue/test-utils";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { apiMock } = vi.hoisted(() => ({ apiMock: vi.fn() }));
-vi.mock("../../lib/api.js", () => ({ api: apiMock }));
+vi.mock("../../lib/api.js", async (importOriginal) => ({ ...await importOriginal(), api: apiMock }));
 vi.mock("../../components/SubmissionAssetUploader.vue", () => ({
   default: {
     props: ["sessionId", "mode", "assets"],
@@ -12,12 +12,14 @@ vi.mock("../../components/SubmissionAssetUploader.vue", () => ({
 }));
 
 import RegistrationPage from "../RegistrationPage.vue";
+import RegistrationRecordsPage from "../RegistrationRecordsPage.vue";
 
 function context() {
   return {
     event: { id: "E2", name: "第二场公开赛事" },
-    organizations: [],
-    defaultOrganizationId: "",
+    organizations: [{ id: "O1", name: "实验小学" }],
+    defaultOrganizationId: "O1",
+    eligibility: { eligible: true, code: "OK", organization: { id: "O1", name: "实验小学" } },
     grades: [{ id: "primary_lower", name: "小学低段", grades: ["一年级", "二年级", "三年级"] }],
     projects: [{
       id: "P-E2",
@@ -48,6 +50,16 @@ describe("RegistrationPage selected event context", () => {
     });
   });
 
+  it("renders ordinary-user registration fields as visible form controls", async () => {
+    const wrapper = mount(RegistrationPage, { props: { eventId: "E2", accountType: "ordinary" }, attachTo: document.body });
+    await flushPromises();
+
+    const nameInput = wrapper.get("form.form-panel input");
+    expect(nameInput.isVisible()).toBe(true);
+
+    wrapper.unmount();
+  });
+
   it("uses one event id for context and ordinary-user submission", async () => {
     const wrapper = mount(RegistrationPage, { props: { eventId: "E2", accountType: "ordinary" } });
     await flushPromises();
@@ -60,13 +72,16 @@ describe("RegistrationPage selected event context", () => {
     await inputs[1].setValue("实验小学");
     await inputs[2].setValue("二年级");
     await inputs[3].setValue("13600005001");
+    await wrapper.get('[data-field="student-id-number"]').setValue("11010520140101123x");
     await flushPromises();
 
     await wrapper.get("form.form-panel").trigger("submit");
     await flushPromises();
     const createCall = apiMock.mock.calls.find(([path]) => path === "/api/me/events/E2/registrations");
-    expect(JSON.parse(createCall[1].body)).toMatchObject({ projectId: "P-E2" });
-    expect(JSON.parse(createCall[1].body).uploadSessionId).toBeUndefined();
+    const body = JSON.parse(createCall[1].body);
+    expect(body).toMatchObject({ projectId: "P-E2", studentIdNumber: "11010520140101123x" });
+    expect(body.athlete.studentIdNumber).toBeUndefined();
+    expect(body.uploadSessionId).toBeUndefined();
     expect(apiMock.mock.calls.some(([path]) => path.includes("/upload-sessions"))).toBe(false);
   });
 
@@ -86,6 +101,7 @@ describe("RegistrationPage selected event context", () => {
     await inputs[1].setValue("实验小学");
     await inputs[2].setValue("二年级");
     await inputs[3].setValue("13600005001");
+    await wrapper.get('[data-field="student-id-number"]').setValue("11010520140101123X");
     await wrapper.get("select").setValue("P-IMAGE");
     await flushPromises();
 
@@ -98,6 +114,41 @@ describe("RegistrationPage selected event context", () => {
 
     const createCall = apiMock.mock.calls.find(([path]) => path === "/api/me/events/E2/registrations");
     expect(JSON.parse(createCall[1].body)).toMatchObject({ projectId: "P-IMAGE", uploadSessionId: "US1" });
+  });
+
+  it("requires a valid student identity and shows the approved purpose before submission", async () => {
+    const wrapper = mount(RegistrationPage, { props: { eventId: "E2", accountType: "ordinary" } });
+    await flushPromises();
+
+    const identity = wrapper.get('[data-field="student-id-number"]');
+    expect(identity.attributes("required")).toBeDefined();
+    expect(identity.attributes("minlength")).toBe("18");
+    expect(identity.attributes("maxlength")).toBe("18");
+    expect(identity.attributes("pattern")).toBe("[0-9]{17}[0-9Xx]");
+    expect(identity.attributes("placeholder")).toBe("18 位居民身份证号，末位可为 X");
+    expect(wrapper.text()).toContain("学生身份证号是报名资料，将用于名单导出和证书信息核对，请本人或监护人确认填写正确。");
+
+    await identity.setValue("11010520140101123A");
+    await wrapper.get("form.form-panel").trigger("submit");
+    await flushPromises();
+    expect(apiMock.mock.calls.some(([path]) => path === "/api/me/events/E2/registrations")).toBe(false);
+    expect(wrapper.emitted("error")?.at(-1)).toEqual(["请输入 18 位居民身份证号，末位可为 X"]);
+  });
+
+  it("shows the authorized full identity and labels a historical empty identity without requesting another scope", async () => {
+    apiMock.mockResolvedValueOnce({ rows: [
+      { id: "R1", eventId: "E2", athlete: { name: "张三", school: "实验小学", grade: "二年级" }, studentIdNumber: "11010520140101123X" },
+      { id: "R0", eventId: "E1", athlete: { name: "历史学生", school: "实验小学", grade: "一年级" }, studentIdNumber: null }
+    ] });
+    const wrapper = mount(RegistrationRecordsPage);
+    await flushPromises();
+
+    expect(wrapper.findAll("thead th").map((cell) => cell.text())).toContain("学生身份证号");
+    expect(wrapper.text()).toContain("11010520140101123X");
+    expect(wrapper.text()).toContain("—（历史报名）");
+    expect(wrapper.text()).not.toContain("待补录");
+    expect(apiMock).toHaveBeenCalledTimes(1);
+    expect(apiMock).toHaveBeenCalledWith("/api/me/registrations");
   });
 
   it("discards a stale material session when the project changes without clearing athlete fields", async () => {
@@ -138,6 +189,26 @@ describe("RegistrationPage selected event context", () => {
     expect(wrapper.text()).toContain("请先选择赛事");
     expect(wrapper.text()).not.toContain("其他赛事项目");
     expect(apiMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["missing organization", null],
+    ["empty organization", {}],
+    ["blank organization id", { id: "", name: "Invalid organization" }]
+  ])("fails closed when eligibility is true with %s", async (_label, organization) => {
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/me/registration-context?eventId=E2") {
+        return { ...context(), organizations: [], eligibility: { eligible: true, code: "OK", organization } };
+      }
+      if (path.startsWith("/api/schools")) return { rows: [] };
+      throw new Error(`unexpected API path ${path}`);
+    });
+
+    const wrapper = mount(RegistrationPage, { props: { eventId: "E2", accountType: "ordinary" } });
+    await flushPromises();
+
+    expect(wrapper.find('[data-testid="registration-eligibility-guidance"]').exists()).toBe(true);
+    expect(wrapper.find("form.form-panel").exists()).toBe(false);
   });
 
   it("never falls back to the legacy registration endpoint for a non-ordinary account", async () => {

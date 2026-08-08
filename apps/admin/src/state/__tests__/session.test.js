@@ -28,6 +28,20 @@ describe("session state", () => {
     expect(useSession().restoring.value).toBe(false);
   });
 
+  it.each([
+    Object.assign(new Error("server failure"), { status: 500 }),
+    new TypeError("Failed to fetch")
+  ])("fails closed for organization access when restore fails: %s", async (failure) => {
+    useSession().setUser({ id: "OU1", type: "organization" }, [{ id: "O1", reviewStatus: "approved", status: "active" }]);
+    apiMock.mockRejectedValue(failure);
+
+    await useSession().restore();
+
+    expect(useSession().user.value).toEqual(expect.objectContaining({ id: "OU1", type: "organization" }));
+    expect(useSession().organizations.value).toEqual([]);
+    expect(useSession().organizationAccess.value).toMatchObject({ operational: false, code: "ORGANIZATION_OWNER_REQUIRED" });
+  });
+
   it("clears local session even if logout fails", async () => {
     useSession().setUser({ id: "U1" }, []);
     apiMock.mockRejectedValue(new Error("network"));

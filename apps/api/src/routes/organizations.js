@@ -8,8 +8,10 @@ import {
   registerOrganization,
   resubmitOrganization,
   reviewOrganization,
+  replayFileCleanupJournal,
   validateCurrentCredentialFile
 } from "../services/organizations.js";
+import { deleteOrganizationAccount } from "../services/organization-account-lifecycle.js";
 import { recordAudit } from "../services/audit.js";
 import { cleanupOrganizationCredentials } from "../services/resource-cleanup.js";
 
@@ -142,6 +144,27 @@ export function createOrganizationsRouter({ store, requireUser, requireAdmin, re
     const organization = db.organizations.find((row) => row.id === req.params.id);
     if (!organization) return res.status(404).json({ error: "组织不存在" });
     res.json({ row: organizationWithDocuments(db, organization) });
+  }));
+
+  router.delete("/admin/organizations/:id", requireAdmin, requirePasswordReady, asyncRoute(async (req, res, next) => {
+    try {
+      const db = await deps.readDb();
+      const previousCleanupIds = new Set((db.fileCleanupJournal || []).map((row) => row.id));
+      const result = deleteOrganizationAccount(db, {
+        organizationId: req.params.id,
+        actor: req.user,
+        makeId,
+        now
+      });
+      const cleanupMarkerIds = (db.fileCleanupJournal || [])
+        .filter((row) => !previousCleanupIds.has(row.id))
+        .map((row) => row.id);
+      await deps.writeDb(db);
+      try {
+        await replayFileCleanupJournal({ store, now, markerIds: cleanupMarkerIds, alreadyLocked: true });
+      } catch { /* deletion is committed; the durable marker will be retried later */ }
+      res.json({ ok: true, ...result });
+    } catch (error) { respondError(error, res, next); }
   }));
 
   router.patch("/admin/organizations/:id/status", requireAdmin, requirePasswordReady, asyncRoute(async (req, res, next) => {

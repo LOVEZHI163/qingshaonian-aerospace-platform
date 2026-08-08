@@ -1,5 +1,6 @@
 import { deletePrivateFile, readPrivateFile, savePrivateFile } from "../files/storage.js";
 import { validateUpload } from "../files/policy.js";
+import { cleanupPathIsReferenced } from "../files/cleanup-references.js";
 
 export const DOCUMENT_TYPES = new Set([
   "business_license",
@@ -239,19 +240,17 @@ export async function resubmitOrganization({ input, file, userId, readDb, writeD
   }
 }
 
-function cleanupPathIsReferenced(db, filePath) {
-  const referencedByDocument = (db.organizationDocuments || []).some((document) => {
-    if (document.filePath !== filePath) return false;
-    const organization = (db.organizations || []).find((row) => row.id === document.organizationId);
-    return !document.cleanedAt || organization?.currentDocumentId === document.id;
-  });
-  return referencedByDocument || (db.certificates || []).some((row) => row.filePath === filePath);
-}
-
-export async function replayFileCleanupJournal({ store, removePrivateFile = deletePrivateFile, now = () => new Date().toISOString() }) {
-  return store.withMutationLock(async () => {
+export async function replayFileCleanupJournal({
+  store,
+  removePrivateFile = deletePrivateFile,
+  now = () => new Date().toISOString(),
+  markerIds = null,
+  alreadyLocked = false
+}) {
+  const replay = async () => {
     const db = await store.readDb();
-    const markers = [...(db.fileCleanupJournal || [])];
+    const selectedIds = markerIds ? new Set(markerIds) : null;
+    const markers = (db.fileCleanupJournal || []).filter((marker) => !selectedIds || selectedIds.has(marker.id));
     if (!markers.length) return { removed: 0, retained: 0 };
     let changed = false;
     let removed = 0;
@@ -282,5 +281,6 @@ export async function replayFileCleanupJournal({ store, removePrivateFile = dele
     }
     if (changed) await store.writeDb(db);
     return { removed, retained };
-  });
+  };
+  return alreadyLocked ? replay() : store.withMutationLock(replay);
 }

@@ -50,6 +50,27 @@ test("PostgreSQL store creates normalized tables and seeds an empty database", a
   });
 });
 
+test("PostgreSQL store round-trips temporary-password fields", async () => {
+  await withStore(async (store) => {
+    const db = await store.readDb();
+    const user = db.users[0];
+    const fields = {
+      temporaryPasswordCiphertext: "ciphertext-base64",
+      temporaryPasswordIv: "iv-base64",
+      temporaryPasswordTag: "tag-base64",
+      temporaryPasswordCreatedAt: "2026-08-06T00:00:00.000Z"
+    };
+    Object.assign(user, fields);
+
+    await store.writeDb(db);
+
+    assert.deepEqual((await store.readDb()).users.find((row) => row.id === user.id), {
+      ...user,
+      ...fields
+    });
+  });
+});
+
 test("012 migration normalizes legacy member rows and restores the active-member constraint", async () => {
   await withStore(async (store, pool) => {
     await pool.query("DROP INDEX memberships_single_active_user_idx");
@@ -841,6 +862,25 @@ test("PostgreSQL store rejects invalid registration modes and project groups", a
   });
 });
 
+test("PostgreSQL store rejects nested plaintext athlete identity fields before any snapshot rows change", async () => {
+  await withStore(async (store) => {
+    const db = await store.readDb();
+    db.registrations[0].athlete.emergencyContact = { name: "陈家长", phone: "13800000001" };
+    await store.writeDb(db);
+    const persisted = await store.readDb();
+    assert.deepEqual(persisted.registrations[0].athlete.emergencyContact, { name: "陈家长", phone: "13800000001" });
+
+    const invalid = structuredClone(persisted);
+    invalid.registrations[0].status = "approved";
+    invalid.registrations[0].athlete.profile = { identityNumber: "330000200001010001" };
+    await assert.rejects(store.writeDb(invalid), /identity field/i);
+
+    const afterRejectedWrite = await store.readDb();
+    assert.equal(afterRejectedWrite.registrations[0].status, persisted.registrations[0].status);
+    assert.equal("profile" in afterRejectedWrite.registrations[0].athlete, false);
+  });
+});
+
 test("PostgreSQL store upgrades a legacy schema without losing existing records", async () => {
   const memory = newDb({ autoCreateForeignKeyIndices: true });
   const { Pool } = memory.adapters.createPg();
@@ -903,6 +943,12 @@ test("PostgreSQL store upgrades a legacy schema without losing existing records"
     assert.equal(legacyCertificate.slot, 1);
     assert.equal(legacyCertificate.title, "获奖证书");
     assert.equal(data.events.filter((event) => event.isCurrent).length, 1);
+
+    await pool.query("ALTER TABLE certificates DROP CONSTRAINT IF EXISTS certificates_organization_id_fk");
+    await pool.query("DELETE FROM memberships WHERE organization_id = 'OLEGACY'");
+    await pool.query("DELETE FROM organizations WHERE id = 'OLEGACY'");
+    const snapshot = await pool.query("SELECT organization_id, organization_name FROM registrations WHERE id = 'RLEGACY'");
+    assert.deepEqual(snapshot.rows[0], { organization_id: null, organization_name: "Legacy Org" });
   } finally {
     await store.close();
   }

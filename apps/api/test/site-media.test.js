@@ -277,10 +277,10 @@ test("temporary-password administrators receive 428 from site media reads and up
     const reset = await fetch(`${baseUrl}/api/admin/users/U9001/reset-password`, withSession(admin.cookie, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ password: "Temporary9" })
+      body: "{}"
     }));
     assert.equal(reset.status, 200);
-    const temporaryAdmin = await loginAs(baseUrl, "13900000000", "Temporary9");
+    const temporaryAdmin = await loginAs(baseUrl, "13900000000", (await reset.json()).temporaryPassword);
 
     const listResponse = await fetch(`${baseUrl}/api/admin/site-media`, withSession(temporaryAdmin.cookie));
     assert.equal(listResponse.status, 428);

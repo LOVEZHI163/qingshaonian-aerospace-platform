@@ -11,7 +11,8 @@ const search = ref("");
 const typeFilter = ref("all");
 const statusFilter = ref("all");
 const message = ref("");
-const form = reactive({ id: "", name: "", phone: "", password: "", type: "ordinary", status: "active", organizationName: "", organizationCode: "" });
+const temporaryPasswordDialog = ref(null);
+const form = reactive({ id: "", name: "", phone: "", type: "ordinary", status: "active", organizationName: "", organizationCode: "" });
 
 const roleText = { ordinary: "普通用户", organization: "组织用户", admin: "超级管理员" };
 const filteredUsers = computed(() => {
@@ -30,13 +31,13 @@ function ownerOrganization(userId) {
 }
 
 function resetForm() {
-  Object.assign(form, { id: "", name: "", phone: "", password: "", type: "ordinary", status: "active", organizationName: "", organizationCode: "" });
+  Object.assign(form, { id: "", name: "", phone: "", type: "ordinary", status: "active", organizationName: "", organizationCode: "" });
 }
 
 function editUser(user) {
   const organization = ownerOrganization(user.id);
   Object.assign(form, {
-    id: user.id, name: user.name, phone: user.phone, password: "", type: user.type, status: user.status || "active",
+    id: user.id, name: user.name, phone: user.phone, type: user.type, status: user.status || "active",
     organizationName: organization?.name || "", organizationCode: organization?.code || ""
   });
 }
@@ -56,21 +57,20 @@ async function load() {
 
 async function save() {
   message.value = "";
-  if (!form.id && !form.password) {
-    message.value = "创建用户时请设置至少 8 位、包含字母和数字的初始密码";
-    return;
-  }
   try {
     const body = {
       name: form.name, phone: form.phone, type: form.type, status: form.status,
       organizationName: form.organizationName, organizationCode: form.organizationCode
     };
-    if (form.password) body.password = form.password;
-    await api(form.id ? `/api/admin/users/${form.id}` : "/api/admin/users", {
+    const result = await api(form.id ? `/api/admin/users/${form.id}` : "/api/admin/users", {
       method: form.id ? "PATCH" : "POST",
+      ...(!form.id ? { cache: "no-store" } : {}),
       body: JSON.stringify(body)
     });
-    message.value = form.id ? "用户已更新" : "用户已创建";
+    if (!form.id) {
+      temporaryPasswordDialog.value = { userName: result.row.name, password: result.temporaryPassword };
+    }
+    message.value = form.id ? "用户已更新" : "用户已创建，请将系统生成的临时密码交给用户";
     resetForm();
     await load();
   } catch (error) {
@@ -79,18 +79,28 @@ async function save() {
 }
 
 async function resetTemporaryPassword(user) {
-  const password = window.prompt(`请输入 ${user.name} 的临时密码（至少 8 位，含字母和数字）`, "");
-  if (!password) return;
-  if (!/^(?=.*[A-Za-z])(?=.*\d).{8,64}$/.test(password)) {
-    message.value = "临时密码至少 8 位且必须同时包含字母和数字";
-    return;
-  }
   try {
-    await api(`/api/admin/users/${user.id}/reset-password`, { method: "POST", body: JSON.stringify({ password }) });
-    message.value = "临时密码已重置；用户首次登录必须修改。";
+    const result = await api(`/api/admin/users/${user.id}/reset-password`, { method: "POST", body: "{}", cache: "no-store" });
+    user.mustChangePassword = true;
+    temporaryPasswordDialog.value = { userName: user.name, password: result.temporaryPassword };
+    message.value = "临时密码已生成；用户下次登录必须修改。";
   } catch (error) {
     message.value = error.message;
   }
+}
+
+async function viewTemporaryPassword(user) {
+  try {
+    const result = await api(`/api/admin/users/${user.id}/temporary-password`, { cache: "no-store" });
+    temporaryPasswordDialog.value = { userName: user.name, password: result.temporaryPassword };
+  } catch (error) { message.value = error.message; }
+}
+
+async function copyTemporaryPassword() {
+  try {
+    await navigator.clipboard?.writeText(temporaryPasswordDialog.value?.password || "");
+    message.value = "临时密码已复制";
+  } catch { message.value = "复制失败，请手动选择临时密码"; }
 }
 
 async function removeUser(user) {
@@ -124,7 +134,6 @@ onMounted(load);
       <div class="two"><label>姓名<input v-model="form.name" required /></label><label>手机号<input v-model="form.phone" required /></label></div>
       <div class="two"><label>账号类型<select v-model="form.type" :disabled="Boolean(form.id)"><option value="ordinary">普通用户</option><option v-if="form.type === 'organization'" value="organization">组织用户</option></select></label><label>状态<select v-model="form.status"><option value="active">启用</option><option value="disabled">停用</option></select></label></div>
       <template v-if="form.type === 'organization'"><label>组织名称<input v-model="form.organizationName" /></label><label>组织代码<input v-model="form.organizationCode" /></label></template>
-      <label v-if="!form.id">初始密码<input v-model="form.password" type="password" placeholder="至少 8 位，含字母和数字" required /></label>
       <button class="primary">{{ form.id ? "保存修改" : "创建用户" }}</button>
       <p v-if="message" class="message">{{ message }}</p>
     </form>
@@ -140,11 +149,20 @@ onMounted(load);
         <tr v-for="user in filteredUsers" :key="user.id">
           <td>{{ user.name }}</td><td>{{ user.phone }}</td><td>{{ roleText[user.type] }}</td>
           <td>{{ ownerOrganization(user.id)?.name || "查看详情" }}</td><td><em :class="user.status">{{ user.status === "disabled" ? "停用" : "启用" }}</em></td>
-          <td><button class="mini" data-action="user-details" @click="showDetails(user)">组织关系与报名历史</button><button v-if="user.type !== 'admin'" class="mini" @click="editUser(user)">编辑</button><button v-if="user.type !== 'admin'" class="mini" @click="resetTemporaryPassword(user)">重置临时密码</button><button v-if="user.type !== 'admin'" class="mini reject" @click="removeUser(user)">删除</button></td>
+          <td><button class="mini" data-action="user-details" @click="showDetails(user)">组织关系与报名历史</button><button v-if="user.type !== 'admin'" class="mini" @click="editUser(user)">编辑</button><button v-if="user.type !== 'admin'" class="mini" :data-action="`reset-user-password-${user.id}`" @click="resetTemporaryPassword(user)">重置密码</button><button v-if="user.type !== 'admin' && user.mustChangePassword" class="mini" :data-action="`view-user-password-${user.id}`" @click="viewTemporaryPassword(user)">查看临时密码</button><button v-if="user.type !== 'admin'" class="mini reject" @click="removeUser(user)">删除</button></td>
         </tr>
       </tbody></table></div>
     </section>
   </section>
+
+  <div v-if="temporaryPasswordDialog" class="dialog-backdrop" @click.self="temporaryPasswordDialog = null">
+    <section class="panel organization-dialog" data-testid="temporary-password-dialog">
+      <h3>{{ temporaryPasswordDialog.userName }} 的临时密码</h3>
+      <p class="hint">该密码可在用户修改前重复查看；用户下次登录必须先修改密码。</p>
+      <output class="temporary-password-value">{{ temporaryPasswordDialog.password }}</output>
+      <div class="form-actions"><button type="button" class="primary" data-action="copy-temporary-password" @click="copyTemporaryPassword">复制临时密码</button><button type="button" data-action="close-temporary-password" @click="temporaryPasswordDialog = null">关闭</button></div>
+    </section>
+  </div>
 
   <section v-if="selectedDetails" class="panel user-detail-panel" data-testid="user-details">
     <div class="panel-title"><h3>{{ selectedDetails.user.name }} 的组织关系与跨赛事报名历史</h3><button class="mini reject" @click="selectedDetails = null">关闭</button></div>

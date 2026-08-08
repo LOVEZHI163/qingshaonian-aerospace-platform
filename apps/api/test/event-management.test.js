@@ -55,11 +55,9 @@ test("event management routes enforce admin sessions and temporary-password read
     }
 
     const admin = await loginAs(baseUrl, "13900000000", "admin123");
-    const reset = await fetch(`${baseUrl}/api/admin/users/U9001/reset-password`, jsonOptions("POST", {
-      password: "Temporary9"
-    }, admin.cookie));
+    const reset = await fetch(`${baseUrl}/api/admin/users/U9001/reset-password`, jsonOptions("POST", {}, admin.cookie));
     assert.equal(reset.status, 200);
-    const temporaryAdmin = await loginAs(baseUrl, "13900000000", "Temporary9");
+    const temporaryAdmin = await loginAs(baseUrl, "13900000000", (await reset.json()).temporaryPassword);
     const blocked = await fetch(`${baseUrl}/api/admin/events`, withSession(temporaryAdmin.cookie));
     assert.equal(blocked.status, 428);
     assert.equal((await json(blocked)).code, "PASSWORD_CHANGE_REQUIRED");
@@ -442,6 +440,7 @@ test("public event and registration APIs use the current database event in real 
 
     const valid = await fetch(`${baseUrl}/api/me/events/${current.id}/registrations`, jsonOptions("POST", {
       eventId: current.id,
+      studentIdNumber: "11010519491231002X",
       projectName: "伪造项目名",
       projectType: "team",
       athlete: { name: "合法学生", school: "测试学校", grade: "二年级", phone: "13600003005" },

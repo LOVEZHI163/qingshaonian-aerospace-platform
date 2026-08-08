@@ -1,8 +1,93 @@
 import { isRegistrationOpen } from "../domain/registration-window.js";
 import { businessError } from "./events.js";
+import { organizationHasApprovedLeader } from "./organization-leaders.js";
 
 export function organizationForOwner(db, userId) {
   return db.organizations.find((row) => row.ownerUserId === userId) || null;
+}
+
+export function organizationAccessState(db, user) {
+  const organization = organizationForOwner(db, user?.id);
+  if (user?.type !== "organization" || !organization) {
+    return { allowed: false, code: "ORGANIZATION_OWNER_REQUIRED", organization };
+  }
+  if (organization.reviewStatus === "pending") {
+    return { allowed: false, code: "ORGANIZATION_REVIEW_PENDING", organization };
+  }
+  if (organization.reviewStatus === "rejected") {
+    return { allowed: false, code: "ORGANIZATION_REJECTED", organization };
+  }
+  if (organization.status !== "active") {
+    return { allowed: false, code: "ORGANIZATION_DISABLED", organization };
+  }
+  if (user.mustChangePassword) {
+    return { allowed: false, code: "PASSWORD_CHANGE_REQUIRED", organization };
+  }
+  return { allowed: true, code: "OK", organization };
+}
+
+function ordinaryOrganizationEligibility(db, userId) {
+  const candidates = db.memberships.flatMap((membership) => {
+    if (membership.userId !== userId || membership.role !== "member" || membership.status !== "active") return [];
+    const organization = db.organizations.find((row) => row.id === membership.organizationId);
+    return organization?.reviewStatus === "approved" && organization?.status === "active"
+      ? [{ membership, organization }]
+      : [];
+  });
+  const eligible = candidates.length === 1;
+  const { membership = null, organization = null } = eligible ? candidates[0] : {};
+  return {
+    eligible,
+    code: eligible ? "OK" : "ACTIVE_ORGANIZATION_REQUIRED",
+    organization,
+    membership
+  };
+}
+
+export function ordinaryRegistrationEligibility(db, userId) {
+  const eligibility = ordinaryOrganizationEligibility(db, userId);
+  if (!eligibility.eligible) return eligibility;
+  if (!organizationHasApprovedLeader(db, eligibility.organization.id)) {
+    return { ...eligibility, eligible: false, code: "ORGANIZATION_LEADER_REQUIRED" };
+  }
+  return eligibility;
+}
+
+function organizationAccessMessage(code) {
+  return {
+    ORGANIZATION_OWNER_REQUIRED: "仅组织负责人可以执行此操作",
+    ORGANIZATION_REVIEW_PENDING: "组织资质正在审核中",
+    ORGANIZATION_REJECTED: "组织资质审核未通过",
+    ORGANIZATION_DISABLED: "组织已停用",
+    PASSWORD_CHANGE_REQUIRED: "请先修改临时密码"
+  }[code] || "组织当前不可用";
+}
+
+export function requireOrganizationAccess(db, user) {
+  const access = organizationAccessState(db, user);
+  if (!access.allowed) {
+    throw businessError(access.code === "PASSWORD_CHANGE_REQUIRED" ? 428 : 403, organizationAccessMessage(access.code), access.code);
+  }
+  return access.organization;
+}
+
+export function requireOrdinaryRegistrationEligibility(db, userId, { requireApprovedLeader = true } = {}) {
+  const eligibility = requireApprovedLeader
+    ? ordinaryRegistrationEligibility(db, userId)
+    : ordinaryOrganizationEligibility(db, userId);
+  if (!eligibility.eligible) {
+    const message = eligibility.code === "ORGANIZATION_LEADER_REQUIRED"
+      ? "所属组织尚无审核通过且已启用的领队"
+      : "需要加入已审核且正常启用的组织后才能报名";
+    throw businessError(403, message, eligibility.code);
+  }
+  return eligibility;
+}
+
+export function requireOrganizationApprovedLeader(db, organizationId) {
+  if (!organizationHasApprovedLeader(db, organizationId)) {
+    throw businessError(403, "所属组织尚无审核通过且已启用的领队", "ORGANIZATION_LEADER_REQUIRED");
+  }
 }
 
 export function requireOrdinaryUser(user) {
@@ -39,13 +124,7 @@ export function requireWritableEvent(db, eventId, clock = () => new Date()) {
 }
 
 export function requireOrganizationEventParticipation(db, user, eventId, { writable = false } = {}) {
-  const organization = requireOrganizationOwner(db, user);
-  if (organization.status !== "active") {
-    throw businessError(403, "组织已停用", "ORGANIZATION_DISABLED");
-  }
-  if (organization.reviewStatus !== "approved") {
-    throw businessError(403, "组织资质尚未通过", "ORGANIZATION_NOT_APPROVED");
-  }
+  const organization = requireOrganizationAccess(db, user);
   const event = writable
     ? requireWritableEvent(db, eventId)
     : db.events.find((row) => row.id === eventId);

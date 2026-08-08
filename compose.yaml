@@ -34,6 +34,8 @@ services:
       RELEASE_SHA: ${RELEASE_SHA:?RELEASE_SHA is required}
       DATABASE_URL: postgresql://${POSTGRES_USER:-aerogp}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:-aerogp}
       SESSION_SECRET: ${SESSION_SECRET:?SESSION_SECRET is required}
+      TEMP_PASSWORD_ENCRYPTION_KEY: ${TEMP_PASSWORD_ENCRYPTION_KEY:-}
+      REGISTRATION_ID_ENCRYPTION_KEY: ${REGISTRATION_ID_ENCRYPTION_KEY:?REGISTRATION_ID_ENCRYPTION_KEY is required}
       ALIBABA_CLOUD_ACCESS_KEY_ID: ${ALIBABA_CLOUD_ACCESS_KEY_ID:-}
       ALIBABA_CLOUD_ACCESS_KEY_SECRET: ${ALIBABA_CLOUD_ACCESS_KEY_SECRET:-}
       ALIYUN_SMS_SIGN_NAME: ${ALIYUN_SMS_SIGN_NAME:-}
@@ -69,8 +71,8 @@ services:
       args:
         VITE_PUBLIC_SITE_URL: https://aerogp.cn
         RELEASE_SHA: ${RELEASE_SHA:?RELEASE_SHA is required}
-    ports:
-      - "80:80"
+    expose:
+      - "80"
     depends_on:
       api:
         condition: service_healthy
@@ -80,6 +82,26 @@ services:
       timeout: 5s
       retries: 10
       start_period: 10s
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  caddy:
+    image: docker.1ms.run/library/caddy:2-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      web:
+        condition: service_healthy
     restart: unless-stopped
     logging:
       driver: json-file
@@ -120,3 +142,5 @@ services:
 volumes:
   postgres_data:
   uploads_data:
+  caddy_data:
+  caddy_config:

@@ -13,8 +13,9 @@ import {
   upsertCertificate
 } from "../services/certificates.js";
 import { recordAudit } from "../services/audit.js";
-import { requireOrganizationEventParticipation, requireOrganizationOwner, requireWritableEvent } from "../services/access-control.js";
+import { requireOrganizationAccess, requireOrganizationEventParticipation, requireWritableEvent } from "../services/access-control.js";
 import { requireEventId } from "../services/registrations.js";
+import { organizationHistoryFields } from "../services/organization-account-lifecycle.js";
 
 export const defaultCertificateStorage = {
   saveFile: saveCertificateFile,
@@ -103,6 +104,7 @@ async function finishCommittedCleanup({ store, db, marker, file, storage, now })
 }
 
 function certificatePayload(certificate, registration) {
+  const registrationPayload = registration ? { ...registration, ...organizationHistoryFields(registration) } : registration;
   const payload = {
     id: certificate.id,
     registrationId: certificate.registrationId,
@@ -119,10 +121,10 @@ function certificatePayload(certificate, registration) {
     publishedAt: certificate.publishedAt,
     cleanedAt: certificate.cleanedAt,
     updatedAt: certificate.updatedAt,
-    registration,
+    registration: registrationPayload,
     athlete: registration?.athlete,
     projectName: registration?.projectName,
-    organization: registration?.organization || ""
+    organization: registrationPayload?.organization || ""
   };
   if (!certificate.cleanedAt) {
     payload.previewUrl = `/api/certificates/${certificate.id}/file`;
@@ -421,7 +423,7 @@ export function createCertificatesRouter({
 
   router.get("/organization/certificates", ...user, asyncRoute(async (req, res) => {
     const db = await store.readDb();
-    const organization = requireOrganizationOwner(db, req.user);
+    const organization = requireOrganizationAccess(db, req.user);
     const registrationsById = new Map(db.registrations.map((registration) => [registration.id, registration]));
     const eventsById = new Map(db.events.map((event) => [event.id, event]));
     const rows = db.certificates
@@ -461,6 +463,7 @@ export function createCertificatesRouter({
     const db = await store.readDb();
     const certificate = db.certificates.find((row) => row.id === req.params.id);
     if (!certificate || certificate.cleanedAt) throw new CertificateError(404, "证书不存在");
+    if (req.user.type === "organization") requireOrganizationAccess(db, req.user);
     if (!canReadCertificate(db, req.user, certificate)) throw new CertificateError(403, "无权读取该证书");
     const registration = db.registrations.find((row) => row.id === certificate.registrationId);
     const extension = extensionFor(certificate);

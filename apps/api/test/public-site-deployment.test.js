@@ -192,7 +192,9 @@ test("backup and preflight cover site media, capacity, health, and port boundari
   }
   assert.match(preflight, /API port 4300 must not be published/);
   assert.match(preflight, /PostgreSQL port 5432 must not be published/);
-  assert.match(preflight, /web port 80 must be published/);
+  assert.match(preflight, /web port 80 must not be published directly/);
+  assert.match(preflight, /Caddy port 80 must be published/);
+  assert.match(preflight, /Caddy port 443 must be published/);
   assert.doesNotMatch(preflight, /docker compose up/);
 });
 
@@ -271,8 +273,11 @@ test("remote smoke discovers public resources dynamically and checks admin autho
   assert.match(smoke, /recover_submission_smoke_user_id\(\)/);
   assert.match(smoke, /verify_submission_smoke_user_target\(\)/);
   assert.match(smoke, /smoke_user_password_file="\$work_dir\/submission-user-password"/);
-  assert.match(smoke, /SMOKE_PASSWORD_FILE="\$smoke_user_password_file" docker compose exec/);
-  assert.match(smoke, /< "\$smoke_user_password_file" \|/);
+  assert.match(smoke, /smoke_user_temporary_password_file="\$work_dir\/submission-user-temporary-password"/);
+  assert.match(smoke, /smoke_extract_temporary_password "\$response_file" "\$smoke_user_temporary_password_file"/);
+  assert.match(smoke, /< "\$smoke_user_temporary_password_file" \|/);
+  assert.match(smoke, /cat "\$smoke_user_temporary_password_file"; printf '\\n'; cat "\$smoke_user_password_file"/);
+  assert.match(smoke, /submission-user-force-password-change/);
   assert.doesNotMatch(smoke, /\bsmoke_password=/);
   const submissionCleanup = smoke.match(/cleanup_submission_smoke\(\) \{([\s\S]*?)\n\}/)?.[1] || "";
   assert.ok(

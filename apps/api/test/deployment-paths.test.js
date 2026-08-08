@@ -87,6 +87,79 @@ test("deployment configuration requires and bootstraps a session secret", async 
   assert.match(bootstrap, /chmod 600 "\$deploy_dir\/\.env"/);
 });
 
+test("deployment requires a generated 32-byte registration identity encryption key", async () => {
+  const [example, compose, bootstrap, preflight, lockedSensitiveRead] = await Promise.all([
+    fs.readFile(path.join(root, ".env.example"), "utf8"),
+    fs.readFile(path.join(root, "compose.yaml"), "utf8"),
+    fs.readFile(path.join(root, "deploy/bootstrap-secrets.sh"), "utf8"),
+    fs.readFile(path.join(root, "deploy/preflight-admin-upgrade.sh"), "utf8"),
+    fs.readFile(path.join(root, "apps/api/test/locked-sensitive-read.test.js"), "utf8")
+  ]);
+
+  assert.match(example, /^REGISTRATION_ID_ENCRYPTION_KEY=$/m);
+  assert.doesNotMatch(example, /^REGISTRATION_ID_ENCRYPTION_KEY=.+$/m);
+  assert.match(
+    compose,
+    /REGISTRATION_ID_ENCRYPTION_KEY:\s*\$\{REGISTRATION_ID_ENCRYPTION_KEY:\?REGISTRATION_ID_ENCRYPTION_KEY is required\}/
+  );
+  assert.doesNotMatch(compose, /REGISTRATION_ID_ENCRYPTION_KEY:\s*\$\{REGISTRATION_ID_ENCRYPTION_KEY:-/);
+  assert.match(bootstrap, /registration_id_encryption_key="\$\(openssl rand -base64 32\)"/);
+  assert.match(bootstrap, /\^REGISTRATION_ID_ENCRYPTION_KEY=\.\+\$/);
+  assert.match(
+    bootstrap,
+    /sed -i "s\|\^REGISTRATION_ID_ENCRYPTION_KEY=\.\*\|REGISTRATION_ID_ENCRYPTION_KEY=\$registration_id_encryption_key\|"/
+  );
+  assert.match(preflight, /REGISTRATION_ID_ENCRYPTION_KEY must be valid base64 encoding exactly 32 bytes/);
+  assert.match(lockedSensitiveRead, /SENSITIVE_ENVIRONMENT_ALLOWLIST[\s\S]*"REGISTRATION_ID_ENCRYPTION_KEY"/);
+});
+
+test("upgrade preflight runs the candidate migration twice against a disposable PostgreSQL database", async () => {
+  const [preflight, guide] = await Promise.all([
+    fs.readFile(path.join(root, "deploy/preflight-admin-upgrade.sh"), "utf8"),
+    fs.readFile(path.join(root, "docs/deployment/aliyun-test.md"), "utf8")
+  ]);
+
+  assert.match(preflight, /openssl rand -hex 16/);
+  assert.match(preflight, /SELECT datname FROM pg_database/);
+  assert.match(preflight, /createdb/);
+  assert.match(preflight, /postgres-migration-restart-smoke\.js/);
+  assert.match(preflight, /dropdb[^\r\n]*--force/);
+  assert.match(preflight, /trap[^\r\n]*cleanup_smoke_database[^\r\n]*EXIT/);
+  assert.ok(
+    preflight.indexOf("smoke_database_created=1") < preflight.indexOf("'createdb"),
+    "cleanup must be armed before attempting to create the disposable database"
+  );
+  assert.match(guide, /docker compose build api/);
+  assert.match(guide, /临时数据库/);
+  assert.match(guide, /015-registration-identities-and-organization-leaders\.sql/);
+});
+
+test("upgrade preflight validates host backups when the candidate lives outside the deploy directory", async () => {
+  const preflight = await fs.readFile(
+    path.join(root, "deploy/preflight-admin-upgrade.sh"),
+    "utf8"
+  );
+
+  assert.match(preflight, /backup_run\(\) \{/);
+  assert.match(
+    preflight,
+    /docker compose run --rm --no-deps -T -v "\$backups_dir:\/backups:ro" backup/
+  );
+  assert.match(preflight, /backup_run pg_restore --list/);
+  assert.match(preflight, /backup_run \/bin\/sh \/scripts\/verify-uploads-backup\.sh/);
+});
+
+test("documented upgrade bootstraps missing secrets before every Compose operation", async () => {
+  const guide = await fs.readFile(path.join(root, "docs/deployment/aliyun-test.md"), "utf8");
+  const upgradeBlock = shellBlockAfter(guide, "更新应用前必须先补齐缺失密钥");
+  const bootstrapIndex = upgradeBlock.indexOf("/bin/sh deploy/bootstrap-secrets.sh /opt/aerogp");
+  const composeIndex = upgradeBlock.indexOf("docker compose");
+
+  assert.notEqual(bootstrapIndex, -1);
+  assert.ok(bootstrapIndex < composeIndex, "secret bootstrap must precede the first Compose command");
+  assert.match(guide, /bootstrap-secrets\.sh[^。\r\n]*不会覆盖现有非空值/);
+});
+
 test("deployment passes optional Aliyun SMS configuration without generating credentials", async () => {
   const [example, compose, bootstrap, smsSource] = await Promise.all([
     fs.readFile(path.join(root, ".env.example"), "utf8"),
@@ -236,4 +309,23 @@ test("authenticated smoke covers organization management and rejects raw HTML ma
   assert.match(smoke, /assert_json_error "admin-event-error"/);
   assert.match(smoke, /assert_json_error "admin-organization-error"/);
   assert.match(smoke, /application\/json/);
+});
+
+test("authenticated smoke establishes approved organization leaders and supplies student identities", async () => {
+  const smoke = await fs.readFile(path.join(root, "deploy/remote-smoke-test.sh"), "utf8");
+
+  for (const label of ["organization-leader", "organization-foreign-leader"]) {
+    const createIndex = smoke.indexOf(`assert_status "${label}-create" 201`);
+    const approveIndex = smoke.indexOf(`assert_status "${label}-approve" 200`);
+    assert.notEqual(createIndex, -1, `${label} must be created`);
+    assert.ok(approveIndex > createIndex, `${label} must be approved after creation`);
+  }
+  assert.ok(
+    smoke.indexOf('assert_status "organization-leader-approve" 200')
+      < smoke.indexOf('assert_status "organization-registration-create" 201'),
+    "the organization leader must be approved before organization registration"
+  );
+  assert.match(smoke, /add_student_id "11010519491231002X"/);
+  assert.match(smoke, /add_student_id "110105194912310038"/);
+  assert.match(smoke, /add_student_id "110105201401011231"/);
 });

@@ -9,6 +9,22 @@ import test from "node:test";
 const root = path.resolve(import.meta.dirname, "../../..");
 const expectedRelease = "3ad0feb535269b67d3d88b6ed3eaadd29dfe3672";
 
+test("organization lifecycle operations preserve release backups and fail closed while updating secrets", async () => {
+  const guide = await readFile(path.join(root, "docs/operations/organization-account-lifecycle.md"), "utf8");
+
+  assert.match(guide, /test -r \.env/);
+  assert.doesNotMatch(guide, /grep -v '\^TEMP_PASSWORD_ENCRYPTION_KEY=' \.env > "\$tmp" \|\| true/);
+  assert.match(guide, /backups\/release-archives\/pre-org-lifecycle-/);
+  assert.match(guide, /cp -- "\$latest" "\$release_archive\/postgres\.dump"/);
+  assert.match(guide, /cp -- "\$latest_uploads" "\$release_archive\/uploads\.tar\.gz"/);
+  assert.match(guide, /自动备份文件仍按 7 天策略清理/);
+  assert.ok((guide.match(/^set -eu$/gm) || []).length >= 2, "secret rotation and backup snippets must fail closed");
+  assert.match(guide, /trap cleanup_key_update EXIT HUP INT TERM/);
+  assert.match(guide, /database_container_path="\$\(/);
+  assert.match(guide, /uploads_container_path="\$\(/);
+  assert.doesNotMatch(guide, /latest="\$\(find backups /);
+});
+
 test("remote smoke keeps organization records scoped and validates the organization workspace release contract", async () => {
   const smoke = await readFile(path.join(root, "deploy/remote-smoke-test.sh"), "utf8");
 
@@ -112,12 +128,50 @@ test("remote smoke keeps organization records scoped and validates the organizat
     "ordinary user cleanup must verify its exact identity before deletion"
   );
   assert.doesNotMatch(smoke, /\bsmoke_password=/);
-  assert.match(smoke, /SMOKE_PASSWORD_FILE=.*docker compose exec/);
+  assert.match(smoke, /\. "\$script_dir\/smoke-credentials\.sh"/);
+  assert.match(smoke, /smoke_extract_temporary_password "\$response_file" "\$smoke_user_temporary_password_file"/);
   assert.doesNotMatch(smoke, /echo[^\r\n]*(?:password|token|cookie)/i);
   assert.doesNotMatch(smoke, /\/api\/admin\/events\/\$smoke_event_id\/current/);
   assert.doesNotMatch(smoke, /\/api\/admin\/events\/\$original_current_event_id\/current/);
   assert.doesNotMatch(smoke, /submission-event-current/);
   assert.match(smoke, /"registrationMode":"force_open"/);
+});
+
+test("remote smoke verifies organization approval, registration eligibility, temporary passwords, and event removal", async () => {
+  const smoke = await readFile(path.join(root, "deploy/remote-smoke-test.sh"), "utf8");
+
+  assert.match(smoke, /assert_json_error_code\(\)/);
+  assert.match(smoke, /assert_status "organization-pending-workspace" 403/);
+  assert.match(smoke, /assert_json_error_code "organization-pending-workspace" "ORGANIZATION_REVIEW_PENDING"/);
+  assert.match(smoke, /assert_status "submission-registration-unaffiliated" 403/);
+  assert.match(smoke, /assert_json_error_code "submission-registration-unaffiliated" "ACTIVE_ORGANIZATION_REQUIRED"/);
+
+  const pendingWorkspace = smoke.indexOf('assert_status "organization-pending-workspace" 403');
+  const ownerApproval = smoke.indexOf('assert_status "organization-owner-review" 200');
+  assert.ok(pendingWorkspace >= 0 && ownerApproval > pendingWorkspace,
+    "pending organization access must be checked before administrator approval");
+
+  const unaffiliatedRegistration = smoke.indexOf('assert_status "submission-registration-unaffiliated" 403');
+  const membershipInvitation = smoke.indexOf('assert_status "submission-user-invitation" 201');
+  assert.ok(unaffiliatedRegistration >= 0 && membershipInvitation > unaffiliatedRegistration,
+    "ordinary registration must be rejected before the smoke user joins an organization");
+
+  assert.match(smoke, /assert_status "submission-user-password-reset" 200/);
+  assert.match(smoke, /data\.user\.mustChangePassword !== true/);
+  assert.match(smoke, /assert_status "submission-user-password-repeat-view" 200/);
+  assert.match(smoke, /cmp "\$smoke_reset_password_file" "\$smoke_repeat_password_file"/);
+  assert.match(smoke, /smoke_user_phone="1\$\(printf '%s' "user-\$submission_token" \| cksum/);
+  assert.doesNotMatch(smoke, /smoke_user_phone="1\$\(date \+%s\)"/);
+
+  const eventCleanup = smoke.match(/cleanup_submission_event_smoke\(\) \{([\s\S]*?)\n\}/)?.[1] || "";
+  const deletion = eventCleanup.indexOf('-X DELETE "$base_url/api/admin/events/$smoke_event_id"');
+  const absenceCheck = eventCleanup.indexOf('verify_submission_smoke_event_absent "$smoke_event_id"');
+  const cleanupComplete = eventCleanup.indexOf("smoke_event_cleanup_pending=0");
+  assert.ok(deletion >= 0 && absenceCheck > deletion && cleanupComplete > absenceCheck,
+    "event cleanup must verify the deleted id is absent before releasing cleanup intent");
+
+  assert.doesNotMatch(smoke, /set -[^\r\n]*x/);
+  assert.doesNotMatch(smoke, /echo[^\r\n]*(?:password|secret|key|token)/i);
 });
 
 function shellCommand() {
@@ -211,7 +265,9 @@ test("verify-release enforces the runtime API and hashed admin asset contract", 
       response.end(
         mode === "legacy-literal"
           ? `${expectedRelease} "/api/admin/registrations?pageSize=100"`
-          : expectedRelease
+          : mode === "missing-account-lifecycle-contract"
+            ? expectedRelease
+            : `${expectedRelease} ORGANIZATION_REVIEW_PENDING ACTIVE_ORGANIZATION_REQUIRED temporary-password`
       );
       return;
     }
@@ -253,6 +309,12 @@ test("verify-release enforces the runtime API and hashed admin asset contract", 
   await t.test("rejects the legacy registrations literal", async () => {
     const result = await runVerifier({ baseUrl: `${origin}/legacy-literal` });
     assert.notEqual(result.code, 0);
+  });
+
+  await t.test("rejects an admin asset without the organization account lifecycle contract", async () => {
+    const result = await runVerifier({ baseUrl: `${origin}/missing-account-lifecycle-contract` });
+    assert.notEqual(result.code, 0);
+    assert.match(result.stderr, /admin asset is missing organization account lifecycle contract/);
   });
 
   await t.test("rejects malformed version JSON before requesting admin HTML", async () => {

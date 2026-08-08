@@ -56,7 +56,8 @@ foreach ($content in @($apiDockerfile, $webDockerfile)) {
   if ($content -match '(?im)^COPY\s+.*\.env') { $failures.Add("Dockerfiles must not copy .env files") }
 }
 
-Require-Match $compose '(?ms)^\s*ports:\s*\r?\n\s*-\s*"80:80"' "Only the web service may publish port 80"
+Require-Match $compose '(?ms)^\s*caddy:\s*.*?^\s*ports:\s*\r?\n\s*-\s*"80:80"\s*\r?\n\s*-\s*"443:443"' "Caddy must publish HTTPS ports 80 and 443"
+Require-NoMatch $compose '(?ms)^\s{2}web:\s*$(?:(?!^\s{2}\S).)*^\s{4}ports:' "Web must remain internal behind Caddy"
 if ($compose -match '(?m)["''](?:4300|5432):') { $failures.Add("API and PostgreSQL ports must not be published") }
 Require-Match $compose 'postgres_data:/var/lib/postgresql/data' "PostgreSQL data must use a named volume"
 Require-Match $compose 'uploads_data:/data/uploads' "Uploads must use a named volume"
@@ -87,7 +88,7 @@ Require-Match $verifyUploadsBackup 'parts\[part_index\]\s*==\s*"\.\."' "Uploads 
 Require-Match $verifyUploadsBackup 'symbolic or hard link' "Uploads backup verifier must reject links"
 Require-Match $preflightUpgrade 'pg_restore\s+--list' "Upgrade preflight must verify the latest database dump"
 Require-Match $preflightUpgrade 'verify-uploads-backup\.sh' "Upgrade preflight must verify the latest uploads archive"
-Require-Match $preflightUpgrade 'docker compose run --rm --no-deps -T backup' "Upgrade preflight must inspect backups with the pending Compose mounts"
+Require-Match $preflightUpgrade 'docker compose run --rm --no-deps -T -v "\$backups_dir:/backups:ro" backup' "Upgrade preflight must inspect the selected host backup directory with the pending Compose image"
 Require-NoMatch $preflightUpgrade 'docker compose exec -T backup' "Upgrade preflight must not depend on the old running backup container mounts"
 Require-Match $preflightUpgrade 'site-media' "Upgrade preflight must verify website media backup coverage"
 Require-Match $preflightUpgrade 'SESSION_SECRET' "Upgrade preflight must validate SESSION_SECRET"

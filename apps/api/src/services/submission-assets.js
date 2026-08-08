@@ -2,7 +2,7 @@ import { isRegistrationOpen } from "../domain/registration-window.js";
 import { deleteSubmissionFile, submissionFileExists } from "../files/submission-storage.js";
 import path from "node:path";
 import { businessError } from "./events.js";
-import { requireOrganizationEventParticipation, requireOrdinaryUser, requireWritableEvent } from "./access-control.js";
+import { requireOrganizationEventParticipation, requireOrdinaryRegistrationEligibility, requireOrdinaryUser, requireWritableEvent } from "./access-control.js";
 import { recordAudit } from "./audit.js";
 
 export const SUBMISSION_ASSET_KINDS = new Set(["artwork_image", "creation_video"]);
@@ -330,6 +330,7 @@ export function createUploadSession({ db, eventId, projectId, actor, channel, no
   let organizationId = null;
   if (channel === "personal") {
     requireOrdinaryUser(actor);
+    requireOrdinaryRegistrationEligibility(db, actor.id, { requireApprovedLeader: false });
   } else if (channel === "organization") {
     organizationId = requireOrganizationEventParticipation(db, actor, eventId, { writable: true }).organization.id;
   } else if (channel === "admin") {

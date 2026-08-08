@@ -6,6 +6,8 @@ export const CREDENTIAL_POLICY = {
   maxBytes: 10 * 1024 * 1024
 };
 
+export const ORGANIZATION_LEADER_DOCUMENT_POLICY = CREDENTIAL_POLICY;
+
 export const CERTIFICATE_POLICY = {
   extensions: new Set(["pdf", "png", "jpg", "jpeg", "webp"]),
   mimeTypes: new Set(["application/pdf", "image/png", "image/jpeg", "image/webp"]),

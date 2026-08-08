@@ -189,11 +189,7 @@
 **Files:**
 - Create: `apps/api/src/auth/passwords.js`
 - Create: `apps/api/src/auth/session.js`
-- Create: `apps/api/src/auth/password-reset.js`
-- Create: `apps/api/src/auth/sms.js`
-- Create: `apps/api/src/data/migrations/002-auth-security.sql`
 - Create: `apps/api/test/auth-session.test.js`
-- Create: `apps/api/test/password-reset.test.js`
 - Modify: `apps/api/src/data/index.js`
 - Modify: `apps/api/src/data/postgres-store.js`
 - Modify: `apps/api/src/server.js`
@@ -207,7 +203,6 @@
 - Produces: `hashPassword(password)`、`verifyPassword(password, storedHash)`、`isLegacyPassword(storedHash)`。
 - Produces: `requireUser(req,res,next)`、`requireAdmin(req,res,next)`；认证成功后 `req.user` 为当前用户。
 - Produces: `POST /api/auth/login`、`POST /api/auth/logout`、`GET /api/auth/me`。
-- Produces: 管理员临时密码重置，以及阿里云短信验证码自助重置；两种改密方式都会使旧会话失效。
 - Consumes: `dataStore.pool` 用于生产 PostgreSQL session store。
 
 - [ ] **Step 1: 安装认证依赖并写失败测试**
@@ -310,19 +305,7 @@ test("login upgrades a legacy password and restores the user from a session", as
 
   `.env.example` 增加 `SESSION_SECRET=`；`bootstrap-secrets.sh` 使用 `openssl rand -hex 32` 生成并写入 root-only `.env`；Compose 把该变量传入 API。
 
-- [ ] **Step 5: 实现安全的双路径密码重置**
-
-  删除或禁用公开的“姓名 + 手机号直接重置密码”接口，并为用户增加 `sessionVersion` 与 `mustChangePassword`。登录恢复会话时必须校验 session 中的版本；任何改密成功都递增版本并使旧会话失效。
-
-  管理员接口为 `POST /api/admin/users/:id/reset-password`，只允许管理员调用，生成或接收符合规则的临时密码，并把 `mustChangePassword` 设为 `true`。
-
-  短信自助接口为 `POST /api/auth/password-reset/sms/request` 和 `POST /api/auth/password-reset/sms/confirm`。验证码为 6 位，有效期 5 分钟，最多尝试 5 次；同手机号冷却 60 秒且每小时最多 5 次，来源 IP 每小时最多 20 次。验证码、尝试次数与限流事件持久化到 PostgreSQL，并依靠事务/原子写入支持多实例；文件测试库提供等价持久接口。申请接口返回统一正文和等价时序，不暴露手机号是否存在；短信发送进入异步派发，测试注入 fake SMS provider，不连接真实网络。
-
-  阿里云短信使用官方 `@alicloud/dysmsapi20170525` SDK，凭据只从 `ALIBABA_CLOUD_ACCESS_KEY_ID`、`ALIBABA_CLOUD_ACCESS_KEY_SECRET`、`ALIYUN_SMS_SIGN_NAME`、`ALIYUN_SMS_TEMPLATE_CODE` 读取，Endpoint 为 `dysmsapi.aliyuncs.com`。未配置时 `/api/public/features` 返回 `smsPasswordResetEnabled: false`，管理员重置不受影响。
-
-  密码必须为 8–64 位并至少包含一个字母和一个数字。登录失败按 IP 与手机号限流，并在查询用户前检查限制；未知手机号执行 dummy bcrypt 校验，避免通过响应时间枚举账户。所有异步路由必须把错误交给 Express 错误处理中间件；退出时销毁会话并清理 cookie；生产 `SESSION_SECRET` 至少 32 字节。Cookie 根据反向代理后的 HTTP/HTTPS 自动设置 `Secure`。
-
-- [ ] **Step 6: 运行认证测试并提交**
+- [ ] **Step 5: 运行认证测试并提交**
 
   Run: `npm test -w apps/api -- --test-name-pattern="login upgrades"`
 
@@ -345,7 +328,6 @@ test("login upgrades a legacy password and restores the user from a session", as
 **Interfaces:**
 - Produces: `loginAs(baseUrl, phone, password): Promise<{ cookie: string, user: object }>`。
 - Produces: `GET /api/me/registrations`、`GET /api/me/certificates`，身份只来自 session。
-- Produces: `POST /api/auth/change-password`；临时密码用户完成改密前只能访问当前用户、退出和改密接口。
 - Consumes: Task 2 的 `requireUser`、`requireAdmin` 和 `req.user`。
 
 - [ ] **Step 1: 新建测试客户端并先改一个管理员用例**
@@ -386,12 +368,6 @@ test("login upgrades a legacy password and restores the user from a session", as
 
   组织成员接口通过 `requireUser` 后，再检查 `req.user` 是否是目标组织 active owner/manager 或 admin。证书下载不再读取 `actorUserId` 查询参数。
 
-  组织报名/证书列表必须同时限制 `registration.organizationId === 目标组织` 与报名用户是该组织 active member，不能因为用户同时加入多个组织而泄露私人或其他组织记录。角色层级固定：owner/admin 可邀请或管理 manager/member；manager 只能邀请或管理 member，不能创建 owner、不能移除 owner/manager；负责人转移留给独立流程。
-
-  所有 `/api/admin/*`、全部报名列表/导出、证书管理和用户管理接口使用 `requireAdmin`。普通报名、重复检查、组织申请、本人报名/证书和证书下载使用 `requireUser`，写入的 `userId` 一律来自 `req.user.id`。`GET /api/organizations` 不再公开 memberships，只向已登录用户返回组织公开搜索字段。
-
-  增加 `requirePasswordReady`：当 `req.user.mustChangePassword=true` 时，除 `/api/auth/me`、`/api/auth/logout`、`/api/auth/change-password` 外，受保护接口返回 `428` 与稳定错误码 `PASSWORD_CHANGE_REQUIRED`。本人改密必须校验当前密码，并拒绝新密码与当前密码相同；成功后递增 `sessionVersion`、清除 `mustChangePassword`，使其他旧会话失效并更新当前 session 版本。
-
 - [ ] **Step 3: 更新所有 API 测试请求**
 
   管理员测试统一使用 `13900000000/admin123` 登录；组织负责人使用 `13800000011/123456`；普通用户使用 `13800000001/123456`。增加以下反向断言：
@@ -406,7 +382,7 @@ test("login upgrades a legacy password and restores the user from a session", as
 
   Run: `npm test -w apps/api`
 
-  Expected: 全部 PASS，生产路由和测试代码中 `rg "actorUserId|\?userId=|req\.query\.userId|req\.body\.userId" apps/api/src/server.js apps/api/test` 无结果。覆盖未登录 401、普通用户访问管理员接口 403、跨用户证书下载 403、非组织管理者 403、临时密码用户 428 及成功改密后其他 session 失效。
+  Expected: 全部 PASS，测试代码中 `rg "actorUserId|\?userId=" apps/api/test` 无结果。
 
   ```bash
   git add apps/api/src/server.js apps/api/test
@@ -443,8 +419,6 @@ test("login upgrades a legacy password and restores the user from a session", as
 
   同时测试已有报名的赛项 `DELETE` 返回 `409`，停用 `PATCH` 返回 `200`。
 
-  报名 API 必须真正消费赛事配置：只允许当前已发布赛事在实时窗口开放时报名；项目必须属于当前赛事、已启用且允许所选固定组别；新报名写入当前 `eventId`。临时开放/关闭不能只影响页面展示。
-
   Run: `npm test -w apps/api -- --test-name-pattern="event management"`
 
   Expected: FAIL，赛事管理路由不存在。
@@ -476,13 +450,9 @@ test("login upgrades a legacy password and restores the user from a session", as
 
   所有管理操作在一次 `readDb`/`writeDb` 周期中完成；PostgreSQL store 保持一次事务写入。
 
-  复制赛事同时复制项目及其 `projectGroups`，项目使用新 ID；不复制报名、证书或成绩。设置当前赛事后数据库中必须恰好一条 `isCurrent=true`，并使用 PostgreSQL 唯一约束兜底。
-
 - [ ] **Step 3: 建立 Router 和输入校验**
 
-  路由统一使用 `requireAdmin` 和 `requirePasswordReady`。赛事写入只接受允许字段；起止时间必须是严格 ISO 8601 时间且开始早于截止；`null`/非对象请求体返回 422；报名模式和值域严格校验。项目 `allowedGroups` 必须是四个固定组别的非空子集，项目类型只允许 `individual/team`。已有报名的项目不可硬删除，但可停用。
-
-  PostgreSQL 启动兼容只为“完全没有 project_groups”的旧赛项一次性补齐四组；已由管理员保存的子集不得在重启/initialize 后被补回。种子组别也只在项目首次创建时写入。
+  路由统一使用 `requireAdmin`。赛事写入只接受允许字段；起止时间必须是有效 ISO 时间且开始早于截止；报名模式和值域严格校验。项目 `allowedGroups` 必须是四个固定组别的子集。
 
   ```js
   router.patch("/events/:id", async (req, res, next) => {
@@ -499,7 +469,7 @@ test("login upgrades a legacy password and restores the user from a session", as
 
 - [ ] **Step 4: 让公开赛事接口读取数据库**
 
-  移除 `EVENT/PROJECTS/GRADES` 的静态响应和报名校验依赖。只返回 `isCurrent && status === "published"` 的赛事、该赛事启用项目、四个固定组别和实时 `registrationWindow`。为保持官网兼容，赛事 payload 继续提供 `date`、`venue`、`registrationDeadline`、`contact`，其中 `date` 来自数据库 `dateLabel`，`registrationDeadline` 来自 `registrationEndAt` 的北京时间日期。没有当前赛事时返回 `503` 和明确错误。
+  移除 `EVENT/PROJECTS/GRADES` 的静态响应。只返回 `isCurrent && status === "published"` 的赛事、该赛事启用项目、固定组别和实时 `registrationWindow`。为保持官网兼容，赛事 payload 继续提供 `date`、`venue`、`registrationDeadline`、`contact`，其中 `date` 来自数据库 `dateLabel`，`registrationDeadline` 来自 `registrationEndAt` 的北京时间日期。没有当前赛事时返回 `503` 和明确错误。
 
 - [ ] **Step 5: 运行测试并提交**
 
@@ -537,9 +507,7 @@ test("login upgrades a legacy password and restores the user from a session", as
 - Produces: `EventManagementPage` emits `event-changed`，供 App 刷新当前赛事。
 - Consumes: Task 4 的赛事 API。
 
-现有单文件后台的所有请求也必须迁移到同一 `api()`：移除 `actorUserId`、`senderUserId` 和 query `userId`，登录后依赖 Cookie session；注册成功后回到登录而不是伪造已登录状态；旧的公开姓名手机号改密页面替换为短信验证码流程或“请联系管理员重置”。管理员用户列表提供临时密码重置入口，临时密码用户先完成强制改密。
-
-- [x] **Step 1: 安装 Vue 测试依赖并写页面失败测试**
+- [ ] **Step 1: 安装 Vue 测试依赖并写页面失败测试**
 
   Run: `npm install -D -w apps/admin vitest @vue/test-utils jsdom`
 
@@ -568,7 +536,7 @@ test("login upgrades a legacy password and restores the user from a session", as
 
   Expected: FAIL，页面和测试配置不存在。
 
-- [x] **Step 2: 实现同源 API 与 session state**
+- [ ] **Step 2: 实现同源 API 与 session state**
 
   `lib/api.js`：
 
@@ -590,9 +558,7 @@ test("login upgrades a legacy password and restores the user from a session", as
 
   `state/session.js` 使用模块级 `ref` 保存用户，首次启动调用 `/api/auth/me`；退出清空用户并回到登录页。
 
-  `api()` 对 401 清会话，对 `PASSWORD_CHANGE_REQUIRED` 保留错误码供 App 打开强制改密页；FormData 不手工设置 Content-Type。错误对象包含 status、code 和 payload，页面不得依赖字符串解析。
-
-- [x] **Step 3: 实现后台外壳和赛事页面**
+- [ ] **Step 3: 实现后台外壳和赛事页面**
 
   `AdminShell.vue` 提供“概览、赛事管理、赛项与组别、组织用户、报名管理、证书管理、普通用户管理”菜单和插槽。`EventManagementPage.vue` 包含赛事列表、基础资料表单、报名起止时间、三态按钮、当前赛事、复制、归档和赛项编辑区域。
 
@@ -609,13 +575,11 @@ test("login upgrades a legacy password and restores the user from a session", as
 
   已有报名的赛项隐藏“删除”，显示“停用”。四组使用固定复选框，不提供自由文本名称。
 
-  页面需要处理 loading、字段错误、API 错误和成功反馈；归档/删除二次确认。赛事与赛项表单发出的 payload 只包含 API 白名单字段，日期控件与 ISO 时间之间明确转换。
+- [ ] **Step 4: 在 App 中切换管理员新页面**
 
-- [x] **Step 4: 在 App 中切换管理员新页面**
+  登录恢复后管理员默认进入后台概览；菜单切换到 `events` 时加载 `EventManagementPage`。非管理员不能渲染 `AdminShell`。保留普通用户和组织用户的现有页面，后续阶段再拆分。
 
-  登录恢复后管理员默认进入后台概览；菜单切换到 `events` 时加载 `EventManagementPage`。非管理员不能渲染 `AdminShell`。保留普通用户和组织用户的现有页面，后续阶段再拆分，但所有旧请求必须兼容 P1T3 的 session-only API。短信未配置时找回密码页面不显示验证码表单，只提示联系管理员。
-
-- [x] **Step 5: 运行测试、构建并提交**
+- [ ] **Step 5: 运行测试、构建并提交**
 
   Run: `npm test -w apps/admin`
 

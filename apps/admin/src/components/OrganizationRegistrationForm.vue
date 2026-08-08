@@ -45,7 +45,7 @@ async function submit() {
     const payload = await api(props.endpoint, { method: props.method, body: data });
     emit("registered", payload.user);
   } catch (error) {
-    emit("error", error.message);
+    emit("error", error);
   } finally {
     submitting.value = false;
   }

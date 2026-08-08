@@ -11,6 +11,7 @@ import {
   requestMembership,
   searchOperationalOrganizations
 } from "../src/services/memberships.js";
+import { ordinaryRegistrationEligibility } from "../src/services/access-control.js";
 
 const fixedNow = "2026-08-04T00:00:00.000Z";
 const now = () => fixedNow;
@@ -38,11 +39,66 @@ function fixture() {
       { id: "O1", name: "组织一", code: "ORG-001", ownerUserId: "UO1", status: "active", reviewStatus: "approved", contactName: "负责人一", contactPhone: "13700000011" },
       { id: "O2", name: "组织二", code: "ORG-002", ownerUserId: "UO2", status: "active", reviewStatus: "approved", contactName: "负责人二", contactPhone: "13700000012" }
     ],
+    organizationLeaders: [
+      { id: "OL1", organizationId: "O1", reviewStatus: "approved", enabled: true },
+      { id: "OL2", organizationId: "O2", reviewStatus: "approved", enabled: true }
+    ],
     memberships: [],
     registrations: [],
     certificates: []
   };
 }
+
+test("ordinary registration eligibility requires one active member relation to an operational organization", () => {
+  const db = fixture();
+  const unaffiliatedUser = db.users[0];
+  assert.equal(ordinaryRegistrationEligibility(db, unaffiliatedUser.id).code, "ACTIVE_ORGANIZATION_REQUIRED");
+
+  db.memberships.push({
+    id: "M-active", userId: unaffiliatedUser.id, organizationId: "O1", role: "member", status: "active",
+    direction: "user_request", note: "", createdAt: now(), updatedAt: now()
+  });
+  const activeMember = unaffiliatedUser;
+  const eligibility = ordinaryRegistrationEligibility(db, activeMember.id);
+  assert.equal(eligibility.eligible, true);
+  assert.equal(eligibility.code, "OK");
+  assert.equal(eligibility.organization.id, "O1");
+  assert.equal(eligibility.membership.id, "M-active");
+
+  db.memberships[0].role = "owner";
+  assert.equal(ordinaryRegistrationEligibility(db, activeMember.id).code, "ACTIVE_ORGANIZATION_REQUIRED");
+  db.memberships[0].role = "member";
+  db.organizations[0].reviewStatus = "rejected";
+  assert.equal(ordinaryRegistrationEligibility(db, activeMember.id).code, "ACTIVE_ORGANIZATION_REQUIRED");
+});
+
+test("ordinary registration eligibility keeps the organization context when an approved leader is missing", () => {
+  const db = fixture();
+  db.memberships.push({ id: "M-active", userId: "U1", organizationId: "O1", role: "member", status: "active" });
+  db.organizationLeaders = [];
+
+  assert.deepEqual(ordinaryRegistrationEligibility(db, "U1"), {
+    eligible: false,
+    code: "ORGANIZATION_LEADER_REQUIRED",
+    organization: db.organizations[0],
+    membership: db.memberships[0]
+  });
+});
+
+test("fix round 1 rejects ambiguous ordinary registration eligibility with two operational member relations", () => {
+  const db = fixture();
+  db.memberships.push(
+    { id: "M-active-1", userId: "U1", organizationId: "O1", role: "member", status: "active" },
+    { id: "M-active-2", userId: "U1", organizationId: "O2", role: "member", status: "active" }
+  );
+
+  assert.deepEqual(ordinaryRegistrationEligibility(db, "U1"), {
+    eligible: false,
+    code: "ACTIVE_ORGANIZATION_REQUIRED",
+    organization: null,
+    membership: null
+  });
+});
 
 test("ordinary request and owner invitation create pending member relations", () => {
   const db = fixture();

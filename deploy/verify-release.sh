@@ -126,5 +126,11 @@ if grep -F -- '/api/admin/registrations?pageSize=100' "$admin_asset" >/dev/null;
   echo "admin asset contains the legacy registrations endpoint" >&2
   exit 1
 fi
+for required_contract in ORGANIZATION_REVIEW_PENDING ACTIVE_ORGANIZATION_REQUIRED temporary-password; do
+  if ! grep -F -- "$required_contract" "$admin_asset" >/dev/null; then
+    echo "admin asset is missing organization account lifecycle contract" >&2
+    exit 1
+  fi
+done
 
 echo "release-consistency=$expected_release"

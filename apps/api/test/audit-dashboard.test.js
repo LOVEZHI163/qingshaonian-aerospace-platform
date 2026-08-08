@@ -42,6 +42,22 @@ test("audit dashboard sanitizes sensitive values before persisting summaries", (
   assert.equal(db.auditLogs[0], row);
 });
 
+test("audit dashboard redacts identity numbers in target IDs before persistence", () => {
+  const db = { auditLogs: [] };
+  const targetId = "11010519491231002X";
+  const row = recordAudit(db, {
+    actor: { id: "U1", name: "管理员" },
+    action: "test.target-id",
+    targetType: "registration",
+    targetId,
+    summary: "安全审计目标"
+  });
+
+  assert.equal(row.targetId.includes(targetId), false);
+  assert.equal(JSON.stringify(db.auditLogs).includes(targetId), false);
+  assert.equal(row.targetId, "[身份证号已隐藏]");
+});
+
 test("audit dashboard redacts quoted JSON secrets, cookies, relative paths and sensitive actor names", () => {
   const db = { auditLogs: [] };
   const summarySecrets = ["admin123", "abc-session", "COOKIESECRET", "uploads/certificates/a.png"];

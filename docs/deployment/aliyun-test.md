@@ -45,7 +45,7 @@ docker compose version
 
 项目中的三个基础镜像显式使用 DaoCloud 公共镜像服务，以避免中国大陆 ECS 拉取 Docker Hub 超时。该设置只作用于本项目，不会修改 Docker 的全局镜像源；正式环境也可以改成阿里云账号专属的 ACR 镜像。
 
-### 创建部署目录和数据库密钥
+### 创建部署目录和应用密钥
 
 ```bash
 install -d -m 700 /opt/aerogp /opt/aerogp/backups
@@ -53,13 +53,14 @@ cd /opt/aerogp
 umask 077
 DB_PASSWORD="$(openssl rand -hex 32)"
 SESSION_SECRET="$(openssl rand -hex 32)"
-printf 'POSTGRES_DB=aerogp\nPOSTGRES_USER=aerogp\nPOSTGRES_PASSWORD=%s\nSESSION_SECRET=%s\n' \
-  "$DB_PASSWORD" "$SESSION_SECRET" > .env
-unset DB_PASSWORD SESSION_SECRET
+REGISTRATION_ID_KEY="$(openssl rand -base64 32)"
+printf 'POSTGRES_DB=aerogp\nPOSTGRES_USER=aerogp\nPOSTGRES_PASSWORD=%s\nSESSION_SECRET=%s\nREGISTRATION_ID_ENCRYPTION_KEY=%s\n' \
+  "$DB_PASSWORD" "$SESSION_SECRET" "$REGISTRATION_ID_KEY" > .env
+unset DB_PASSWORD SESSION_SECRET REGISTRATION_ID_KEY
 chmod 600 .env
 ```
 
-数据库密码只保存在 root-only 的 `.env` 中，不写入镜像或仓库。
+身份证加密密钥必须是 32 字节随机值的规范 base64 编码，不得设置默认生产值。数据库密码和所有应用密钥只保存在 root-only 的 `.env` 中，不写入镜像、部署记录或仓库。已有 `.env` 缺少密钥时也可运行 `/bin/sh deploy/bootstrap-secrets.sh /opt/aerogp`；脚本仅补齐缺失或空值，不会轮换已有非空密钥。已有值若格式错误，升级预检会拒绝继续，运维人员不得用新值覆盖，否则既有身份证密文将无法解密。
 
 ## 启动和检查
 
@@ -104,12 +105,14 @@ docker compose ps
 docker compose logs --tail=200 api web
 ```
 
-更新应用前必须先备份数据库和上传文件，并运行升级预检。预检只读取现状，不会启动或替换容器：
+更新应用前必须先补齐缺失密钥、备份数据库和上传文件，构建已审核的候选 API 镜像，再运行升级预检。`bootstrap-secrets.sh` 只补齐缺失或空值，不会覆盖现有非空值。预检不会替换或重启当前业务容器；它会在当前 PostgreSQL 服务内创建一个强随机命名的临时数据库，用候选 API 镜像执行两次初始化以模拟进程重启，验证 `015-registration-identities-and-organization-leaders.sql`、四张新增表和加密行持久化，然后无论成功失败都删除临时数据库。该 smoke 不连接或修改业务数据库：
 
 ```bash
 cd /opt/aerogp
+/bin/sh deploy/bootstrap-secrets.sh /opt/aerogp
 docker compose run --rm backup /bin/sh /scripts/backup-postgres.sh once
 docker compose run --rm backup /bin/sh /scripts/backup-uploads.sh once
+docker compose build api
 /bin/sh deploy/preflight-admin-upgrade.sh
 ```
 
@@ -279,7 +282,7 @@ else
 fi
 ```
 
-不要删除 `aerogp_postgres_data` 或 `aerogp_uploads_data` volume。若数据库结构已经变化，必须先验证旧版应用是否兼容当前数据库。
+不要删除 `aerogp_postgres_data` 或 `aerogp_uploads_data` volume。本次 015 迁移只增加表；应用代码回滚时保留 `registration_identities`、`organization_leaders`、`organization_leader_documents` 和 `organization_leader_reviews`，上一版本不会读取这些表。只有在已确认数据库备份可恢复且确实需要数据回滚时，才允许执行数据库恢复；不得为了应用回滚主动删除新增表。若其他数据库结构已经变化，仍必须先验证旧版应用是否兼容当前数据库。
 
 官网改版回滚时，先记录失败版本的容器日志和 smoke 摘要，再切回发布记录中的上一 commit 并重建 API/Web。默认保留当前 PostgreSQL 与上传卷；只有确认数据库迁移不兼容或上传内容损坏时，才按已校验的具体备份文件执行恢复。禁止使用 `docker compose down -v`、删除命名卷或对运行中的上传卷直接覆盖解压。
 

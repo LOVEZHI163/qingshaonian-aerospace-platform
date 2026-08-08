@@ -30,6 +30,35 @@ const LEGACY_INVITATION_FIELDS = [
   "organizationId", "role", "status", "updatedAt", "userId"
 ];
 
+test("fix round 1 organization business reads and writes use stable centralized access codes", async () => {
+  const cases = [
+    ["pending", "active", "ORGANIZATION_REVIEW_PENDING"],
+    ["rejected", "active", "ORGANIZATION_REJECTED"],
+    ["approved", "disabled", "ORGANIZATION_DISABLED"]
+  ];
+
+  for (const [reviewStatus, status, expectedCode] of cases) {
+    await withTestServer(async ({ baseUrl, dbPath }) => {
+      const owner = await loginAs(baseUrl, "13800000011", "123456");
+      const db = JSON.parse(await fs.readFile(dbPath, "utf8"));
+      Object.assign(db.organizations.find((row) => row.id === "O1001"), { reviewStatus, status });
+      await fs.writeFile(dbPath, JSON.stringify(db), "utf8");
+
+      const requests = [
+        fetch(`${baseUrl}/api/organization/registrations`, withSession(owner.cookie)),
+        fetch(`${baseUrl}/api/organization/certificates`, withSession(owner.cookie)),
+        fetch(`${baseUrl}/api/organization/invitations`, jsonOptions("POST", { phone: "13800000001" }, owner.cookie))
+      ];
+      for (const response of await Promise.all(requests)) {
+        assert.equal(response.status, 403);
+        const payload = await responseJson(response);
+        assert.equal(payload.code, expectedCode);
+        assert.notEqual(payload.code, "ORGANIZATION_NOT_OPERATIONAL");
+      }
+    }, { prefix: `membership-central-${reviewStatus}-${status}-` });
+  }
+});
+
 test("organization invitation requires personal acceptance and repeated invitation is idempotent and audited", async () => {
   await withTestServer(async ({ baseUrl, dbPath }) => {
     const owner = await loginAs(baseUrl, "13800000011", "123456");

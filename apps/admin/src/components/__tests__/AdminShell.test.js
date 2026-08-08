@@ -8,7 +8,7 @@ describe("AdminShell", () => {
     const wrapper = mount(AdminShell, { props: { active: "overview" } });
 
     expect(wrapper.findAll("[data-nav]").map((item) => item.text())).toEqual([
-      "概览", "赛事设置", "报名管理", "证书管理", "官网内容", "组织用户", "普通用户管理"
+      "概览", "赛事设置", "报名管理", "证书管理", "官网内容", "组织用户", "领队审核", "普通用户管理"
     ]);
     expect(wrapper.find('[data-nav="projects"]').exists()).toBe(false);
 

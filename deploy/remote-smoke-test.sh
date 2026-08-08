@@ -1,6 +1,9 @@
 #!/bin/sh
 set -eu
 
+script_dir="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+. "$script_dir/smoke-credentials.sh"
+
 base_url="${BASE_URL:-http://127.0.0.1}"
 admin_phone="${ADMIN_TEST_PHONE:-13900000000}"
 umask 077
@@ -101,6 +104,18 @@ json_path() {
   docker compose exec -T api node -e "$script" < "$response_file"
 }
 
+add_student_id() {
+  student_id="$1"
+  STUDENT_ID="$student_id" docker compose exec -T -e STUDENT_ID api node -e '
+    let input = "";
+    process.stdin.on("data", (chunk) => input += chunk).on("end", () => {
+      const data = JSON.parse(input);
+      data.studentIdNumber = process.env.STUDENT_ID;
+      process.stdout.write(JSON.stringify(data));
+    });
+  '
+}
+
 assert_json_response() {
   label="$1"
   case "$received_media_type" in
@@ -129,6 +144,16 @@ assert_json_error() {
   esac
   if ! json_path 'let input="";process.stdin.on("data",chunk=>input+=chunk).on("end",()=>{const data=JSON.parse(input);if(typeof data.error!=="string"||!data.error.trim())process.exit(2);});' >/dev/null; then
     echo "$label did not return the required JSON error contract" >&2
+    exit 1
+  fi
+}
+
+assert_json_error_code() {
+  label="$1"
+  expected_code="$2"
+  assert_json_error "$label"
+  if ! EXPECTED_CODE="$expected_code" docker compose exec -T -e EXPECTED_CODE api node -e 'let input="";process.stdin.on("data",chunk=>input+=chunk).on("end",()=>{const data=JSON.parse(input);if(data.code!==process.env.EXPECTED_CODE)process.exit(2);});' < "$response_file" >/dev/null; then
+    echo "$label did not return the expected stable error code" >&2
     exit 1
   fi
 }
@@ -231,6 +256,22 @@ if ! docker compose exec -T postgres sh -c \
   exit 1
 fi
 echo "membership-migration-012=applied"
+if ! docker compose exec -T postgres sh -c \
+  'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "$1"' sh \
+  "SELECT 1 FROM schema_migrations WHERE name = '013-organization-account-lifecycle.sql'" \
+  | grep -qx 1; then
+  echo "organization account lifecycle migration 013 is not recorded" >&2
+  exit 1
+fi
+echo "organization-account-lifecycle-migration-013=applied"
+if ! docker compose exec -T postgres sh -c \
+  'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "$1"' sh \
+  "SELECT 1 FROM schema_migrations WHERE name = '014-organization-deletion-history.sql'" \
+  | grep -qx 1; then
+  echo "organization deletion history migration 014 is not recorded" >&2
+  exit 1
+fi
+echo "organization-deletion-history-migration-014=applied"
 
 assert_status "admin-event-error" 404 \
   -b "$cookie_jar" \
@@ -291,6 +332,13 @@ verify_submission_smoke_event_target() {
   EXPECTED_ID="$event_id" EXPECTED_PROJECT_ID="$smoke_project_id" EXPECTED_NAME="$smoke_event_name" EXPECTED_TOKEN="$submission_token" SOURCE_EVENT_ID="$smoke_source_event_id" REQUIRE_ARCHIVED="$require_archived" REQUIRE_PROJECT="$require_project" docker compose exec -T -e EXPECTED_ID -e EXPECTED_PROJECT_ID -e EXPECTED_NAME -e EXPECTED_TOKEN -e SOURCE_EVENT_ID -e REQUIRE_ARCHIVED -e REQUIRE_PROJECT api node -e 'let input="";process.stdin.on("data",chunk=>input+=chunk).on("end",()=>{const data=JSON.parse(input);const rows=data.rows||[];const sourceEventId=process.env.SOURCE_EVENT_ID;const event=rows.find(row=>row.id===process.env.EXPECTED_ID);const project=(data.projects||[]).find(row=>row.id===process.env.EXPECTED_PROJECT_ID);if(!event||event.name !== process.env.EXPECTED_NAME||!event.name.includes(process.env.EXPECTED_TOKEN)||event.id === sourceEventId||(process.env.REQUIRE_PROJECT === "1"&&(!project||project.eventId !== event.id)))process.exit(2);if(process.env.REQUIRE_ARCHIVED === "1"&&(!event.archivedAt||event.isCurrent))process.exit(2);});' < "$cleanup_events_response" >/dev/null
 }
 
+verify_submission_smoke_event_absent() {
+  deleted_event_id="$1"
+  test -n "$deleted_event_id" || return 1
+  refresh_submission_cleanup_events || return 1
+  EXPECTED_ID="$deleted_event_id" docker compose exec -T -e EXPECTED_ID api node -e 'let input="";process.stdin.on("data",chunk=>input+=chunk).on("end",()=>{const rows=JSON.parse(input).rows||[];if(rows.some(row=>row.id===process.env.EXPECTED_ID))process.exit(2);});' < "$cleanup_events_response" >/dev/null
+}
+
 refresh_submission_cleanup_users() {
   cleanup_submission_users_response="$work_dir/cleanup-submission-users.json"
   curl -sS -f -o "$cleanup_submission_users_response" -b "$cookie_jar" "$base_url/api/users"
@@ -335,6 +383,7 @@ cleanup_submission_event_smoke() {
   printf '%s' "$cleanup_payload" | curl -sS -f -o /dev/null -b "$cookie_jar" \
     -H 'Content-Type: application/json' --data-binary @- \
     -X DELETE "$base_url/api/admin/events/$smoke_event_id" || return 1
+  verify_submission_smoke_event_absent "$smoke_event_id" || return 1
   smoke_event_cleanup_pending=0
   smoke_event_id=
 }
@@ -541,15 +590,37 @@ if test -z "$smoke_organization_user_id" || test -z "$smoke_organization_id" || 
   echo "Organization smoke registration did not return the exact owner and organization fixture" >&2
   exit 1
 fi
-printf '%s' '{"status":"approved","reason":""}' | \
-assert_status "organization-owner-review" 200 \
-  -b "$cookie_jar" -H 'Content-Type: application/json' --data-binary @- \
-  -X PATCH "$base_url/api/admin/organizations/$smoke_organization_id/review"
 smoke_organization_cookie_jar="$work_dir/organization-owner.cookies"
 { printf '{"phone":"%s","password":"' "$smoke_organization_phone"; cat "$smoke_organization_password_file"; printf '"}'; } | \
 assert_status "organization-owner-login" 200 \
   -c "$smoke_organization_cookie_jar" -H 'Content-Type: application/json' --data-binary @- \
   "$base_url/api/auth/login"
+assert_status "organization-pending-workspace" 403 \
+  -b "$smoke_organization_cookie_jar" \
+  "$base_url/api/organization/events/$smoke_event_id/workspace"
+assert_json_error_code "organization-pending-workspace" "ORGANIZATION_REVIEW_PENDING"
+printf '%s' '{"status":"approved","reason":""}' | \
+assert_status "organization-owner-review" 200 \
+  -b "$cookie_jar" -H 'Content-Type: application/json' --data-binary @- \
+  -X PATCH "$base_url/api/admin/organizations/$smoke_organization_id/review"
+assert_status "organization-leader-create" 201 \
+  -b "$smoke_organization_cookie_jar" \
+  -F 'name=Smoke Leader' \
+  -F "phone=$smoke_organization_phone" \
+  -F 'email=smoke-leader@example.com' \
+  -F 'notes=release smoke leader' \
+  -F "authorization=@$organization_credential_file;type=application/pdf" \
+  "$base_url/api/organization/leaders"
+assert_json_response "organization-leader-create"
+smoke_organization_leader_id="$(json_path 'let input="";process.stdin.on("data",chunk=>input+=chunk).on("end",()=>{const data=JSON.parse(input);if(data.row&&data.row.id)process.stdout.write(encodeURIComponent(data.row.id));});')"
+if test -z "$smoke_organization_leader_id"; then
+  echo "Organization leader smoke creation returned no leader id" >&2
+  exit 1
+fi
+printf '%s' '{"decision":"approved"}' | \
+assert_status "organization-leader-approve" 200 \
+  -b "$cookie_jar" -H 'Content-Type: application/json' --data-binary @- \
+  -X PATCH "$base_url/api/admin/organization-leaders/$smoke_organization_leader_id/review"
 assert_status "organization-event-join" 201 \
   -b "$smoke_organization_cookie_jar" -X POST \
   "$base_url/api/organization/events/$smoke_event_id/join"
@@ -561,8 +632,8 @@ if ! EXPECTED_ORGANIZATION_ID="$smoke_organization_id" EXPECTED_ORGANIZATION_NAM
   echo "organization-workspace did not return the exact organization identity and grades" >&2
   exit 1
 fi
-printf '{"projectId":"%s","athlete":{"name":"组织冒烟选手","school":"%s","grade":"三年级","phone":"%s"}}' \
-  "$smoke_project_id" "$smoke_organization_name" "$smoke_organization_phone" | \
+printf '{"registrationSource":"organization_proxy","projectId":"%s","athlete":{"name":"组织冒烟选手","school":"%s","grade":"三年级","phone":"%s"}}' \
+  "$smoke_project_id" "$smoke_organization_name" "$smoke_organization_phone" | add_student_id "11010519491231002X" | \
 assert_status "organization-registration-create" 201 \
   -b "$smoke_organization_cookie_jar" -H 'Content-Type: application/json' --data-binary @- \
   "$base_url/api/organization/events/$smoke_event_id/registrations"
@@ -601,11 +672,29 @@ smoke_foreign_organization_cookie_jar="$work_dir/organization-foreign.cookies"
 assert_status "organization-foreign-login" 200 \
   -c "$smoke_foreign_organization_cookie_jar" -H 'Content-Type: application/json' --data-binary @- \
   "$base_url/api/auth/login"
+assert_status "organization-foreign-leader-create" 201 \
+  -b "$smoke_foreign_organization_cookie_jar" \
+  -F 'name=Foreign Smoke Leader' \
+  -F "phone=$smoke_foreign_organization_phone" \
+  -F 'email=foreign-smoke-leader@example.com' \
+  -F 'notes=foreign release smoke leader' \
+  -F "authorization=@$organization_credential_file;type=application/pdf" \
+  "$base_url/api/organization/leaders"
+assert_json_response "organization-foreign-leader-create"
+smoke_foreign_organization_leader_id="$(json_path 'let input="";process.stdin.on("data",chunk=>input+=chunk).on("end",()=>{const data=JSON.parse(input);if(data.row&&data.row.id)process.stdout.write(encodeURIComponent(data.row.id));});')"
+if test -z "$smoke_foreign_organization_leader_id"; then
+  echo "Foreign organization leader smoke creation returned no leader id" >&2
+  exit 1
+fi
+printf '%s' '{"decision":"approved"}' | \
+assert_status "organization-foreign-leader-approve" 200 \
+  -b "$cookie_jar" -H 'Content-Type: application/json' --data-binary @- \
+  -X PATCH "$base_url/api/admin/organization-leaders/$smoke_foreign_organization_leader_id/review"
 assert_status "organization-foreign-event-join" 201 \
   -b "$smoke_foreign_organization_cookie_jar" -X POST \
   "$base_url/api/organization/events/$smoke_event_id/join"
-printf '{"projectId":"%s","athlete":{"name":"外部组织选手","school":"%s","grade":"三年级","phone":"%s"}}' \
-  "$smoke_project_id" "$smoke_foreign_organization_name" "$smoke_foreign_organization_phone" | \
+printf '{"registrationSource":"organization_proxy","projectId":"%s","athlete":{"name":"外部组织选手","school":"%s","grade":"三年级","phone":"%s"}}' \
+  "$smoke_project_id" "$smoke_foreign_organization_name" "$smoke_foreign_organization_phone" | add_student_id "110105194912310038" | \
 assert_status "organization-foreign-registration-create" 201 \
   -b "$smoke_foreign_organization_cookie_jar" -H 'Content-Type: application/json' --data-binary @- \
   "$base_url/api/organization/events/$smoke_event_id/registrations"
@@ -636,27 +725,66 @@ assert_status "submission-project-mode" 200 \
   -b "$cookie_jar" -H 'Content-Type: application/json' --data-binary @- \
   -X PATCH "$base_url/api/admin/projects/$smoke_project_id"
 
-smoke_user_phone="1$(date +%s)"
+smoke_user_phone="1$(printf '%s' "user-$submission_token" | cksum | awk '{printf "%010d", $1}')"
 smoke_phone="$smoke_user_phone"
 smoke_user_name="上传冒烟用户-$submission_token"
 smoke_user_password_file="$work_dir/submission-user-password"
 printf 'Smoke-%s!a' "$submission_token" > "$smoke_user_password_file"
+chmod 600 "$smoke_user_password_file"
 smoke_user_cleanup_pending=1
-SMOKE_USER_NAME="$smoke_user_name" SMOKE_PHONE="$smoke_user_phone" SMOKE_PASSWORD_FILE="$smoke_user_password_file" docker compose exec -T -e SMOKE_USER_NAME -e SMOKE_PHONE -e SMOKE_PASSWORD_FILE api node -e 'let password="";process.stdin.on("data",chunk=>password+=chunk).on("end",()=>process.stdout.write(JSON.stringify({name:process.env.SMOKE_USER_NAME,phone:process.env.SMOKE_PHONE,password,type:"ordinary"})));' < "$smoke_user_password_file" | \
+SMOKE_USER_NAME="$smoke_user_name" SMOKE_PHONE="$smoke_user_phone" docker compose exec -T -e SMOKE_USER_NAME -e SMOKE_PHONE api node -e 'process.stdout.write(JSON.stringify({name:process.env.SMOKE_USER_NAME,phone:process.env.SMOKE_PHONE,type:"ordinary"}));' | \
 assert_status "submission-user-create" 201 \
   -b "$cookie_jar" -H 'Content-Type: application/json' --data-binary @- \
   "$base_url/api/admin/users"
 assert_json_response "submission-user-create"
+smoke_user_temporary_password_file="$work_dir/submission-user-temporary-password"
+if ! smoke_extract_temporary_password "$response_file" "$smoke_user_temporary_password_file"; then
+  echo "Submission smoke user creation did not return valid generated credentials" >&2
+  exit 1
+fi
 smoke_user_id="$(json_path 'let input="";process.stdin.on("data",chunk=>input+=chunk).on("end",()=>{const data=JSON.parse(input);if(data.row&&data.row.id)process.stdout.write(encodeURIComponent(data.row.id));});')"
 if ! recover_submission_smoke_user_id || test "$smoke_user_cleanup_pending" -ne 1; then
   echo "Submission smoke user did not match the exact temporary identity" >&2
   exit 1
 fi
 smoke_cookie_jar="$work_dir/submission-user.cookies"
-SMOKE_PHONE="$smoke_user_phone" SMOKE_PASSWORD_FILE="$smoke_user_password_file" docker compose exec -T -e SMOKE_PHONE -e SMOKE_PASSWORD_FILE api node -e 'let password="";process.stdin.on("data",chunk=>password+=chunk).on("end",()=>process.stdout.write(JSON.stringify({phone:process.env.SMOKE_PHONE,password})));' < "$smoke_user_password_file" | \
+SMOKE_PHONE="$smoke_user_phone" docker compose exec -T -e SMOKE_PHONE api node -e 'let password="";process.stdin.on("data",chunk=>password+=chunk).on("end",()=>process.stdout.write(JSON.stringify({phone:process.env.SMOKE_PHONE,password})));' < "$smoke_user_temporary_password_file" | \
 assert_status "submission-user-login" 200 \
   -c "$smoke_cookie_jar" -H 'Content-Type: application/json' --data-binary @- \
   "$base_url/api/auth/login"
+assert_json_response "submission-user-login"
+if ! json_path 'let input="";process.stdin.on("data",chunk=>input+=chunk).on("end",()=>{const data=JSON.parse(input);if(!data.user||data.user.mustChangePassword!==true)process.exit(2);});' >/dev/null; then
+  echo "Submission smoke user login did not require a credential change" >&2
+  exit 1
+fi
+{ cat "$smoke_user_temporary_password_file"; printf '\n'; cat "$smoke_user_password_file"; } | \
+docker compose exec -T api node -e 'let input="";process.stdin.on("data",chunk=>input+=chunk).on("end",()=>{const separator=input.indexOf("\n");if(separator<1)process.exit(2);process.stdout.write(JSON.stringify({currentPassword:input.slice(0,separator),newPassword:input.slice(separator+1)}));});' | \
+assert_status "submission-user-force-password-change" 200 \
+  -b "$smoke_cookie_jar" -H 'Content-Type: application/json' --data-binary @- \
+  "$base_url/api/auth/change-password"
+assert_json_response "submission-user-force-password-change"
+
+printf '{"projectId":"%s","athlete":{"name":"未入组织冒烟选手","school":"未入组织冒烟学校","grade":"五年级","phone":"%s"}}' \
+  "$smoke_project_id" "$smoke_user_phone" | add_student_id "110105201401011231" | \
+assert_status "submission-registration-unaffiliated" 403 \
+  -b "$smoke_cookie_jar" -H 'Content-Type: application/json' --data-binary @- \
+  "$base_url/api/me/events/$smoke_event_id/registrations"
+assert_json_error_code "submission-registration-unaffiliated" "ACTIVE_ORGANIZATION_REQUIRED"
+
+printf '{"phone":"%s"}' "$smoke_user_phone" | \
+assert_status "submission-user-invitation" 201 \
+  -b "$smoke_organization_cookie_jar" -H 'Content-Type: application/json' --data-binary @- \
+  "$base_url/api/organization/invitations"
+assert_json_response "submission-user-invitation"
+submission_membership_id="$(json_path 'let input="";process.stdin.on("data",chunk=>input+=chunk).on("end",()=>{const row=JSON.parse(input).row;if(row&&row.id)process.stdout.write(encodeURIComponent(row.id));});')"
+if test -z "$submission_membership_id"; then
+  echo "Submission smoke invitation returned no membership id" >&2
+  exit 1
+fi
+printf '%s' '{"action":"accept"}' | \
+assert_status "submission-user-invitation-accept" 200 \
+  -b "$smoke_cookie_jar" -H 'Content-Type: application/json' --data-binary @- \
+  -X PATCH "$base_url/api/me/organization-relations/$submission_membership_id"
 
 png_file="$work_dir/submission-work.png"
 video_file="$work_dir/submission-work.mp4"
@@ -685,7 +813,7 @@ assert_status "submission-video-upload" 201 \
 assert_json_response "submission-video-upload"
 
 printf '{"projectId":"%s","athlete":{"name":"上传冒烟选手","school":"上传冒烟学校","grade":"五年级","phone":"%s"},"uploadSessionId":"%s"}' \
-  "$smoke_project_id" "$smoke_phone" "$submission_session_id" | \
+  "$smoke_project_id" "$smoke_phone" "$submission_session_id" | add_student_id "110105201401011231" | \
 assert_status "submission-registration-bind" 201 \
   -b "$smoke_cookie_jar" -H 'Content-Type: application/json' --data-binary @- \
   "$base_url/api/me/events/$smoke_event_id/registrations"
@@ -708,5 +836,25 @@ assert_json_response "submission-admin-summary"
 json_path 'let input="";process.stdin.on("data",chunk=>input+=chunk).on("end",()=>{const row=(JSON.parse(input).rows||[]).find(item=>item.submission&&item.submission.complete);if(!row)process.exit(2);});' >/dev/null
 assert_status "submission-private-unauthorized" 401 \
   "$base_url/api/me/events/$smoke_event_id/registrations/$submission_registration_id/assets/artwork_image"
+
+assert_status "submission-user-password-reset" 200 \
+  -b "$cookie_jar" -H 'Content-Type: application/json' --data-binary '{}' \
+  -X POST "$base_url/api/admin/users/$smoke_user_id/reset-password"
+assert_json_response "submission-user-password-reset"
+if ! json_path 'let input="";process.stdin.on("data",chunk=>input+=chunk).on("end",()=>{const data=JSON.parse(input);if(!data.user||data.user.mustChangePassword !== true||typeof data.temporaryPassword!=="string"||!data.temporaryPassword)process.exit(2);process.stdout.write(data.temporaryPassword);});' > "$work_dir/reset-temporary-password"; then
+  echo "Submission smoke reset did not enforce the required account state" >&2
+  exit 1
+fi
+smoke_reset_password_file="$work_dir/reset-temporary-password"
+assert_status "submission-user-password-repeat-view" 200 \
+  -b "$cookie_jar" \
+  "$base_url/api/admin/users/$smoke_user_id/temporary-password"
+assert_json_response "submission-user-password-repeat-view"
+smoke_repeat_password_file="$work_dir/repeated-temporary-password"
+json_path 'let input="";process.stdin.on("data",chunk=>input+=chunk).on("end",()=>{const value=JSON.parse(input).temporaryPassword;if(typeof value!=="string"||!value)process.exit(2);process.stdout.write(value);});' > "$smoke_repeat_password_file"
+if ! cmp "$smoke_reset_password_file" "$smoke_repeat_password_file" >/dev/null; then
+  echo "Repeated credential view did not return the current value" >&2
+  exit 1
+fi
 
 cleanup_submission_smoke

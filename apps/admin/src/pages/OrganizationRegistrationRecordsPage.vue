@@ -5,8 +5,9 @@ import OrganizationAthleteRegistrationForm from "../components/OrganizationAthle
 import SubmissionAssetUploader from "../components/SubmissionAssetUploader.vue";
 import { api, apiBlob, apiUrl } from "../lib/api.js";
 import { createBlobDownloadManager } from "../lib/download.js";
+import { isOrganizationRestrictionError } from "../state/access.js";
 
-const emit = defineEmits(["back-to-events"]);
+const emit = defineEmits(["back-to-events", "access-denied"]);
 
 const filters = reactive({ q: "", eventId: "", projectId: "", status: "", page: 1, pageSize: 25 });
 const rows = ref([]);
@@ -29,6 +30,12 @@ const materialError = ref("");
 const lastDownload = ref(null);
 const downloads = createBlobDownloadManager();
 const statusText = { pending: "待审核", approved: "已通过", rejected: "已驳回", cancelled: "已取消" };
+const sourceText = {
+  member_registration: "成员报名",
+  organization_proxy: "组织代报名",
+  personal: "成员本人报名",
+  organization: "历史组织报名"
+};
 const materialKinds = ["artwork_image", "creation_video"];
 const materialLabels = { artwork_image: "作品图片", creation_video: "作画视频" };
 const remainingReplacementKinds = computed(() => materialKinds.filter((kind) => !replacementCompletedKinds.value.has(kind)));
@@ -50,6 +57,22 @@ function safeMessage(error, fallback) {
   const message = String(typeof error === "string" ? error : error?.message || "").trim();
   if (!message || /<html|<!doctype|cannot\s+(?:get|post|put|patch|delete)/i.test(message)) return fallback;
   return message;
+}
+
+function reportAccessDenied(error) {
+  if (!isOrganizationRestrictionError(error)) return false;
+  emit("access-denied", error);
+  return true;
+}
+
+function handleEditingError(error) {
+  reportAccessDenied(error);
+  editingError.value = safeMessage(error, "报名记录保存失败，请重试");
+}
+
+function handleReplacementUploadError(error) {
+  reportAccessDenied(error);
+  replacementError.value = safeMessage(error, "作品材料上传失败，请重试");
 }
 
 function recordsErrorMessage(error) {
@@ -108,6 +131,7 @@ async function loadRecords() {
     filterOptions.projects = payload.filterOptions?.projects || [];
   } catch (requestError) {
     if (currentRequest !== requestId) return;
+    reportAccessDenied(requestError);
     rows.value = [];
     total.value = 0;
     error.value = recordsErrorMessage(requestError);
@@ -140,6 +164,7 @@ async function downloadSubmissionAsset(row, kind, asset) {
     const blob = await apiBlob(organizationAssetPath(row, kind));
     downloads.save(blob, blob.fileName || asset.originalName);
   } catch (downloadError) {
+    reportAccessDenied(downloadError);
     lastDownload.value = { row, kind, asset };
     materialError.value = materialErrorMessage(downloadError);
   }
@@ -180,6 +205,7 @@ async function editRegistration(row) {
     editingWorkspace.value = workspace || {};
   } catch (workspaceError) {
     if (currentRequest !== editRequestId || editingRegistration.value?.id !== row.id) return;
+    reportAccessDenied(workspaceError);
     editingError.value = workspaceErrorMessage(workspaceError);
   } finally {
     if (currentRequest === editRequestId) editingLoading.value = false;
@@ -222,6 +248,7 @@ async function createReplacementSession(row) {
     replacementSession.value = session;
   } catch (sessionError) {
     if (currentRequest !== replacementRequestId || replacingRegistration.value?.id !== row.id) return;
+    reportAccessDenied(sessionError);
     replacementError.value = replacementSessionErrorMessage(sessionError);
   } finally {
     if (currentRequest === replacementRequestId) replacementLoading.value = false;
@@ -259,6 +286,7 @@ async function confirmReplacement() {
     replacementResult.value = "作品材料已替换，报名已恢复待审核";
     cancelReplacement({ keepResult: true });
   } catch (replaceError) {
+    reportAccessDenied(replaceError);
     if (currentReplacement()) replacementError.value = replacementAssetErrorMessage(replaceError);
   } finally {
     if (currentReplacement()) replacementLoading.value = false;
@@ -293,14 +321,14 @@ onBeforeUnmount(() => {
       <div class="panel-title"><h4>编辑 {{ editingRegistration.athlete?.name || "报名记录" }}</h4><button type="button" class="mini" data-action="return-organization-records" @click="cancelEditing">返回报名记录</button></div>
       <p v-if="editingLoading" class="hint">正在加载赛事工作台…</p>
       <p v-else-if="editingError" class="message" role="alert">{{ editingError }} <button type="button" class="mini" :data-action="`retry-organization-edit-${editingRegistration.id}`" @click="editRegistration(editingRegistration)">重试</button> <button type="button" class="mini" data-action="return-organization-records" @click="cancelEditing">返回报名记录</button></p>
-      <OrganizationAthleteRegistrationForm v-else-if="editingWorkspace" :event-id="editingRegistration.eventId" :projects="editingWorkspace.projects || []" :grades="editingWorkspace.grades || []" :default-school="editingWorkspace.organization?.name || ''" :registration="editingRegistration" @registered="savedRegistration" @error="editingError = safeMessage($event, '报名记录保存失败，请重试')" />
+      <OrganizationAthleteRegistrationForm v-else-if="editingWorkspace" :event-id="editingRegistration.eventId" :projects="editingWorkspace.projects || []" :grades="editingWorkspace.grades || []" :members="editingWorkspace.members || []" :default-school="editingWorkspace.organization?.name || ''" :registration="editingRegistration" @registered="savedRegistration" @error="handleEditingError" />
     </section>
 
     <section v-if="replacingRegistration" class="organization-registration-material-replacement" aria-label="替换作品材料">
       <div class="panel-title"><h4>替换 {{ replacingRegistration.athlete?.name || "报名记录" }} 的作品材料</h4><button type="button" class="mini" data-action="return-organization-records" @click="cancelReplacement">返回报名记录</button></div>
       <p v-if="replacementLoading && !replacementSession" class="hint">正在创建作品上传会话…</p>
       <template v-else-if="replacementSession?.id">
-        <SubmissionAssetUploader :key="replacementSession.id" :session-id="replacementSession.id" mode="image_video" :assets="replacementSession.assets || {}" @complete="replacementComplete = $event" @error="replacementError = '作品材料上传失败，请重试'" />
+        <SubmissionAssetUploader :key="replacementSession.id" :session-id="replacementSession.id" mode="image_video" :assets="replacementSession.assets || {}" @complete="replacementComplete = $event" @error="handleReplacementUploadError" />
         <p v-if="replacementError" class="message" role="alert">{{ replacementError }} <button type="button" class="mini" :data-action="`retry-organization-material-replacement-${replacingRegistration.id}`" :disabled="replacementLoading" @click="retryReplacement">重试</button></p>
         <button type="button" class="primary" :data-action="`confirm-organization-material-replacement-${replacingRegistration.id}`" :disabled="replacementLoading || !replacementComplete || !remainingReplacementKinds.length" @click="confirmReplacement">{{ replacementLoading ? "正在替换…" : "确认替换作品材料" }}</button>
       </template>
@@ -308,8 +336,8 @@ onBeforeUnmount(() => {
     </section>
     <p v-if="replacementResult" class="message" role="status">{{ replacementResult }}</p>
 
-    <div v-if="!loading && !error" class="table-wrap"><table class="registration-record-table"><thead><tr><th>赛事</th><th>编号</th><th>姓名</th><th>学校/年级</th><th>赛项</th><th>指导老师</th><th>作品材料</th><th>审核状态</th><th>成绩/奖项</th><th>操作</th></tr></thead><tbody>
-      <tr v-for="row in rows" :key="row.id"><td>{{ row.eventName || row.eventId || "-" }}</td><td>{{ row.id }}</td><td>{{ row.athlete?.name || "-" }}</td><td>{{ row.athlete?.school || "-" }}<br /><span>{{ row.athlete?.grade || "-" }}</span></td><td>{{ row.projectName || "-" }}</td><td>{{ row.instructor || "-" }}</td><td class="organization-record-materials"><template v-if="row.submission?.required"><div v-for="kind in materialKinds" :key="kind" :data-asset-kind="kind"><span>{{ materialLabels[kind] }}</span><template v-if="assetAvailable(row.submission.assets?.[kind])"><img v-if="kind === 'artwork_image'" class="submission-artwork-preview" :src="apiUrl(organizationAssetPath(row, kind))" :alt="`${row.submission.assets[kind].originalName} 预览`" /><video v-else class="submission-video-preview" :src="apiUrl(organizationAssetPath(row, kind))" controls preload="metadata"></video><button type="button" class="mini" :data-action="`download-organization-${kind}-${row.id}`" @click="downloadSubmissionAsset(row, kind, row.submission.assets[kind])">下载</button></template><span v-else class="hint">不可用</span></div><button v-if="canReplaceMaterials(row)" type="button" class="mini" :data-action="`replace-organization-materials-${row.id}`" @click="createReplacementSession(row)">替换材料</button></template><span v-else>无需作品材料</span></td><td><em :class="row.status">{{ statusText[row.status] || row.status || "-" }}</em></td><td>{{ row.awardName || "未录入" }}<br /><span>名次 {{ row.rank || "-" }} · 成绩 {{ row.score || "-" }}</span></td><td><button v-if="!isArchived(row)" type="button" class="mini" :data-action="`edit-organization-registration-${row.id}`" @click="editRegistration(row)">编辑</button></td></tr>
+    <div v-if="!loading && !error" class="table-wrap"><table class="registration-record-table"><thead><tr><th>赛事</th><th>编号</th><th>报名来源</th><th>姓名</th><th>学生身份证号</th><th>学校/年级</th><th>赛项</th><th>指导老师</th><th>作品材料</th><th>审核状态</th><th>成绩/奖项</th><th>操作</th></tr></thead><tbody>
+      <tr v-for="row in rows" :key="row.id"><td>{{ row.eventName || row.eventId || "-" }}</td><td>{{ row.id }}</td><td>{{ sourceText[row.source] || row.source || "-" }}</td><td>{{ row.athlete?.name || "-" }}</td><td class="registration-identity-value">{{ row.studentIdNumber || "—（历史报名）" }}</td><td>{{ row.athlete?.school || "-" }}<br /><span>{{ row.athlete?.grade || "-" }}</span></td><td>{{ row.projectName || "-" }}</td><td>{{ row.instructor || "-" }}</td><td class="organization-record-materials"><template v-if="row.submission?.required"><div v-for="kind in materialKinds" :key="kind" :data-asset-kind="kind"><span>{{ materialLabels[kind] }}</span><template v-if="assetAvailable(row.submission.assets?.[kind])"><img v-if="kind === 'artwork_image'" class="submission-artwork-preview" :src="apiUrl(organizationAssetPath(row, kind))" :alt="`${row.submission.assets[kind].originalName} 预览`" /><video v-else class="submission-video-preview" :src="apiUrl(organizationAssetPath(row, kind))" controls preload="metadata"></video><button type="button" class="mini" :data-action="`download-organization-${kind}-${row.id}`" @click="downloadSubmissionAsset(row, kind, row.submission.assets[kind])">下载</button></template><span v-else class="hint">不可用</span></div><button v-if="canReplaceMaterials(row)" type="button" class="mini" :data-action="`replace-organization-materials-${row.id}`" @click="createReplacementSession(row)">替换材料</button></template><span v-else>无需作品材料</span></td><td><em :class="row.status">{{ statusText[row.status] || row.status || "-" }}</em></td><td>{{ row.awardName || "未录入" }}<br /><span>名次 {{ row.rank || "-" }} · 成绩 {{ row.score || "-" }}</span></td><td><button v-if="!isArchived(row)" type="button" class="mini" :data-action="`edit-organization-registration-${row.id}`" @click="editRegistration(row)">编辑</button></td></tr>
     </tbody></table><p v-if="rows.length === 0" class="hint empty-state">暂无报名记录。</p></div>
 
     <div class="pagination"><button type="button" class="mini" data-action="organization-records-previous" :disabled="loading || filters.page <= 1" @click="previousPage">上一页</button><span>第 {{ filters.page }} 页</span><button type="button" class="mini" data-action="organization-records-next" :disabled="loading || filters.page * filters.pageSize >= total" @click="nextPage">下一页</button></div>

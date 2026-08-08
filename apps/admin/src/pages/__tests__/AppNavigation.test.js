@@ -73,12 +73,17 @@ describe("role based application navigation", () => {
   it("shows the website module to administrators and opens it from navigation", async () => {
     const wrapper = await mountFor({ id: "A1", type: "admin", name: "管理员", mustChangePassword: false }); mounted.push(wrapper);
     const labels = wrapper.findAll("[data-nav]").map((item) => item.text());
-    expect(labels).toEqual(["概览", "赛事设置", "报名管理", "证书管理", "官网内容", "组织用户", "普通用户管理"]);
+    expect(labels).toEqual(["概览", "赛事设置", "报名管理", "证书管理", "官网内容", "组织用户", "领队审核", "普通用户管理"]);
     expect(wrapper.find('[data-user-nav="myOrganization"]').exists()).toBe(false);
 
     await wrapper.get('[data-nav="siteContent"]').trigger("click");
     await flushPromises();
     expect(wrapper.find('[data-testid="site-content-page"]').exists()).toBe(true);
+
+    await wrapper.get('[data-nav="leaders"]').trigger("click");
+    await flushPromises();
+    expect(wrapper.find('[data-testid="admin-leader-review-page"]').exists()).toBe(true);
+    expect(new URLSearchParams(window.location.search).get("view")).toBe("leaders");
   });
 
   it("opens event settings from a draft event website state", async () => {
@@ -218,8 +223,9 @@ describe("role based application navigation", () => {
   it("shows the personal organization page without changing event context", async () => {
     const wrapper = await mountFor({ id: "U1", type: "ordinary", name: "普通用户", phone: "13800000001", mustChangePassword: false }); mounted.push(wrapper);
     const labels = wrapper.findAll("[data-user-nav]").map((item) => item.get(".user-nav-label").text());
-    expect(labels).toEqual(["赛事中心", "我的组织", "报名记录", "证书查询"]);
+    expect(labels).toEqual(["赛事中心", "我的组织", "报名记录", "证书查询", "修改密码"]);
     expect(wrapper.text()).not.toContain("普通用户管理");
+    expect(wrapper.find('[data-user-nav="leaders"]').exists()).toBe(false);
     expect(apiMock.mock.calls.some(([path]) => path === "/api/users" || path.startsWith("/api/admin/"))).toBe(false);
 
     await wrapper.get('[data-user-nav="myOrganization"]').trigger("click");
@@ -287,7 +293,7 @@ describe("role based application navigation", () => {
       if (path === "/api/public/features") return { smsPasswordResetEnabled: false };
       if (path === "/api/me/registration-context?eventId=E2") return {
         event: { id: "E2", name: "目标赛事 E2", dateLabel: "2027-02-02", venue: "E2 场地", registrationEndAt: "2027-01-20T15:59:59.000Z" },
-        organizations: [], projects: [], grades: []
+        organizations: [], eligibility: { eligible: false, code: "ACTIVE_ORGANIZATION_REQUIRED", organization: null }, projects: [], grades: []
       };
       return { rows: [] };
     });
@@ -444,25 +450,32 @@ describe("role based application navigation", () => {
     expect(apiMock.mock.calls.some(([path]) => path.includes("%3Cscript%3E") || path.includes("<script>"))).toBe(false);
   });
 
-  it("shows an event center and review navigation to a pending organization", async () => {
+  it("shows only review and password navigation to a pending organization", async () => {
     const organization = { id: "O1", ownerUserId: "O1U", name: "待审核学校", reviewStatus: "pending", status: "active", membershipRole: "owner" };
     const wrapper = await mountFor({ id: "O1U", type: "organization", name: "负责人", phone: "13800000002", mustChangePassword: false }, organization); mounted.push(wrapper);
-    expect(wrapper.find('[data-testid="event-center-page"]').exists()).toBe(true);
+    expect(wrapper.find('[data-testid="organization-review-progress"]').exists()).toBe(true);
     expect(wrapper.text()).not.toContain("邀请成员");
-    expect(wrapper.findAll("[data-user-nav]").map((item) => item.get(".user-nav-label").text())).toEqual(["赛事工作台", "报名记录", "组织与成员", "证书查询"]);
-    expect(wrapper.text()).not.toContain("审核进度");
+    expect(wrapper.findAll("[data-user-nav]").map((item) => item.get(".user-nav-label").text())).toEqual(["审核进度", "修改密码"]);
+    expect(wrapper.text()).toContain("组织资质正在审核中");
     expect(wrapper.find('[data-user-nav="myOrganization"]').exists()).toBe(false);
+    expect(wrapper.find('[data-user-nav="leaders"]').exists()).toBe(false);
     expect(apiMock.mock.calls.some(([path]) => path.includes("/registrations") || path.includes("/certificates"))).toBe(false);
   });
 
-  it.each(["pending", "approved"])("keeps organization navigation stable and opens cross-event records for a %s organization", async (reviewStatus) => {
+  it("keeps organization navigation stable and opens cross-event records for an approved organization", async () => {
+    const reviewStatus = "approved";
     const organization = { id: "O1", ownerUserId: "O1U", name: "组织学校", reviewStatus, status: "active", membershipRole: "owner" };
     const wrapper = await mountFor({ id: "O1U", type: "organization", name: "负责人", phone: "13800000002", mustChangePassword: false }, organization); mounted.push(wrapper);
 
     expect(wrapper.findAll("[data-user-nav]").map((item) => item.get(".user-nav-label").text())).toEqual([
-      "赛事工作台", "报名记录", "组织与成员", "证书查询"
+      "赛事工作台", "报名记录", "组织与成员", "领队管理", "证书查询", "修改密码"
     ]);
     expect(wrapper.text()).not.toContain("审核进度");
+
+    await wrapper.get('[data-user-nav="leaders"]').trigger("click");
+    await flushPromises();
+    expect(wrapper.find('[data-testid="organization-leaders-page"]').exists()).toBe(true);
+    expect(new URLSearchParams(window.location.search).get("view")).toBe("leaders");
 
     await wrapper.get('[data-user-nav="organizationRecords"]').trigger("click");
     await flushPromises();
@@ -492,10 +505,108 @@ describe("role based application navigation", () => {
     expect(new URLSearchParams(window.location.search).has("eventId")).toBe(false);
   });
 
+  it.each([
+    ["ORGANIZATION_REVIEW_PENDING", { reviewStatus: "pending", status: "active" }],
+    ["ORGANIZATION_REJECTED", { reviewStatus: "rejected", status: "active" }],
+    ["ORGANIZATION_DISABLED", { reviewStatus: "approved", status: "disabled" }]
+  ])("refreshes the session and collapses organization navigation on %s", async (code, restriction) => {
+    window.history.replaceState({}, "", "/admin/?view=organizationRecords");
+    const organization = { id: "O1", ownerUserId: "O1U", name: "Organization", reviewStatus: "approved", status: "active", membershipRole: "owner" };
+    session.user.value = { id: "O1U", type: "organization", name: "Owner", phone: "13800000002", mustChangePassword: false };
+    session.organizations.value = [organization];
+    session.restore
+      .mockImplementationOnce(async () => session.user.value)
+      .mockImplementationOnce(async () => {
+        session.organizations.value = [{ ...organization, ...restriction }];
+        return session.user.value;
+      });
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/public/event") return { event: { name: "Event" }, projects: [], grades: [] };
+      if (path.startsWith("/api/organization/registrations?")) {
+        throw Object.assign(new Error("raw server wording"), { code });
+      }
+      return { rows: [] };
+    });
+
+    const wrapper = mount(App); mounted.push(wrapper);
+    await flushPromises();
+    await flushPromises();
+
+    expect(session.restore).toHaveBeenCalledTimes(2);
+    expect(wrapper.find('[data-testid="organization-review-progress"]').exists()).toBe(true);
+    expect(wrapper.find('[data-testid="event-center-page"]').exists()).toBe(false);
+    expect(wrapper.findAll("[data-user-nav]").map((item) => item.attributes("data-user-nav"))).toEqual(["organization", "passwordSettings"]);
+    expect(new URLSearchParams(window.location.search).get("view")).toBe("organization");
+  });
+
+  it("refreshes the session when the organization event center reports a stable restriction", async () => {
+    window.history.replaceState({}, "", "/admin/?view=eventCenter");
+    const organization = { id: "O1", ownerUserId: "O1U", name: "Organization", reviewStatus: "approved", status: "active", membershipRole: "owner" };
+    session.user.value = { id: "O1U", type: "organization", name: "Owner", phone: "13800000002", mustChangePassword: false };
+    session.organizations.value = [organization];
+    session.restore
+      .mockImplementationOnce(async () => session.user.value)
+      .mockImplementationOnce(async () => {
+        session.organizations.value = [{ ...organization, reviewStatus: "rejected" }];
+        return session.user.value;
+      });
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/public/event") return { event: { name: "Event" }, projects: [], grades: [] };
+      if (path === "/api/me/events") throw Object.assign(new Error("stale list"), { code: "ORGANIZATION_REJECTED" });
+      if (path === "/api/me/organizations") return { rows: [{ ...organization, reviewStatus: "rejected" }] };
+      return { rows: [] };
+    });
+
+    const wrapper = mount(App); mounted.push(wrapper);
+    await flushPromises();
+    await flushPromises();
+
+    expect(session.restore).toHaveBeenCalledTimes(2);
+    expect(wrapper.find('[data-testid="organization-review-progress"]').exists()).toBe(true);
+    expect(wrapper.findAll("[data-user-nav]").map((item) => item.attributes("data-user-nav"))).toEqual(["organization", "passwordSettings"]);
+  });
+
+  it("refreshes the session and collapses navigation when organization resubmission is denied", async () => {
+    window.history.replaceState({}, "", "/admin/?view=organization");
+    const organization = { id: "O1", ownerUserId: "O1U", name: "Organization", reviewStatus: "rejected", status: "active", membershipRole: "owner", rejectReason: "资料不清晰", creditCode: "123456789012345678" };
+    session.user.value = { id: "O1U", type: "organization", name: "Owner", phone: "13800000002", mustChangePassword: false };
+    session.organizations.value = [organization];
+    session.restore
+      .mockImplementationOnce(async () => session.user.value)
+      .mockImplementationOnce(async () => {
+        session.organizations.value = [{ ...organization, reviewStatus: "pending" }];
+        return session.user.value;
+      });
+    apiMock.mockImplementation(async (path, options) => {
+      if (path === "/api/public/event") return { event: { name: "Event" }, projects: [], grades: [] };
+      if (path === "/api/me/organizations") return { rows: session.organizations.value };
+      if (path === "/api/me/organization" && options?.method === "PATCH") {
+        throw Object.assign(new Error("stale organization"), { code: "ORGANIZATION_REVIEW_PENDING" });
+      }
+      return { rows: [] };
+    });
+
+    const wrapper = mount(App); mounted.push(wrapper);
+    await flushPromises();
+    await wrapper.get('[data-action="resubmit-organization"]').trigger("click");
+    await wrapper.get('[data-testid="organization-credit-code"]').setValue("123456789012345678");
+    const fileInput = wrapper.get('input[type="file"]');
+    Object.defineProperty(fileInput.element, "files", { configurable: true, value: [new File(["credential"], "credential.png", { type: "image/png" })] });
+    await fileInput.trigger("change");
+    await wrapper.get('form[data-register="organization"]').trigger("submit");
+    await flushPromises();
+    await flushPromises();
+
+    expect(session.restore).toHaveBeenCalledTimes(2);
+    expect(wrapper.find('[data-testid="organization-review-progress"]').exists()).toBe(true);
+    expect(wrapper.findAll("[data-user-nav]").map((item) => item.attributes("data-user-nav"))).toEqual(["organization", "passwordSettings"]);
+    expect(new URLSearchParams(window.location.search).get("view")).toBe("organization");
+  });
+
   it("opens the organization console for an approved owner", async () => {
     const organization = { id: "O1", ownerUserId: "O1U", name: "实验学校", reviewStatus: "approved", status: "active", membershipRole: "owner" };
     const wrapper = await mountFor({ id: "O1U", type: "organization", name: "负责人", phone: "13800000002", mustChangePassword: false }, organization); mounted.push(wrapper);
-    expect(wrapper.findAll("[data-user-nav]").map((item) => item.get(".user-nav-label").text())).toEqual(["赛事工作台", "报名记录", "组织与成员", "证书查询"]);
+    expect(wrapper.findAll("[data-user-nav]").map((item) => item.get(".user-nav-label").text())).toEqual(["赛事工作台", "报名记录", "组织与成员", "领队管理", "证书查询", "修改密码"]);
     expect(wrapper.find('[data-user-nav="myOrganization"]').exists()).toBe(false);
     expect(wrapper.find('[data-testid="event-center-page"]').exists()).toBe(true);
   });

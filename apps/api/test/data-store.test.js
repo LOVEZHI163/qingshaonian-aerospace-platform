@@ -73,6 +73,32 @@ test("data store selects file persistence and keeps mutations", async () => {
   }
 });
 
+test("file store rejects nested plaintext athlete identity fields without replacing persisted data", async () => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "aerogp-athlete-identity-"));
+  const dbPath = path.join(tempDir, "db.json");
+  const store = createDataStore({ DB_PATH: dbPath });
+
+  try {
+    const db = await store.readDb();
+    db.registrations[0].athlete.emergencyContact = { name: "陈家长", phone: "13800000001" };
+    await store.writeDb(db);
+    const persisted = await store.readDb();
+    assert.deepEqual(persisted.registrations[0].athlete.emergencyContact, { name: "陈家长", phone: "13800000001" });
+
+    const invalid = structuredClone(persisted);
+    invalid.registrations[0].status = "approved";
+    invalid.registrations[0].athlete.guardian = { idCard: "330000200001010001" };
+    await assert.rejects(store.writeDb(invalid), /identity field/i);
+
+    const afterRejectedWrite = await store.readDb();
+    assert.equal(afterRejectedWrite.registrations[0].status, persisted.registrations[0].status);
+    assert.equal("guardian" in afterRejectedWrite.registrations[0].athlete, false);
+  } finally {
+    await store.close();
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("file auth state persists rate limits and one-time challenges across store instances", async () => {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "aerogp-auth-state-"));
   const dbPath = path.join(tempDir, "db.json");

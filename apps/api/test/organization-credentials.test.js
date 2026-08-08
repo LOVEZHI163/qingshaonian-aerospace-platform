@@ -251,7 +251,7 @@ test("organization registration records a cleanup tombstone when database failur
   assert.equal(journal[0].filePath, saved.filePath);
 });
 
-test("organization registrations reject pending, rejected, and disabled organizations without blocking personal registration", async () => {
+test("organization registrations reject pending, rejected, and disabled organizations and unaffiliated personal registration", async () => {
   await withTestServer(async ({ baseUrl, dbPath }) => {
     const registered = await postOrganizationRegistration(baseUrl, { creditCode: "91330300TEST000020" });
     const { organization } = await registered.json();
@@ -305,7 +305,8 @@ test("organization registrations reject pending, rejected, and disabled organiza
         group: "中学组", projectId: "drone-relay"
       })
     }));
-    assert.equal(personalRegistration.status, 201);
+    assert.equal(personalRegistration.status, 403);
+    assert.equal((await personalRegistration.json()).code, "ACTIVE_ORGANIZATION_REQUIRED");
   }, { prefix: "organization-registration-gate-" });
 });
 

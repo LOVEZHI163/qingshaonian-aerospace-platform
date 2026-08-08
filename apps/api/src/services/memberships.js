@@ -1,4 +1,5 @@
 import { businessError } from "./events.js";
+import { requireOrganizationAccess } from "./access-control.js";
 
 function normalizePhone(value) {
   return String(value || "").replace(/\D/g, "");
@@ -17,20 +18,28 @@ function organizationSummary(organization) {
 function requireOperationalOrganization(db, organizationId) {
   const organization = db.organizations.find((row) => row.id === organizationId);
   if (!organization) throw businessError(404, "组织不存在", "ORGANIZATION_NOT_FOUND");
-  if (organization.status !== "active" || organization.reviewStatus !== "approved") {
-    throw businessError(403, "组织尚未通过审核或已停用", "ORGANIZATION_NOT_OPERATIONAL");
-  }
+  if (organization.reviewStatus === "pending") throw businessError(403, "组织资质正在审核中", "ORGANIZATION_REVIEW_PENDING");
+  if (organization.reviewStatus === "rejected") throw businessError(403, "组织资质审核未通过", "ORGANIZATION_REJECTED");
+  if (organization.status !== "active") throw businessError(403, "组织已停用", "ORGANIZATION_DISABLED");
   return organization;
 }
 
 function requireOwnerOrganization(db, owner) {
-  const organization = db.organizations.find((row) => row.ownerUserId === owner?.id);
-  if (!organization) throw businessError(403, "只有组织负责人可以执行此操作", "ORGANIZATION_OWNER_REQUIRED");
-  return requireOperationalOrganization(db, organization.id);
+  return requireOrganizationAccess(db, owner);
 }
 
 function userSummary(user) {
   return { id: user.id, name: user.name, phone: user.phone };
+}
+
+export function listActiveOrganizationMembers(db, organizationId) {
+  return db.memberships.flatMap((membership) => {
+    if (membership.organizationId !== organizationId || membership.role !== "member" || membership.status !== "active") return [];
+    const user = db.users.find((row) => (
+      row.id === membership.userId && row.type === "ordinary" && row.status === "active"
+    ));
+    return user ? [userSummary(user)] : [];
+  });
 }
 
 function membershipDto(row) {
@@ -260,6 +269,7 @@ export function listOwnedMemberships(db, owner) {
     });
   return {
     organization: organizationSummary(organization),
+    members: listActiveOrganizationMembers(db, organization.id),
     summary: {
       total: rows.length,
       pending: rows.filter((row) => row.status === "pending").length,

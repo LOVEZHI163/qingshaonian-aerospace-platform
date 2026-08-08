@@ -28,6 +28,30 @@ const REGISTRATION_START_AT = "2026-10-01T00:00:00.000Z";
 const REGISTRATION_END_AT = "2026-11-01T15:59:59.000Z";
 export const APPROVED_GROUP_NAMES = ["小学低段", "小学高段", "中学组", "职高/高中组"];
 export const REGISTRATION_MODES = ["automatic", "force_open", "force_closed"];
+const ORGANIZATION_LEADER_REVIEW_ACTIONS = ["submitted", "approved", "rejected", "enabled", "disabled"];
+const ATHLETE_IDENTITY_KEYS = new Set([
+  "studentidnumber",
+  "identitynumber",
+  "identitycard",
+  "idcardnumber",
+  "idcard",
+  "idnumber",
+  "nationalidnumber",
+  "citizenidnumber"
+]);
+
+function findAthleteIdentityKey(value, seen = new WeakSet()) {
+  if (!value || typeof value !== "object") return null;
+  if (seen.has(value)) return null;
+  seen.add(value);
+  for (const [key, nestedValue] of Object.entries(value)) {
+    const normalizedKey = key.replace(/[_-]/g, "").toLowerCase();
+    if (ATHLETE_IDENTITY_KEYS.has(normalizedKey) || key.includes("身份证")) return key;
+    const nestedKey = findAthleteIdentityKey(nestedValue, seen);
+    if (nestedKey) return nestedKey;
+  }
+  return null;
+}
 
 export function normalizeSubmissionWarnings(value) {
   if (!Array.isArray(value)) return [];
@@ -83,10 +107,10 @@ export const GRADES = ["小学低组（1-3年级）", "小学中高组（4-6年�
 
 export const seedDb = {
   users: [
-    { id: "U1001", name: "陈宇航家长", phone: "13800000001", password: "123456", type: "ordinary", status: "active", sessionVersion: 0, mustChangePassword: false, createdAt: "2026-06-27T06:30:00.000Z" },
-    { id: "U2001", name: "林老师", phone: "13800000011", password: "123456", type: "organization", status: "active", sessionVersion: 0, mustChangePassword: false, createdAt: "2026-06-27T06:31:00.000Z" },
-    { id: "U2002", name: "王老师", phone: "13800000012", password: "123456", type: "organization", status: "active", sessionVersion: 0, mustChangePassword: false, createdAt: "2026-06-27T06:31:30.000Z" },
-    { id: "U9001", name: "赛事管理员", phone: "13900000000", password: "admin123", type: "admin", status: "active", sessionVersion: 0, mustChangePassword: false, createdAt: "2026-06-27T06:32:00.000Z" }
+    { id: "U1001", name: "陈宇航家长", phone: "13800000001", password: "123456", type: "ordinary", status: "active", sessionVersion: 0, mustChangePassword: false, temporaryPasswordCiphertext: null, temporaryPasswordIv: null, temporaryPasswordTag: null, temporaryPasswordCreatedAt: null, createdAt: "2026-06-27T06:30:00.000Z" },
+    { id: "U2001", name: "林老师", phone: "13800000011", password: "123456", type: "organization", status: "active", sessionVersion: 0, mustChangePassword: false, temporaryPasswordCiphertext: null, temporaryPasswordIv: null, temporaryPasswordTag: null, temporaryPasswordCreatedAt: null, createdAt: "2026-06-27T06:31:00.000Z" },
+    { id: "U2002", name: "王老师", phone: "13800000012", password: "123456", type: "organization", status: "active", sessionVersion: 0, mustChangePassword: false, temporaryPasswordCiphertext: null, temporaryPasswordIv: null, temporaryPasswordTag: null, temporaryPasswordCreatedAt: null, createdAt: "2026-06-27T06:31:30.000Z" },
+    { id: "U9001", name: "赛事管理员", phone: "13900000000", password: "admin123", type: "admin", status: "active", sessionVersion: 0, mustChangePassword: false, temporaryPasswordCiphertext: null, temporaryPasswordIv: null, temporaryPasswordTag: null, temporaryPasswordCreatedAt: null, createdAt: "2026-06-27T06:32:00.000Z" }
   ],
   organizations: [
     { id: "O1001", name: "温州市实验小学", code: "WZ-SYXX", ownerUserId: "U2001", contactName: "林老师", contactPhone: "13800000011", status: "active", createdAt: "2026-06-27T06:31:00.000Z" },
@@ -164,7 +188,11 @@ Object.assign(seedDb, {
   mediaAssets: [],
   contentAttachments: [],
   registrationUploadSessions: [],
-  registrationSubmissionAssets: []
+  registrationSubmissionAssets: [],
+  registrationIdentities: [],
+  organizationLeaders: [],
+  organizationLeaderDocuments: [],
+  organizationLeaderReviews: []
 });
 for (const organization of seedDb.organizations) {
   Object.assign(organization, {
@@ -178,7 +206,10 @@ for (const organization of seedDb.organizations) {
   });
 }
 for (const project of seedDb.projects) project.submissionMode ||= "none";
-for (const row of seedDb.registrations) row.eventId = EVENT.id;
+for (const row of seedDb.registrations) {
+  row.eventId = EVENT.id;
+  row.organizationDeleted = false;
+}
 
 export function ensureDbShape(db) {
   db.siteSettings ||= {};
@@ -193,10 +224,23 @@ export function ensureDbShape(db) {
   for (const session of db.registrationUploadSessions) session.channel ||= session.organizationId ? "organization" : "personal";
   db.registrationSubmissionAssets ||= [];
   for (const asset of db.registrationSubmissionAssets) asset.warnings = normalizeSubmissionWarnings(asset.warnings);
+  db.registrationIdentities ||= [];
+  db.organizationLeaders ||= [];
+  db.organizationLeaderDocuments ||= [];
+  db.organizationLeaderReviews ||= [];
+  for (const review of db.organizationLeaderReviews) {
+    if (!ORGANIZATION_LEADER_REVIEW_ACTIONS.includes(review.action)) {
+      throw new Error(`Invalid organization leader review action: ${review.action}`);
+    }
+  }
   db.users ||= [];
   for (const user of db.users) {
     user.sessionVersion ??= 0;
     user.mustChangePassword ??= false;
+    user.temporaryPasswordCiphertext ??= null;
+    user.temporaryPasswordIv ??= null;
+    user.temporaryPasswordTag ??= null;
+    user.temporaryPasswordCreatedAt ??= null;
   }
   db.organizations ||= [];
   const isLegacyOrganizationShape = !Array.isArray(db.organizationDocuments);
@@ -245,6 +289,7 @@ export function ensureDbShape(db) {
     (project.allowedGroups || APPROVED_GROUP_NAMES).map((groupName) => ({ projectId: project.id, groupName }))
   );
   db.registrations ||= [];
+  for (const registration of db.registrations) registration.organizationDeleted ??= false;
   db.organizationEventParticipations ||= [];
   db.certificates ||= [];
   db.certificateImportBatches ||= [];
@@ -282,8 +327,10 @@ export function ensureDbShape(db) {
     }
   }
   for (const row of db.registrations) {
+    const identityKey = findAthleteIdentityKey(row.athlete);
+    if (identityKey) throw new Error(`Registration athlete contains identity field: ${identityKey}`);
     row.eventId ||= EVENT.id;
-    row.createdByUserId ||= row.userId;
+    if (!Object.hasOwn(row, "createdByUserId")) row.createdByUserId = row.userId ?? null;
     const creator = db.users.find((user) => user.id === row.createdByUserId);
     row.createdVia ||= creator?.type === "organization" ? "organization" : "personal";
     row.personalUserId ??= row.createdVia === "personal" ? row.createdByUserId : null;

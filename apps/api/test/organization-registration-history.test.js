@@ -89,3 +89,24 @@ test("organization registration history filters stored organization rows and pag
     assert.deepEqual(outOfRangePayload.rows, []);
   }, { prefix: "organization-registration-history-filter-" });
 });
+
+test("retains organization history after the platform administrator deletes its account", async () => {
+  await withTestServer(async ({ baseUrl, dbPath }) => {
+    const db = JSON.parse(await fs.readFile(dbPath, "utf8"));
+    db.registrations.find((row) => row.id === "R20260627001").awardName = "一等奖";
+    await fs.writeFile(dbPath, JSON.stringify(db), "utf8");
+    const admin = await loginAs(baseUrl, "13900000000", "admin123");
+
+    const removed = await fetch(`${baseUrl}/api/admin/organizations/O1001`, withSession(admin.cookie, { method: "DELETE" }));
+    assert.equal(removed.status, 200);
+
+    const history = await fetch(`${baseUrl}/api/admin/events/wz-aerospace-2026/registrations`, withSession(admin.cookie));
+    assert.equal(history.status, 200);
+    const registration = (await history.json()).rows.find((row) => row.id === "R20260627001");
+    assert.ok(registration);
+    assert.equal(registration.organizationId, null);
+    assert.equal(registration.organizationSnapshot, db.organizations.find((row) => row.id === "O1001").name);
+    assert.match(registration.organization, /原组织已删除/);
+    assert.equal(registration.awardName, "一等奖");
+  }, { prefix: "organization-deleted-registration-history-" });
+});

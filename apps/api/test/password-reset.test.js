@@ -48,12 +48,12 @@ test("users list requires an administrator session and legacy public reset is re
   });
 });
 
-test("administrator reset sets a temporary password and invalidates existing sessions", async () => {
+test("administrator reset generates a repeat-viewable temporary password that is cleared after change", async () => {
   await withServer(async ({ baseUrl, dbPath }) => {
     const ordinaryCookie = await login(baseUrl, "13800000001", "123456");
     const adminCookie = await login(baseUrl, "13900000000", "admin123");
     const url = `${baseUrl}/api/admin/users/U1001/reset-password`;
-    const body = JSON.stringify({ password: "TempPass9" });
+    const body = JSON.stringify({ password: "CallerMustNotChoose9" });
 
     assert.equal((await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body })).status, 401);
     assert.equal((await fetch(url, { method: "POST", headers: { "Content-Type": "application/json", Cookie: ordinaryCookie }, body })).status, 403);
@@ -65,20 +65,67 @@ test("administrator reset sets a temporary password and invalidates existing ses
     });
     assert.equal(reset.status, 200);
     const resetBody = await reset.json();
+    assert.match(resetBody.temporaryPassword, /[A-Za-z]/);
+    assert.notEqual(resetBody.temporaryPassword, "CallerMustNotChoose9");
     assert.equal(resetBody.user.mustChangePassword, true);
     assert.equal("password" in resetBody.user, false);
+    assert.equal("temporaryPasswordCiphertext" in resetBody.user, false);
 
     const persisted = JSON.parse(await fs.readFile(dbPath, "utf8"));
     const user = persisted.users.find((item) => item.id === "U1001");
     assert.match(user.password, /^\$2/);
     assert.equal(user.sessionVersion, 1);
     assert.equal(user.mustChangePassword, true);
+    assert.ok(user.temporaryPasswordCiphertext);
+    assert.notEqual(user.temporaryPasswordCiphertext, resetBody.temporaryPassword);
+    assert.doesNotMatch(JSON.stringify(persisted.auditLogs), new RegExp(resetBody.temporaryPassword));
+    assert.doesNotMatch(JSON.stringify(persisted.auditLogs), /temporaryPasswordCiphertext|\$2[aby]\$/);
 
     assert.equal((await fetch(`${baseUrl}/api/auth/me`, { headers: { Cookie: ordinaryCookie } })).status, 401);
-    const nextCookie = await login(baseUrl, "13800000001", "TempPass9");
+    const oldLogin = await fetch(`${baseUrl}/api/auth/login`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ phone: "13800000001", password: "123456" })
+    });
+    assert.equal(oldLogin.status, 401);
+
+    const nextCookie = await login(baseUrl, "13800000001", resetBody.temporaryPassword);
     const me = await fetch(`${baseUrl}/api/auth/me`, { headers: { Cookie: nextCookie } });
     assert.equal((await me.json()).user.mustChangePassword, true);
+
+    const repeated = await fetch(`${baseUrl}/api/admin/users/U1001/temporary-password`, { headers: { Cookie: adminCookie } });
+    assert.equal(repeated.status, 200);
+    assert.deepEqual(await repeated.json(), { temporaryPassword: resetBody.temporaryPassword });
+
+    const changed = await fetch(`${baseUrl}/api/auth/change-password`, withSession(nextCookie, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ currentPassword: resetBody.temporaryPassword, newPassword: "NextPass2" })
+    }));
+    assert.equal(changed.status, 200);
+    const cleared = await fetch(`${baseUrl}/api/admin/users/U1001/temporary-password`, { headers: { Cookie: adminCookie } });
+    assert.equal(cleared.status, 404);
+    const afterChange = JSON.parse(await fs.readFile(dbPath, "utf8")).users.find((item) => item.id === "U1001");
+    assert.equal(afterChange.temporaryPasswordCiphertext, null);
+    assert.equal(afterChange.temporaryPasswordIv, null);
+    assert.equal(afterChange.temporaryPasswordTag, null);
+    assert.equal(afterChange.temporaryPasswordCreatedAt, null);
   });
+});
+
+test("temporary password endpoints fail closed when the encryption key is unavailable", async () => {
+  for (const key of ["", "not-valid-base64", Buffer.alloc(16).toString("base64")]) {
+    await withTestServer(async ({ baseUrl }) => {
+      const adminCookie = await login(baseUrl, "13900000000", "admin123");
+      const reset = await fetch(`${baseUrl}/api/admin/users/U1001/reset-password`, withSession(adminCookie, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: "{}"
+      }));
+      assert.equal(reset.status, 503);
+      assert.equal((await reset.json()).code, "TEMP_PASSWORD_KEY_UNAVAILABLE");
+
+      const read = await fetch(`${baseUrl}/api/admin/users/U1001/temporary-password`, withSession(adminCookie));
+      assert.equal(read.status, 503);
+      assert.equal((await read.json()).code, "TEMP_PASSWORD_KEY_UNAVAILABLE");
+    }, { prefix: "aerogp-password-key-unavailable-", env: { TEMP_PASSWORD_ENCRYPTION_KEY: key } });
+  }
 });
 
 function serviceHarness({ sendCode, logger } = {}) {
@@ -86,7 +133,9 @@ function serviceHarness({ sendCode, logger } = {}) {
   let db = {
     users: [{
       id: "U1", name: "短信用户", phone: "13800000001", password: "OldPass1", type: "ordinary",
-      status: "active", sessionVersion: 3, mustChangePassword: true, createdAt: "2026-01-01T00:00:00.000Z"
+      status: "active", sessionVersion: 3, mustChangePassword: true,
+      temporaryPasswordCiphertext: "sealed", temporaryPasswordIv: "iv", temporaryPasswordTag: "tag",
+      temporaryPasswordCreatedAt: "2026-01-02T00:00:00.000Z", createdAt: "2026-01-01T00:00:00.000Z"
     }]
   };
   const sent = [];
@@ -138,7 +187,13 @@ function serviceHarness({ sendCode, logger } = {}) {
     authState,
     logger: logger || { warn() {}, error() {} },
     clock: () => currentTime,
-    generateCode: () => "123456"
+    generateCode: () => "123456",
+    clearTemporaryPassword: (user) => {
+      user.temporaryPasswordCiphertext = null;
+      user.temporaryPasswordIv = null;
+      user.temporaryPasswordTag = null;
+      user.temporaryPasswordCreatedAt = null;
+    }
   });
   return {
     service, sent, challengeStore,
@@ -243,6 +298,10 @@ test("SMS reset confirms once, changes the password, and increments session vers
   assert.equal(await verifyPassword("NextPass2", harness.db().users[0].password), true);
   assert.equal(harness.db().users[0].sessionVersion, 4);
   assert.equal(harness.db().users[0].mustChangePassword, false);
+  assert.equal(harness.db().users[0].temporaryPasswordCiphertext, null);
+  assert.equal(harness.db().users[0].temporaryPasswordIv, null);
+  assert.equal(harness.db().users[0].temporaryPasswordTag, null);
+  assert.equal(harness.db().users[0].temporaryPasswordCreatedAt, null);
   assert.equal(harness.challengeStore.has("13800000001"), false);
 });
 

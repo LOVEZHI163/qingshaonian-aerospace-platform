@@ -4,6 +4,8 @@ import test from "node:test";
 import { withTestServer } from "../test-support/server.js";
 import { loginAs, withSession } from "./helpers/api-client.js";
 
+const validStudentIdNumber = "11010519491231002X";
+
 const CERTIFICATE_PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
   "base64"
@@ -161,6 +163,7 @@ test("session identity cannot be replaced through body, query, or path values", 
     assert.equal("athleteKey" in duplicatePayload, false);
 
     const forgedRegistration = await fetch(`${baseUrl}/api/me/events/wz-aerospace-2026/registrations`, jsonOptions("POST", {
+      studentIdNumber: validStudentIdNumber,
       userId: "U2001",
       organizationId: "O1001",
       source: "伪造来源",
@@ -173,22 +176,27 @@ test("session identity cannot be replaced through body, query, or path values", 
     assert.equal((await forgedRegistration.json()).row.personalUserId, "U1001");
 
     const unrelatedOrganization = await fetch(`${baseUrl}/api/me/events/wz-aerospace-2026/registrations`, jsonOptions("POST", {
+      studentIdNumber: validStudentIdNumber,
       organizationId: "O1002",
       athlete: { name: "测试学生乙", school: "其他学校", grade: "初二", phone: "13600001002" },
       group: "中学组",
       projectId: "drone-relay"
     }, ordinary.cookie));
-    assert.equal(unrelatedOrganization.status, 403);
+    assert.equal(unrelatedOrganization.status, 201);
+    assert.equal((await unrelatedOrganization.json()).row.organizationId, "O1001");
 
     const unknownOrganization = await fetch(`${baseUrl}/api/me/events/wz-aerospace-2026/registrations`, jsonOptions("POST", {
+      studentIdNumber: validStudentIdNumber,
       organizationId: "O-NOT-FOUND",
       athlete: { name: "测试学生丙", school: "其他学校", grade: "初二", phone: "13600001003" },
       group: "中学组",
       projectId: "drone-relay"
     }, ordinary.cookie));
-    assert.equal(unknownOrganization.status, 404);
+    assert.equal(unknownOrganization.status, 201);
+    assert.equal((await unknownOrganization.json()).row.organizationId, "O1001");
 
     const privateRegistration = await fetch(`${baseUrl}/api/me/events/wz-aerospace-2026/registrations`, jsonOptions("POST", {
+      studentIdNumber: validStudentIdNumber,
       athlete: { name: "私人参赛者", school: "个人学校", grade: "初二", phone: "13600001004" },
       group: "中学组",
       projectId: "drone-relay"
@@ -208,7 +216,7 @@ test("session identity cannot be replaced through body, query, or path values", 
     const ownerRows = (await ownerOrganizationRows.json()).rows;
     assert.equal(ownerRows.every((row) => row.organizationId === "O1001"), true);
     assert.equal(ownerRows.some((row) => row.id === "R20260627002"), false);
-    assert.equal(ownerRows.some((row) => row.id === privateRegistrationId), false);
+    assert.equal(ownerRows.some((row) => row.id === privateRegistrationId), true);
     const adminOrganizationRows = await fetch(`${baseUrl}/api/organization/events/wz-aerospace-2026/registrations`, withSession(admin.cookie));
     assert.equal(adminOrganizationRows.status, 403);
 
@@ -284,6 +292,7 @@ test("certificate downloads enforce ownership, publication, and organization man
     assert.equal((await fetch(`${baseUrl}/api/certificates/${foreignCertificate.id}/file`, withSession(ordinary.cookie))).status, 403);
 
     const privateRegistration = await fetch(`${baseUrl}/api/me/events/wz-aerospace-2026/registrations`, jsonOptions("POST", {
+      studentIdNumber: validStudentIdNumber,
       athlete: { name: "私人报名", school: "个人学校", grade: "初二", phone: "13600002001" },
       group: "中学组",
       projectId: "drone-relay"
@@ -296,11 +305,11 @@ test("certificate downloads enforce ownership, publication, and organization man
     const privateUpload = await uploadCertificate(baseUrl, privateRow.id, 1, admin.cookie, "私人证书");
     const privateCertificate = (await privateUpload.json()).row;
     await fetch(`${baseUrl}/api/admin/events/wz-aerospace-2026/certificates/bulk-status`, jsonOptions("POST", { ids: [privateCertificate.id], status: "published" }, admin.cookie));
-    assert.equal((await fetch(`${baseUrl}/api/certificates/${privateCertificate.id}/file`, withSession(owner.cookie))).status, 403);
+    assert.equal((await fetch(`${baseUrl}/api/certificates/${privateCertificate.id}/file`, withSession(owner.cookie))).status, 200);
 
     const organizationCertificates = await fetch(`${baseUrl}/api/organization/events/wz-aerospace-2026/certificates`, withSession(owner.cookie));
     const organizationRows = (await organizationCertificates.json()).rows;
-    assert.deepEqual(organizationRows.map((row) => row.registrationId), ["R20260627001"]);
+    assert.deepEqual(organizationRows.map((row) => row.registrationId).sort(), ["R20260627001", privateRow.id].sort());
     assert.equal(organizationRows.every((row) => !("filePath" in row) && !("storedName" in row)), true);
     const ownCertificates = await fetch(`${baseUrl}/api/me/events/wz-aerospace-2026/certificates`, withSession(ordinary.cookie));
     assert.equal((await ownCertificates.json()).rows.every((row) => !("filePath" in row) && !("storedName" in row)), true);
@@ -312,11 +321,12 @@ test("certificate downloads enforce ownership, publication, and organization man
 test("temporary-password users must change password and only the current session survives", async () => {
   await withServer(async (baseUrl) => {
     const admin = await loginAs(baseUrl, "13900000000", "admin123");
-    const reset = await fetch(`${baseUrl}/api/admin/users/U1001/reset-password`, jsonOptions("POST", { password: "TempPass9" }, admin.cookie));
+    const reset = await fetch(`${baseUrl}/api/admin/users/U1001/reset-password`, jsonOptions("POST", {}, admin.cookie));
     assert.equal(reset.status, 200);
+    const temporaryPassword = (await reset.json()).temporaryPassword;
 
-    const first = await loginAs(baseUrl, "13800000001", "TempPass9");
-    const second = await loginAs(baseUrl, "13800000001", "TempPass9");
+    const first = await loginAs(baseUrl, "13800000001", temporaryPassword);
+    const second = await loginAs(baseUrl, "13800000001", temporaryPassword);
     assert.equal((await fetch(`${baseUrl}/api/auth/me`, withSession(first.cookie))).status, 200);
     const blocked = await fetch(`${baseUrl}/api/me/events/wz-aerospace-2026/registrations`, withSession(first.cookie));
     assert.equal(blocked.status, 428);
@@ -328,13 +338,13 @@ test("temporary-password users must change password and only the current session
     assert.equal(wrong.status, 401);
 
     const unchanged = await fetch(`${baseUrl}/api/auth/change-password`, jsonOptions("POST", {
-      currentPassword: "TempPass9", newPassword: "TempPass9"
+      currentPassword: temporaryPassword, newPassword: temporaryPassword
     }, first.cookie));
     assert.equal(unchanged.status, 422);
     assert.equal((await fetch(`${baseUrl}/api/me/events/wz-aerospace-2026/registrations`, withSession(first.cookie))).status, 428);
 
     const changed = await fetch(`${baseUrl}/api/auth/change-password`, jsonOptions("POST", {
-      currentPassword: "TempPass9", newPassword: "NextPass2"
+      currentPassword: temporaryPassword, newPassword: "NextPass2"
     }, first.cookie));
     assert.equal(changed.status, 200);
     const changedPayload = await changed.json();

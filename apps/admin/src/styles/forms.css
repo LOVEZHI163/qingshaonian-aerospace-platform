@@ -108,6 +108,36 @@
   color: #9a3412;
 }
 
+.registration-eligibility-card {
+  display: grid;
+  max-width: 620px;
+  gap: 12px;
+}
+
+.registration-eligibility-card .primary {
+  width: fit-content;
+}
+
+.registration-organization-readonly {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 4px 12px;
+  padding: 14px 16px;
+  border: 1px solid #bfdbfe;
+  border-radius: 10px;
+  background: #eff6ff;
+}
+
+.registration-organization-readonly span,
+.registration-organization-readonly small {
+  color: var(--muted);
+}
+
+.registration-organization-readonly small {
+  grid-column: 2;
+}
+
 .certificate-event-query {
   display: flex;
   align-items: end;

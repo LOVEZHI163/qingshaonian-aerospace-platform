@@ -10,15 +10,17 @@ vi.mock("../../lib/api.js", () => ({ api: apiMock, apiBlob: apiBlobMock, apiUrl:
 vi.mock("../../components/SubmissionAssetUploader.vue", () => ({
   default: {
     props: ["sessionId", "mode", "assets"],
-    emits: ["complete"],
-    template: '<button type="button" data-testid="submission-uploader" @click="$emit(\'complete\', true)">素材已完成</button>'
+    emits: ["complete", "error"],
+    data: () => ({ restrictionError: Object.assign(new Error("stale upload"), { code: "ORGANIZATION_DISABLED" }) }),
+    template: '<div><button type="button" data-testid="submission-uploader" @click="$emit(\'complete\', true)">素材已完成</button><button type="button" data-action="deny-submission-upload" @click="$emit(\'error\', restrictionError)">上传受限</button></div>'
   }
 }));
 vi.mock("../../components/OrganizationAthleteRegistrationForm.vue", () => ({
   default: {
     props: ["eventId", "projects", "grades", "defaultSchool", "registration"],
-    emits: ["registered"],
-    template: '<div data-testid="organization-registration-editor" :data-event-id="eventId" :data-registration-id="registration.id"><button type="button" data-action="save-organization-registration" @click="$emit(\'registered\')">保存</button></div>'
+    emits: ["registered", "error"],
+    data: () => ({ restrictionError: Object.assign(new Error("stale edit"), { code: "ORGANIZATION_REJECTED" }) }),
+    template: '<div data-testid="organization-registration-editor" :data-event-id="eventId" :data-registration-id="registration.id"><button type="button" data-action="save-organization-registration" @click="$emit(\'registered\')">保存</button><button type="button" data-action="deny-organization-registration-save" @click="$emit(\'error\', restrictionError)">保存受限</button></div>'
   }
 }));
 
@@ -28,7 +30,7 @@ const payload = {
   rows: [
     {
       id: "R1", eventId: "E1", eventName: "春季航空赛", projectId: "P1", projectName: "纸飞机",
-      athlete: { name: "张三", school: "实验小学", grade: "五年级" }, instructor: "林老师", status: "pending", score: "98", awardName: "一等奖",
+      athlete: { name: "张三", school: "实验小学", grade: "五年级" }, studentIdNumber: "11010520140101123X", instructor: "林老师", status: "pending", score: "98", awardName: "一等奖",
       submission: { required: true, complete: true, assets: {
         artwork_image: { originalName: "作品.png", sizeBytes: 100 },
         creation_video: { originalName: "作画.mp4", sizeBytes: 200 }
@@ -36,7 +38,7 @@ const payload = {
     },
     {
       id: "R2", eventId: "E2", eventName: "夏季无人机赛", projectId: "P2", projectName: "无人机",
-      athlete: { name: "李四", school: "航空学校", grade: "六年级" }, instructor: "", status: "pending", score: "", awardName: ""
+      athlete: { name: "李四", school: "航空学校", grade: "六年级" }, studentIdNumber: null, instructor: "", status: "pending", score: "", awardName: ""
     }
   ],
   total: 27,
@@ -85,6 +87,14 @@ describe("OrganizationRegistrationRecordsPage", () => {
     expect(wrapper.get('[data-action="organization-records-next"]').attributes("disabled")).toBeUndefined();
   });
 
+  it("reports a stable organization restriction to the application shell", async () => {
+    apiMock.mockRejectedValue(Object.assign(new Error("stale session"), { code: "ORGANIZATION_DISABLED" }));
+    const wrapper = mount(OrganizationRegistrationRecordsPage);
+    await flushPromises();
+
+    expect(wrapper.emitted("access-denied")?.[0]?.[0]).toMatchObject({ code: "ORGANIZATION_DISABLED" });
+  });
+
   it("shows an empty state when the organization has no matching registrations", async () => {
     apiMock.mockResolvedValue({ ...payload, rows: [], total: 0 });
     const wrapper = mount(OrganizationRegistrationRecordsPage);
@@ -104,6 +114,35 @@ describe("OrganizationRegistrationRecordsPage", () => {
     const rows = wrapper.findAll("tbody tr");
     expect(rows[0].text()).toContain("林老师");
     expect(rows[1].text()).toContain("-");
+  });
+
+  it("shows authorized identities and marks historical empty values without a collection prompt", async () => {
+    apiMock.mockResolvedValue(payload);
+    const wrapper = mount(OrganizationRegistrationRecordsPage);
+    await flushPromises();
+
+    expect(wrapper.findAll("thead th").map((cell) => cell.text())).toContain("学生身份证号");
+    expect(wrapper.text()).toContain("11010520140101123X");
+    expect(wrapper.text()).toContain("—（历史报名）");
+    expect(wrapper.text()).not.toContain("待补录");
+    expect(apiMock).toHaveBeenCalledTimes(1);
+    expect(apiMock).toHaveBeenCalledWith("/api/organization/registrations?page=1&pageSize=25");
+  });
+
+  it("shows Chinese source labels for member and organization proxy registrations", async () => {
+    apiMock.mockResolvedValue({
+      ...payload,
+      rows: payload.rows.map((row, index) => ({
+        ...row,
+        source: index === 0 ? "member_registration" : "organization_proxy"
+      }))
+    });
+    const wrapper = mount(OrganizationRegistrationRecordsPage);
+    await flushPromises();
+
+    expect(wrapper.findAll("thead th").map((cell) => cell.text())).toContain("报名来源");
+    expect(wrapper.findAll("tbody tr")[0].text()).toContain("成员报名");
+    expect(wrapper.findAll("tbody tr")[1].text()).toContain("组织代报名");
   });
 
   it("allows a non-archived approved submission to enter the replacement flow", async () => {
@@ -212,6 +251,36 @@ describe("OrganizationRegistrationRecordsPage", () => {
     await flushPromises();
     expect(wrapper.find('[data-testid="organization-registration-editor"]').exists()).toBe(false);
     expect(apiMock.mock.calls.filter(([path]) => path === "/api/organization/registrations?page=1&pageSize=25")).toHaveLength(2);
+  });
+
+  it("propagates a stable restriction from editing save", async () => {
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/organization/registrations?page=1&pageSize=25") return payload;
+      if (path === "/api/organization/events/E1/workspace") return { event: { id: "E1", status: "published" }, organization: { name: "School" }, projects: [], grades: [] };
+      throw new Error(`unexpected ${path}`);
+    });
+    const wrapper = mount(OrganizationRegistrationRecordsPage);
+    await flushPromises();
+    await wrapper.get('[data-action="edit-organization-registration-R1"]').trigger("click");
+    await flushPromises();
+    await wrapper.get('[data-action="deny-organization-registration-save"]').trigger("click");
+
+    expect(wrapper.emitted("access-denied")?.[0]?.[0]).toMatchObject({ code: "ORGANIZATION_REJECTED" });
+  });
+
+  it("propagates a stable restriction from material upload", async () => {
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/organization/registrations?page=1&pageSize=25") return payload;
+      if (path === "/api/organization/events/E1/projects/P1/upload-sessions") return { row: { id: "US1", assets: {} } };
+      throw new Error(`unexpected ${path}`);
+    });
+    const wrapper = mount(OrganizationRegistrationRecordsPage);
+    await flushPromises();
+    await wrapper.get('[data-action="replace-organization-materials-R1"]').trigger("click");
+    await flushPromises();
+    await wrapper.get('[data-action="deny-submission-upload"]').trigger("click");
+
+    expect(wrapper.emitted("access-denied")?.[0]?.[0]).toMatchObject({ code: "ORGANIZATION_DISABLED" });
   });
 
   it.each([

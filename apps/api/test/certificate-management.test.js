@@ -299,6 +299,60 @@ test("manual certificate management uploads both slots, edits, replaces, deletes
   }, { prefix: "manual-certificate-management-crud-" });
 });
 
+test("certificate bulk audit preserves long normal target IDs and redacts only identity-shaped IDs", async () => {
+  await withTestServer(async ({ baseUrl, dbPath }) => {
+    const admin = await loginAs(baseUrl, "13900000000", "admin123");
+    const normalIds = Array.from({ length: 12 }, (_, index) => `C-BATCH-${String(index).padStart(8, "0")}`);
+    const identityId = "11010519491231002X";
+    const db = JSON.parse(await fs.readFile(dbPath, "utf8"));
+    db.certificates.push(...[...normalIds, identityId].map((id, index) => ({
+      id,
+      registrationId: "R20260627001",
+      slot: index + 1,
+      title: `批量证书 ${index + 1}`,
+      fileName: `certificate-${index + 1}.png`,
+      storedName: `certificate-${index + 1}.png`,
+      filePath: `/safe/certificates/${index + 1}.png`,
+      awardName: "",
+      rank: "",
+      score: "",
+      status: "draft",
+      source: "manual",
+      importBatchId: null,
+      uploadedAt: "2026-08-07T00:00:00.000Z",
+      publishedAt: "",
+      cleanedAt: ""
+    })));
+    await fs.writeFile(dbPath, JSON.stringify(db, null, 2));
+
+    const publish = await fetch(`${baseUrl}/api/admin/events/wz-aerospace-2026/certificates/bulk-status`, jsonRequest("POST", {
+      ids: normalIds, status: "published"
+    }, admin.cookie));
+    assert.equal(publish.status, 200);
+    const expectedNormalTargetId = [...normalIds].sort().join(",");
+    assert.ok(expectedNormalTargetId.length > 120);
+    let persisted = JSON.parse(await fs.readFile(dbPath, "utf8"));
+    assert.equal(
+      persisted.auditLogs.find((row) => row.action === "certificate.publish")?.targetId,
+      expectedNormalTargetId
+    );
+
+    const withdraw = await fetch(`${baseUrl}/api/admin/events/wz-aerospace-2026/certificates/bulk-status`, jsonRequest("POST", {
+      ids: [...normalIds, identityId], status: "draft"
+    }, admin.cookie));
+    assert.equal(withdraw.status, 200);
+    const expectedRedactedTargetId = [...normalIds, identityId]
+      .sort()
+      .join(",")
+      .replace(identityId, "[身份证号已隐藏]");
+    persisted = JSON.parse(await fs.readFile(dbPath, "utf8"));
+    assert.equal(
+      persisted.auditLogs.find((row) => row.action === "certificate.withdraw")?.targetId,
+      expectedRedactedTargetId
+    );
+  }, { prefix: "certificate-bulk-audit-target-id-" });
+});
+
 test("manual certificate upload rejects a registration that is not approved", async () => {
   await withTestServer(async ({ baseUrl, dbPath }) => {
     const admin = await loginAs(baseUrl, "13900000000", "admin123");
