@@ -104,6 +104,18 @@ json_path() {
   docker compose exec -T api node -e "$script" < "$response_file"
 }
 
+add_student_id() {
+  student_id="$1"
+  STUDENT_ID="$student_id" docker compose exec -T -e STUDENT_ID api node -e '
+    let input = "";
+    process.stdin.on("data", (chunk) => input += chunk).on("end", () => {
+      const data = JSON.parse(input);
+      data.studentIdNumber = process.env.STUDENT_ID;
+      process.stdout.write(JSON.stringify(data));
+    });
+  '
+}
+
 assert_json_response() {
   label="$1"
   case "$received_media_type" in
@@ -591,6 +603,24 @@ printf '%s' '{"status":"approved","reason":""}' | \
 assert_status "organization-owner-review" 200 \
   -b "$cookie_jar" -H 'Content-Type: application/json' --data-binary @- \
   -X PATCH "$base_url/api/admin/organizations/$smoke_organization_id/review"
+assert_status "organization-leader-create" 201 \
+  -b "$smoke_organization_cookie_jar" \
+  -F 'name=Smoke Leader' \
+  -F "phone=$smoke_organization_phone" \
+  -F 'email=smoke-leader@example.com' \
+  -F 'notes=release smoke leader' \
+  -F "authorization=@$organization_credential_file;type=application/pdf" \
+  "$base_url/api/organization/leaders"
+assert_json_response "organization-leader-create"
+smoke_organization_leader_id="$(json_path 'let input="";process.stdin.on("data",chunk=>input+=chunk).on("end",()=>{const data=JSON.parse(input);if(data.row&&data.row.id)process.stdout.write(encodeURIComponent(data.row.id));});')"
+if test -z "$smoke_organization_leader_id"; then
+  echo "Organization leader smoke creation returned no leader id" >&2
+  exit 1
+fi
+printf '%s' '{"decision":"approved"}' | \
+assert_status "organization-leader-approve" 200 \
+  -b "$cookie_jar" -H 'Content-Type: application/json' --data-binary @- \
+  -X PATCH "$base_url/api/admin/organization-leaders/$smoke_organization_leader_id/review"
 assert_status "organization-event-join" 201 \
   -b "$smoke_organization_cookie_jar" -X POST \
   "$base_url/api/organization/events/$smoke_event_id/join"
@@ -603,7 +633,7 @@ if ! EXPECTED_ORGANIZATION_ID="$smoke_organization_id" EXPECTED_ORGANIZATION_NAM
   exit 1
 fi
 printf '{"registrationSource":"organization_proxy","projectId":"%s","athlete":{"name":"组织冒烟选手","school":"%s","grade":"三年级","phone":"%s"}}' \
-  "$smoke_project_id" "$smoke_organization_name" "$smoke_organization_phone" | \
+  "$smoke_project_id" "$smoke_organization_name" "$smoke_organization_phone" | add_student_id "11010519491231002X" | \
 assert_status "organization-registration-create" 201 \
   -b "$smoke_organization_cookie_jar" -H 'Content-Type: application/json' --data-binary @- \
   "$base_url/api/organization/events/$smoke_event_id/registrations"
@@ -642,11 +672,29 @@ smoke_foreign_organization_cookie_jar="$work_dir/organization-foreign.cookies"
 assert_status "organization-foreign-login" 200 \
   -c "$smoke_foreign_organization_cookie_jar" -H 'Content-Type: application/json' --data-binary @- \
   "$base_url/api/auth/login"
+assert_status "organization-foreign-leader-create" 201 \
+  -b "$smoke_foreign_organization_cookie_jar" \
+  -F 'name=Foreign Smoke Leader' \
+  -F "phone=$smoke_foreign_organization_phone" \
+  -F 'email=foreign-smoke-leader@example.com' \
+  -F 'notes=foreign release smoke leader' \
+  -F "authorization=@$organization_credential_file;type=application/pdf" \
+  "$base_url/api/organization/leaders"
+assert_json_response "organization-foreign-leader-create"
+smoke_foreign_organization_leader_id="$(json_path 'let input="";process.stdin.on("data",chunk=>input+=chunk).on("end",()=>{const data=JSON.parse(input);if(data.row&&data.row.id)process.stdout.write(encodeURIComponent(data.row.id));});')"
+if test -z "$smoke_foreign_organization_leader_id"; then
+  echo "Foreign organization leader smoke creation returned no leader id" >&2
+  exit 1
+fi
+printf '%s' '{"decision":"approved"}' | \
+assert_status "organization-foreign-leader-approve" 200 \
+  -b "$cookie_jar" -H 'Content-Type: application/json' --data-binary @- \
+  -X PATCH "$base_url/api/admin/organization-leaders/$smoke_foreign_organization_leader_id/review"
 assert_status "organization-foreign-event-join" 201 \
   -b "$smoke_foreign_organization_cookie_jar" -X POST \
   "$base_url/api/organization/events/$smoke_event_id/join"
 printf '{"registrationSource":"organization_proxy","projectId":"%s","athlete":{"name":"外部组织选手","school":"%s","grade":"三年级","phone":"%s"}}' \
-  "$smoke_project_id" "$smoke_foreign_organization_name" "$smoke_foreign_organization_phone" | \
+  "$smoke_project_id" "$smoke_foreign_organization_name" "$smoke_foreign_organization_phone" | add_student_id "110105194912310038" | \
 assert_status "organization-foreign-registration-create" 201 \
   -b "$smoke_foreign_organization_cookie_jar" -H 'Content-Type: application/json' --data-binary @- \
   "$base_url/api/organization/events/$smoke_event_id/registrations"
@@ -717,7 +765,7 @@ assert_status "submission-user-force-password-change" 200 \
 assert_json_response "submission-user-force-password-change"
 
 printf '{"projectId":"%s","athlete":{"name":"未入组织冒烟选手","school":"未入组织冒烟学校","grade":"五年级","phone":"%s"}}' \
-  "$smoke_project_id" "$smoke_user_phone" | \
+  "$smoke_project_id" "$smoke_user_phone" | add_student_id "110105201401011231" | \
 assert_status "submission-registration-unaffiliated" 403 \
   -b "$smoke_cookie_jar" -H 'Content-Type: application/json' --data-binary @- \
   "$base_url/api/me/events/$smoke_event_id/registrations"
@@ -765,7 +813,7 @@ assert_status "submission-video-upload" 201 \
 assert_json_response "submission-video-upload"
 
 printf '{"projectId":"%s","athlete":{"name":"上传冒烟选手","school":"上传冒烟学校","grade":"五年级","phone":"%s"},"uploadSessionId":"%s"}' \
-  "$smoke_project_id" "$smoke_phone" "$submission_session_id" | \
+  "$smoke_project_id" "$smoke_phone" "$submission_session_id" | add_student_id "110105201401011231" | \
 assert_status "submission-registration-bind" 201 \
   -b "$smoke_cookie_jar" -H 'Content-Type: application/json' --data-binary @- \
   "$base_url/api/me/events/$smoke_event_id/registrations"

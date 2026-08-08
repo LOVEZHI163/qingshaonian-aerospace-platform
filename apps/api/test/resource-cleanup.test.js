@@ -70,6 +70,10 @@ async function writeFixture(dbPath, tempDir) {
     { id: "R-OLD", eventId: "E-OLD", projectId: "P-OLD", userId: "U1001", organizationId: "O1002", athlete: { name: "旧赛事选手" } },
     { id: "R-OTHER", eventId: "E-OTHER", projectId: "P-OTHER", userId: "U1001", organizationId: "O1002", athlete: { name: "其他赛事选手" } }
   );
+  db.registrationIdentities.push(
+    { registrationId: "R-OLD", ciphertext: "old-ciphertext", iv: "old-iv", authTag: "old-tag", keyVersion: 1, idFingerprint: "old-fingerprint", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" },
+    { registrationId: "R-OTHER", ciphertext: "other-ciphertext", iv: "other-iv", authTag: "other-tag", keyVersion: 1, idFingerprint: "other-fingerprint", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" }
+  );
   db.certificates.push(
     { id: "C-OLD", registrationId: "R-OLD", slot: 1, title: "旧赛事证书", fileName: "old.png", storedName: "old.png", filePath: paths.targetCertificate, status: "draft", source: "manual", importBatchId: null, uploadedAt: "2026-01-01T00:00:00.000Z", publishedAt: "", cleanedAt: "" },
     { id: "C-OLD-MISSING", registrationId: "R-OLD", slot: 2, title: "缺失的旧赛事证书", fileName: "missing.png", storedName: "", filePath: "", status: "draft", source: "manual", importBatchId: null, uploadedAt: "2026-01-01T00:00:00.000Z", publishedAt: "", cleanedAt: "" },
@@ -241,6 +245,8 @@ test("resource cleanup thoroughly deletes only a confirmed non-current archived 
     assert.equal(persisted.organizationEventParticipations.some((row) => row.eventId === "E-OLD"), false);
     assert.equal(persisted.organizationEventParticipations.some((row) => row.eventId === "E-OTHER"), true);
     assert.equal(persisted.registrations.some((row) => row.eventId === "E-OLD"), false);
+    assert.equal(persisted.registrationIdentities.some((row) => row.registrationId === "R-OLD"), false);
+    assert.equal(persisted.registrationIdentities.some((row) => row.registrationId === "R-OTHER"), true);
     assert.equal(persisted.certificates.some((row) => row.id === "C-OLD"), false);
     assert.equal(persisted.certificateImportBatches.some((row) => row.eventId === "E-OLD"), false);
     assert.equal(persisted.registrationUploadSessions.some((row) => row.eventId === "E-OLD"), false);

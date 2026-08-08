@@ -310,3 +310,22 @@ test("authenticated smoke covers organization management and rejects raw HTML ma
   assert.match(smoke, /assert_json_error "admin-organization-error"/);
   assert.match(smoke, /application\/json/);
 });
+
+test("authenticated smoke establishes approved organization leaders and supplies student identities", async () => {
+  const smoke = await fs.readFile(path.join(root, "deploy/remote-smoke-test.sh"), "utf8");
+
+  for (const label of ["organization-leader", "organization-foreign-leader"]) {
+    const createIndex = smoke.indexOf(`assert_status "${label}-create" 201`);
+    const approveIndex = smoke.indexOf(`assert_status "${label}-approve" 200`);
+    assert.notEqual(createIndex, -1, `${label} must be created`);
+    assert.ok(approveIndex > createIndex, `${label} must be approved after creation`);
+  }
+  assert.ok(
+    smoke.indexOf('assert_status "organization-leader-approve" 200')
+      < smoke.indexOf('assert_status "organization-registration-create" 201'),
+    "the organization leader must be approved before organization registration"
+  );
+  assert.match(smoke, /add_student_id "11010519491231002X"/);
+  assert.match(smoke, /add_student_id "110105194912310038"/);
+  assert.match(smoke, /add_student_id "110105201401011231"/);
+});
