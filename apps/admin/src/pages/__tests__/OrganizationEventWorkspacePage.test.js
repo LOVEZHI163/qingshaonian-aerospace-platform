@@ -139,6 +139,34 @@ describe("OrganizationEventWorkspacePage", () => {
       method: "POST",
       body: JSON.stringify({ registrationSource: "organization_proxy", studentIdNumber: "11010520140101123X", athlete: { name: "Student A", school: "Aviation School", grade: "Grade 5", phone: "13800000000" }, projectId: "P1", instructor: "" })
     }));
+    const feedback = wrapper.get('[data-testid="organization-registration-feedback"]');
+    expect(feedback.attributes("role")).toBe("status");
+    expect(feedback.text()).toContain("组织报名已提交");
+  });
+
+  it("keeps the backend validation reason visible and preserves its stable error code", async () => {
+    apiMock.mockImplementation(async (path, options) => {
+      if (path === "/api/organization/events/E2/workspace") return workspace;
+      if (path === "/api/organization/leaders") return { rows: [{ id: "OL1", reviewStatus: "approved", enabled: true }] };
+      if (path === "/api/organization/events/E2/registrations" && options?.method === "POST") {
+        throw Object.assign(new Error("身份证号校验失败"), { status: 400, code: "INVALID_STUDENT_ID_NUMBER" });
+      }
+      return { rows: [] };
+    });
+    const wrapper = mount(OrganizationEventWorkspacePage, { props: { eventId: "E2" } });
+    await flushPromises();
+    await wrapper.get('[data-registration-source="organization_proxy"]').setValue();
+    await wrapper.get('[data-field="athlete-name"]').setValue("Student A");
+    await wrapper.get('[data-field="athlete-grade"]').setValue("Grade 5");
+    await wrapper.get('[data-field="athlete-phone"]').setValue("13800000000");
+    await wrapper.get('[data-field="student-id-number"]').setValue("330304198811232711");
+    await wrapper.get('[data-testid="organization-registration-form"]').trigger("submit");
+    await flushPromises();
+
+    const feedback = wrapper.get('[data-testid="organization-registration-feedback"]');
+    expect(feedback.attributes("role")).toBe("alert");
+    expect(feedback.text()).toContain("身份证号校验失败，请检查出生日期和校验位");
+    expect(wrapper.emitted("error")?.at(-1)?.[0]).toMatchObject({ code: "INVALID_STUDENT_ID_NUMBER" });
   });
 
   it("submits member_registration with the selected active member and prefilled identity", async () => {
@@ -187,7 +215,7 @@ describe("OrganizationEventWorkspacePage", () => {
     await wrapper.get('[data-testid="organization-registration-form"]').trigger("submit");
     await flushPromises();
     expect(apiMock.mock.calls.some(([path, options]) => path === "/api/organization/events/E2/registrations" && options?.method === "POST")).toBe(false);
-    expect(wrapper.emitted("error")?.at(-1)).toEqual(["请输入 18 位居民身份证号，末位可为 X"]);
+    expect(wrapper.emitted("error")?.at(-1)?.[0]).toMatchObject({ message: "请输入 18 位居民身份证号，末位可为 X" });
   });
 
   it("keeps proxy identity editable while member identity is derived and read-only", async () => {

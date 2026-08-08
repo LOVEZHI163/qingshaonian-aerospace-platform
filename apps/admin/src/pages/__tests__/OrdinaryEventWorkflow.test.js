@@ -155,6 +155,33 @@ describe("ordinary user event workflow", () => {
     await flushPromises();
 
     expect(wrapper.emitted("error")).toEqual([["请先加入已通过审核的组织后再报名"]]);
+    const feedback = wrapper.get('[data-testid="ordinary-registration-feedback"]');
+    expect(feedback.attributes("role")).toBe("alert");
+    expect(feedback.text()).toContain("请先加入已通过审核的组织后再报名");
+  });
+
+  it("shows an identity checksum failure beside the ordinary registration form", async () => {
+    apiMock.mockImplementation(async (path, options) => {
+      if (path === "/api/me/registration-context?eventId=E2") return context;
+      if (path.startsWith("/api/schools")) return { rows: [] };
+      if (path === "/api/me/events/E2/registrations" && options?.method === "POST") {
+        throw Object.assign(new Error("身份证号校验失败"), { code: "INVALID_STUDENT_ID_NUMBER" });
+      }
+      throw new Error(`unexpected API path ${path}`);
+    });
+    const wrapper = mount(RegistrationPage, { props: { eventId: "E2", accountType: "ordinary" } });
+    await flushPromises();
+    const inputs = wrapper.findAll("form.form-panel input");
+    await inputs[0].setValue("张三");
+    await inputs[1].setValue("实验小学");
+    await inputs[2].setValue("二年级");
+    await inputs[3].setValue("13600005001");
+    await wrapper.get('[data-field="student-id-number"]').setValue("330304198811232711");
+    await wrapper.get("form.form-panel").trigger("submit");
+    await flushPromises();
+
+    expect(wrapper.get('[data-testid="ordinary-registration-feedback"]').text()).toContain("身份证号校验失败，请检查出生日期和校验位");
+    expect(wrapper.emitted("error")?.at(-1)).toEqual(["身份证号校验失败，请检查出生日期和校验位"]);
   });
 
   it("translates a leader loss returned by the locked submission check", async () => {

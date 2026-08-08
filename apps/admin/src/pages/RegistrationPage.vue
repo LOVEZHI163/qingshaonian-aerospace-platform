@@ -16,6 +16,7 @@ const emit = defineEmits(["context", "registered", "error", "navigate"]);
 const context = ref({ organizations: [], projects: [], grades: [] });
 const loading = ref(true);
 const submitting = ref(false);
+const submitFeedback = ref(null);
 const uploadSession = ref(null);
 const uploadSessionLoading = ref(false);
 const uploadSessionError = ref("");
@@ -92,25 +93,34 @@ watch(() => [form.athlete.name, form.athlete.school, form.athlete.grade, form.at
 });
 
 async function submit() {
+  submitFeedback.value = null;
   if (!hasEventContext.value) {
-    emit("error", "请先从赛事中心选择赛事");
+    const message = "请先从赛事中心选择赛事";
+    submitFeedback.value = { tone: "error", message };
+    emit("error", message);
     return;
   }
   if (!registrationOpen.value) {
+    submitFeedback.value = { tone: "error", message: registrationStateMessage.value };
     emit("error", registrationStateMessage.value);
     return;
   }
   if (!ordinaryUser.value) {
-    emit("error", "请从组织赛事工作台提交报名");
+    const message = "请从组织赛事工作台提交报名";
+    submitFeedback.value = { tone: "error", message };
+    emit("error", message);
     return;
   }
   if (!registrationEligible.value) {
+    submitFeedback.value = { tone: "error", message: eligibilityMessage.value };
     emit("error", eligibilityMessage.value);
     return;
   }
   const studentIdNumber = form.studentIdNumber.trim();
   if (!studentIdPattern.test(studentIdNumber)) {
-    emit("error", "请输入 18 位居民身份证号，末位可为 X");
+    const message = "请输入 18 位居民身份证号，末位可为 X";
+    submitFeedback.value = { tone: "error", message };
+    emit("error", message);
     return;
   }
   if (submitDisabled.value) return;
@@ -130,8 +140,13 @@ async function submit() {
     form.instructor = "";
     form.projectId = "";
     clearUploadSession();
+    submitFeedback.value = { tone: "success", message: "报名已提交，可在“报名记录”中查看" };
     emit("registered");
-  } catch (error) { emit("error", accessMessage(error)); }
+  } catch (error) {
+    const message = accessMessage(error);
+    submitFeedback.value = { tone: "error", message };
+    emit("error", message);
+  }
   finally { submitting.value = false; }
 }
 
@@ -191,5 +206,6 @@ onMounted(async () => {
       </section>
     <p class="hint registration-identity-notice">学生身份证号是报名资料，将用于名单导出和证书信息核对，请本人或监护人确认填写正确。</p>
     <button class="primary" :disabled="submitDisabled">{{ submitting ? "正在提交…" : "提交报名" }}</button>
+    <p v-if="submitFeedback" class="message" :class="submitFeedback.tone === 'error' ? 'danger-message' : ''" :role="submitFeedback.tone === 'error' ? 'alert' : 'status'" data-testid="ordinary-registration-feedback">{{ submitFeedback.message }}</p>
   </form></section>
 </template>

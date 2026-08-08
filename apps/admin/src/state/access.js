@@ -1,5 +1,6 @@
 export const accessMessages = Object.freeze({
   ACTIVE_ORGANIZATION_REQUIRED: "请先加入已通过审核的组织后再报名",
+  INVALID_STUDENT_ID_NUMBER: "身份证号校验失败，请检查出生日期和校验位",
   ORGANIZATION_LEADER_REQUIRED: "所属组织尚无审核通过且已启用的领队，请联系组织负责人",
   ORGANIZATION_REVIEW_PENDING: "组织资质正在审核中",
   ORGANIZATION_REJECTED: "组织资质未通过，请按原因重新提交",
@@ -19,6 +20,7 @@ export function isOrganizationRestrictionError(error) {
 }
 
 export function accessMessage(error, fallback = "操作失败，请稍后重试") {
+  if (typeof error === "string" && error.trim()) return error;
   return accessMessages[error?.code] || error?.message || fallback;
 }
 
