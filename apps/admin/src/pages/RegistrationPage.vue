@@ -164,7 +164,17 @@ onMounted(async () => {
   <section v-else-if="ordinaryUser && !registrationEligible && !leaderRequired" class="content-grid registration-page"><div class="panel registration-eligibility-card" data-testid="registration-eligibility-guidance"><h3>请先加入组织</h3><p class="hint">{{ eligibilityMessage }}</p><button type="button" class="primary" data-action="open-my-organization" @click="emit('navigate', 'myOrganization')">前往“我的组织”</button></div></section>
   <section v-else class="content-grid registration-page"><form class="panel form-panel" @submit.prevent="submit">
     <div class="panel-title"><h3>报名端<span v-if="context.event?.name"> · {{ context.event.name }}</span></h3><span v-if="selectedGroup">{{ selectedGroup }}</span></div>
-    <div v-if="leaderRequired" class="registration-eligibility-card" data-testid="registration-eligibility-guidance"><h4>当前组织暂不能新增报名</h4><p class="hint">{{ eligibilityMessage }}</p></div>
+    <div v-if="leaderRequired" class="registration-eligibility-card registration-leader-required" data-testid="registration-eligibility-guidance" role="alert">
+      <span class="registration-blocked-label">报名条件未满足</span>
+      <h4>所属组织尚未完成领队申报</h4>
+      <p>您已加入“{{ eligibleOrganization?.name || "当前组织" }}”，但该组织目前没有审核通过且已启用的领队，因此暂时无法提交报名。</p>
+      <ol>
+        <li>请联系组织负责人进入“领队管理”；</li>
+        <li>提交领队资料和授权书，等待平台管理员审核通过并启用；</li>
+        <li>完成后返回本页面，即可继续报名。</li>
+      </ol>
+      <p class="registration-leader-note">无需退出组织或重新申请加入。</p>
+    </div>
     <div v-if="eligibleOrganization" class="registration-organization-readonly" data-testid="eligible-organization"><span>所属组织</span><strong>{{ eligibleOrganization.name }}</strong><small>报名将自动归属该组织</small></div>
       <div class="two"><label>姓名<input v-model="form.athlete.name" required /></label><label data-field="registration-school">学校<SchoolCombobox v-model="form.athlete.school" /></label></div>
       <div class="two"><label>年级<input v-model="form.athlete.grade" list="grade-options" placeholder="请选择实际年级" required /><datalist id="grade-options"><template v-for="group in context.grades" :key="group.id"><option v-for="grade in group.grades" :key="grade" :value="grade">{{ group.name }}</option></template></datalist></label><label>手机号/家长手机号<input v-model="form.athlete.phone" required /></label></div>

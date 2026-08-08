@@ -121,8 +121,14 @@ describe("ordinary user event workflow", () => {
     const wrapper = mount(RegistrationPage, { props: { eventId: "E2", accountType: "ordinary" } });
     await flushPromises();
 
+    const guidance = wrapper.get('[data-testid="registration-eligibility-guidance"]');
+    expect(guidance.attributes("role")).toBe("alert");
+    expect(guidance.text()).toContain("所属组织尚未完成领队申报");
+    expect(guidance.text()).toContain("请联系组织负责人进入“领队管理”");
+    expect(guidance.text()).toContain("提交领队资料和授权书");
+    expect(guidance.text()).toContain("无需退出组织或重新申请加入");
     expect(wrapper.text()).toContain("第二场公开赛事");
-    expect(wrapper.text()).toContain("所属组织尚无审核通过且已启用的领队，请联系组织负责人");
+    expect(wrapper.text()).toContain("目前没有审核通过且已启用的领队");
     expect(wrapper.find("form").exists()).toBe(true);
     expect(wrapper.get("form button.primary").attributes("disabled")).toBeDefined();
     expect(wrapper.find('[data-action="open-my-organization"]').exists()).toBe(false);
