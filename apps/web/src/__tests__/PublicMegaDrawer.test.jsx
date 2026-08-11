@@ -49,11 +49,16 @@ function createMediaQueryList(media, initialMatches) {
   return query;
 }
 
-function installMatchMedia({ hover = false, mobile = false } = {}) {
+function installMatchMedia({ hover = false, mobile = false, reducedMotion = false } = {}) {
   const hoverQuery = createMediaQueryList("(hover: hover) and (pointer: fine)", hover);
   const mobileQuery = createMediaQueryList("(max-width: 1120px)", mobile);
-  vi.stubGlobal("matchMedia", vi.fn((media) => media === mobileQuery.media ? mobileQuery : hoverQuery));
-  return { hoverQuery, mobileQuery };
+  const reducedMotionQuery = createMediaQueryList("(prefers-reduced-motion: reduce)", reducedMotion);
+  vi.stubGlobal("matchMedia", vi.fn((media) => {
+    if (media === mobileQuery.media) return mobileQuery;
+    if (media === reducedMotionQuery.media) return reducedMotionQuery;
+    return hoverQuery;
+  }));
+  return { hoverQuery, mobileQuery, reducedMotionQuery };
 }
 
 afterEach(() => {
@@ -107,7 +112,48 @@ describe("public mega drawer interactions", () => {
     fireEvent.pointerDown(document.body);
     expect(screen.getByRole("button", { name: "打开赛事导航" })).toHaveAttribute("aria-expanded", "false");
     expect(document.getElementById("public-mega-drawer")).toHaveAttribute("aria-hidden", "true");
+    expect(document.getElementById("public-mega-drawer")).toHaveAttribute("inert");
+    expect(document.getElementById("public-mega-drawer")).not.toHaveAttribute("hidden");
+    expect(screen.queryByRole("navigation", { name: "赛事导航" })).not.toBeInTheDocument();
+    act(() => vi.advanceTimersByTime(200));
     expect(document.getElementById("public-mega-drawer")).toHaveAttribute("hidden");
+  });
+
+  it("mounts before the opening frame and hides immediately when reduced motion is requested", () => {
+    vi.useFakeTimers();
+    installMatchMedia({ reducedMotion: true });
+    render(<SiteHeader routeKey="/" homeData={home} homeStatus="success" />);
+
+    fireEvent.click(screen.getByRole("button", { name: "打开赛事导航" }));
+    const drawer = document.getElementById("public-mega-drawer");
+    expect(drawer).not.toHaveAttribute("hidden");
+    expect(drawer).toHaveAttribute("data-open");
+
+    fireEvent.click(screen.getByRole("button", { name: "关闭赛事导航" }));
+    expect(drawer).toHaveAttribute("hidden");
+  });
+
+  it("keeps the drawer mounted and inaccessible until the closing transition completes", () => {
+    vi.useFakeTimers();
+    installMatchMedia();
+    render(<SiteHeader routeKey="/" homeData={home} homeStatus="success" />);
+
+    fireEvent.click(screen.getByRole("button", { name: "打开赛事导航" }));
+    act(() => vi.advanceTimersByTime(16));
+    const drawer = document.getElementById("public-mega-drawer");
+    expect(drawer).toHaveAttribute("data-open");
+
+    fireEvent.click(screen.getByRole("button", { name: "关闭赛事导航" }));
+    expect(drawer).not.toHaveAttribute("data-open");
+    expect(drawer).toHaveAttribute("aria-hidden", "true");
+    expect(drawer).toHaveAttribute("inert");
+    expect(drawer).not.toHaveAttribute("hidden");
+    expect(screen.queryByRole("link", { name: "大赛简介" })).not.toBeInTheDocument();
+
+    act(() => vi.advanceTimersByTime(199));
+    expect(drawer).not.toHaveAttribute("hidden");
+    act(() => vi.advanceTimersByTime(1));
+    expect(drawer).toHaveAttribute("hidden");
   });
 
   it("returns focus after Escape and exposes links for the selected event", () => {
@@ -144,7 +190,8 @@ describe("public mega drawer interactions", () => {
     expect(within(drawerNavigation).getAllByRole("link")[0]).toHaveFocus();
     fireEvent.click(screen.getByRole("button", { name: "关闭赛事导航" }));
     expect(screen.getByRole("button", { name: "打开赛事导航" })).toHaveAttribute("aria-expanded", "false");
-    expect(document.getElementById("public-mega-drawer")).toHaveAttribute("hidden");
+    expect(document.getElementById("public-mega-drawer")).toHaveAttribute("inert");
+    expect(document.getElementById("public-mega-drawer")).not.toHaveAttribute("hidden");
   });
 
   it("synchronizes body scrolling when an open menu crosses the mobile breakpoint", () => {
@@ -203,7 +250,8 @@ describe("public mega drawer interactions", () => {
     currentEventLink.addEventListener("click", (event) => event.preventDefault());
     fireEvent.click(currentEventLink);
     expect(trigger).toHaveAttribute("aria-expanded", "false");
-    expect(document.getElementById("public-mega-drawer")).toHaveAttribute("hidden");
+    expect(document.getElementById("public-mega-drawer")).toHaveAttribute("inert");
+    expect(document.getElementById("public-mega-drawer")).not.toHaveAttribute("hidden");
   });
 
   it("uses the implicitly selected featured event when matching the current drawer link", () => {

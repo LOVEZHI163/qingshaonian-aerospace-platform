@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useLayoutEffect, useRef, useState } from "react";
 import {
   accountEntry,
   eventScopedPath,
@@ -6,6 +6,8 @@ import {
 } from "../lib/public-navigation.js";
 
 const DRAWER_QUERY_KEYS = ["event", "type"];
+const DRAWER_TRANSITION_MS = 200;
+const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
 
 function normalizedDrawerLocation(location) {
   try {
@@ -23,6 +25,53 @@ function normalizedDrawerLocation(location) {
 }
 
 export default function PublicMegaDrawer({ open, activeEvent, events, currentPath, onClose }) {
+  const [mounted, setMounted] = useState(open);
+  const [visible, setVisible] = useState(open);
+  const animationFrameRef = useRef(null);
+  const hideTimerRef = useRef(null);
+
+  useLayoutEffect(() => {
+    const cancelPendingAnimation = () => {
+      if (animationFrameRef.current !== null) {
+        window.cancelAnimationFrame?.(animationFrameRef.current);
+        animationFrameRef.current = null;
+      }
+      window.clearTimeout(hideTimerRef.current);
+      hideTimerRef.current = null;
+    };
+    const reducedMotion = window.matchMedia?.(REDUCED_MOTION_QUERY).matches;
+
+    cancelPendingAnimation();
+    if (open) {
+      setMounted(true);
+      if (reducedMotion) {
+        setVisible(true);
+        return undefined;
+      }
+      animationFrameRef.current = window.requestAnimationFrame(() => {
+        animationFrameRef.current = null;
+        setVisible(true);
+      });
+      return cancelPendingAnimation;
+    }
+
+    setVisible(false);
+    if (!mounted || reducedMotion) {
+      setMounted(false);
+      return undefined;
+    }
+    hideTimerRef.current = window.setTimeout(() => {
+      hideTimerRef.current = null;
+      setMounted(false);
+    }, DRAWER_TRANSITION_MS);
+    return cancelPendingAnimation;
+  }, [mounted, open]);
+
+  useLayoutEffect(() => () => {
+    if (animationFrameRef.current !== null) window.cancelAnimationFrame?.(animationFrameRef.current);
+    window.clearTimeout(hideTimerRef.current);
+  }, []);
+
   const theme = activeEvent?.theme || activeEvent?.slogan || "科技强国，未来有我";
   const currentLocation = normalizedDrawerLocation(eventScopedPath(currentPath, activeEvent));
   const hrefFor = (link) => link.accountView
@@ -33,9 +82,11 @@ export default function PublicMegaDrawer({ open, activeEvent, events, currentPat
     <div
       id="public-mega-drawer"
       className="public-mega-drawer"
-      data-open={open || undefined}
+      data-open={visible || undefined}
       aria-hidden={!open}
-      hidden={!open}
+      inert={!open ? "" : undefined}
+      hidden={!mounted}
+      style={{ "--drawer-transition-duration": `${DRAWER_TRANSITION_MS}ms` }}
     >
       <div className="public-mega-drawer-inner">
         <nav aria-label="赛事导航">

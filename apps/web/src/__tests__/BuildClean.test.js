@@ -1,21 +1,38 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 
 describe("web build cleanup", () => {
-  it("imports the responsive navigation and event information stylesheet modules", () => {
+  it("emits responsive navigation and event information rules in the production CSS bundle", () => {
     const webRoot = resolve(process.cwd());
     const styles = readFileSync(resolve(webRoot, "src", "styles.css"), "utf8");
-    const navigation = readFileSync(resolve(webRoot, "src", "styles", "navigation.css"), "utf8");
-    const eventInformation = readFileSync(resolve(webRoot, "src", "styles", "event-information.css"), "utf8");
 
     expect(styles).toContain('@import "./styles/navigation.css"');
     expect(styles).toContain('@import "./styles/event-information.css"');
-    expect(navigation).toContain(".public-mega-drawer");
-    expect(navigation).toContain("@media (max-width: 1120px)");
-    expect(navigation).toContain("prefers-reduced-motion");
-    expect(eventInformation).toContain(".event-information-page");
+
+    const buildCommand = process.platform === "win32"
+      ? { command: process.env.ComSpec || "cmd.exe", args: ["/d", "/s", "/c", "npm run build"] }
+      : { command: "npm", args: ["run", "build"] };
+    const result = spawnSync(buildCommand.command, buildCommand.args, {
+      cwd: webRoot,
+      encoding: "utf8"
+    });
+    expect(result.error).toBeUndefined();
+    expect(result.status, result.stderr || result.stdout).toBe(0);
+    expect(`${result.stdout}\n${result.stderr}`).not.toContain("Could not resolve");
+
+    const assets = resolve(webRoot, "dist", "assets");
+    const cssBundle = readdirSync(assets).find((file) => file.endsWith(".css"));
+    expect(cssBundle).toBeDefined();
+    const css = readFileSync(resolve(assets, cssBundle), "utf8");
+
+    expect(css).toContain(".public-mega-drawer{position:absolute");
+    expect(css).toContain("@media(max-width:1120px)");
+    expect(css).toContain("prefers-reduced-motion:reduce");
+    expect(css).toContain(".event-information-page{width:min(var(--content-max),calc(100% - 2.5rem))");
+    expect(css).toMatch(/\.public-mega-drawer-featured strong\{[^}]*min-width:0[^}]*overflow-wrap:anywhere/);
+    expect(css).toMatch(/\.event-information-facts dd\{[^}]*min-width:0[^}]*overflow-wrap:anywhere/);
   });
 
   it("executes the prebuild cleaner and removes a stale dist sentinel", () => {
