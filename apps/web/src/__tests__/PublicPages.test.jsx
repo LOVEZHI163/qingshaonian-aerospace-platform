@@ -604,6 +604,35 @@ describe("public content lists", () => {
 describe("public content detail and failures", () => {
   beforeEach(() => window.history.replaceState({}, "", "/content/safe-story"));
 
+  it("shows original attribution only for reposted content", async () => {
+    installApi({
+      "/api/public/content/safe-story": {
+        row: {
+          ...content("SAFE", "news", { slug: "safe-story", title: "转载新闻" }),
+          bodyHtml: "<p>正文</p>", attachments: [],
+          source: { name: "温州发布", author: "作者甲", url: "https://news.example.com/a", publishedAt: "2026-08-10T08:00:00.000Z" }
+        }
+      }
+    });
+    const { unmount } = render(<App />);
+    expect(await screen.findByText("来源：温州发布")).toBeInTheDocument();
+    expect(screen.getByText("作者：作者甲")).toBeInTheDocument();
+    expect(screen.getByText(/版权归原作者及原平台所有/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "查看原文" })).toHaveAttribute("href", "https://news.example.com/a");
+    expect(screen.getByRole("link", { name: "查看原文" })).toHaveAttribute("target", "_blank");
+    expect(screen.getByRole("link", { name: "查看原文" })).toHaveAttribute("rel", "noopener noreferrer");
+    unmount();
+
+    installApi({
+      "/api/public/content/safe-story": {
+        row: { ...content("SAFE", "news", { slug: "safe-story", title: "原创新闻" }), bodyHtml: "", attachments: [], source: null }
+      }
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "原创新闻" })).toBeInTheDocument();
+    expect(screen.queryByText(/版权归原作者及原平台所有/)).not.toBeInTheDocument();
+  });
+
   it("continues to fetch the public content detail API", async () => {
     const request = installApi({
       "/api/public/content/safe-story": {

@@ -81,6 +81,35 @@ test("public view builders preserve homepage, event and content shapes", () => {
   assert.equal(buildContentDetailView(source, "news-one", current).row.slug, "news-one");
 });
 
+test("public content detail exposes only a safe original-source DTO", () => {
+  const source = seededPublicSiteDb();
+  Object.assign(source.contentPosts[0], {
+    sourceName: "温州发布",
+    sourceAuthor: "作者甲",
+    sourceUrl: "https://news.example.com/article",
+    sourcePublishedAt: "2026-08-10T08:00:00.000Z",
+    sourceUrlFingerprint: "secret-fingerprint",
+    importedAt: "2026-08-11T08:00:00.000Z"
+  });
+  const current = new Date("2026-08-12T00:00:00.000Z");
+  const detail = buildContentDetailView(source, "news-one", current).row;
+  const summary = buildHomeView(source, current).news[0];
+
+  assert.deepEqual(detail.source, {
+    name: "温州发布",
+    author: "作者甲",
+    url: "https://news.example.com/article",
+    publishedAt: "2026-08-10T08:00:00.000Z"
+  });
+  assert.equal("sourceUrlFingerprint" in detail, false);
+  assert.equal("source" in summary, false);
+
+  source.contentPosts[0].sourceUrl = "javascript:alert(1)";
+  assert.equal(buildContentDetailView(source, "news-one", current).row.source, null);
+  delete source.contentPosts[0].sourceUrl;
+  assert.equal(buildContentDetailView(source, "news-one", current).row.source, null);
+});
+
 test("public content hides linked draft events but keeps platform content public", () => {
   const source = seededPublicSiteDb();
   const linked = source.contentPosts[0];

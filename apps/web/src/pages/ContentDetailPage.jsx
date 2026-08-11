@@ -73,6 +73,17 @@ export function ContentDetailView({ row, preview = false, canonicalPath = null }
               {row.eventSlug ? <a href={`/events/${encodeURIComponent(row.eventSlug)}`}>查看关联赛事</a> : null}
             </div>
           </header>
+          {row.source ? (
+            <aside className="content-source" aria-label="转载来源">
+              <div>
+                <strong>来源：{row.source.name || "原发布平台"}</strong>
+                {row.source.author ? <span>作者：{row.source.author}</span> : null}
+                {row.source.publishedAt ? <time dateTime={row.source.publishedAt}>原文发布时间：{formatDate(row.source.publishedAt)}</time> : null}
+              </div>
+              <a href={row.source.url} target="_blank" rel="noopener noreferrer">查看原文</a>
+              <p>本文转载自“{row.source.name || "原发布平台"}”，版权归原作者及原平台所有；如有侵权请联系删除。</p>
+            </aside>
+          ) : null}
           <div
             ref={bodyRef}
             className="rich-content"

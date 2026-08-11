@@ -103,8 +103,25 @@ function contentDetail(db, row, mediaOptions) {
   return {
     ...contentSummary(db, row, mediaOptions),
     bodyHtml: row.bodyHtml,
-    attachments: attachmentsFor(db, row.id, mediaOptions)
+    attachments: attachmentsFor(db, row.id, mediaOptions),
+    source: publicContentSource(row)
   };
+}
+
+function publicContentSource(row) {
+  if (!row?.sourceUrl) return null;
+  try {
+    const url = new URL(row.sourceUrl);
+    if (!["http:", "https:"].includes(url.protocol)) return null;
+    return {
+      name: String(row.sourceName || "").trim(),
+      author: String(row.sourceAuthor || "").trim(),
+      url: url.href,
+      publishedAt: row.sourcePublishedAt || null
+    };
+  } catch {
+    return null;
+  }
 }
 
 function publicRegistrationWindow(event, now) {
