@@ -7,9 +7,18 @@ describe("web build cleanup", () => {
   it("emits responsive navigation and event information rules in the production CSS bundle", () => {
     const webRoot = resolve(process.cwd());
     const styles = readFileSync(resolve(webRoot, "src", "styles.css"), "utf8");
+    const navigationStyles = readFileSync(resolve(webRoot, "src", "styles", "navigation.css"), "utf8");
+    const eventInformationStyles = readFileSync(resolve(webRoot, "src", "styles", "event-information.css"), "utf8");
 
     expect(styles).toContain('@import "./styles/navigation.css"');
     expect(styles).toContain('@import "./styles/event-information.css"');
+    expect(navigationStyles).not.toMatch(/\.mobile-brand-name\s*,\s*\.menu-trigger\s*\{[^}]*display:\s*none/);
+    expect(navigationStyles).toMatch(/\.menu-trigger\s*\{[^}]*display:\s*grid/);
+    expect(navigationStyles).toMatch(/@media\s*\(max-width:\s*1120px\)[\s\S]*\.public-mega-drawer-mobile-navigation\s*\{[^}]*display:\s*grid/);
+    expect(navigationStyles).toMatch(/\.public-mega-drawer-featured p\s*\{[^}]*min-width:\s*0[^}]*overflow-wrap:\s*anywhere/);
+    expect(eventInformationStyles).toMatch(/\.event-information-hero p\s*\{[^}]*min-width:\s*0[^}]*overflow-wrap:\s*anywhere/);
+    expect(eventInformationStyles).toMatch(/\.event-information-contact\s*\{[^}]*min-width:\s*0[^}]*overflow-wrap:\s*anywhere/);
+    expect(eventInformationStyles).toMatch(/\.event-information-sections li\s*\{[^}]*min-width:\s*0[^}]*overflow-wrap:\s*anywhere/);
 
     const buildCommand = process.platform === "win32"
       ? { command: process.env.ComSpec || "cmd.exe", args: ["/d", "/s", "/c", "npm run build"] }

@@ -6,21 +6,32 @@ import { eventScopedPath, publicEventOptions, selectedPublicEvent } from "../lib
 
 export default function EventInformationPage({ section, homeData, homeStatus, location }) {
   const event = selectedPublicEvent(homeData, location);
+  const [detailAttempt, setDetailAttempt] = useState(0);
   const [detailState, setDetailState] = useState({ slug: null, status: "idle", data: null });
 
   useEffect(() => {
     if (!event?.slug) return undefined;
     const controller = new AbortController();
+    let current = true;
     setDetailState({ slug: event.slug, status: "loading", data: null });
     fetchJson(`/api/public/events/${encodeURIComponent(event.slug)}`, { signal: controller.signal })
-      .then((data) => setDetailState({ slug: event.slug, status: "success", data }))
+      .then((data) => {
+        if (current) setDetailState({ slug: event.slug, status: "success", data });
+      })
       .catch((error) => {
-        if (error?.name !== "AbortError") setDetailState({ slug: event.slug, status: "error", data: null });
+        if (current && error?.name !== "AbortError") {
+          setDetailState({ slug: event.slug, status: "error", data: null });
+        }
       });
-    return () => controller.abort();
-  }, [event?.slug]);
+    return () => {
+      current = false;
+      controller.abort();
+    };
+  }, [detailAttempt, event?.slug]);
 
-  const detail = detailState.slug === event?.slug ? detailState.data : null;
+  const detailIsCurrent = detailState.slug === event?.slug;
+  const detail = detailIsCurrent ? detailState.data : null;
+  const detailStatus = detailIsCurrent ? detailState.status : "idle";
   const model = useMemo(
     () => buildPublicEventContent(section, { event, detail, site: homeData?.site }),
     [section, event, detail, homeData?.site]
@@ -53,15 +64,37 @@ export default function EventInformationPage({ section, homeData, homeStatus, lo
           {model.facts.map(({ label, value }) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}
         </dl>
       ) : null}
-      {homeStatus === "loading" || (detailState.status === "loading" && section === "projects") ? (
+      {homeStatus === "loading" || (detailStatus === "loading" && section === "projects") ? (
         <p role="status">正在加载赛事信息…</p>
+      ) : null}
+      {detailStatus === "error" ? (
+        <div className="event-information-error" role="alert">
+          <p>暂时无法加载赛事详情，请稍后重试。</p>
+          <button type="button" onClick={() => setDetailAttempt((value) => value + 1)}>重新加载</button>
+        </div>
       ) : null}
       <div className="event-information-sections">
         {model.sections.map((item) => (
           <article key={item.heading}>
             <h2>{item.heading}</h2>
             {(item.paragraphs || []).map((paragraph) => <p key={paragraph}>{paragraph}</p>)}
-            {item.items ? <ul>{item.items.map((row) => <li key={row.id}>{row.name}</li>)}</ul> : null}
+            {item.contact ? (
+              <div className="event-information-contact">
+                {item.contact.name ? <p>联系人：{item.contact.name}</p> : null}
+                {item.contact.phones.length ? (
+                  <p>
+                    联系电话：
+                    {item.contact.phones.map((phone, index) => (
+                      <React.Fragment key={phone.href}>
+                        {index ? " / " : ""}
+                        <a href={phone.href}>{phone.label}</a>
+                      </React.Fragment>
+                    ))}
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
+            {item.items?.length ? <ul>{item.items.map((row) => <li key={row.id}>{row.name}</li>)}</ul> : null}
           </article>
         ))}
       </div>

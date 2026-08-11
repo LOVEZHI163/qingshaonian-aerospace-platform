@@ -2,12 +2,14 @@ import React, { useEffect, useRef, useState } from "react";
 import PublicMegaDrawer from "./PublicMegaDrawer.jsx";
 import {
   accountEntry,
+  activePrimaryNavigationLabel,
   eventScopedPath,
   publicEventOptions,
   selectedPublicEvent
 } from "../lib/public-navigation.js";
 
 const BRAND_NAME = "温州市青少年航空航天创新比赛";
+const MOBILE_BRAND_NAME = "温州少航";
 const MOBILE_NAVIGATION_QUERY = "(max-width: 1120px)";
 const HOVER_NAVIGATION_QUERY = "(hover: hover) and (pointer: fine)";
 
@@ -19,12 +21,9 @@ export default function SiteHeader({ routeKey, homeData, homeStatus }) {
   const navigationZoneRef = useRef(null);
   const closeTimerRef = useRef(null);
   const focusDrawerOnOpenRef = useRef(false);
-  const currentPath = (() => {
-    try { return new URL(routeKey || "/", window.location.origin).pathname; }
-    catch { return "/"; }
-  })();
   const events = publicEventOptions(homeData);
   const activeEvent = selectedPublicEvent(homeData, routeKey);
+  const activePrimaryLabel = activePrimaryNavigationLabel(routeKey);
   const primaryLinks = [
     { label: "首页", href: "/" },
     { label: "关于大赛", href: eventScopedPath("/about", activeEvent) },
@@ -157,6 +156,7 @@ export default function SiteHeader({ routeKey, homeData, homeStatus }) {
           <img className="brand-mark" src="/brand/mark.svg" alt="" />
           <img className="brand-wordmark" src="/brand/wordmark.svg" alt={BRAND_NAME} />
         </a>
+        <p className="mobile-brand-name">{MOBILE_BRAND_NAME}</p>
 
         <button
           ref={menuButtonRef}
@@ -172,7 +172,6 @@ export default function SiteHeader({ routeKey, homeData, homeStatus }) {
         </button>
 
         <div id="site-navigation" className="site-navigation" data-open={menuOpen || undefined}>
-          <p className="mobile-brand-name">{BRAND_NAME}</p>
           <div className="header-actions">
             <a className="login-link" href="/admin/" data-router-ignore="true" onClick={closeMenu}>用户登录</a>
           </div>
@@ -182,7 +181,7 @@ export default function SiteHeader({ routeKey, homeData, homeStatus }) {
                 className={link.label === "报名入口" ? "registration-link" : undefined}
                 href={link.href}
                 data-router-ignore={link.routerIgnore ? "true" : undefined}
-                aria-current={currentPath === new URL(link.href, window.location.origin).pathname ? "page" : undefined}
+                aria-current={activePrimaryLabel === link.label ? "page" : undefined}
                 key={link.label}
                 onClick={closeMenu}
               >
@@ -197,6 +196,8 @@ export default function SiteHeader({ routeKey, homeData, homeStatus }) {
         activeEvent={activeEvent}
         events={events}
         currentPath={routeKey || "/"}
+        primaryLinks={primaryLinks}
+        activePrimaryLabel={activePrimaryLabel}
         onClose={closeMenu}
       />
     </header>

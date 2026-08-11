@@ -24,7 +24,15 @@ function normalizedDrawerLocation(location) {
   }
 }
 
-export default function PublicMegaDrawer({ open, activeEvent, events, currentPath, onClose }) {
+export default function PublicMegaDrawer({
+  open,
+  activeEvent,
+  events,
+  currentPath,
+  primaryLinks = [],
+  activePrimaryLabel,
+  onClose
+}) {
   const [mounted, setMounted] = useState(open);
   const [visible, setVisible] = useState(open);
   const animationFrameRef = useRef(null);
@@ -89,7 +97,7 @@ export default function PublicMegaDrawer({ open, activeEvent, events, currentPat
       style={{ "--drawer-transition-duration": `${DRAWER_TRANSITION_MS}ms` }}
     >
       <div className="public-mega-drawer-inner">
-        <nav aria-label="赛事导航">
+        <nav className="public-mega-drawer-main-navigation" aria-label="赛事导航">
           {PUBLIC_NAVIGATION_GROUPS.map((group) => (
             <section className="public-mega-drawer-group" key={group.label}>
               <h2>{group.label}</h2>
@@ -113,6 +121,22 @@ export default function PublicMegaDrawer({ open, activeEvent, events, currentPat
             </section>
           ))}
         </nav>
+        <div className="public-mega-drawer-mobile-navigation">
+          <nav aria-label="移动端主导航">
+            <a href="/admin/" data-router-ignore="true" onClick={onClose}>用户登录</a>
+            {primaryLinks.map((link) => (
+              <a
+                href={link.href}
+                data-router-ignore={link.routerIgnore ? "true" : undefined}
+                aria-current={activePrimaryLabel === link.label ? "page" : undefined}
+                key={link.label}
+                onClick={onClose}
+              >
+                {link.label}
+              </a>
+            ))}
+          </nav>
+        </div>
         <aside className="public-mega-drawer-featured">
           <p>{theme}</p>
           <strong>{activeEvent?.name || "温州少航赛事平台"}</strong>

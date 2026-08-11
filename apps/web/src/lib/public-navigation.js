@@ -28,6 +28,29 @@ export const PUBLIC_NAVIGATION_GROUPS = [
   }
 ];
 
+const ABOUT_ROUTES = new Set([
+  "/about",
+  "/rules",
+  "/registration-process",
+  "/registration-guide",
+  "/projects",
+  "/contact"
+]);
+const NEWS_ROUTES = new Set(["/announcements", "/news", "/history"]);
+
+export function activePrimaryNavigationLabel(location) {
+  let pathname;
+  try {
+    pathname = new URL(location || "/", window.location.origin).pathname;
+  } catch {
+    return null;
+  }
+  if (pathname === "/") return "首页";
+  if (ABOUT_ROUTES.has(pathname)) return "关于大赛";
+  if (NEWS_ROUTES.has(pathname)) return "赛事资讯";
+  return null;
+}
+
 export function publicEventOptions(homeData = {}) {
   homeData ||= {};
   const seen = new Set();

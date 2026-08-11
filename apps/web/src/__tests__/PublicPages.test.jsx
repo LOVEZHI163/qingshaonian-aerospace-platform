@@ -1,6 +1,6 @@
 import React from "react";
 import { readFileSync } from "node:fs";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import App from "../App.jsx";
@@ -96,6 +96,16 @@ function installApi(routes, bootstrap = home()) {
   });
   vi.stubGlobal("fetch", request);
   return request;
+}
+
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
 }
 
 describe("public event page", () => {
@@ -266,6 +276,137 @@ describe("public event information page", () => {
       "/api/public/events/summer-cup",
       expect.objectContaining({ signal: expect.any(AbortSignal) })
     );
+  });
+
+  it("switches from event A to event B through the projects switcher and removes A projects", async () => {
+    const eventA = event({ id: "EVENT-A", slug: "event-a", name: "赛事 A" });
+    const eventB = event({ id: "EVENT-B", slug: "event-b", name: "赛事 B" });
+    const request = installApi({
+      "/api/public/events/event-a": {
+        event: eventA,
+        projects: [{ id: "PROJECT-A", name: "A 专属赛项" }],
+        groups: [], resources: [], content: []
+      },
+      "/api/public/events/event-b": {
+        event: eventB,
+        projects: [{ id: "PROJECT-B", name: "B 专属赛项" }],
+        groups: [], resources: [], content: []
+      }
+    }, home({ featuredEvent: eventA, concurrentEvents: [eventB] }));
+
+    render(<App />);
+    expect(await screen.findByText("A 专属赛项")).toBeInTheDocument();
+    fireEvent.click(within(screen.getByRole("navigation", { name: "切换公开赛事" })).getByRole("link", { name: "赛事 B" }));
+
+    expect(await screen.findByText("B 专属赛项")).toBeInTheDocument();
+    expect(screen.queryByText("A 专属赛项")).not.toBeInTheDocument();
+    expect(window.location.pathname).toBe("/projects");
+    expect(window.location.search).toBe("?event=event-b");
+    expect(request).toHaveBeenCalledWith(
+      "/api/public/events/event-b",
+      expect.objectContaining({ signal: expect.any(AbortSignal) })
+    );
+  });
+
+  it("ignores an event A response that arrives after event B has rendered", async () => {
+    const eventA = event({ id: "EVENT-A", slug: "event-a", name: "赛事 A" });
+    const eventB = event({ id: "EVENT-B", slug: "event-b", name: "赛事 B" });
+    const eventAResponse = deferred();
+    const eventBResponse = deferred();
+    const request = vi.fn(async (url) => {
+      if (url === "/api/public/home") {
+        return jsonResponse(home({ featuredEvent: eventA, concurrentEvents: [eventB] }));
+      }
+      if (url === "/api/public/events/event-a") return eventAResponse.promise;
+      if (url === "/api/public/events/event-b") return eventBResponse.promise;
+      return jsonResponse({ error: "not found" }, 404);
+    });
+    vi.stubGlobal("fetch", request);
+
+    render(<App />);
+    await waitFor(() => expect(request).toHaveBeenCalledWith(
+      "/api/public/events/event-a",
+      expect.objectContaining({ signal: expect.any(AbortSignal) })
+    ));
+    fireEvent.click(within(screen.getByRole("navigation", { name: "切换公开赛事" })).getByRole("link", { name: "赛事 B" }));
+    await waitFor(() => expect(request).toHaveBeenCalledWith(
+      "/api/public/events/event-b",
+      expect.objectContaining({ signal: expect.any(AbortSignal) })
+    ));
+
+    await act(async () => {
+      eventBResponse.resolve(jsonResponse({
+        event: eventB,
+        projects: [{ id: "PROJECT-B", name: "B 乱序赛项" }],
+        groups: [], resources: [], content: []
+      }));
+    });
+    expect(await screen.findByText("B 乱序赛项")).toBeInTheDocument();
+
+    await act(async () => {
+      eventAResponse.resolve(jsonResponse({
+        event: eventA,
+        projects: [{ id: "PROJECT-A", name: "A 迟到赛项" }],
+        groups: [], resources: [], content: []
+      }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(screen.getByText("B 乱序赛项")).toBeInTheDocument();
+    expect(screen.queryByText("A 迟到赛项")).not.toBeInTheDocument();
+  });
+
+  it("shows a friendly retry state for detail failures without empty project cards", async () => {
+    const summerCup = event({ id: "SUMMER", slug: "summer-cup", name: "暑期航空挑战赛" });
+    let detailAttempts = 0;
+    const request = installApi({
+      "/api/public/events/summer-cup": () => {
+        detailAttempts += 1;
+        if (detailAttempts === 1) return jsonResponse({ message: "SQL connection refused" }, 500);
+        return jsonResponse({
+          event: summerCup,
+          projects: [{ id: "RETRY-PROJECT", name: "重试后赛项" }],
+          groups: [], resources: [], content: []
+        });
+      }
+    }, home({ featuredEvent: summerCup }));
+
+    render(<App />);
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("暂时无法加载赛事详情，请稍后重试。");
+    expect(alert).not.toHaveTextContent("SQL");
+    expect(screen.queryByRole("heading", { name: "赛事项目" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "参赛组别" })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "重新加载" }));
+    expect(await screen.findByText("重试后赛项")).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(detailAttempts).toBe(2);
+    expect(request).toHaveBeenCalledWith(
+      "/api/public/events/summer-cup",
+      expect.objectContaining({ signal: expect.any(AbortSignal) })
+    );
+  });
+
+  it("renders generic event phone numbers as dial links while preserving the contact name", async () => {
+    window.history.replaceState({}, "", "/contact");
+    const summerCup = event({
+      id: "SUMMER",
+      slug: "summer-cup",
+      name: "暑期航空挑战赛",
+      contact: "赛事组委会 0577-12345678 / 138 0013 8000"
+    });
+    installApi({
+      "/api/public/events/summer-cup": {
+        event: summerCup, projects: [], groups: [], resources: [], content: []
+      }
+    }, home({ featuredEvent: summerCup }));
+
+    render(<App />);
+
+    expect(await screen.findByText("联系人：赛事组委会")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "0577-12345678" })).toHaveAttribute("href", "tel:057712345678");
+    expect(screen.getByRole("link", { name: "138 0013 8000" })).toHaveAttribute("href", "tel:13800138000");
   });
 });
 

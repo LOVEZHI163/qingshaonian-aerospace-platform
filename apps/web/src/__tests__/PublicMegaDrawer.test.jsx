@@ -154,6 +154,40 @@ describe("public mega drawer interactions", () => {
     expect(trigger).toHaveAttribute("aria-expanded", "false");
   });
 
+  it("keeps the desktop trigger keyboard-operable and restores its focus after Escape", () => {
+    installMatchMedia({ mobile: false });
+    render(<SiteHeader routeKey="/" homeData={home} homeStatus="success" />);
+    const trigger = screen.getByRole("button", { name: "打开赛事导航" });
+
+    fireEvent.keyDown(trigger, { key: "Enter", code: "Enter" });
+    expect(within(screen.getByRole("navigation", { name: "赛事导航" })).getAllByRole("link")[0]).toHaveFocus();
+
+    fireEvent.keyDown(document, { key: "Escape", code: "Escape" });
+    expect(trigger).toHaveFocus();
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("places the complete primary navigation, login and short brand in the mobile drawer", () => {
+    installMatchMedia({ mobile: true });
+    render(<SiteHeader routeKey="/projects" homeData={home} homeStatus="success" />);
+
+    fireEvent.click(screen.getByRole("button", { name: "打开赛事导航" }));
+    expect(screen.getByText("温州少航")).toBeInTheDocument();
+    const mobileNavigation = screen.getByRole("navigation", { name: "移动端主导航" });
+    expect(within(mobileNavigation).getAllByRole("link").map((link) => link.textContent)).toEqual([
+      "用户登录",
+      "首页",
+      "关于大赛",
+      "赛事资讯",
+      "获奖查询",
+      "联系我们",
+      "报名入口"
+    ]);
+    expect(within(mobileNavigation).getByRole("link", { name: "用户登录" })).toHaveAttribute("href", "/admin/");
+    expect(within(mobileNavigation).getByRole("link", { name: "用户登录" })).toHaveAttribute("data-router-ignore", "true");
+    expect(within(mobileNavigation).getByRole("link", { name: "关于大赛" })).toHaveAttribute("aria-current", "page");
+  });
+
   it("keeps the drawer mounted and inaccessible until the closing transition completes", () => {
     vi.useFakeTimers();
     installMatchMedia();

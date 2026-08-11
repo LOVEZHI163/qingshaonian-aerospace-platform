@@ -71,6 +71,24 @@ describe("public site keyboard and semantics", () => {
     expect(await screen.findByRole("heading", { name: "动态与优秀作品" })).toBeInTheDocument();
   });
 
+  it.each([
+    ["/", "首页"],
+    ["/about", "关于大赛"],
+    ["/rules", "关于大赛"],
+    ["/registration-process", "关于大赛"],
+    ["/projects", "关于大赛"],
+    ["/contact", "关于大赛"],
+    ["/announcements", "赛事资讯"],
+    ["/news", "赛事资讯"],
+    ["/history", "赛事资讯"]
+  ])("marks the route family for %s as %s", (path, label) => {
+    render(<SiteHeader routeKey={path} homeData={{}} homeStatus="empty" />);
+    const primaryNavigation = screen.getByRole("navigation", { name: "主导航" });
+
+    expect(within(primaryNavigation).getByRole("link", { name: label })).toHaveAttribute("aria-current", "page");
+    expect(within(primaryNavigation).getAllByRole("link").filter((link) => link.hasAttribute("aria-current"))).toHaveLength(1);
+  });
+
   it("moves focus into the opened mobile menu and returns it after Escape", () => {
     render(<App />);
     const trigger = screen.getByRole("button", { name: "打开赛事导航" });
@@ -89,8 +107,9 @@ describe("public site keyboard and semantics", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "打开赛事导航" }));
 
-    const login = screen.getByRole("link", { name: "用户登录" });
-    const registration = within(screen.getByRole("navigation", { name: "主导航" })).getByRole("link", { name: "报名入口" });
+    const mobileNavigation = screen.getByRole("navigation", { name: "移动端主导航" });
+    const login = within(mobileNavigation).getByRole("link", { name: "用户登录" });
+    const registration = within(mobileNavigation).getByRole("link", { name: "报名入口" });
     expect(login).toHaveAttribute("href", "/admin/");
     expect(login).toHaveAttribute("data-router-ignore", "true");
     expect(registration).toHaveAttribute("href", "/admin/?view=eventCenter");
