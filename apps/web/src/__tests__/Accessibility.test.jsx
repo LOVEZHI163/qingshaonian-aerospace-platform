@@ -52,6 +52,7 @@ describe("public site keyboard and semantics", () => {
     render(<App />);
 
     expect(screen.getByRole("link", { name: "跳到主要内容" })).toHaveAttribute("href", "#main-content");
+    expect(document.getElementById("public-mega-drawer")).toHaveAttribute("hidden");
     const primaryNavigation = screen.getByRole("navigation", { name: "主导航" });
     expect(within(primaryNavigation).getByRole("link", { name: "赛事资讯" })).toHaveAttribute("aria-current", "page");
     expect(screen.getByRole("link", { name: "用户登录" })).toHaveAttribute("href", "/admin/");

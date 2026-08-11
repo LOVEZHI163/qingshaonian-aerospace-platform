@@ -9,6 +9,7 @@ import {
 
 const BRAND_NAME = "温州市青少年航空航天创新比赛";
 const MOBILE_NAVIGATION_QUERY = "(max-width: 1120px)";
+const HOVER_NAVIGATION_QUERY = "(hover: hover) and (pointer: fine)";
 
 export default function SiteHeader({ routeKey, homeData, homeStatus }) {
   const [hoverOpen, setHoverOpen] = useState(false);
@@ -43,6 +44,7 @@ export default function SiteHeader({ routeKey, homeData, homeStatus }) {
     setLockedOpen(false);
   };
   const openFromHover = () => {
+    if (!window.matchMedia?.(HOVER_NAVIGATION_QUERY).matches) return;
     cancelClose();
     setHoverOpen(true);
   };
@@ -82,23 +84,34 @@ export default function SiteHeader({ routeKey, homeData, homeStatus }) {
   }, [menuOpen]);
 
   useEffect(() => {
-    if (!menuOpen || !window.matchMedia?.(MOBILE_NAVIGATION_QUERY).matches) return undefined;
+    if (!menuOpen) return undefined;
+    const mediaQuery = window.matchMedia?.(MOBILE_NAVIGATION_QUERY);
+    if (!mediaQuery) return undefined;
     const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => { document.body.style.overflow = previousOverflow; };
+    const syncBodyScroll = () => {
+      document.body.style.overflow = mediaQuery.matches ? "hidden" : previousOverflow;
+    };
+    syncBodyScroll();
+    mediaQuery.addEventListener?.("change", syncBodyScroll);
+    return () => {
+      mediaQuery.removeEventListener?.("change", syncBodyScroll);
+      document.body.style.overflow = previousOverflow;
+    };
   }, [menuOpen]);
 
   useEffect(() => () => cancelClose(), []);
 
   const toggleLockedOpen = () => {
-    if (!lockedOpen) {
-      if (menuOpen) {
-        navigationZoneRef.current?.querySelector("#public-mega-drawer a[href]")?.focus();
-      } else {
-        focusDrawerOnOpenRef.current = true;
-      }
+    if (lockedOpen) {
+      closeMenu();
+      return;
     }
-    setLockedOpen((open) => !open);
+    if (menuOpen) {
+      navigationZoneRef.current?.querySelector("#public-mega-drawer a[href]")?.focus();
+    } else {
+      focusDrawerOnOpenRef.current = true;
+    }
+    setLockedOpen(true);
   };
 
   return (
@@ -120,7 +133,7 @@ export default function SiteHeader({ routeKey, homeData, homeStatus }) {
           ref={menuButtonRef}
           className="menu-trigger"
           type="button"
-          aria-label={menuOpen ? "关闭赛事导航" : "打开赛事导航"}
+          aria-label={lockedOpen ? "关闭赛事导航" : hoverOpen ? "固定赛事导航" : "打开赛事导航"}
           aria-expanded={menuOpen}
           aria-controls="public-mega-drawer"
           onClick={toggleLockedOpen}
@@ -153,7 +166,7 @@ export default function SiteHeader({ routeKey, homeData, homeStatus }) {
         open={menuOpen}
         activeEvent={activeEvent}
         events={events}
-        currentPath={currentPath}
+        currentPath={routeKey || "/"}
         onClose={closeMenu}
       />
     </header>
