@@ -131,6 +131,27 @@ describe("public mega drawer interactions", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "关闭赛事导航" }));
     expect(drawer).toHaveAttribute("hidden");
+    expect(drawer).toHaveAttribute("aria-hidden", "true");
+    expect(drawer).toHaveAttribute("inert");
+  });
+
+  it("opens with Enter, advances through drawer links with Tab, and restores the trigger after Escape", () => {
+    installMatchMedia({ mobile: true });
+    render(<SiteHeader routeKey="/" homeData={home} homeStatus="success" />);
+    const trigger = screen.getByRole("button", { name: "打开赛事导航" });
+
+    fireEvent.keyDown(trigger, { key: "Enter", code: "Enter" });
+    const links = within(screen.getByRole("navigation", { name: "赛事导航" })).getAllByRole("link");
+    expect(links[0]).toHaveFocus();
+
+    fireEvent.keyDown(document, { key: "Tab", code: "Tab" });
+    expect(links[1]).toHaveFocus();
+    fireEvent.keyDown(document, { key: "Tab", code: "Tab" });
+    expect(links[2]).toHaveFocus();
+
+    fireEvent.keyDown(document, { key: "Escape", code: "Escape" });
+    expect(trigger).toHaveFocus();
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
   });
 
   it("keeps the drawer mounted and inaccessible until the closing transition completes", () => {

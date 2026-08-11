@@ -62,14 +62,37 @@ export default function SiteHeader({ routeKey, homeData, homeStatus }) {
 
   useEffect(() => {
     if (!menuOpen) return undefined;
+    let focusFrame = null;
     if (focusDrawerOnOpenRef.current) {
       focusDrawerOnOpenRef.current = false;
-      navigationZoneRef.current?.querySelector("#public-mega-drawer a[href]")?.focus();
+      const focusFirstDrawerLink = () => {
+        navigationZoneRef.current?.querySelector("#public-mega-drawer a[href]")?.focus();
+      };
+      focusFirstDrawerLink();
+      if (document.activeElement === menuButtonRef.current) {
+        focusFrame = window.requestAnimationFrame?.(focusFirstDrawerLink) ?? null;
+      }
     }
     const handleKeyDown = (event) => {
-      if (event.key !== "Escape") return;
-      closeMenu();
-      menuButtonRef.current?.focus();
+      if (event.key === "Escape") {
+        closeMenu();
+        menuButtonRef.current?.focus();
+        return;
+      }
+      if (event.key !== "Tab" || !window.matchMedia?.(MOBILE_NAVIGATION_QUERY).matches) return;
+      const drawerLinks = navigationZoneRef.current?.querySelectorAll("#public-mega-drawer a[href]") || [];
+      const focusable = [
+        menuButtonRef.current,
+        ...drawerLinks
+      ].filter(Boolean);
+      if (!focusable.length) return;
+      const currentIndex = focusable.indexOf(document.activeElement);
+      const direction = event.shiftKey ? -1 : 1;
+      const nextIndex = currentIndex < 0
+        ? (event.shiftKey ? focusable.length - 1 : 0)
+        : (currentIndex + direction + focusable.length) % focusable.length;
+      event.preventDefault();
+      focusable[nextIndex].focus();
     };
     const handlePointerDown = (event) => {
       if (navigationZoneRef.current?.contains(event.target)) return;
@@ -78,6 +101,7 @@ export default function SiteHeader({ routeKey, homeData, homeStatus }) {
     document.addEventListener("keydown", handleKeyDown);
     document.addEventListener("pointerdown", handlePointerDown);
     return () => {
+      if (focusFrame !== null) window.cancelAnimationFrame?.(focusFrame);
       document.removeEventListener("keydown", handleKeyDown);
       document.removeEventListener("pointerdown", handlePointerDown);
     };
@@ -113,6 +137,11 @@ export default function SiteHeader({ routeKey, homeData, homeStatus }) {
     }
     setLockedOpen(true);
   };
+  const handleMenuButtonKeyDown = (event) => {
+    if (event.repeat || (event.key !== "Enter" && event.key !== " ")) return;
+    event.preventDefault();
+    toggleLockedOpen();
+  };
 
   return (
     <header
@@ -137,6 +166,7 @@ export default function SiteHeader({ routeKey, homeData, homeStatus }) {
           aria-expanded={menuOpen}
           aria-controls="public-mega-drawer"
           onClick={toggleLockedOpen}
+          onKeyDown={handleMenuButtonKeyDown}
         >
           <span aria-hidden="true">{menuOpen ? "×" : "☰"}</span>
         </button>
