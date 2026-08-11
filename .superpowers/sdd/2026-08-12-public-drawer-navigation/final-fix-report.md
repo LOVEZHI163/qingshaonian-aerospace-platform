@@ -220,3 +220,10 @@ git diff --check
 - `/contact → 关于大赛` 按本次终审明文路由族契约保留；未采纳与该契约相反的自审建议。
 - 响应式重复导航由生产 CSS 在互斥断点显示；关闭抽屉继续使用 `hidden`、`inert`、`aria-hidden`。
 - 未解决项：无。
+
+## 最终验证稳定性补丁
+
+- RED：`BuildClean.test.js` 的真实生产 build 用例沿用 Vitest 默认 5000ms；完整套件耗时 7875ms、单独复现耗时 5052ms，均仅因测试超时失败，构建断言没有失败。
+- 最小修复：只为该重型用例设置 `{ timeout: 30_000 }`，未提高全局超时，第二个轻量 cleaner 用例保持不变，生产代码未改动。
+- GREEN（单用例）：`npm test -w apps/web -- --run src/__tests__/BuildClean.test.js -t "emits responsive navigation and event information rules in the production CSS bundle"` → 1 passed / 1 skipped，退出码 0。
+- GREEN（完整 Web）：`npm test -w apps/web -- --run` → 10 files / 186 tests passed，退出码 0。

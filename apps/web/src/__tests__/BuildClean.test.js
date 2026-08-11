@@ -4,7 +4,7 @@ import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 
 describe("web build cleanup", () => {
-  it("emits responsive navigation and event information rules in the production CSS bundle", () => {
+  it("emits responsive navigation and event information rules in the production CSS bundle", { timeout: 30_000 }, () => {
     const webRoot = resolve(process.cwd());
     const styles = readFileSync(resolve(webRoot, "src", "styles.css"), "utf8");
     const navigationStyles = readFileSync(resolve(webRoot, "src", "styles", "navigation.css"), "utf8");
