@@ -15,6 +15,11 @@ describe("public navigation model", () => {
     expect(publicEventOptions(home).map((row) => row.id)).toEqual(["E1", "E2"]);
   });
 
+  it("falls back safely when the homepage data is null", () => {
+    expect(publicEventOptions(null)).toEqual([]);
+    expect(selectedPublicEvent(null, "https://aerogp.cn/about")).toBeNull();
+  });
+
   it("uses the requested public event and falls back from a stale slug", () => {
     expect(selectedPublicEvent(home, "https://aerogp.cn/about?event=second")).toEqual(second);
     expect(selectedPublicEvent(home, "https://aerogp.cn/about?event=deleted")).toEqual(featured);

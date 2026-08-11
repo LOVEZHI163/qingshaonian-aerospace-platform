@@ -29,6 +29,7 @@ export const PUBLIC_NAVIGATION_GROUPS = [
 ];
 
 export function publicEventOptions(homeData = {}) {
+  homeData ||= {};
   const seen = new Set();
   return [homeData.featuredEvent, ...(homeData.concurrentEvents || [])].filter((event) => {
     if (!event?.id || !event.slug || seen.has(event.id)) return false;
