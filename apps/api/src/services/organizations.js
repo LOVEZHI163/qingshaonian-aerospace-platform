@@ -1,6 +1,7 @@
 import { deletePrivateFile, readPrivateFile, savePrivateFile } from "../files/storage.js";
 import { validateUpload } from "../files/policy.js";
 import { cleanupPathIsReferenced } from "../files/cleanup-references.js";
+import { deleteStagedImportCleanupTarget } from "../files/site-content-import-storage.js";
 
 export const DOCUMENT_TYPES = new Set([
   "business_license",
@@ -243,6 +244,7 @@ export async function resubmitOrganization({ input, file, userId, readDb, writeD
 export async function replayFileCleanupJournal({
   store,
   removePrivateFile = deletePrivateFile,
+  removeImportStaging = deleteStagedImportCleanupTarget,
   now = () => new Date().toISOString(),
   markerIds = null,
   alreadyLocked = false
@@ -262,7 +264,11 @@ export async function replayFileCleanupJournal({
         continue;
       }
       try {
-        await removePrivateFile(marker);
+        if (marker.category === "site-content-import-staging") {
+          await removeImportStaging({ filePath: marker.filePath });
+        } else {
+          await removePrivateFile(marker);
+        }
         db.fileCleanupJournal = db.fileCleanupJournal.filter((row) => row.id !== marker.id);
         removed += 1;
         changed = true;

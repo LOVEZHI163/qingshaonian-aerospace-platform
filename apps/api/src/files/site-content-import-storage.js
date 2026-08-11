@@ -156,3 +156,23 @@ export async function deleteStagedImportBatch({ batchId, fileSystem = fs }) {
     throw error;
   }
 }
+
+export async function deleteStagedImportCleanupTarget({ filePath, fileSystem = fs }) {
+  const root = uploadRoot();
+  const parent = stagingParent();
+  const target = path.resolve(String(filePath || ""));
+  assertInside(parent, target, "Cleanup target escapes imported-content staging");
+  try {
+    await fileSystem.lstat(target);
+  } catch (error) {
+    if (error?.code === "ENOENT") return;
+    throw error;
+  }
+  await assertNoSymlinks(root, target, fileSystem);
+  const [realRoot, realParent, realTarget] = await Promise.all([
+    fileSystem.realpath(root), fileSystem.realpath(parent), fileSystem.realpath(target)
+  ]);
+  assertInside(realRoot, realParent, "Imported-content staging parent escapes upload root");
+  assertInside(realParent, realTarget, "Cleanup target escapes imported-content staging");
+  await fileSystem.rm(realTarget, { recursive: true, force: false });
+}

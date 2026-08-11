@@ -95,6 +95,8 @@ test("inspects a normalized source, persists an owned batch, and reports storage
   assert.equal(batch.images[0].status, "ready");
   assert.equal(batch.warnings.some((warning) => warning.code === "IMPORT_STORAGE_WARNING"), true);
   assert.equal(deps.store.value().siteContentImportBatches.length, 1);
+  assert.equal(deps.store.value().auditLogs.at(-1).action, "content.import.inspect");
+  assert.equal(deps.store.value().auditLogs.at(-1).actorUserId, "ADMIN");
 });
 
 test("rejects duplicate source fingerprints before and after fetching", async () => {
@@ -159,6 +161,7 @@ test("enforces batch ownership and expiry while deleting or retrying only the se
   assert.equal(deps.store.value().siteContentImportBatches[0].images[1].status, "failed");
   await retryContentImportImage(deps, { adminId: "ADMIN", batchId: "SCI-1", imageId: "IMG2" });
   assert.equal(deps.store.value().siteContentImportBatches[0].images[1].status, "ready");
+  assert.deepEqual(deps.store.value().auditLogs.map((row) => row.action), ["content.import.image-retry", "content.import.image-delete"]);
 
   const expiredDb = deps.store.value();
   expiredDb.siteContentImportBatches[0].expiresAt = "2026-08-10T23:59:00.000Z";
@@ -199,6 +202,52 @@ test("expires ready batches and removes their staging directories", async () => 
   );
   const deps = dependencies({ store: memoryStore(db) });
   assert.deepEqual(await expireContentImportBatches(deps), ["OLD"]);
-  assert.equal(deps.store.value().siteContentImportBatches.find((batch) => batch.id === "OLD").status, "expired");
+  assert.equal(deps.store.value().siteContentImportBatches.some((batch) => batch.id === "OLD"), false);
+  assert.equal(deps.store.value().auditLogs.at(-1).action, "content.import.expire");
+  assert.equal(deps.store.value().auditLogs.at(-1).actorUserId, "system");
   assert.deepEqual(deps._deleted, ["batch:OLD"]);
+});
+
+test("cancel audits the administrator and journals staging cleanup failures", async () => {
+  const deps = dependencies({
+    stagedStorage: {
+      save: async () => ({ stagePath: "/staging/image" }),
+      read: async () => Buffer.from("png"),
+      deleteImage: async () => {},
+      deleteBatch: async ({ batchId }) => {
+        const error = new Error("disk busy");
+        error.cleanupTarget = { filePath: `/uploads/site-content-import-staging/${batchId}` };
+        throw error;
+      }
+    }
+  });
+  const batch = await inspectContentImport(deps, { adminId: "ADMIN", sourceUrl: "https://news.example.test/cancel" });
+  const cancelled = await cancelContentImport(deps, { adminId: "ADMIN", batchId: batch.id });
+  const snapshot = deps.store.value();
+
+  assert.equal(cancelled.status, "cancelled");
+  assert.equal(snapshot.auditLogs[0].action, "content.import.cancel");
+  assert.equal(snapshot.auditLogs[0].actorUserId, "ADMIN");
+  assert.equal(snapshot.fileCleanupJournal[0].category, "site-content-import-staging");
+});
+
+test("a committed draft remains saved when final staging cleanup fails", async () => {
+  const deps = dependencies();
+  const originalDeleteBatch = deps.stagedStorage.deleteBatch;
+  const batch = await inspectContentImport(deps, { adminId: "ADMIN", sourceUrl: "https://news.example.test/cleanup-after-commit" });
+  deps.stagedStorage.deleteBatch = async ({ batchId }) => {
+    const error = new Error("staging cleanup failed");
+    error.cleanupTarget = { filePath: `/uploads/site-content-import-staging/${batchId}` };
+    throw error;
+  };
+
+  const post = await commitContentImport(deps, {
+    adminId: "ADMIN", batchId: batch.id, eventId: null, type: "news", title: "保留的草稿", summary: "",
+    slug: "saved-despite-cleanup", selectedImageIds: [], coverImageId: null
+  });
+  const snapshot = deps.store.value();
+  assert.equal(post.status, "draft");
+  assert.equal(snapshot.contentPosts.some((row) => row.id === post.id), true);
+  assert.equal(snapshot.fileCleanupJournal[0].category, "site-content-import-staging");
+  deps.stagedStorage.deleteBatch = originalDeleteBatch;
 });

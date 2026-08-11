@@ -517,3 +517,39 @@ test("cleanup journal replay retains failed markers and updates their attempt me
   assert.equal(db.fileCleanupJournal[0].lastAttemptAt, attemptedAt);
   assert.equal(db.fileCleanupJournal[0].lastError, "disk unavailable");
 });
+
+test("cleanup journal safely replays imported-content staging directories", async () => {
+  const uploadRoot = await fs.mkdtemp(path.join(os.tmpdir(), "content-import-cleanup-"));
+  const previousRoot = process.env.UPLOAD_ROOT;
+  process.env.UPLOAD_ROOT = uploadRoot;
+  const staging = path.join(uploadRoot, "site-content-import-staging", "SCI-SAFE");
+  const outside = path.join(uploadRoot, "must-remain.txt");
+  await fs.mkdir(staging, { recursive: true });
+  await fs.writeFile(path.join(staging, "image.png"), "image");
+  await fs.writeFile(outside, "safe");
+  let db = {
+    organizationDocuments: [], organizations: [], certificates: [],
+    fileCleanupJournal: [
+      { id: "CLN-STAGING", filePath: staging, category: "site-content-import-staging", attempts: 0, lastError: "pending", createdAt: "2026-08-11T00:00:00.000Z" },
+      { id: "CLN-ESCAPE", filePath: outside, category: "site-content-import-staging", attempts: 0, lastError: "pending", createdAt: "2026-08-11T00:00:00.000Z" }
+    ]
+  };
+  const store = {
+    withMutationLock: (handler) => handler(),
+    readDb: async () => structuredClone(db),
+    writeDb: async (next) => { db = structuredClone(next); }
+  };
+
+  try {
+    const result = await organizations.replayFileCleanupJournal({ store, now: () => "2026-08-11T01:00:00.000Z" });
+    assert.deepEqual(result, { removed: 1, retained: 1 });
+    await assert.rejects(fs.access(staging));
+    await fs.access(outside);
+    assert.deepEqual(db.fileCleanupJournal.map((row) => row.id), ["CLN-ESCAPE"]);
+    assert.equal(db.fileCleanupJournal[0].attempts, 1);
+  } finally {
+    if (previousRoot === undefined) delete process.env.UPLOAD_ROOT;
+    else process.env.UPLOAD_ROOT = previousRoot;
+    await fs.rm(uploadRoot, { recursive: true, force: true });
+  }
+});

@@ -69,6 +69,10 @@ function duplicateSource(db, fingerprint) {
   return (db.contentPosts || []).find((post) => post.sourceUrlFingerprint === fingerprint) || null;
 }
 
+function auditActor(db, adminId) {
+  return (db.users || []).find((user) => user.id === adminId) || { id: adminId, name: "管理员" };
+}
+
 function assertNotDuplicate(db, normalizedUrl) {
   const fingerprint = sourceUrlFingerprint(normalizedUrl);
   const existing = duplicateSource(db, fingerprint);
@@ -185,6 +189,10 @@ export async function inspectContentImport(rawDeps, { adminId, sourceUrl }) {
   const db = structuredClone(originalDb);
   db.siteContentImportBatches ||= [];
   db.siteContentImportBatches.push(batch);
+  recordAudit(db, {
+    actor: auditActor(db, adminId), action: "content.import.inspect", targetType: "content-import",
+    targetId: batch.id, summary: `检查转载来源：${batch.sourceName || batch.sourceUrl}`, createdAt: nowValue.toISOString()
+  });
   try {
     await deps.store.writeDb(db);
   } catch (error) {
@@ -208,6 +216,10 @@ export async function retryContentImportImage(rawDeps, { adminId, batchId, image
     saveImage: deps.stagedStorage.save
   });
   batch.warnings = warningRows(batch.images, null);
+  recordAudit(db, {
+    actor: auditActor(db, adminId), action: "content.import.image-retry", targetType: "content-import",
+    targetId: batch.id, summary: `重试转载图片：${imageId}`, createdAt: nowValue.toISOString()
+  });
   await deps.store.writeDb(db);
   return structuredClone(result);
 }
@@ -223,6 +235,10 @@ export async function deleteContentImportImage(rawDeps, { adminId, batchId, imag
   }
   Object.assign(image, { status: "deleted", stagePath: null, reasonCode: "IMPORT_IMAGE_DELETED", reason: "管理员已删除" });
   batch.warnings = warningRows(batch.images, null);
+  recordAudit(db, {
+    actor: auditActor(db, adminId), action: "content.import.image-delete", targetType: "content-import",
+    targetId: batch.id, summary: `删除转载图片：${imageId}`, createdAt: nowValue.toISOString()
+  });
   await deps.store.writeDb(db);
   return structuredClone(image);
 }
@@ -348,7 +364,7 @@ export async function commitContentImport(rawDeps, input) {
     } catch (error) {
       await persistCleanupTargets(deps, db, [{
         filePath: error?.cleanupTarget?.filePath || path.resolve(process.env.UPLOAD_ROOT || "/data/uploads", "site-content-import-staging", batch.id),
-        category: "site-content-import-staging-batch",
+        category: "site-content-import-staging",
         cleanupAttempts: 1,
         lastError: String(error?.message || error)
       }], nowValue);
@@ -366,13 +382,17 @@ export async function cancelContentImport(rawDeps, { adminId, batchId }) {
   const db = await deps.store.readDb();
   const batch = batchByOwner(db, batchId, adminId, nowValue);
   batch.status = "cancelled";
+  recordAudit(db, {
+    actor: auditActor(db, adminId), action: "content.import.cancel", targetType: "content-import",
+    targetId: batch.id, summary: `取消转载任务：${batch.title || batch.sourceUrl}`, createdAt: nowValue.toISOString()
+  });
   await deps.store.writeDb(db);
   try {
     await deps.stagedStorage.deleteBatch({ batchId });
   } catch (error) {
     await persistCleanupTargets(deps, db, [{
       filePath: error?.cleanupTarget?.filePath || path.resolve(process.env.UPLOAD_ROOT || "/data/uploads", "site-content-import-staging", batchId),
-      category: "site-content-import-staging-batch",
+      category: "site-content-import-staging",
       cleanupAttempts: 1,
       lastError: String(error?.message || error)
     }], nowValue);
@@ -388,7 +408,14 @@ export async function expireContentImportBatches(rawDeps) {
     batch.status === "ready" && Date.parse(batch.expiresAt) <= nowValue.getTime()
   ));
   if (!expired.length) return [];
-  for (const batch of expired) batch.status = "expired";
+  const expiredIds = new Set(expired.map((batch) => batch.id));
+  db.siteContentImportBatches = (db.siteContentImportBatches || []).filter((batch) => !expiredIds.has(batch.id));
+  for (const batch of expired) {
+    recordAudit(db, {
+      actor: { id: "system", name: "系统" }, action: "content.import.expire", targetType: "content-import",
+      targetId: batch.id, summary: `清理过期转载任务：${batch.title || batch.sourceUrl || batch.id}`, createdAt: nowValue.toISOString()
+    });
+  }
   await deps.store.writeDb(db);
   for (const batch of expired) {
     try {
@@ -396,7 +423,7 @@ export async function expireContentImportBatches(rawDeps) {
     } catch (error) {
       await persistCleanupTargets(deps, db, [{
         filePath: error?.cleanupTarget?.filePath || path.resolve(process.env.UPLOAD_ROOT || "/data/uploads", "site-content-import-staging", batch.id),
-        category: "site-content-import-staging-batch",
+        category: "site-content-import-staging",
         cleanupAttempts: 1,
         lastError: String(error?.message || error)
       }], nowValue);
