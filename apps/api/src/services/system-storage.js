@@ -59,3 +59,25 @@ export function assertVideoUploadCapacity(status, incomingBytes) {
     throw Object.assign(new Error("磁盘空间严重不足，暂时无法上传视频"), { status: 507 });
   }
 }
+
+export function assertContentImportCapacity(status) {
+  const disk = status?.disk;
+  if (!disk || !Number.isFinite(disk.totalBytes) || !Number.isFinite(disk.usedBytes) || disk.totalBytes <= 0) {
+    throw new Error("上传磁盘状态无效");
+  }
+  const thresholds = status?.thresholds || { warningPercent: UPLOAD_WARNING_PERCENT, criticalPercent: UPLOAD_CRITICAL_PERCENT };
+  const usedPercent = Number.isFinite(disk.usedPercent)
+    ? disk.usedPercent
+    : (disk.usedBytes / disk.totalBytes) * 100;
+  if (status.level === "critical" || usedPercent >= thresholds.criticalPercent) {
+    throw Object.assign(new Error("服务器磁盘空间严重不足，暂时无法转载内容"), {
+      status: 507,
+      code: "IMPORT_STORAGE_CRITICAL"
+    });
+  }
+  return {
+    warning: status.level === "warning" || usedPercent >= thresholds.warningPercent
+      ? `服务器磁盘使用率已达到 ${usedPercent.toFixed(1)}%，请及时清理存储空间`
+      : null
+  };
+}

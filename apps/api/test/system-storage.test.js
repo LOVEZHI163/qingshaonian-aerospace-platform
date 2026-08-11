@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  assertContentImportCapacity,
   assertVideoUploadCapacity,
   readStorageStatus,
   UPLOAD_CRITICAL_PERCENT,
@@ -28,6 +29,19 @@ test("reports actual upload-volume usage and warning thresholds", async () => {
   assert.equal(warning.level, "warning");
   assert.equal(critical.disk.usedPercent, 90);
   assert.equal(critical.level, "critical");
+});
+
+test("warns at 80 percent and blocks content imports at 90 percent", async () => {
+  const normal = await readStorageStatus({ uploadRoot: "/uploads", fileSystem: fileSystemFor(21) });
+  const warning = await readStorageStatus({ uploadRoot: "/uploads", fileSystem: fileSystemFor(20) });
+  const critical = await readStorageStatus({ uploadRoot: "/uploads", fileSystem: fileSystemFor(10) });
+
+  assert.deepEqual(assertContentImportCapacity(normal), { warning: null });
+  assert.match(assertContentImportCapacity(warning).warning, /80%|磁盘/);
+  assert.throws(
+    () => assertContentImportCapacity(critical),
+    (error) => error?.status === 507 && error?.code === "IMPORT_STORAGE_CRITICAL"
+  );
 });
 
 test("blocks only a video that is already critical or would reach 90 percent", async () => {

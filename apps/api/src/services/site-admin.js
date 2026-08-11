@@ -212,7 +212,7 @@ function assertContentReferences(db, post) {
   return attachments;
 }
 
-export function createContent(db, input, { id, actor, now } = {}) {
+export function createContent(db, input, { id, actor, now, source = null } = {}) {
   const slug = normalizeSlug(input?.slug);
   assertUniqueSlug(db.contentPosts || [], slug, "id");
   assertEvent(db, input?.eventId, { optional: true });
@@ -234,6 +234,16 @@ export function createContent(db, input, { id, actor, now } = {}) {
   row.bodyHtml = sanitizeContentHtml(row.bodyHtml);
   contentBodyMedia(db, row.bodyHtml);
   Object.assign(row, { id, createdBy: actor.id, createdAt: timestamp, updatedAt: timestamp });
+  if (source) {
+    Object.assign(row, {
+      sourceUrl: source.sourceUrl || null,
+      sourceUrlFingerprint: source.sourceUrlFingerprint || null,
+      sourceName: source.sourceName || "",
+      sourceAuthor: source.sourceAuthor || "",
+      sourcePublishedAt: source.sourcePublishedAt || null,
+      importedAt: source.importedAt || timestamp
+    });
+  }
   const attachments = normalizeAttachments(db, id, input?.attachments || []);
   db.contentPosts ||= [];
   db.contentPosts.push(row);
