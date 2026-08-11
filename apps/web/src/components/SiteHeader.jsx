@@ -1,39 +1,115 @@
 import React, { useEffect, useRef, useState } from "react";
+import PublicMegaDrawer from "./PublicMegaDrawer.jsx";
+import {
+  accountEntry,
+  eventScopedPath,
+  publicEventOptions,
+  selectedPublicEvent
+} from "../lib/public-navigation.js";
 
 const BRAND_NAME = "温州市青少年航空航天创新比赛";
+const MOBILE_NAVIGATION_QUERY = "(max-width: 1120px)";
 
-const navigation = [
-  ["首页", "/"],
-  ["公告", "/announcements"],
-  ["动态与作品", "/news"],
-  ["历届赛事", "/history"]
-];
-
-export default function SiteHeader({ routeKey }) {
-  const [menuOpen, setMenuOpen] = useState(false);
+export default function SiteHeader({ routeKey, homeData, homeStatus }) {
+  const [hoverOpen, setHoverOpen] = useState(false);
+  const [lockedOpen, setLockedOpen] = useState(false);
+  const menuOpen = hoverOpen || lockedOpen;
   const menuButtonRef = useRef(null);
-  const navigationRef = useRef(null);
+  const navigationZoneRef = useRef(null);
+  const closeTimerRef = useRef(null);
+  const focusDrawerOnOpenRef = useRef(false);
   const currentPath = (() => {
     try { return new URL(routeKey || "/", window.location.origin).pathname; }
     catch { return "/"; }
   })();
+  const events = publicEventOptions(homeData);
+  const activeEvent = selectedPublicEvent(homeData, routeKey);
+  const primaryLinks = [
+    { label: "首页", href: "/" },
+    { label: "关于大赛", href: eventScopedPath("/about", activeEvent) },
+    { label: "赛事资讯", href: eventScopedPath("/news", activeEvent) },
+    { label: "获奖查询", href: accountEntry("certificates", activeEvent), routerIgnore: true },
+    { label: "联系我们", href: eventScopedPath("/contact", activeEvent) },
+    { label: "报名入口", href: accountEntry("eventCenter", activeEvent), routerIgnore: true }
+  ];
 
-  useEffect(() => setMenuOpen(false), [routeKey]);
+  const cancelClose = () => {
+    window.clearTimeout(closeTimerRef.current);
+    closeTimerRef.current = null;
+  };
+  const closeMenu = () => {
+    cancelClose();
+    setHoverOpen(false);
+    setLockedOpen(false);
+  };
+  const openFromHover = () => {
+    cancelClose();
+    setHoverOpen(true);
+  };
+  const scheduleHoverClose = () => {
+    if (lockedOpen) return;
+    cancelClose();
+    closeTimerRef.current = window.setTimeout(() => setHoverOpen(false), 300);
+  };
+
+  useEffect(() => {
+    cancelClose();
+    setHoverOpen(false);
+    setLockedOpen(false);
+  }, [routeKey]);
 
   useEffect(() => {
     if (!menuOpen) return undefined;
-    navigationRef.current?.querySelector("a[href]")?.focus();
+    if (focusDrawerOnOpenRef.current) {
+      focusDrawerOnOpenRef.current = false;
+      navigationZoneRef.current?.querySelector("#public-mega-drawer a[href]")?.focus();
+    }
     const handleKeyDown = (event) => {
       if (event.key !== "Escape") return;
-      setMenuOpen(false);
+      closeMenu();
       menuButtonRef.current?.focus();
     };
+    const handlePointerDown = (event) => {
+      if (navigationZoneRef.current?.contains(event.target)) return;
+      closeMenu();
+    };
     document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      document.removeEventListener("pointerdown", handlePointerDown);
+    };
   }, [menuOpen]);
 
+  useEffect(() => {
+    if (!menuOpen || !window.matchMedia?.(MOBILE_NAVIGATION_QUERY).matches) return undefined;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = previousOverflow; };
+  }, [menuOpen]);
+
+  useEffect(() => () => cancelClose(), []);
+
+  const toggleLockedOpen = () => {
+    if (!lockedOpen) {
+      if (menuOpen) {
+        navigationZoneRef.current?.querySelector("#public-mega-drawer a[href]")?.focus();
+      } else {
+        focusDrawerOnOpenRef.current = true;
+      }
+    }
+    setLockedOpen((open) => !open);
+  };
+
   return (
-    <header className="site-header" role="banner">
+    <header
+      ref={navigationZoneRef}
+      className="site-header"
+      role="banner"
+      data-testid="public-navigation-zone"
+      onMouseEnter={openFromHover}
+      onMouseLeave={scheduleHoverClose}
+    >
       <div className="site-header-inner">
         <a className="brand" href="/" aria-label="网站首页">
           <img className="brand-mark" src="/brand/mark.svg" alt="" />
@@ -44,27 +120,42 @@ export default function SiteHeader({ routeKey }) {
           ref={menuButtonRef}
           className="menu-trigger"
           type="button"
-          aria-label={menuOpen ? "关闭导航菜单" : "打开导航菜单"}
+          aria-label={menuOpen ? "关闭赛事导航" : "打开赛事导航"}
           aria-expanded={menuOpen}
-          aria-controls="site-navigation"
-          onClick={() => setMenuOpen((open) => !open)}
+          aria-controls="public-mega-drawer"
+          onClick={toggleLockedOpen}
         >
           <span aria-hidden="true">{menuOpen ? "×" : "☰"}</span>
         </button>
 
-        <div ref={navigationRef} id="site-navigation" className="site-navigation" data-open={menuOpen || undefined}>
+        <div id="site-navigation" className="site-navigation" data-open={menuOpen || undefined}>
           <p className="mobile-brand-name">{BRAND_NAME}</p>
+          <div className="header-actions">
+            <a className="login-link" href="/admin/" data-router-ignore="true" onClick={closeMenu}>用户登录</a>
+          </div>
           <nav aria-label="主导航">
-            {navigation.map(([label, href]) => (
-              <a href={href} aria-current={currentPath === href ? "page" : undefined} key={href}>{label}</a>
+            {primaryLinks.map((link) => (
+              <a
+                className={link.label === "报名入口" ? "registration-link" : undefined}
+                href={link.href}
+                data-router-ignore={link.routerIgnore ? "true" : undefined}
+                aria-current={currentPath === new URL(link.href, window.location.origin).pathname ? "page" : undefined}
+                key={link.label}
+                onClick={closeMenu}
+              >
+                {link.label}
+              </a>
             ))}
           </nav>
-          <div className="header-actions">
-            <a className="login-link" href="/admin/" data-router-ignore="true">用户登录</a>
-            <a className="registration-link" href="/#registration">报名入口</a>
-          </div>
         </div>
       </div>
+      <PublicMegaDrawer
+        open={menuOpen}
+        activeEvent={activeEvent}
+        events={events}
+        currentPath={currentPath}
+        onClose={closeMenu}
+      />
     </header>
   );
 }

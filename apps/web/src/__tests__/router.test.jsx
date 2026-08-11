@@ -1,6 +1,6 @@
 import React from "react";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "../App.jsx";
 import { fetchJson } from "../api/client.js";
 import { matchRoute, shouldHandleLinkClick } from "../router.js";
@@ -23,6 +23,8 @@ const deferred = () => {
 };
 
 const emptyPage = { rows: [], pagination: { page: 1, pageSize: 10, total: 0, totalPages: 0 } };
+
+afterEach(() => vi.useRealTimers());
 
 function routePayload(url) {
   if (url === "/api/public/home") return {
@@ -112,16 +114,16 @@ describe("public site router", () => {
 
   it("uses History API navigation and responds to popstate", async () => {
     render(<App />);
-    fireEvent.click(screen.getByRole("link", { name: "公告" }));
-    expect(window.location.pathname).toBe("/announcements");
-    expect(screen.getByRole("heading", { name: "公告" })).toBeInTheDocument();
+    fireEvent.click(within(screen.getByRole("navigation", { name: "主导航" })).getByRole("link", { name: "赛事资讯" }));
+    expect(window.location.pathname).toBe("/news");
+    expect(screen.getByRole("heading", { name: "动态与优秀作品" })).toBeInTheDocument();
 
     window.history.pushState({}, "", "/history");
     window.dispatchEvent(new PopStateEvent("popstate"));
     expect(await screen.findByRole("heading", { name: "历届赛事" })).toBeInTheDocument();
   });
 
-  it("scrolls and moves focus for real same-page skip and registration-link clicks", async () => {
+  it("scrolls and moves focus for repeated real same-page skip-link clicks", async () => {
     const scrollIntoView = vi.fn();
     Element.prototype.scrollIntoView = scrollIntoView;
     render(<App />);
@@ -133,10 +135,6 @@ describe("public site router", () => {
     screen.getByRole("link", { name: "网站首页" }).focus();
     fireEvent.click(screen.getByRole("link", { name: "跳到主要内容" }));
     expect(document.getElementById("main-content")).toHaveFocus();
-
-    fireEvent.click(screen.getByRole("link", { name: "报名入口" }));
-    await waitFor(() => expect(document.getElementById("registration")).toHaveFocus());
-    expect(window.location.hash).toBe("#registration");
   });
 
   it("keeps cross-route hash focus pending for a target that appears after two seconds", async () => {
@@ -370,7 +368,7 @@ describe("site header mobile menu", () => {
 
   it("has accessible menu state, closes on Escape and restores trigger focus", () => {
     render(<App />);
-    const trigger = screen.getByRole("button", { name: "打开导航菜单" });
+    const trigger = screen.getByRole("button", { name: "打开赛事导航" });
     expect(trigger).toHaveAttribute("aria-expanded", "false");
     fireEvent.click(trigger);
     expect(trigger).toHaveAttribute("aria-expanded", "true");
@@ -382,11 +380,13 @@ describe("site header mobile menu", () => {
 
   it("closes after route navigation and uses a safe event-selection registration link", () => {
     render(<App />);
-    const trigger = screen.getByRole("button", { name: "打开导航菜单" });
+    const trigger = screen.getByRole("button", { name: "打开赛事导航" });
     fireEvent.click(trigger);
-    fireEvent.click(screen.getByRole("link", { name: "公告" }));
+    const drawerNavigation = screen.getByRole("navigation", { name: "赛事导航" });
+    fireEvent.click(within(drawerNavigation).getByRole("link", { name: "通知公告" }));
     expect(trigger).toHaveAttribute("aria-expanded", "false");
-    expect(screen.getByRole("link", { name: "报名入口" })).toHaveAttribute("href", "/#registration");
+    expect(window.location.pathname).toBe("/announcements");
+    expect(within(screen.getByRole("navigation", { name: "主导航" })).getByRole("link", { name: "报名入口" })).toHaveAttribute("href", "/admin/?view=eventCenter");
     expect(screen.getByRole("link", { name: "用户登录" })).toHaveAttribute("href", "/admin/");
     expect(screen.getByRole("link", { name: "用户登录" })).toHaveAttribute("data-router-ignore", "true");
     expect(screen.getByRole("link", { name: "管理入口" })).toHaveAttribute("data-router-ignore", "true");
