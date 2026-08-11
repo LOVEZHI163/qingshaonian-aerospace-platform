@@ -2777,3 +2777,30 @@ em.invited {
     grid-template-columns: 1fr;
   }
 }
+/* Guided public article repost workflow. */
+.content-import-panel { display: grid; gap: 20px; }
+.content-import-start { display: grid; gap: 16px; max-width: 900px; }
+.content-import-step { display: grid; gap: 5px; padding: 14px 16px; border: 1px solid #bfd6f5; border-radius: 12px; background: #f4f8ff; }
+.content-import-step span { color: #52657d; }
+.content-import-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.content-import-summary { grid-column: 1 / -1; }
+.content-import-layout { display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(280px, .75fr); gap: 20px; align-items: start; }
+.content-import-layout > section,
+.content-import-layout > aside { min-width: 0; padding: 16px; border: 1px solid #d8e1ee; border-radius: 14px; background: #fff; }
+.content-import-preview { min-height: 260px; max-height: 620px; overflow: auto; padding: 18px; border: 1px solid #e3e9f2; border-radius: 10px; line-height: 1.75; }
+.content-import-preview img { display: block; max-width: 100%; height: auto; margin: 16px auto; }
+.content-import-image { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 12px; margin-top: 12px; padding: 10px; border: 1px solid #d8e1ee; border-radius: 10px; }
+.content-import-image.failed,
+.content-import-image.filtered,
+.content-import-image.deleted { opacity: .68; background: #f5f6f8; }
+.content-import-image img { width: 92px; height: 72px; object-fit: cover; border-radius: 8px; }
+.content-import-image > div { display: grid; gap: 7px; min-width: 0; }
+.content-import-image small { color: #64748b; overflow-wrap: anywhere; }
+.content-import-commit { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 18px; border-radius: 14px; background: #eef7f2; }
+.content-import-commit p { margin: 5px 0 0; color: #51675d; }
+@media (max-width: 900px) {
+  .content-import-layout,
+  .content-import-fields { grid-template-columns: 1fr; }
+  .content-import-summary { grid-column: auto; }
+  .content-import-commit { align-items: stretch; flex-direction: column; }
+}

@@ -2,6 +2,7 @@
 import { computed, nextTick, onMounted, ref } from "vue";
 
 import ContentEditorPanel from "../components/ContentEditorPanel.vue";
+import ContentImportPanel from "../components/ContentImportPanel.vue";
 import ContentListPanel from "../components/ContentListPanel.vue";
 import EventPublicProfilePanel from "../components/EventPublicProfilePanel.vue";
 import SiteSettingsPanel from "../components/SiteSettingsPanel.vue";
@@ -27,6 +28,7 @@ const selectedContentId = ref(props.initialContentId || null);
 const contentContext = ref(props.initialContentId ? "existing" : "none");
 const contentEditor = ref(null);
 const contentList = ref(null);
+const contentImport = ref(null);
 const previewError = ref("");
 const blockedPreviewUrl = ref("");
 
@@ -37,12 +39,15 @@ const activePreviewPanel = computed(() => activeTab.value === "homepage"
     : contentEditor.value);
 
 const activePreviewDraft = computed(() => {
-  if (activeTab.value === "content" && contentContext.value === "none") return null;
+  if (activeTab.value === "content" && ["none", "import"].includes(contentContext.value)) return null;
   return activePreviewPanel.value?.getPreviewDraft?.() || null;
 });
 const savedPreviewState = computed(() => {
   if (activeTab.value === "content" && contentContext.value === "none") {
     return { path: null, reason: "请先选择已保存内容后再预览。" };
+  }
+  if (activeTab.value === "content" && contentContext.value === "import") {
+    return { path: null, reason: "转载内容保存为草稿后才可预览。" };
   }
   if (activeTab.value === "content" && contentContext.value === "new") {
     return { path: null, reason: "新建内容尚未保存，暂无已保存官网页面。" };
@@ -62,6 +67,7 @@ const activePreviewState = computed(() => activePreviewPanel.value?.getPreviewSt
 const previewHelp = computed(() => {
   if (activeTab.value === "events" && !activePreviewDraft.value) return "请先选择赛事后再预览。";
   if (activeTab.value === "content" && contentContext.value === "none") return "请先选择或新建内容后再预览。";
+  if (activeTab.value === "content" && contentContext.value === "import") return "转载检查不会发布内容，保存为草稿后可继续预览。";
   if (activeTab.value === "content" && activePreviewState.value.loading) return "内容加载中，请稍候。";
   if (activeTab.value === "content" && activePreviewState.value.failed) return "内容加载失败，请重试。";
   if (activeTab.value === "content" && !activePreviewState.value.ready) return "内容暂不可预览，请重试。";
@@ -113,13 +119,42 @@ function newContent() {
   emit("content-id", null);
 }
 
+function importContent() {
+  contentContext.value = "import";
+  selectedContentId.value = null;
+  emit("content-id", null);
+}
+
 function backToContentList() {
+  if (contentContext.value === "import" && contentImport.value) {
+    contentImport.value.requestLeave(() => {
+      contentContext.value = "none";
+      selectedContentId.value = null;
+      emit("content-id", null);
+      contentList.value?.load();
+    });
+    return;
+  }
   contentEditor.value?.requestLeave(() => {
     contentContext.value = "none";
     selectedContentId.value = null;
     emit("content-id", null);
     contentList.value?.load();
   });
+}
+
+function importCancelled() {
+  contentContext.value = "none";
+  selectedContentId.value = null;
+  emit("content-id", null);
+  contentList.value?.load();
+}
+
+function contentImported(id) {
+  contentContext.value = "existing";
+  selectedContentId.value = id;
+  emit("content-id", id);
+  contentList.value?.load();
 }
 
 function contentSaved(row) {
@@ -143,7 +178,11 @@ function contentMissing() {
 }
 
 function requestLeave(callback) {
-  if (activeTab.value === "content" && contentEditor.value) {
+  if (activeTab.value === "content" && contentContext.value === "import" && contentImport.value) {
+    contentImport.value.requestLeave(callback);
+    return;
+  }
+  if (activeTab.value === "content" && contentContext.value !== "import" && contentEditor.value) {
     contentEditor.value.requestLeave(callback);
     return;
   }
@@ -164,6 +203,10 @@ function activateTab(index, { focus = false } = {}) {
   const normalized = (index + tabs.length) % tabs.length;
   if (tabs[normalized][0] === activeTab.value) {
     if (focus) void finishTabActivation(normalized, true);
+    return;
+  }
+  if (activeTab.value === "content" && contentContext.value === "import" && contentImport.value) {
+    contentImport.value.requestLeave(() => finishTabActivation(normalized, focus));
     return;
   }
   if (activeTab.value === "content" && contentEditor.value) {
@@ -268,7 +311,7 @@ defineExpose({ requestLeave });
     <template v-else>
       <section id="site-panel-homepage" v-show="activeTab === 'homepage'" role="tabpanel" aria-labelledby="site-tab-homepage" data-site-panel="homepage"><SiteSettingsPanel v-if="settings" ref="siteSettingsPanel" :settings="settings" :events="events" :profiles="profiles" @saved="updateSettings" /></section>
       <section id="site-panel-events" v-show="activeTab === 'events'" role="tabpanel" aria-labelledby="site-tab-events" data-site-panel="events"><EventPublicProfilePanel ref="eventPublicProfilePanel" :events="events" :profiles="profiles" @saved="updateProfile" @navigate="emit('navigate', $event)" /></section>
-      <section id="site-panel-content" v-show="activeTab === 'content'" role="tabpanel" aria-labelledby="site-tab-content" data-site-panel="content" :data-content-context="contentContext"><div class="content-management-layout"><ContentListPanel v-if="contentContext === 'none'" ref="contentList" :events="events" :selected-id="selectedContentId" @select="chooseContent" @new="newContent" /><div v-else class="content-editor-workflow"><button type="button" data-action="back-to-content-list" @click="backToContentList">返回内容列表</button><ContentEditorPanel ref="contentEditor" :content-id="selectedContentId" :events="events" :profiles="profiles" @saved="contentSaved" @deleted="contentDeleted" @missing="contentMissing" @navigate="emit('navigate', $event)" /></div></div></section>
+      <section id="site-panel-content" v-show="activeTab === 'content'" role="tabpanel" aria-labelledby="site-tab-content" data-site-panel="content" :data-content-context="contentContext"><div class="content-management-layout"><ContentListPanel v-if="contentContext === 'none'" ref="contentList" :events="events" :selected-id="selectedContentId" @select="chooseContent" @new="newContent" @import="importContent" /><ContentImportPanel v-else-if="contentContext === 'import'" ref="contentImport" :events="events" @cancel="importCancelled" @committed="contentImported" /><div v-else class="content-editor-workflow"><button type="button" data-action="back-to-content-list" @click="backToContentList">返回内容列表</button><ContentEditorPanel ref="contentEditor" :content-id="selectedContentId" :events="events" :profiles="profiles" @saved="contentSaved" @deleted="contentDeleted" @missing="contentMissing" @navigate="emit('navigate', $event)" /></div></div></section>
     </template>
   </section>
 </template>

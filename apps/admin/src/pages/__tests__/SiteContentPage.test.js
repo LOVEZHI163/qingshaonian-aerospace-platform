@@ -100,6 +100,17 @@ describe("SiteContentPage", () => {
     localStorage.clear();
   });
 
+  it("opens the guided repost workflow and excludes it from draft preview", async () => {
+    const wrapper = await mountLoaded();
+    await activateTab(wrapper, "content");
+    await wrapper.get('[data-action="import-content"]').trigger("click");
+
+    expect(wrapper.get('[data-site-panel="content"]').attributes("data-content-context")).toBe("import");
+    expect(wrapper.get('[data-action="inspect-import"]').exists()).toBe(true);
+    expect(wrapper.get('[data-action="preview-site-draft"]').attributes("disabled")).toBeDefined();
+    expect(wrapper.get("[data-preview-help]").text()).toContain("保存为草稿后");
+  });
+
   it("loads homepage settings and exposes only configurable featured events", async () => {
     const wrapper = await mountLoaded();
 

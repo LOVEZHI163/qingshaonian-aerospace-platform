@@ -32,6 +32,16 @@ async function mountLoaded(options = {}) {
 describe("ContentListPanel", () => {
   beforeEach(() => apiMock.mockReset());
 
+  it("offers content repost next to new content and emits import", async () => {
+    apiMock.mockResolvedValue({ rows });
+    const wrapper = await mountLoaded();
+    const actions = wrapper.get(".panel-title .form-actions").findAll("button");
+
+    expect(actions.map((button) => button.text())).toEqual(["刷新", "转载内容", "新建内容"]);
+    await wrapper.get('[data-action="import-content"]').trigger("click");
+    expect(wrapper.emitted("import")).toEqual([[]]);
+  });
+
   it("matches an event name in keyword search and clears filters", async () => {
     apiMock.mockResolvedValue({ rows });
     const wrapper = await mountLoaded();
