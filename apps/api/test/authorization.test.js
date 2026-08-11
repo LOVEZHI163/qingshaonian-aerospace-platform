@@ -50,6 +50,7 @@ test("every business API requires a session and every administrator API rejects 
       "/api/organization/events/wz-aerospace-2026/registrations",
       "/api/organization/events/wz-aerospace-2026/certificates",
       "/api/admin/events/wz-aerospace-2026/certificates",
+      "/api/admin/content-imports/not-found",
       "/api/certificates/not-found/file"
     ];
     for (const route of protectedGets) {
@@ -72,6 +73,8 @@ test("every business API requires a session and every administrator API rejects 
       ["GET", "/api/admin/events/wz-aerospace-2026/registrations"],
       ["GET", "/api/admin/events/wz-aerospace-2026/registrations/export.xlsx?scope=all"],
       ["GET", "/api/admin/events/wz-aerospace-2026/certificates"],
+      ["GET", "/api/admin/content-imports/not-found"],
+      ["POST", "/api/admin/content-imports/inspect", { sourceUrl: "https://example.com/news" }],
       ["POST", "/api/admin/users", {}],
       ["POST", "/api/admin/users/U1001/reset-password", { password: "TempPass9" }],
       ["PATCH", "/api/admin/users/U2001", {}],

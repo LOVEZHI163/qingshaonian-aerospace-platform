@@ -13,7 +13,29 @@ import { resetUserTemporaryPassword } from "../src/services/account-passwords.js
 import { createFileStore } from "../src/data/file-store.js";
 import { createPostgresStore } from "../src/data/postgres-store.js";
 import { createOrganizationsRouter } from "../src/routes/organizations.js";
+import { createSiteContentImportRouter } from "../src/routes/site-content-imports.js";
 import * as organizations from "../src/services/organizations.js";
+
+test("content import mutations use the locked route wrapper while reads remain unlocked", () => {
+  const registrations = [];
+  const capture = (kind) => (handler) => {
+    registrations.push({ kind, handler });
+    return handler;
+  };
+  const router = createSiteContentImportRouter({
+    store: { readDb: async () => ({ siteContentImportBatches: [] }) },
+    requireAdmin: (_req, _res, next) => next(),
+    requirePasswordReady: (_req, _res, next) => next(),
+    asyncRoute: capture("read"),
+    mutationAsyncRoute: capture("mutation"),
+    makeId: () => "ID",
+    now: () => "2026-08-11T00:00:00.000Z"
+  });
+
+  assert.ok(router);
+  assert.equal(registrations.filter((entry) => entry.kind === "mutation").length, 5);
+  assert.equal(registrations.filter((entry) => entry.kind === "read").length, 2);
+});
 
 class SingleConnectionPool {
   constructor(pool) {

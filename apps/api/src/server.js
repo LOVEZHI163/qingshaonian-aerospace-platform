@@ -19,6 +19,7 @@ import { createDashboardRouter } from "./routes/dashboard.js";
 import { createResourcesRouter } from "./routes/resources.js";
 import { createSiteMediaRouter } from "./routes/site-media.js";
 import { createSiteAdminRouter } from "./routes/site-admin.js";
+import { createSiteContentImportRouter } from "./routes/site-content-imports.js";
 import { createPublicSiteRouter } from "./routes/public-site.js";
 import { createAccountEventsRouter } from "./routes/account-events.js";
 import { createSystemRouter } from "./routes/system.js";
@@ -36,6 +37,7 @@ import {
 import { recordAudit } from "./services/audit.js";
 import { organizationForOwner } from "./services/access-control.js";
 import { publishDueScheduledContent, startScheduledContentPublisher } from "./services/scheduled-content-publisher.js";
+import { expireContentImportBatches } from "./services/site-content-imports.js";
 import { requireRegistrationIdentityEncryptionKey } from "./security/registration-identities.js";
 
 requireRegistrationIdentityEncryptionKey(process.env);
@@ -314,6 +316,16 @@ app.use("/api", createDashboardRouter({
 }));
 
 app.use("/api", createSiteMediaRouter({
+  store: dataStore,
+  requireAdmin,
+  requirePasswordReady,
+  asyncRoute,
+  mutationAsyncRoute,
+  makeId: id,
+  now
+}));
+
+app.use("/api", createSiteContentImportRouter({
   store: dataStore,
   requireAdmin,
   requirePasswordReady,
@@ -624,18 +636,25 @@ app.use((error, req, res, next) => {
   res.status(status).json({
     error: status === 500 ? "服务器内部错误" : error.message,
     ...(error.code ? { code: error.code } : {}),
-    ...(error.relation ? { relation: error.relation } : {})
+    ...(error.relation ? { relation: error.relation } : {}),
+    ...(error.details ? { details: error.details } : {})
   });
 });
 
 await dataStore.initialize();
 await importLeaderCleanupFallbackJournal({ store: dataStore });
 await cleanupExpiredCertificateImportPreviews({ store: dataStore, makeId: id, now });
+await expireContentImportBatches({ store: dataStore, makeId: id, now });
 await replayFileCleanupJournal({ store: dataStore, now });
 const stopScheduledContentPublisher = startScheduledContentPublisher({ store: dataStore });
 const stopSubmissionSessionExpiryCleanup = process.env.NODE_ENV === "production"
   ? startSubmissionSessionExpiryCleanup({ store: dataStore })
   : () => {};
+const contentImportExpiryTimer = setInterval(() => {
+  dataStore.withMutationLock(() => expireContentImportBatches({ store: dataStore, makeId: id, now }))
+    .catch((error) => console.error("Content import expiry cleanup failed", error));
+}, 15 * 60_000);
+contentImportExpiryTimer.unref();
 
 const server = app.listen(PORT, () => {
   console.log(`API listening on http://localhost:${server.address().port}`);
@@ -646,6 +665,7 @@ export { dataStore, server };
 async function shutdown() {
   stopScheduledContentPublisher();
   stopSubmissionSessionExpiryCleanup();
+  clearInterval(contentImportExpiryTimer);
   server.close(async () => {
     await dataStore.close();
   });
