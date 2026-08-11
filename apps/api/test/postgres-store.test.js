@@ -376,6 +376,37 @@ test("public site schema creates constrained tables, indexes, and one default se
   });
 });
 
+test("PostgreSQL store upgrades a legacy content_posts table before creating import indexes", async () => {
+  await withStore(async (store, pool) => {
+    await pool.query("DROP INDEX content_posts_source_url_fingerprint_unique");
+    for (const column of [
+      "source_url",
+      "source_url_fingerprint",
+      "source_name",
+      "source_author",
+      "source_published_at",
+      "imported_at"
+    ]) {
+      await pool.query(`ALTER TABLE content_posts DROP COLUMN ${column}`);
+    }
+    await pool.query("DELETE FROM schema_migrations WHERE name = '016-site-content-imports.sql'");
+
+    await store.initialize();
+
+    const columns = new Set((await pool.query(`
+      SELECT column_name FROM information_schema.columns WHERE table_name = 'content_posts'
+    `)).rows.map((row) => row.column_name));
+    assert.equal(columns.has("source_url_fingerprint"), true);
+    assert.equal((await pool.query(
+      "SELECT 1 FROM schema_migrations WHERE name = '016-site-content-imports.sql'"
+    )).rowCount, 1);
+    await assert.rejects(
+      pool.query("CREATE UNIQUE INDEX content_posts_source_url_fingerprint_unique ON content_posts(source_url_fingerprint)"),
+      /already exists/i
+    );
+  });
+});
+
 test("PostgreSQL public site data maps snapshots with versioned content and media attachments", async () => {
   await withStore(async (store) => {
     const data = await store.readDb();

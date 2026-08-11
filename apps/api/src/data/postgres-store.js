@@ -246,8 +246,14 @@ async function runMigrations(pool) {
   }
 }
 
-async function runSchema(pool) {
+async function runSchema(pool, { deferMigrationDependentIndexes = false } = {}) {
   let schema = await fs.readFile(schemaUrl, "utf8");
+  if (deferMigrationDependentIndexes) {
+    schema = schema.replace(
+      /CREATE UNIQUE INDEX IF NOT EXISTS content_posts_source_url_fingerprint_unique[\s\S]*?;\s*/,
+      ""
+    );
+  }
   const tableRows = await pool.query(`
     SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'
   `);
@@ -382,8 +388,9 @@ export function createPostgresStore(pool, { seedOnEmpty = true } = {}) {
       }
     },
     async initialize() {
-      await runSchema(pool);
+      await runSchema(pool, { deferMigrationDependentIndexes: true });
       await runMigrations(pool);
+      await runSchema(pool);
       await backfillCurrentDocumentIds(pool);
       await addApprovedGroups(pool);
 
