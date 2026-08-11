@@ -1,6 +1,8 @@
 @import "./styles/tokens.css";
 @import "./styles/home.css";
 @import "./styles/content.css";
+@import "./styles/navigation.css";
+@import "./styles/event-information.css";
 
 :root {
   color: var(--color-text);
@@ -71,39 +73,6 @@ a:focus-visible, button:focus-visible { outline: none; box-shadow: var(--focus-r
 .site-shell { min-height: 100vh; display: flex; flex-direction: column; }
 .site-shell > main { flex: 1; }
 
-.site-header {
-  position: relative;
-  z-index: 10;
-  color: var(--color-white);
-  background: var(--color-brand);
-  box-shadow: var(--shadow-sm);
-}
-
-.site-header-inner {
-  display: flex;
-  width: min(var(--content-max), calc(100% - 2.5rem));
-  min-height: 82px;
-  margin: 0 auto;
-  align-items: center;
-  gap: 38px;
-}
-
-.brand { display: flex; min-width: 0; max-width: min(31rem, 48vw); align-items: center; gap: 14px; text-decoration: none; }
-.brand img { display: block; filter: brightness(0) invert(1); }
-.brand-mark { width: 50px; height: 50px; object-fit: contain; }
-.brand-wordmark { width: min(390px, 31vw); height: 42px; object-fit: contain; object-position: left center; }
-
-.site-navigation { display: flex; flex: 1; align-items: center; justify-content: flex-end; gap: 26px; }
-.site-navigation nav { display: flex; align-items: center; gap: clamp(16px, 2.2vw, 34px); }
-.site-navigation nav a { padding: 10px 0; font-weight: 700; text-decoration: none; }
-.site-navigation nav a:hover { text-decoration: underline; text-underline-offset: 6px; }
-.header-actions { display: flex; align-items: center; gap: 10px; }
-.login-link,
-.registration-link { padding: 11px 20px; border: 1px solid rgba(255,255,255,.65); border-radius: 7px; font-weight: 800; text-decoration: none; background: rgba(255,255,255,.12); }
-.login-link { color: var(--color-brand); background: var(--color-white); }
-.login-link:hover, .registration-link:hover { transform: translateY(-1px); }
-.mobile-brand-name, .menu-trigger { display: none; }
-
 .page-skeleton { width: min(1100px, calc(100% - 40px)); min-height: 480px; margin: 0 auto; padding: 84px 0; }
 .page-heading { margin-bottom: 34px; }
 .page-heading p, .not-found > p { margin: 0 0 9px; color: var(--color-brand-bright); font-weight: 800; letter-spacing: .12em; }
@@ -128,25 +97,10 @@ a:focus-visible, button:focus-visible { outline: none; box-shadow: var(--focus-r
 @keyframes spin { to { transform: rotate(360deg); } }
 
 @media (max-width: 1120px) {
-  .site-header-inner { min-height: 72px; }
-  .brand { min-width: 0; margin-right: auto; }
-  .brand-mark { width: 46px; height: 46px; }
-  .brand-wordmark { display: none !important; }
-  .menu-trigger { display: grid; width: 44px; height: 44px; place-items: center; border: 1px solid rgba(255,255,255,.65); border-radius: var(--radius-sm); color: var(--color-white); background: transparent; cursor: pointer; }
-  .menu-trigger span { font-size: 24px; }
-  .site-navigation { position: absolute; top: 100%; right: 0; left: 0; display: none; padding: 22px; color: var(--color-text); background: var(--color-white); box-shadow: var(--shadow-sm); }
-  .site-navigation[data-open] { display: grid; }
-  .site-navigation nav { display: grid; }
-  .site-navigation a { min-height: 44px; display: flex; align-items: center; }
-  .header-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-  .mobile-brand-name { display: block; margin: 0; color: var(--color-brand); font-weight: 800; }
-  .login-link,
-  .registration-link { width: fit-content; color: var(--color-white); background: var(--color-brand); }
   .site-footer { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 640px) {
-  .site-header-inner { width: min(var(--content-max), calc(100% - 1.5rem)); }
   .preview-banner {
     display: grid;
     grid-template-columns: 1fr;

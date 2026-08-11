@@ -1,9 +1,23 @@
-import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 
 describe("web build cleanup", () => {
+  it("imports the responsive navigation and event information stylesheet modules", () => {
+    const webRoot = resolve(process.cwd());
+    const styles = readFileSync(resolve(webRoot, "src", "styles.css"), "utf8");
+    const navigation = readFileSync(resolve(webRoot, "src", "styles", "navigation.css"), "utf8");
+    const eventInformation = readFileSync(resolve(webRoot, "src", "styles", "event-information.css"), "utf8");
+
+    expect(styles).toContain('@import "./styles/navigation.css"');
+    expect(styles).toContain('@import "./styles/event-information.css"');
+    expect(navigation).toContain(".public-mega-drawer");
+    expect(navigation).toContain("@media (max-width: 1120px)");
+    expect(navigation).toContain("prefers-reduced-motion");
+    expect(eventInformation).toContain(".event-information-page");
+  });
+
   it("executes the prebuild cleaner and removes a stale dist sentinel", () => {
     const webRoot = resolve(process.cwd());
     const dist = resolve(webRoot, "dist");
