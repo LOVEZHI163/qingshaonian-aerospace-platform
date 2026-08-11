@@ -240,6 +240,35 @@ describe("public event page", () => {
   });
 });
 
+describe("public event information page", () => {
+  beforeEach(() => window.history.replaceState({}, "", "/projects"));
+
+  it("renders only the projects returned for the featured public event", async () => {
+    const summerCup = event({ id: "SUMMER", slug: "summer-cup", name: "暑期航空挑战赛" });
+    const request = installApi({
+      "/api/public/events/summer-cup": {
+        event: summerCup,
+        projects: [{ id: "RETURNED", name: "公开接口赛项" }],
+        groups: [],
+        resources: [],
+        content: []
+      }
+    }, home({
+      featuredEvent: summerCup,
+      services: [{ id: "STALE", name: "首页陈旧赛项" }]
+    }));
+
+    render(<App />);
+
+    expect(await screen.findByText("公开接口赛项")).toBeInTheDocument();
+    expect(screen.queryByText("首页陈旧赛项")).not.toBeInTheDocument();
+    expect(request).toHaveBeenCalledWith(
+      "/api/public/events/summer-cup",
+      expect.objectContaining({ signal: expect.any(AbortSignal) })
+    );
+  });
+});
+
 describe("public content lists", () => {
   it("keeps announcements fixed to rows, paginates and preserves the legal type filter", async () => {
     window.history.replaceState({}, "", "/announcements");

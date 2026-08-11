@@ -74,6 +74,18 @@ describe("public site router", () => {
     expect(screen.getByRole("contentinfo")).toBeInTheDocument();
   });
 
+  it.each([
+    ["/about", "大赛简介"],
+    ["/rules", "赛事章程"],
+    ["/registration-guide", "报名流程"],
+    ["/contact", "联系我们"],
+    ["/projects", "赛事项目与组别"]
+  ])("renders the %s event information route", async (path, heading) => {
+    window.history.replaceState({}, "", path);
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: heading })).toBeInTheDocument();
+  });
+
   it("shows a 404 page for unknown and malformed encoded paths", () => {
     window.history.replaceState({}, "", "/events/%E0%A4%A");
     const { rerender } = render(<App />);

@@ -13,7 +13,10 @@ import {
 } from "../services/public-site-view.js";
 
 const CONTENT_TYPES = new Set(["announcement", "news", "work", "recap", "guide"]);
-const FIXED_ROUTES = ["/", "/announcements", "/news", "/history"];
+const FIXED_ROUTES = [
+  "/", "/about", "/rules", "/registration-guide", "/contact", "/projects",
+  "/announcements", "/news", "/history"
+];
 
 function routeError(status, message, code) {
   return Object.assign(new Error(message), { status, ...(code ? { code } : {}) });

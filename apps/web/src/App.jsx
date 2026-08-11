@@ -10,6 +10,7 @@ import PreviewPage, { readPreviewPageSnapshot } from "./pages/PreviewPage.jsx";
 const ContentDetailPage = lazy(() => import("./pages/ContentDetailPage.jsx"));
 const ContentListPage = lazy(() => import("./pages/ContentListPage.jsx"));
 const EventDetailPage = lazy(() => import("./pages/EventDetailPage.jsx"));
+const EventInformationPage = lazy(() => import("./pages/EventInformationPage.jsx"));
 const HistoryPage = lazy(() => import("./pages/HistoryPage.jsx"));
 const HomePage = lazy(() => import("./pages/HomePage.jsx"));
 
@@ -38,6 +39,14 @@ function NotFoundPage() {
 function PublicRoute({ route, bootstrap, location }) {
   switch (route.name) {
     case "event": return <EventDetailPage slug={route.params.slug} />;
+    case "event-information": return (
+      <EventInformationPage
+        section={route.params.section}
+        homeData={bootstrap.data}
+        homeStatus={bootstrap.status}
+        location={location}
+      />
+    );
     case "announcements": return <ContentListPage mode="announcements" location={location} />;
     case "news": return <ContentListPage mode="news" location={location} />;
     case "history": return <HistoryPage location={location} />;
@@ -95,7 +104,7 @@ export default function App() {
   return (
     <div className="site-shell">
       <a className="skip-link" href="#main-content">跳到主要内容</a>
-      <SiteHeader routeKey={location} />
+      <SiteHeader routeKey={location} homeData={bootstrap.data || {}} homeStatus={bootstrap.status} />
       <main id="main-content" tabIndex="-1">
         <Suspense fallback={<RouteLoading />}>
           {route.name === "preview" ? (
@@ -120,9 +129,9 @@ export default function App() {
             </div>
           ) : (
             <PublicRoute
-              key={`${route.name}:${route.params.slug || ""}`}
+              key={`${route.name}:${route.params.slug || route.params.section || ""}`}
               route={route}
-              bootstrap={bootstrap.data}
+              bootstrap={bootstrap}
               location={location}
             />
           )}

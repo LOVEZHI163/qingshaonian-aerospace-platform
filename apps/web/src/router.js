@@ -71,6 +71,11 @@ export function navigateHistoryEventsPage(location, page) {
 
 export function matchRoute(pathname) {
   if (pathname === "/") return { name: "home", params: {} };
+  if (pathname === "/about") return { name: "event-information", params: { section: "about" } };
+  if (pathname === "/rules") return { name: "event-information", params: { section: "rules" } };
+  if (pathname === "/registration-guide") return { name: "event-information", params: { section: "registration" } };
+  if (pathname === "/contact") return { name: "event-information", params: { section: "contact" } };
+  if (pathname === "/projects") return { name: "event-information", params: { section: "projects" } };
   if (pathname === "/announcements") return { name: "announcements", params: {} };
   if (pathname === "/news") return { name: "news", params: {} };
   if (pathname === "/history") return { name: "history", params: {} };

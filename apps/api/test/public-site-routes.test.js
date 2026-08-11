@@ -415,6 +415,9 @@ test("sitemap uses PUBLIC_SITE_URL and contains only public canonical routes", a
     for (const route of ["/", "/announcements", "/news", "/history", "/events/visible-event", "/content/public-story"]) {
       assert.match(xml, new RegExp(`<loc>https://public\\.example/base${route.replaceAll("/", "\\/")}</loc>`));
     }
+    for (const route of ["/about", "/rules", "/registration-guide", "/contact", "/projects"]) {
+      assert.equal(xml.includes(`<loc>https://public.example/base${route}</loc>`), true);
+    }
     assert.equal(xml.includes("draft-story"), false);
     assert.equal(xml.includes("attacker.example"), false);
   }, {
