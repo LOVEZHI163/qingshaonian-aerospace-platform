@@ -200,6 +200,21 @@ async function runMigrations(pool) {
           migration = migration.replace(new RegExp(`CREATE TABLE IF NOT EXISTS ${tableName} \\([\\s\\S]*?\\);\\s*`), "");
         }
       }
+      const siteContentImportBatches = await client.query(`
+        SELECT 1 FROM information_schema.tables
+        WHERE table_schema = 'public' AND table_name = 'site_content_import_batches'
+      `);
+      if (siteContentImportBatches.rowCount > 0) {
+        migration = migration
+          .replace(/CREATE TABLE IF NOT EXISTS site_content_import_batches \([\s\S]*?\);\s*/, "")
+          .replace(/CREATE INDEX IF NOT EXISTS site_content_import_batches_created_by_status_idx[\s\S]*?;\s*/, "")
+          .replace(/CREATE INDEX IF NOT EXISTS site_content_import_batches_expires_at_idx[\s\S]*?;\s*/, "");
+      } else {
+        migration = migration.replace(
+          "CREATE TABLE IF NOT EXISTS site_content_import_batches",
+          "CREATE TABLE site_content_import_batches"
+        );
+      }
       if (!supportsPlpgsql) {
         migration = migration.replace(/DO \$\$[\s\S]*?END \$\$;/g, "");
         if (name === "007-multi-event-accounts.sql") {
@@ -430,7 +445,7 @@ export function createPostgresStore(pool, { seedOnEmpty = true } = {}) {
     },
     async readDb() {
       const executor = activeContext()?.client || pool;
-      const [events, projects, projectGroups, users, organizations, memberships, organizationEventParticipations, registrations, registrationIdentities, organizationLeaders, organizationLeaderDocuments, organizationLeaderReviews, certificates, certificateImportBatches, certificateImportErrors, organizationDocuments, fileCleanupJournal, auditLogs, siteSettings, eventPublicProfiles, contentPosts, mediaAssets, contentAttachments, registrationUploadSessions, registrationSubmissionAssets] = await Promise.all([
+      const [events, projects, projectGroups, users, organizations, memberships, organizationEventParticipations, registrations, registrationIdentities, organizationLeaders, organizationLeaderDocuments, organizationLeaderReviews, certificates, certificateImportBatches, certificateImportErrors, organizationDocuments, fileCleanupJournal, auditLogs, siteSettings, eventPublicProfiles, contentPosts, siteContentImportBatches, mediaAssets, contentAttachments, registrationUploadSessions, registrationSubmissionAssets] = await Promise.all([
         executor.query("SELECT * FROM events ORDER BY created_at, id"),
         executor.query("SELECT * FROM projects ORDER BY display_order, id"),
         executor.query("SELECT * FROM project_groups ORDER BY project_id, group_name"),
@@ -457,6 +472,7 @@ export function createPostgresStore(pool, { seedOnEmpty = true } = {}) {
         executor.query("SELECT * FROM site_settings WHERE id = 'default'"),
         executor.query("SELECT * FROM event_public_profiles ORDER BY display_order, event_id"),
         executor.query("SELECT * FROM content_posts ORDER BY sort_order, created_at, id"),
+        executor.query("SELECT * FROM site_content_import_batches ORDER BY created_at, id"),
         executor.query("SELECT * FROM media_assets ORDER BY created_at, id"),
         executor.query("SELECT * FROM content_attachments ORDER BY content_id, display_order, media_id"),
         executor.query("SELECT * FROM registration_upload_sessions ORDER BY created_at, id"),
@@ -729,10 +745,35 @@ export function createPostgresStore(pool, { seedOnEmpty = true } = {}) {
           pinned: row.pinned,
           sortOrder: row.sort_order,
           coverMediaId: row.cover_media_id,
+          sourceUrl: row.source_url,
+          sourceUrlFingerprint: row.source_url_fingerprint,
+          sourceName: row.source_name,
+          sourceAuthor: row.source_author,
+          sourcePublishedAt: row.source_published_at ? iso(row.source_published_at) : null,
+          importedAt: row.imported_at ? iso(row.imported_at) : null,
           version: row.version,
           createdBy: row.created_by,
           createdAt: iso(row.created_at),
           updatedAt: iso(row.updated_at)
+        })),
+        siteContentImportBatches: siteContentImportBatches.rows.map((row) => ({
+          id: row.id,
+          createdBy: row.created_by,
+          sourceUrl: row.source_url,
+          normalizedSourceUrl: row.normalized_source_url,
+          sourceUrlFingerprint: row.source_url_fingerprint,
+          sourceType: row.source_type,
+          sourceName: row.source_name,
+          sourceAuthor: row.source_author,
+          sourcePublishedAt: row.source_published_at ? iso(row.source_published_at) : null,
+          title: row.title,
+          summary: row.summary,
+          bodyTemplateHtml: row.body_template_html,
+          warnings: row.warnings || [],
+          images: row.images || [],
+          status: row.status,
+          createdAt: iso(row.created_at),
+          expiresAt: iso(row.expires_at)
         })),
         mediaAssets: mediaAssets.rows.map((row) => ({
           id: row.id,
@@ -1246,6 +1287,39 @@ export function createPostgresStore(pool, { seedOnEmpty = true } = {}) {
           );
         }
 
+        for (const row of db.siteContentImportBatches) {
+          await client.query(
+            `INSERT INTO site_content_import_batches
+              (id, created_by, source_url, normalized_source_url, source_url_fingerprint, source_type,
+               source_name, source_author, source_published_at, title, summary, body_template_html,
+               warnings, images, status, created_at, expires_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14::jsonb, $15, $16, $17)
+             ON CONFLICT (id) DO UPDATE SET
+               created_by = EXCLUDED.created_by,
+               source_url = EXCLUDED.source_url,
+               normalized_source_url = EXCLUDED.normalized_source_url,
+               source_url_fingerprint = EXCLUDED.source_url_fingerprint,
+               source_type = EXCLUDED.source_type,
+               source_name = EXCLUDED.source_name,
+               source_author = EXCLUDED.source_author,
+               source_published_at = EXCLUDED.source_published_at,
+               title = EXCLUDED.title,
+               summary = EXCLUDED.summary,
+               body_template_html = EXCLUDED.body_template_html,
+               warnings = EXCLUDED.warnings,
+               images = EXCLUDED.images,
+               status = EXCLUDED.status,
+               created_at = EXCLUDED.created_at,
+               expires_at = EXCLUDED.expires_at`,
+            [
+              row.id, row.createdBy, row.sourceUrl, row.normalizedSourceUrl, row.sourceUrlFingerprint,
+              row.sourceType, row.sourceName || "", row.sourceAuthor || "", row.sourcePublishedAt || null,
+              row.title, row.summary || "", row.bodyTemplateHtml, JSON.stringify(row.warnings || []),
+              JSON.stringify(row.images || []), row.status, row.createdAt, row.expiresAt
+            ]
+          );
+        }
+
         for (const row of db.mediaAssets) {
           await client.query(
             `INSERT INTO media_assets
@@ -1341,17 +1415,30 @@ export function createPostgresStore(pool, { seedOnEmpty = true } = {}) {
             || existingPost.pinned !== row.pinned
             || existingPost.sort_order !== row.sortOrder
             || existingPost.cover_media_id !== (row.coverMediaId || null)
+            || existingPost.source_url !== (row.sourceUrl || null)
+            || existingPost.source_url_fingerprint !== (row.sourceUrlFingerprint || null)
+            || existingPost.source_name !== (row.sourceName || "")
+            || existingPost.source_author !== (row.sourceAuthor || "")
+            || (existingPost.source_published_at ? iso(existingPost.source_published_at) : null) !== (row.sourcePublishedAt || null)
+            || (existingPost.imported_at ? iso(existingPost.imported_at) : null) !== (row.importedAt || null)
             || existingPost.created_by !== (row.createdBy || null)
             || iso(existingPost.created_at) !== iso(row.createdAt);
           if (!existingPost) {
             const inserted = await client.query(
               `INSERT INTO content_posts
                 (id, slug, event_id, type, title, summary, body_html, status, publish_at, pinned, sort_order,
-                 cover_media_id, version, created_by, created_at, updated_at)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+                 cover_media_id, source_url, source_url_fingerprint, source_name, source_author,
+                 source_published_at, imported_at, version, created_by, created_at, updated_at)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
                ON CONFLICT (id) DO NOTHING
                RETURNING id`,
-              [row.id, row.slug, row.eventId || null, row.type, row.title, row.summary || "", row.bodyHtml || "", row.status, row.publishAt || null, row.pinned, row.sortOrder, row.coverMediaId || null, row.version, row.createdBy || null, row.createdAt, row.updatedAt]
+              [
+                row.id, row.slug, row.eventId || null, row.type, row.title, row.summary || "", row.bodyHtml || "",
+                row.status, row.publishAt || null, row.pinned, row.sortOrder, row.coverMediaId || null,
+                row.sourceUrl || null, row.sourceUrlFingerprint || null, row.sourceName || "", row.sourceAuthor || "",
+                row.sourcePublishedAt || null, row.importedAt || null, row.version, row.createdBy || null,
+                row.createdAt, row.updatedAt
+              ]
             );
             if (inserted.rowCount === 0) throw new Error("content_posts version conflict");
           } else if (postChanged) {
@@ -1368,13 +1455,25 @@ export function createPostgresStore(pool, { seedOnEmpty = true } = {}) {
                  pinned = $10,
                  sort_order = $11,
                  cover_media_id = $12,
-                 created_by = $13,
-                 created_at = $14,
-                 updated_at = $15,
+                 source_url = $13,
+                 source_url_fingerprint = $14,
+                 source_name = $15,
+                 source_author = $16,
+                 source_published_at = $17,
+                 imported_at = $18,
+                 created_by = $19,
+                 created_at = $20,
+                 updated_at = $21,
                  version = version + 1
-               WHERE id = $1 AND version = $16
+               WHERE id = $1 AND version = $22
                RETURNING id`,
-              [row.id, row.slug, row.eventId || null, row.type, row.title, row.summary || "", row.bodyHtml || "", row.status, row.publishAt || null, row.pinned, row.sortOrder, row.coverMediaId || null, row.createdBy || null, row.createdAt, row.updatedAt, row.version]
+              [
+                row.id, row.slug, row.eventId || null, row.type, row.title, row.summary || "", row.bodyHtml || "",
+                row.status, row.publishAt || null, row.pinned, row.sortOrder, row.coverMediaId || null,
+                row.sourceUrl || null, row.sourceUrlFingerprint || null, row.sourceName || "", row.sourceAuthor || "",
+                row.sourcePublishedAt || null, row.importedAt || null, row.createdBy || null, row.createdAt,
+                row.updatedAt, row.version
+              ]
             );
             if (updated.rowCount === 0) throw new Error("content_posts version conflict");
           }
@@ -1457,6 +1556,7 @@ export function createPostgresStore(pool, { seedOnEmpty = true } = {}) {
         }
 
         await deleteMissing(client, "content_attachments", "content_id || ':' || media_id", db.contentAttachments.map((row) => `${row.contentId}:${row.mediaId}`));
+        await deleteMissing(client, "site_content_import_batches", "id", db.siteContentImportBatches.map((row) => row.id));
         await deleteMissing(client, "content_posts", "id", db.contentPosts.map((row) => row.id));
         await deleteMissing(client, "media_assets", "id", db.mediaAssets.map((row) => row.id));
         await deleteMissing(client, "event_public_profiles", "event_id", db.eventPublicProfiles.map((row) => row.eventId));

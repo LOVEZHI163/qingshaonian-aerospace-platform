@@ -322,8 +322,15 @@ test("public site schema creates constrained tables, indexes, and one default se
       WHERE table_schema = 'public'
     `);
     const tables = new Set(tableRows.rows.map((row) => row.table_name));
-    for (const name of ["site_settings", "event_public_profiles", "content_posts", "media_assets", "content_attachments"]) {
+    for (const name of ["site_settings", "event_public_profiles", "content_posts", "media_assets", "content_attachments", "site_content_import_batches"]) {
       assert.equal(tables.has(name), true, `missing table ${name}`);
+    }
+
+    const contentColumns = new Set((await pool.query(`
+      SELECT column_name FROM information_schema.columns WHERE table_name = 'content_posts'
+    `)).rows.map((row) => row.column_name));
+    for (const name of ["source_url", "source_url_fingerprint", "source_name", "source_author", "source_published_at", "imported_at"]) {
+      assert.equal(contentColumns.has(name), true, `missing content_posts.${name}`);
     }
 
     for (const statement of [
@@ -341,6 +348,7 @@ test("public site schema creates constrained tables, indexes, and one default se
     assert.equal(data.contentPosts.length, 0);
     assert.equal(data.mediaAssets.length, 0);
     assert.equal(data.contentAttachments.length, 0);
+    assert.deepEqual(data.siteContentImportBatches, []);
 
     await store.initialize();
     assert.equal((await store.readDb()).siteSettings.version, 1);
@@ -413,12 +421,50 @@ test("PostgreSQL public site data maps snapshots with versioned content and medi
       pinned: true,
       sortOrder: 1,
       coverMediaId: "MEDIA-1",
+      sourceUrl: "https://news.example.cn/aerospace",
+      sourceUrlFingerprint: "54a2fe4d6ce3d3aa82d3739df0aa07755d99bc8cbc157bb025ba55d11cec8cb4",
+      sourceName: "温州教育新闻网",
+      sourceAuthor: "王老师",
+      sourcePublishedAt: "2026-07-18T08:00:00.000Z",
+      importedAt: "2026-07-19T00:00:00.000Z",
       version: 4,
       createdBy: "U9001",
       createdAt: "2026-07-19T00:00:00.000Z",
       updatedAt: "2026-07-19T00:00:00.000Z"
     });
     data.contentAttachments.push({ contentId: "POST-1", mediaId: "MEDIA-1", label: "封面", displayOrder: 0 });
+    data.siteContentImportBatches.push({
+      id: "SCI-1",
+      createdBy: "U9001",
+      sourceUrl: "https://news.example.cn/aerospace?utm_source=feed",
+      normalizedSourceUrl: "https://news.example.cn/aerospace",
+      sourceUrlFingerprint: "54a2fe4d6ce3d3aa82d3739df0aa07755d99bc8cbc157bb025ba55d11cec8cb4",
+      sourceType: "web",
+      sourceName: "温州教育新闻网",
+      sourceAuthor: "王老师",
+      sourcePublishedAt: "2026-07-18T08:00:00.000Z",
+      title: "航空科普活动",
+      summary: "摘要",
+      bodyTemplateHtml: '<p>正文<img src="@@SITE_IMPORT_IMAGE:IMG1@@"></p>',
+      warnings: [{ code: "IMPORT_IMAGE_FAILED", message: "一张图片下载失败" }],
+      images: [{
+        id: "IMG1",
+        originalUrl: "https://news.example.cn/photo.jpg",
+        resolvedUrl: "https://cdn.example.cn/photo.jpg",
+        originalName: "photo.jpg",
+        mimeType: "image/jpeg",
+        sizeBytes: 128,
+        width: 1200,
+        height: 800,
+        stagePath: "/data/uploads/site-content-import-staging/SCI-1/IMG1.jpg",
+        status: "ready",
+        reasonCode: null,
+        reason: ""
+      }],
+      status: "ready",
+      createdAt: "2026-07-19T00:00:00.000Z",
+      expiresAt: "2026-07-19T00:30:00.000Z"
+    });
 
     await store.writeDb(data);
     const persisted = await store.readDb();
@@ -429,6 +475,11 @@ test("PostgreSQL public site data maps snapshots with versioned content and medi
     assert.deepEqual(persisted.contentPosts, [data.contentPosts[0]]);
     assert.deepEqual(persisted.mediaAssets, [data.mediaAssets[0]]);
     assert.deepEqual(persisted.contentAttachments, [data.contentAttachments[0]]);
+    assert.deepEqual(persisted.siteContentImportBatches, [data.siteContentImportBatches[0]]);
+
+    persisted.siteContentImportBatches = [];
+    await store.writeDb(persisted);
+    assert.equal((await store.readDb()).siteContentImportBatches.length, 0);
   });
 });
 

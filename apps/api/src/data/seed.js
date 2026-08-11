@@ -185,6 +185,7 @@ Object.assign(seedDb, {
   siteSettings: structuredClone(DEFAULT_SITE_SETTINGS),
   eventPublicProfiles: [],
   contentPosts: [],
+  siteContentImportBatches: [],
   mediaAssets: [],
   contentAttachments: [],
   registrationUploadSessions: [],
@@ -218,6 +219,23 @@ export function ensureDbShape(db) {
   }
   db.eventPublicProfiles ||= [];
   db.contentPosts ||= [];
+  for (const post of db.contentPosts) {
+    post.sourceUrl ??= null;
+    post.sourceUrlFingerprint ??= null;
+    post.sourceName ||= "";
+    post.sourceAuthor ||= "";
+    post.sourcePublishedAt ??= null;
+    post.importedAt ??= null;
+  }
+  db.siteContentImportBatches ||= [];
+  for (const batch of db.siteContentImportBatches) {
+    batch.sourceName ||= "";
+    batch.sourceAuthor ||= "";
+    batch.sourcePublishedAt ??= null;
+    batch.summary ||= "";
+    batch.warnings = Array.isArray(batch.warnings) ? batch.warnings : [];
+    batch.images = Array.isArray(batch.images) ? batch.images : [];
+  }
   db.mediaAssets ||= [];
   db.contentAttachments ||= [];
   db.registrationUploadSessions ||= [];

@@ -370,11 +370,46 @@ CREATE TABLE IF NOT EXISTS content_posts (
   pinned BOOLEAN NOT NULL DEFAULT FALSE,
   sort_order INTEGER NOT NULL DEFAULT 0,
   cover_media_id TEXT,
+  source_url TEXT,
+  source_url_fingerprint TEXT,
+  source_name TEXT NOT NULL DEFAULT '',
+  source_author TEXT NOT NULL DEFAULT '',
+  source_published_at TIMESTAMPTZ,
+  imported_at TIMESTAMPTZ,
   version INTEGER NOT NULL DEFAULT 1,
   created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
   created_at TIMESTAMPTZ NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS content_posts_source_url_fingerprint_unique
+  ON content_posts(source_url_fingerprint)
+  WHERE source_url_fingerprint IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS site_content_import_batches (
+  id TEXT PRIMARY KEY,
+  created_by TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  source_url TEXT NOT NULL,
+  normalized_source_url TEXT NOT NULL,
+  source_url_fingerprint TEXT NOT NULL,
+  source_type TEXT NOT NULL CHECK (source_type IN ('wechat','web')),
+  source_name TEXT NOT NULL DEFAULT '',
+  source_author TEXT NOT NULL DEFAULT '',
+  source_published_at TIMESTAMPTZ,
+  title TEXT NOT NULL,
+  summary TEXT NOT NULL DEFAULT '',
+  body_template_html TEXT NOT NULL,
+  warnings JSONB NOT NULL DEFAULT '[]'::jsonb,
+  images JSONB NOT NULL DEFAULT '[]'::jsonb,
+  status TEXT NOT NULL CHECK (status IN ('ready','committed','cancelled','expired')),
+  created_at TIMESTAMPTZ NOT NULL,
+  expires_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS site_content_import_batches_created_by_status_idx
+  ON site_content_import_batches(created_by, status);
+CREATE INDEX IF NOT EXISTS site_content_import_batches_expires_at_idx
+  ON site_content_import_batches(expires_at);
 
 CREATE TABLE IF NOT EXISTS media_assets (
   id TEXT PRIMARY KEY,
