@@ -144,7 +144,7 @@ describe("OrganizationEventWorkspacePage", () => {
     expect(feedback.text()).toContain("组织报名已提交");
   });
 
-  it("keeps the backend validation reason visible and preserves its stable error code", async () => {
+  it("explains the national-standard validation failure and preserves its stable error code", async () => {
     apiMock.mockImplementation(async (path, options) => {
       if (path === "/api/organization/events/E2/workspace") return workspace;
       if (path === "/api/organization/leaders") return { rows: [{ id: "OL1", reviewStatus: "approved", enabled: true }] };
@@ -165,7 +165,7 @@ describe("OrganizationEventWorkspacePage", () => {
 
     const feedback = wrapper.get('[data-testid="organization-registration-feedback"]');
     expect(feedback.attributes("role")).toBe("alert");
-    expect(feedback.text()).toContain("身份证号校验失败，请检查出生日期和校验位");
+    expect(feedback.text()).toContain("输入的身份证号码不符合国家标准，请检查后重新填写");
     expect(wrapper.emitted("error")?.at(-1)?.[0]).toMatchObject({ code: "INVALID_STUDENT_ID_NUMBER" });
   });
 
