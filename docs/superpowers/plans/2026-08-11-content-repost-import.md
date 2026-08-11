@@ -143,7 +143,7 @@ resolvePublicImportTarget(url, { lookup })
 
 **Step 2: 运行测试确认失败**
 
-Run: `npm test -w apps/api -- site-content-import-url-policy.test.js`
+Run: `npm test -w apps/api -- test/site-content-import-url-policy.test.js`
 
 Expected: FAIL，模块不存在。
 
@@ -164,7 +164,7 @@ Expected: FAIL，模块不存在。
 
 **Step 4: 运行测试**
 
-Run: `npm test -w apps/api -- site-content-import-url-policy.test.js`
+Run: `npm test -w apps/api -- test/site-content-import-url-policy.test.js`
 
 Expected: PASS。
 
@@ -207,7 +207,7 @@ fetchPublicResource(rawUrl, {
 
 **Step 2: 确认失败**
 
-Run: `npm test -w apps/api -- site-content-import-public-fetch.test.js`
+Run: `npm test -w apps/api -- test/site-content-import-public-fetch.test.js`
 
 Expected: FAIL。
 
@@ -223,7 +223,7 @@ Expected: FAIL。
 
 **Step 4: 运行测试**
 
-Run: `npm test -w apps/api -- site-content-import-public-fetch.test.js`
+Run: `npm test -w apps/api -- test/site-content-import-public-fetch.test.js`
 
 Expected: PASS。
 
@@ -261,7 +261,7 @@ extractImportedArticle({ html, finalUrl })
 
 **Step 2: 确认失败**
 
-Run: `npm test -w apps/api -- site-content-import-article-extractor.test.js`
+Run: `npm test -w apps/api -- test/site-content-import-article-extractor.test.js`
 
 Expected: FAIL。
 
@@ -277,7 +277,7 @@ Expected: FAIL。
 
 **Step 4: 运行测试**
 
-Run: `npm test -w apps/api -- site-content-import-article-extractor.test.js`
+Run: `npm test -w apps/api -- test/site-content-import-article-extractor.test.js`
 
 Expected: PASS。
 
@@ -308,7 +308,7 @@ git commit -m "feat: extract imported article content"
 
 **Step 2: 确认失败**
 
-Run: `npm test -w apps/api -- postgres-store.test.js`
+Run: `npm test -w apps/api -- test/postgres-store.test.js`
 
 Expected: FAIL，新表/字段不存在。
 
@@ -338,7 +338,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS content_posts_source_url_fingerprint_unique
 
 **Step 5: 运行测试**
 
-Run: `npm test -w apps/api -- postgres-store.test.js`
+Run: `npm test -w apps/api -- test/postgres-store.test.js`
 
 Expected: PASS。
 
@@ -385,7 +385,7 @@ retryArticleImage({ batch, imageId, fetchResource, saveImage, imageProcessor })
 
 **Step 3: 确认失败**
 
-Run: `npm test -w apps/api -- site-content-import-storage.test.js site-content-import-images.test.js`
+Run: `npm test -w apps/api -- test/site-content-import-storage.test.js test/site-content-import-images.test.js`
 
 Expected: FAIL。
 
@@ -395,7 +395,7 @@ Expected: FAIL。
 
 **Step 5: 运行测试**
 
-Run: `npm test -w apps/api -- site-content-import-storage.test.js site-content-import-images.test.js`
+Run: `npm test -w apps/api -- test/site-content-import-storage.test.js test/site-content-import-images.test.js`
 
 Expected: PASS。
 
@@ -444,7 +444,7 @@ expireContentImportBatches(deps)
 
 **Step 2: 确认失败**
 
-Run: `npm test -w apps/api -- site-content-imports.test.js system-storage.test.js`
+Run: `npm test -w apps/api -- test/site-content-imports.test.js test/system-storage.test.js`
 
 Expected: FAIL。
 
@@ -465,7 +465,7 @@ assertContentImportCapacity(status)
 
 **Step 5: 运行测试**
 
-Run: `npm test -w apps/api -- site-content-imports.test.js system-storage.test.js site-admin.test.js`
+Run: `npm test -w apps/api -- test/site-content-imports.test.js test/system-storage.test.js test/site-admin.test.js`
 
 Expected: PASS，现有内容创建不回归。
 
@@ -499,7 +499,7 @@ Content-Disposition: inline
 
 **Step 2: 确认失败**
 
-Run: `npm test -w apps/api -- site-content-import-routes.test.js authorization.test.js mutation-architecture.test.js`
+Run: `npm test -w apps/api -- test/site-content-import-routes.test.js test/authorization.test.js test/mutation-architecture.test.js`
 
 Expected: FAIL。
 
@@ -524,7 +524,7 @@ createSiteContentImportRouter({
 
 **Step 5: 运行测试**
 
-Run: `npm test -w apps/api -- site-content-import-routes.test.js authorization.test.js mutation-architecture.test.js`
+Run: `npm test -w apps/api -- test/site-content-import-routes.test.js test/authorization.test.js test/mutation-architecture.test.js`
 
 Expected: PASS。
 
@@ -648,7 +648,7 @@ source: {
 
 **Step 3: 确认失败**
 
-Run: `npm test -w apps/api -- public-site-service.test.js`
+Run: `npm test -w apps/api -- test/public-site-service.test.js`
 
 Run: `npm test -w apps/web -- --run ContentDetailPage.test.jsx`
 
@@ -664,7 +664,7 @@ Expected: FAIL。
 
 **Step 5: 运行测试**
 
-Run: `npm test -w apps/api -- public-site-service.test.js`
+Run: `npm test -w apps/api -- test/public-site-service.test.js`
 
 Run: `npm test -w apps/web -- --run ContentDetailPage.test.jsx`
 
@@ -697,7 +697,7 @@ git commit -m "feat: show original source on reposted content"
 
 **Step 2: 确认失败**
 
-Run: `npm test -w apps/api -- resource-cleanup.test.js site-content-imports.test.js mutation-architecture.test.js`
+Run: `npm test -w apps/api -- test/resource-cleanup.test.js test/site-content-imports.test.js test/mutation-architecture.test.js`
 
 Expected: FAIL。
 
@@ -707,7 +707,7 @@ Expected: FAIL。
 
 **Step 4: 运行测试**
 
-Run: `npm test -w apps/api -- resource-cleanup.test.js site-content-imports.test.js mutation-architecture.test.js`
+Run: `npm test -w apps/api -- test/resource-cleanup.test.js test/site-content-imports.test.js test/mutation-architecture.test.js`
 
 Expected: PASS。
 
