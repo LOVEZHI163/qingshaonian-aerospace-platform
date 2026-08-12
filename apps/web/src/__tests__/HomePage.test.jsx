@@ -152,6 +152,17 @@ describe("adaptive public home", () => {
       "href",
       "/admin/?view=registration&eventId=E1"
     );
+    const posterActions = screen.getByRole("group", { name: "E1 动态赛事名称赛事操作" });
+    expect(posterActions).toHaveClass("featured-event-poster");
+    expect(within(posterActions).getByRole("link", { name: "立即报名" })).toHaveAttribute(
+      "href",
+      "/admin/?view=registration&eventId=E1"
+    );
+    expect(within(posterActions).getByRole("link", { name: "了解赛事" })).toHaveAttribute(
+      "href",
+      "/events/event-e1"
+    );
+    expect(screen.getByTestId("featured-event-mobile-copy")).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "同期赛事" })).not.toBeInTheDocument();
 
     const picture = screen.getByRole("img", { name: "E1 动态赛事名称赛事封面" }).closest("picture");
