@@ -249,3 +249,16 @@ https://aerogp.cn/
 git add docs/superpowers/plans/2026-08-12-event-information-poster-header.md
 git commit -m "docs(web): record poster header rollout"
 ```
+
+---
+
+## 2026-08-12 执行记录
+
+- 已统一公开站导航及页面名称：`/about` 为“大赛简介”，`/rules` 为“大赛章程”。
+- 已将所选赛事的 `hero` 海报作为两个赛事信息页的装饰性首屏背景；无海报或图片失败时保留蓝紫渐变兜底。
+- 已把完整桌面导航稳定在大于 1280px 的视口，1280px 及以下改用紧凑抽屉，避免品牌、导航和登录/报名入口互相挤压。
+- TDD 聚焦测试及 Web 全量测试通过：10 个测试文件、204/204；Admin 全量测试通过：50 个测试文件、581/581；Web/Admin 生产构建成功，`git diff --check` 无输出。
+- API 在 Windows 全量运行到尾部后遇到既有 `libuv` 测试进程退出断言；本次相对线上版本没有 API 源码差异。Linux Docker 镜像构建、升级预检、版本一致性验证和完整远程 smoke 均通过。
+- 已部署提交 `3f42f4c96b51e6a3bd8ba2633f3373f7e725949c`。发布前生成并校验 PostgreSQL 备份、uploads 备份、旧源码归档及 API/Web 回滚镜像；未执行 `docker compose down -v`，未删除或重建业务卷。
+- 线上 `/about`、`/rules`、主页与后台均返回 200；版本接口与 `.release` 一致；PostgreSQL、API、Web、Backup 均为 healthy。完整 smoke 覆盖登录、组织隔离、报名、图片/视频上传、证书历史及测试数据清理。
+- 内置浏览器在 1280px DOM 验收中确认标题“大赛简介”、海报媒体、空 `alt`、无横向溢出与抽屉入口；多视口连续截图通道随后超时。1440/1280/390 的布局契约由响应式自动化测试覆盖，未把超时截图作为通过证据。
