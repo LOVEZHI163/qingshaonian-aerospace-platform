@@ -85,7 +85,7 @@ a:focus-visible, button:focus-visible { outline: none; box-shadow: var(--focus-r
 .loading-mark { display: inline-block; width: 24px; height: 24px; border: 3px solid var(--color-brand-soft); border-top-color: var(--color-brand); border-radius: 50%; animation: spin .8s linear infinite; }
 .route-loading { display: grid; min-height: 24rem; place-content: center; justify-items: center; color: var(--color-text-muted); }
 
-.site-footer { display: grid; grid-template-columns: 1.2fr 1fr auto; gap: 34px; align-items: start; padding: 44px clamp(20px, 5vw, 78px); color: #dbeaff; background: var(--color-brand-deep); }
+.site-footer { display: grid; grid-template-columns: 1.2fr 1fr auto; gap: 34px; align-items: start; padding: 44px clamp(20px, 5vw, 78px); color: #e8ecff; background: linear-gradient(120deg, var(--color-brand-deep), #102b91 68%, #421c9b); }
 .site-footer strong { color: var(--color-white); font-size: 18px; }
 .site-footer p { max-width: 560px; line-height: 1.7; }
 .site-footer dl { margin: 0; }

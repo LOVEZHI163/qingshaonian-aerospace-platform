@@ -278,6 +278,20 @@ describe("public site keyboard and semantics", () => {
     expect(homeStyles).toMatch(/@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*\.button:hover\s*\{[^}]*transform:\s*none\s*!important/);
   });
 
+  it("preserves the poster composition and exposes actions without hover-only access", () => {
+    const tokens = readFileSync(resolve(process.cwd(), "src/styles/tokens.css"), "utf8");
+    const homeStyles = readFileSync(resolve(process.cwd(), "src/styles/home.css"), "utf8");
+
+    expect(tokens).toMatch(/--color-brand:\s*#155add/i);
+    expect(tokens).toMatch(/--color-brand-deep:\s*#07185e/i);
+    expect(tokens).toMatch(/--color-brand-accent:\s*#6e35e7/i);
+    expect(homeStyles).toMatch(/\.featured-event-media img\s*\{[^}]*object-fit:\s*contain/);
+    expect(homeStyles).toMatch(/\.featured-event-poster:hover\s+\.featured-event-interaction/);
+    expect(homeStyles).toMatch(/\.featured-event-poster:focus-within\s+\.featured-event-interaction/);
+    expect(homeStyles).toMatch(/@media\s*\(hover:\s*none\)[\s\S]*\.featured-event-interaction\s*\{[^}]*position:\s*relative/);
+    expect(homeStyles).toMatch(/@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*\.featured-event-interaction\s*\{[^}]*transition:\s*none/);
+  });
+
   it("gives mobile text links a real 44px touch box", () => {
     const styles = readFileSync(resolve(process.cwd(), "src/styles/home.css"), "utf8");
     const textLinkRule = styles.match(/(?:^|\n)\.text-link\s*\{([^}]*)\}/)?.[1] || "";

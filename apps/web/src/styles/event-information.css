@@ -1,5 +1,5 @@
 .event-information-page { width: min(var(--content-max), calc(100% - 2.5rem)); margin: 0 auto; padding: clamp(2rem, 5vw, 5rem) 0; }
-.event-information-hero { padding: clamp(1.5rem, 5vw, 4rem); border-radius: var(--radius-lg); color: var(--color-white); background: linear-gradient(135deg, var(--color-brand-deep), var(--color-brand)); }
+.event-information-hero { padding: clamp(1.5rem, 5vw, 4rem); border-radius: var(--radius-lg); color: var(--color-white); background: linear-gradient(135deg, var(--color-brand-deep), var(--color-brand) 62%, var(--color-brand-accent)); box-shadow: var(--shadow-lg); }
 .event-information-hero p { min-width: 0; max-width: 48rem; margin: 0; line-height: 1.7; overflow-wrap: anywhere; }
 .event-information-hero p:first-child { margin-bottom: 0.75rem; font-weight: 800; letter-spacing: 0.08em; }
 .event-information-hero h1 { margin: 0 0 1rem; font-size: clamp(2rem, 5vw, 4rem); line-height: 1.15; }

@@ -2,7 +2,7 @@
   position: relative;
   z-index: 30;
   color: var(--color-white);
-  background: var(--color-brand);
+  background: linear-gradient(110deg, var(--color-brand-deep) 0%, var(--color-brand) 68%, var(--color-brand-accent) 100%);
   box-shadow: var(--shadow-sm);
 }
 
