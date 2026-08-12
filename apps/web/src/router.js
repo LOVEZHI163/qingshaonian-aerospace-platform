@@ -10,7 +10,7 @@ const decodeSlug = (value) => {
 };
 
 const EVENT_FILTER_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9._~-]{0,127})$/;
-const PUBLIC_NEWS_TYPES = new Set(["news", "work"]);
+const PUBLIC_NEWS_TYPES = new Set(["news"]);
 
 export function parsePublicListLocation(location) {
   const url = new URL(location || "/", window.location.origin);

@@ -25,14 +25,15 @@ function ResourceNotFound() {
   );
 }
 function EventContent({ rows = [] }) {
-  if (!rows.length) return null;
+  const publicRows = rows.filter((row) => row?.type !== "work");
+  if (!publicRows.length) return null;
   return (
     <section className="event-content-section" aria-labelledby="event-content-title">
       <div className="section-heading compact-heading">
         <div><p className="section-kicker">最新信息</p><h2 id="event-content-title">赛事内容</h2></div>
       </div>
       <div className="event-content-grid">
-        {rows.map((row) => (
+        {publicRows.map((row) => (
           <article key={row.id || row.slug}>
             <span>{publicContentTypeLabel(row.type) || "赛事内容"}</span>
             <h3>{row.slug ? <a href={`/content/${encodeURIComponent(row.slug)}`}>{row.title}</a> : row.title}</h3>

@@ -1,10 +1,10 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 
 import { fetchJson } from "../api/client.js";
 import AsyncState from "../components/AsyncState.jsx";
 import Seo from "../components/Seo.jsx";
 import { PUBLIC_CONTENT_TYPE_LABELS, publicContentTypeLabel } from "../lib/public-content-labels.js";
-import { navigatePublicListPage, navigatePublicListType, parsePublicListLocation, publicContentListPath } from "../router.js";
+import { navigatePublicListPage, parsePublicListLocation, publicContentListPath } from "../router.js";
 
 function dateLabel(value) {
   const date = new Date(value);
@@ -46,23 +46,18 @@ export default function ContentListPage({ mode = "announcements", location = win
   const newsMode = mode === "news";
   const [attempt, setAttempt] = useState(0);
   const [state, setState] = useState({ status: "loading", pages: {} });
-  const tabRefs = useRef({});
   const query = useMemo(() => parsePublicListLocation(location), [location]);
-  const types = newsMode ? ["news", "work"] : ["announcement"];
-  const selectedType = newsMode ? query.type : "announcement";
+  const contentType = newsMode ? "news" : "announcement";
 
   useEffect(() => {
     const controller = new AbortController();
     let current = true;
     setState({ status: "loading", pages: {} });
 
-    Promise.all(types.map(async (type) => [
-      type,
-      await fetchJson(publicContentListPath(type, query.page, query.event), { signal: controller.signal })
-    ]))
-      .then((entries) => {
+    fetchJson(publicContentListPath(contentType, query.page, query.event), { signal: controller.signal })
+      .then((payload) => {
         if (!current) return;
-        setState({ status: "success", pages: Object.fromEntries(entries) });
+        setState({ status: "success", pages: { [contentType]: payload } });
       })
       .catch((error) => {
         if (!current || error?.name === "AbortError") return;
@@ -73,94 +68,33 @@ export default function ContentListPage({ mode = "announcements", location = win
       current = false;
       controller.abort();
     };
-  }, [attempt, newsMode, query.event, query.page]);
+  }, [attempt, contentType, query.event, query.page]);
 
   function changePage(nextPage) {
-    navigatePublicListPage(location, nextPage, query.event, newsMode ? selectedType : null);
+    navigatePublicListPage(location, nextPage, query.event, newsMode ? "news" : null);
   }
 
-  function activateTab(type, focus = false) {
-    if (type !== selectedType) navigatePublicListType(location, type, query.event);
-    if (focus) tabRefs.current[type]?.focus();
-  }
-
-  function handleTabKeyDown(event, type) {
-    const index = types.indexOf(type);
-    let nextIndex = null;
-    if (event.key === "ArrowRight") nextIndex = (index + 1) % types.length;
-    if (event.key === "ArrowLeft") nextIndex = (index - 1 + types.length) % types.length;
-    if (event.key === "Home") nextIndex = 0;
-    if (event.key === "End") nextIndex = types.length - 1;
-    if (nextIndex === null) return;
-    event.preventDefault();
-    activateTab(types[nextIndex], true);
-  }
-
-  const heading = newsMode
-    ? `${PUBLIC_CONTENT_TYPE_LABELS.news}与${PUBLIC_CONTENT_TYPE_LABELS.work}`
-    : PUBLIC_CONTENT_TYPE_LABELS.announcement;
+  const heading = newsMode ? PUBLIC_CONTENT_TYPE_LABELS.news : PUBLIC_CONTENT_TYPE_LABELS.announcement;
 
   return (
     <section className="content-page content-list-page" aria-labelledby="content-list-title">
       <Seo
         title={heading}
-        description={newsMode ? "了解新闻动态，浏览青少年优秀航空航天作品。" : "查看平台及赛事最新通知。"}
+        description={newsMode ? "了解平台及赛事最新新闻动态。" : "查看平台及赛事最新通知。"}
         pathname={newsMode ? "/news" : "/announcements"}
       />
       <div className="content-page-heading">
         <p className="section-kicker">官方发布</p>
         <h1 id="content-list-title">{heading}</h1>
-        <p>{newsMode ? "了解新闻动态，浏览青少年优秀航空航天作品。" : "查看平台及赛事最新通知。"}</p>
+        <p>{newsMode ? "了解平台及赛事最新新闻动态。" : "查看平台及赛事最新通知。"}</p>
       </div>
 
-      {newsMode ? (
-        <div className="content-tabs" role="tablist" aria-label="内容分类">
-          {["news", "work"].map((type) => (
-            <button
-              type="button"
-              role="tab"
-              id={`content-tab-${type}`}
-              aria-controls={`content-panel-${type}`}
-              aria-selected={selectedType === type}
-              tabIndex={selectedType === type ? 0 : -1}
-              key={type}
-              ref={(node) => { tabRefs.current[type] = node; }}
-              onClick={() => activateTab(type)}
-              onKeyDown={(event) => handleTabKeyDown(event, type)}
-            >{publicContentTypeLabel(type)}</button>
-          ))}
-        </div>
-      ) : null}
-
-      {newsMode ? (
-        types.map((type) => (
-          <div
-            role="tabpanel"
-            id={`content-panel-${type}`}
-            aria-labelledby={`content-tab-${type}`}
-            tabIndex={0}
-            hidden={selectedType !== type}
-            key={type}
-          >
-            {selectedType === type ? (
-              <AsyncState status={state.status} onRetry={() => setAttempt((value) => value + 1)}>
-                <ContentRows
-                  payload={state.pages[type]}
-                  emptyText={type === "work" ? "暂无公开优秀作品" : "暂无公开内容"}
-                />
-                <Pagination pagination={state.pages[type]?.pagination} onPage={changePage} />
-              </AsyncState>
-            ) : null}
-          </div>
-        ))
-      ) : (
-        <div className="content-list-body">
-          <AsyncState status={state.status} onRetry={() => setAttempt((value) => value + 1)}>
-            <ContentRows payload={state.pages.announcement} emptyText="暂无公开内容" />
-            <Pagination pagination={state.pages.announcement?.pagination} onPage={changePage} />
-          </AsyncState>
-        </div>
-      )}
+      <div className="content-list-body">
+        <AsyncState status={state.status} onRetry={() => setAttempt((value) => value + 1)}>
+          <ContentRows payload={state.pages[contentType]} emptyText="暂无公开内容" />
+          <Pagination pagination={state.pages[contentType]?.pagination} onPage={changePage} />
+        </AsyncState>
+      </div>
     </section>
   );
 }

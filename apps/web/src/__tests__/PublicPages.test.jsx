@@ -185,9 +185,11 @@ describe("public event page", () => {
     expect(screen.getByRole("link", { name: /赛事规程/ })).toHaveAttribute("href", "/api/public/media/RULES?variant=original");
     expect(screen.getByRole("link", { name: "announcement-NOTICE 标题" })).toHaveAttribute("href", "/content/announcement-notice");
     const eventContent = screen.getByRole("heading", { name: "赛事内容" }).closest("section");
-    for (const label of ["通知公告", "新闻动态", "优秀作品", "赛事回顾"]) {
+    for (const label of ["通知公告", "新闻动态", "赛事回顾"]) {
       expect(within(eventContent).getByText(label)).toBeInTheDocument();
     }
+    expect(within(eventContent).queryByText("优秀作品")).not.toBeInTheDocument();
+    expect(within(eventContent).queryByText("work-WORK 标题")).not.toBeInTheDocument();
     expect(within(eventContent).getByText("special")).toBeInTheDocument();
     expect(within(eventContent).getByText("toString")).toBeInTheDocument();
     expect(within(eventContent).getByText("constructor")).toBeInTheDocument();
@@ -495,87 +497,22 @@ describe("public content lists", () => {
     expect(document.querySelector("[aria-labelledby='content-tab-announcement']")).toBeNull();
   });
 
-  it("loads news and work in parallel and switches accessible tabs without an illegal combined type", async () => {
+  it("shows only news publicly and never requests work content", async () => {
     window.history.replaceState({}, "", "/news");
     const request = installApi({
-      "/api/public/content?type=news&page=1&pageSize=10": page([content("N1", "news")]),
-      "/api/public/content?type=work&page=1&pageSize=10": page([content("W1", "work")])
+      "/api/public/content?type=news&page=1&pageSize=10": page([content("N1", "news")])
     });
 
     render(<App />);
     expect(await screen.findByRole("link", { name: "news-N1 标题" })).toBeInTheDocument();
-    const newsCall = request.mock.calls.find(([url]) => url.includes("type=news"));
-    const workCall = request.mock.calls.find(([url]) => url.includes("type=work"));
-    expect(newsCall[1].signal).toBe(workCall[1].signal);
-    expect(request.mock.calls.some(([url]) => url.includes("news,work"))).toBe(false);
-
-    const tabs = screen.getByRole("tablist", { name: "内容分类" });
-    fireEvent.click(within(tabs).getByRole("tab", { name: "优秀作品" }));
-    expect(screen.getByRole("link", { name: "work-W1 标题" })).toBeInTheDocument();
-    expect(within(tabs).getByRole("tab", { name: "优秀作品" })).toHaveAttribute("aria-selected", "true");
-  });
-
-  it("implements roving keyboard tabs with cyclic arrows, Home/End and linked tabpanels", async () => {
-    window.history.replaceState({}, "", "/news");
-    installApi({
-      "/api/public/content?type=news&page=1&pageSize=10": page([content("N1", "news")]),
-      "/api/public/content?type=work&page=1&pageSize=10": page([content("W1", "work")])
-    });
-
-    render(<App />);
-    await screen.findByText("news-N1 标题");
-    const newsTab = screen.getByRole("tab", { name: "新闻动态" });
-    const workTab = screen.getByRole("tab", { name: "优秀作品" });
-    expect(newsTab).toHaveAttribute("tabindex", "0");
-    expect(workTab).toHaveAttribute("tabindex", "-1");
-    expect(newsTab).toHaveAttribute("aria-controls", "content-panel-news");
-    expect(screen.getByRole("tabpanel")).toHaveAttribute("aria-labelledby", "content-tab-news");
-
-    newsTab.focus();
-    fireEvent.keyDown(newsTab, { key: "ArrowLeft" });
-    expect(workTab).toHaveFocus();
-    expect(workTab).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByRole("tabpanel")).toHaveAttribute("id", "content-panel-work");
-    expect(screen.getByText("work-W1 标题")).toBeInTheDocument();
-
-    fireEvent.keyDown(workTab, { key: "Home" });
-    expect(newsTab).toHaveFocus();
-    fireEvent.keyDown(newsTab, { key: "End" });
-    expect(workTab).toHaveFocus();
-    fireEvent.keyDown(workTab, { key: "ArrowRight" });
-    expect(newsTab).toHaveFocus();
-  });
-
-  it("keeps both controlled tab panels connected while visibility follows clicks and URL restoration", async () => {
-    window.history.replaceState({}, "", "/news?type=work&page=1&event=E1");
-    installApi({
-      "/api/public/content?type=news&page=1&pageSize=10&event=E1": page([content("N1", "news")]),
-      "/api/public/content?type=work&page=1&pageSize=10&event=E1": page([content("W1", "work")])
-    });
-
-    render(<App />);
-    expect(await screen.findByText("work-W1 标题")).toBeInTheDocument();
-    const newsTab = screen.getByRole("tab", { name: "新闻动态" });
-    const workTab = screen.getByRole("tab", { name: "优秀作品" });
-    const newsPanelId = newsTab.getAttribute("aria-controls");
-    const workPanelId = workTab.getAttribute("aria-controls");
-    const newsPanel = document.getElementById(newsPanelId);
-    const workPanel = document.getElementById(workPanelId);
-    expect(newsPanel).toBeInTheDocument();
-    expect(workPanel).toBeInTheDocument();
-    expect(newsPanel).toHaveAttribute("hidden");
-    expect(workPanel).not.toHaveAttribute("hidden");
-
-    fireEvent.click(newsTab);
-    expect(await screen.findByText("news-N1 标题")).toBeInTheDocument();
-    expect(document.getElementById(newsPanelId)).not.toHaveAttribute("hidden");
-    expect(document.getElementById(workPanelId)).toHaveAttribute("hidden");
-
-    window.history.pushState({}, "", "/news?type=work&page=1&event=E1");
-    window.dispatchEvent(new PopStateEvent("popstate"));
-    expect(await screen.findByText("work-W1 标题")).toBeInTheDocument();
-    expect(document.getElementById(newsPanelId)).toHaveAttribute("hidden");
-    expect(document.getElementById(workPanelId)).not.toHaveAttribute("hidden");
+    expect(screen.getByRole("heading", { name: "新闻动态" })).toBeInTheDocument();
+    expect(screen.queryByText("优秀作品")).not.toBeInTheDocument();
+    expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
+    expect(request).toHaveBeenCalledWith(
+      "/api/public/content?type=news&page=1&pageSize=10",
+      expect.objectContaining({ signal: expect.any(AbortSignal) })
+    );
+    expect(request.mock.calls.some(([url]) => url.includes("type=work"))).toBe(false);
   });
 
   it("keeps one legal event filter on announcements and pagination requests", async () => {
@@ -601,115 +538,58 @@ describe("public content lists", () => {
     );
   });
 
-  it("keeps one legal event filter on parallel news/work requests and tab switches", async () => {
+  it("keeps one legal event filter on the news request", async () => {
     window.history.replaceState({}, "", "/news?event=E1");
     const request = installApi({
-      "/api/public/content?type=news&page=1&pageSize=10&event=E1": page([content("N1", "news")]),
-      "/api/public/content?type=work&page=1&pageSize=10&event=E1": page([content("W1", "work")])
+      "/api/public/content?type=news&page=1&pageSize=10&event=E1": page([content("N1", "news")])
     });
 
     render(<App />);
     expect(await screen.findByText("news-N1 标题")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("tab", { name: "优秀作品" }));
-    expect(screen.getByText("work-W1 标题")).toBeInTheDocument();
-    expect(request.mock.calls.filter(([url]) => url.endsWith("&event=E1"))).toHaveLength(2);
+    expect(request.mock.calls.filter(([url]) => url.endsWith("&event=E1"))).toHaveLength(1);
     expect(window.location.search).toContain("event=E1");
-    expect(window.location.search).toContain("type=work");
-    expect(window.location.search).toContain("page=1");
+    expect(request.mock.calls.some(([url]) => url.includes("type=work"))).toBe(false);
   });
 
-  it("uses the URL work type for pagination and keeps the selected rows and event filter", async () => {
+  it("normalizes a legacy work URL to news while preserving event and pagination", async () => {
     window.history.replaceState({}, "", "/news?type=work&page=1&event=E1");
     const request = installApi({
       "/api/public/content?type=news&page=1&pageSize=10&event=E1": page([content("N1", "news")], {
         pagination: { page: 1, pageSize: 10, total: 11, totalPages: 2 }
       }),
-      "/api/public/content?type=work&page=1&pageSize=10&event=E1": page([content("W1", "work")], {
-        pagination: { page: 1, pageSize: 10, total: 11, totalPages: 2 }
-      }),
       "/api/public/content?type=news&page=2&pageSize=10&event=E1": page([content("N2", "news")], {
-        pagination: { page: 2, pageSize: 10, total: 11, totalPages: 2 }
-      }),
-      "/api/public/content?type=work&page=2&pageSize=10&event=E1": page([content("W2", "work")], {
         pagination: { page: 2, pageSize: 10, total: 11, totalPages: 2 }
       })
     });
 
     render(<App />);
-    expect(await screen.findByText("work-W1 标题")).toBeInTheDocument();
-    expect(screen.queryByText("news-N1 标题")).not.toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: "优秀作品" })).toHaveAttribute("aria-selected", "true");
+    expect(await screen.findByText("news-N1 标题")).toBeInTheDocument();
+    expect(screen.queryByText("优秀作品")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "下一页" }));
-    expect(await screen.findByText("work-W2 标题")).toBeInTheDocument();
-    expect(screen.queryByText("news-N2 标题")).not.toBeInTheDocument();
-    expect(window.location.search).toContain("type=work");
+    expect(await screen.findByText("news-N2 标题")).toBeInTheDocument();
+    expect(window.location.search).toContain("type=news");
     expect(window.location.search).toContain("page=2");
     expect(window.location.search).toContain("event=E1");
     expect(request).toHaveBeenCalledWith(
-      "/api/public/content?type=work&page=2&pageSize=10&event=E1",
+      "/api/public/content?type=news&page=2&pageSize=10&event=E1",
       expect.objectContaining({ signal: expect.any(AbortSignal) })
     );
+    expect(request.mock.calls.some(([url]) => url.includes("type=work"))).toBe(false);
   });
 
-  it("writes tab changes to history and restores the selected rows on back and forward", async () => {
-    window.history.replaceState({}, "", "/news?event=E1");
-    installApi({
-      "/api/public/content?type=news&page=1&pageSize=10&event=E1": page([content("N1", "news")]),
-      "/api/public/content?type=work&page=1&pageSize=10&event=E1": page([content("W1", "work")])
-    });
-
-    render(<App />);
-    expect(await screen.findByText("news-N1 标题")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("tab", { name: "优秀作品" }));
-    expect(await screen.findByText("work-W1 标题")).toBeInTheDocument();
-    expect(window.location.search).toContain("type=work");
-    fireEvent.click(screen.getByRole("tab", { name: "新闻动态" }));
-    expect(await screen.findByText("news-N1 标题")).toBeInTheDocument();
-    expect(window.location.search).toContain("type=news");
-
-    window.history.back();
-    await waitFor(() => expect(screen.getByRole("tab", { name: "优秀作品" })).toHaveAttribute("aria-selected", "true"));
-    expect(screen.getByText("work-W1 标题")).toBeInTheDocument();
-    window.history.forward();
-    await waitFor(() => expect(screen.getByRole("tab", { name: "新闻动态" })).toHaveAttribute("aria-selected", "true"));
-    expect(screen.getByText("news-N1 标题")).toBeInTheDocument();
-  });
-
-  it("keeps work selected when the event filter changes through navigation", async () => {
-    window.history.replaceState({}, "", "/news?type=work&page=1&event=E1");
-    const request = installApi({
-      "/api/public/content?type=news&page=1&pageSize=10&event=E1": page([content("N1", "news")]),
-      "/api/public/content?type=work&page=1&pageSize=10&event=E1": page([content("W1", "work")]),
-      "/api/public/content?type=news&page=1&pageSize=10&event=E2": page([content("N2", "news")]),
-      "/api/public/content?type=work&page=1&pageSize=10&event=E2": page([content("W2", "work")])
-    });
-
-    render(<App />);
-    expect(await screen.findByText("work-W1 标题")).toBeInTheDocument();
-    window.history.pushState({}, "", "/news?type=work&page=1&event=E2");
-    window.dispatchEvent(new PopStateEvent("popstate"));
-    expect(await screen.findByText("work-W2 标题")).toBeInTheDocument();
-    expect(screen.queryByText("news-N2 标题")).not.toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: "优秀作品" })).toHaveAttribute("aria-selected", "true");
-    expect(request).toHaveBeenCalledWith(
-      "/api/public/content?type=work&page=1&pageSize=10&event=E2",
-      expect.objectContaining({ signal: expect.any(AbortSignal) })
-    );
-  });
-
-  it.each(["?type=", "?type=news&type=work", "?type=invalid"])(
+  it.each(["?type=", "?type=news&type=work", "?type=invalid", "?type=work"])(
     "defaults an empty, duplicate or invalid news type to news without forwarding it %s",
     async (query) => {
       window.history.replaceState({}, "", `/news${query}`);
       const request = installApi({
-        "/api/public/content?type=news&page=1&pageSize=10": page([content("N1", "news")]),
-        "/api/public/content?type=work&page=1&pageSize=10": page([content("W1", "work")])
+        "/api/public/content?type=news&page=1&pageSize=10": page([content("N1", "news")])
       });
 
       const { unmount } = render(<App />);
       expect(await screen.findByText("news-N1 标题")).toBeInTheDocument();
-      expect(screen.getByRole("tab", { name: "新闻动态" })).toHaveAttribute("aria-selected", "true");
+      expect(screen.queryByText("优秀作品")).not.toBeInTheDocument();
       expect(request.mock.calls.every(([url]) => !url.includes("type=invalid") && !url.includes("type=&"))).toBe(true);
+      expect(request.mock.calls.some(([url]) => url.includes("type=work"))).toBe(false);
       unmount();
     }
   );
@@ -818,6 +698,24 @@ describe("public content lists", () => {
 
 describe("public content detail and failures", () => {
   beforeEach(() => window.history.replaceState({}, "", "/content/safe-story"));
+
+  it("hides a published work detail behind the public not-found view", async () => {
+    installApi({
+      "/api/public/content/safe-story": {
+        row: {
+          ...content("WORK", "work", { slug: "safe-story", title: "不应公开的优秀作品" }),
+          bodyHtml: "<p>不应公开的作品正文</p>",
+          attachments: []
+        }
+      }
+    });
+
+    render(<App />);
+
+    expect(await screen.findByRole("heading", { name: "内容不存在" })).toBeInTheDocument();
+    expect(screen.queryByText("不应公开的优秀作品")).not.toBeInTheDocument();
+    expect(screen.queryByText("不应公开的作品正文")).not.toBeInTheDocument();
+  });
 
   it("shows original attribution only for reposted content", async () => {
     installApi({

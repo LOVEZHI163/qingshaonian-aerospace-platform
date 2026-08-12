@@ -64,7 +64,7 @@ describe("public site router", () => {
     ["/", "首页"],
     ["/events/summer-cup", "测试赛事详情"],
     ["/announcements", "通知公告"],
-    ["/news", "新闻动态与优秀作品"],
+    ["/news", "新闻动态"],
     ["/history", "历届赛事"],
     ["/content/opening-notice", "测试内容详情"]
   ])("renders the %s route inside the persistent site shell", async (path, heading) => {
@@ -117,7 +117,7 @@ describe("public site router", () => {
     fireEvent.click(within(screen.getByRole("navigation", { name: "主导航" })).getByRole("button", { name: "赛事资讯" }));
     fireEvent.click(within(screen.getByRole("navigation", { name: "赛事资讯子导航" })).getByRole("link", { name: "新闻动态" }));
     expect(window.location.pathname).toBe("/news");
-    expect(screen.getByRole("heading", { name: "新闻动态与优秀作品" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "新闻动态" })).toBeInTheDocument();
 
     window.history.pushState({}, "", "/history");
     window.dispatchEvent(new PopStateEvent("popstate"));
@@ -329,35 +329,31 @@ describe("site bootstrap and route data", () => {
     expect(signals.every((signal) => signal.aborted === true)).toBe(true);
   });
 
-  it("loads news and work with two legal requests sharing one abort signal", async () => {
+  it("loads only the public news stream", async () => {
     window.history.replaceState({}, "", "/news");
     const request = vi.fn(async (url) => {
       if (url === "/api/public/home") return jsonResponse({ site });
-      return jsonResponse({ rows: [{ id: url.includes("work") ? "work-1" : "news-1", slug: url.includes("work") ? "work-1" : "news-1", type: url.includes("work") ? "work" : "news", title: url.includes("work") ? "作品一" : "动态一" }], pagination: { page: 1, pageSize: 10, total: 1, totalPages: 1 } });
+      return jsonResponse({ rows: [{ id: "news-1", slug: "news-1", type: "news", title: "动态一" }], pagination: { page: 1, pageSize: 10, total: 1, totalPages: 1 } });
     });
     vi.stubGlobal("fetch", request);
 
     render(<App />);
     expect(await screen.findByText("动态一")).toBeInTheDocument();
     const newsCall = request.mock.calls.find(([url]) => url === "/api/public/content?type=news&page=1&pageSize=10");
-    const workCall = request.mock.calls.find(([url]) => url === "/api/public/content?type=work&page=1&pageSize=10");
     expect(newsCall).toBeDefined();
-    expect(workCall).toBeDefined();
-    expect(newsCall[1].signal).toBe(workCall[1].signal);
-    expect(request.mock.calls.some(([url]) => url.includes("type=news,work"))).toBe(false);
+    expect(request.mock.calls.some(([url]) => url.includes("type=work"))).toBe(false);
   });
 
-  it("shows a retryable route error when either news request fails", async () => {
+  it("does not fail the news page for a removed work endpoint", async () => {
     window.history.replaceState({}, "", "/news");
     vi.stubGlobal("fetch", vi.fn(async (url) => {
       if (url === "/api/public/home") return jsonResponse({ site });
-      if (url === "/api/public/content?type=work&page=1&pageSize=10") throw new Error("work unavailable");
       return jsonResponse(emptyPage);
     }));
 
     render(<App />);
-    expect(await screen.findByRole("alert")).toHaveTextContent("暂时无法加载页面数据");
-    expect(screen.getByRole("button", { name: "重新加载" })).toBeInTheDocument();
+    expect(await screen.findByText("暂无公开内容")).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 });
 

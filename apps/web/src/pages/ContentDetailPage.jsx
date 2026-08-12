@@ -6,7 +6,7 @@ import AttachmentList from "../components/AttachmentList.jsx";
 import Seo from "../components/Seo.jsx";
 import { enhanceBilibiliVideos } from "../lib/bilibili-video.js";
 
-const DEFAULT_CONTENT_DESCRIPTION = "查看通知公告、新闻动态与优秀作品详情。";
+const DEFAULT_CONTENT_DESCRIPTION = "查看通知公告与新闻动态详情。";
 
 function ContentNotFound() {
   return (
@@ -116,6 +116,8 @@ export default function ContentDetailPage({ slug }) {
   }, [attempt, slug]);
 
   if (state.status === "not-found") return <ContentNotFound />;
+
+  if (state.status === "success" && state.row?.type === "work") return <ContentNotFound />;
 
   if (state.status !== "success") {
     return (
