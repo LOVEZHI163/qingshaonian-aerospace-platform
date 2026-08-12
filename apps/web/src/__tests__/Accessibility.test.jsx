@@ -292,6 +292,17 @@ describe("public site keyboard and semantics", () => {
     expect(homeStyles).toMatch(/@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*\.featured-event-interaction\s*\{[^}]*transition:\s*none/);
   });
 
+  it("aligns desktop poster copy with the lower safe area and resets it on mobile", () => {
+    const homeStyles = readFileSync(resolve(process.cwd(), "src/styles/home.css"), "utf8");
+    const copyRule = homeStyles.match(/(?:^|\n)\.featured-event-copy\s*\{([^}]*)\}/)?.[1] || "";
+    const headingRule = homeStyles.match(/(?:^|\n)\.featured-event h2\s*\{([^}]*)\}/)?.[1] || "";
+    const mobileRules = homeStyles.match(/@media\s*\(max-width:\s*640px\)\s*\{([\s\S]*?)\n\}/)?.[1] || "";
+
+    expect(copyRule).toMatch(/transform:\s*translateY\(clamp\(2rem,\s*3vw,\s*3rem\)\)/);
+    expect(headingRule).toMatch(/font-size:\s*clamp\(1\.625rem,\s*3vw,\s*3rem\)/);
+    expect(mobileRules).toMatch(/\.featured-event-copy\s*\{[^}]*transform:\s*none/);
+  });
+
   it("gives mobile text links a real 44px touch box", () => {
     const styles = readFileSync(resolve(process.cwd(), "src/styles/home.css"), "utf8");
     const textLinkRule = styles.match(/(?:^|\n)\.text-link\s*\{([^}]*)\}/)?.[1] || "";

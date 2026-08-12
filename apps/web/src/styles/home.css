@@ -80,10 +80,11 @@
   flex-direction: column;
   justify-content: flex-end;
   padding: clamp(1.5rem, 4vw, 3.5rem);
+  transform: translateY(clamp(2rem, 3vw, 3rem));
 }
 
 .featured-event-meta-row { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
-.featured-event h2 { max-width: 17ch; margin: var(--space-1) 0; font-size: clamp(1.75rem, 3.6vw, 3.5rem); line-height: 1.08; letter-spacing: -0.03em; }
+.featured-event h2 { max-width: 17ch; margin: var(--space-1) 0; font-size: clamp(1.625rem, 3vw, 3rem); line-height: 1.08; letter-spacing: -0.03em; }
 .featured-event-theme { margin: var(--space-1) 0 0; font-size: clamp(1.125rem, 2vw, 1.5rem); font-weight: 800; }
 .featured-event-slogan { max-width: 38rem; margin: var(--space-1) 0; color: #dbeaff; line-height: 1.7; }
 
@@ -201,7 +202,7 @@
   .featured-event { color: var(--color-text); background: var(--color-white); }
   .featured-event-poster { aspect-ratio: auto; overflow: visible; }
   .featured-event-media { position: relative; display: block; aspect-ratio: 1549 / 434; background: var(--color-brand-deep); }
-  .featured-event-copy { width: 100%; padding: var(--space-3); }
+  .featured-event-copy { width: 100%; padding: var(--space-3); transform: none; }
   .featured-event h2 { color: var(--color-brand-ink); font-size: clamp(1.75rem, 8.5vw, 2.5rem); }
   .featured-event .section-kicker { color: var(--color-brand); }
   .featured-event-slogan { color: var(--color-text-muted); }
@@ -228,7 +229,7 @@
   .featured-event-poster { aspect-ratio: auto; overflow: visible; }
   .featured-event-media { position: relative; display: block; aspect-ratio: 1549 / 434; background: var(--color-brand-deep); }
   .featured-event-interaction { position: relative; inset: auto; opacity: 1; pointer-events: auto; transform: none; color: var(--color-text); background: var(--color-white); }
-  .featured-event-copy { width: 100%; }
+  .featured-event-copy { width: 100%; transform: none; }
   .featured-event h2 { color: var(--color-brand-ink); }
   .featured-event .section-kicker { color: var(--color-brand); }
   .featured-event-slogan { color: var(--color-text-muted); }
