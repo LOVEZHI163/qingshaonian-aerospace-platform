@@ -14,8 +14,8 @@ export const PUBLIC_PRIMARY_NAVIGATION = [
     label: "关于大赛",
     path: "/about",
     children: [
-      { id: "about-introduction", label: "赛事简章", path: "/about" },
-      { id: "rules", label: "赛事章程", path: "/rules" }
+      { id: "about-introduction", label: "大赛简介", path: "/about" },
+      { id: "rules", label: "大赛章程", path: "/rules" }
     ]
   },
   {

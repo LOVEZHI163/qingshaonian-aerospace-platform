@@ -66,7 +66,7 @@ describe("per-module public navigation", () => {
 
     fireEvent.mouseEnter(screen.getByRole("button", { name: "首页" }));
     expect(screen.getByRole("navigation", { name: "首页子导航" })).toBeVisible();
-    expect(screen.queryByRole("link", { name: "赛事章程" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "大赛章程" })).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "关于大赛" }));
     expect(screen.queryByRole("navigation", { name: "首页子导航" })).not.toBeInTheDocument();
@@ -141,7 +141,7 @@ describe("per-module public navigation", () => {
     fireEvent.mouseLeave(hoverTrigger);
 
     fireEvent.click(clickTrigger);
-    expect(await screen.findByRole("link", { name: "赛事简章" })).toHaveFocus();
+    expect(await screen.findByRole("link", { name: "大赛简介" })).toHaveFocus();
     fireEvent.keyDown(document, { key: "Escape" });
     expect(clickTrigger).toHaveFocus();
 
@@ -297,7 +297,7 @@ describe("mobile public navigation", () => {
     expect(homeButton).toHaveAttribute("aria-expanded", "false");
     expect(aboutButton).toHaveAttribute("aria-expanded", "true");
     expect(within(mobileNavigation).queryByRole("link", { name: "报名流程" })).not.toBeInTheDocument();
-    expect(within(mobileNavigation).getByRole("link", { name: "赛事章程" })).toBeVisible();
+    expect(within(mobileNavigation).getByRole("link", { name: "大赛章程" })).toBeVisible();
   });
 
   it("locks body scroll, contains focus and restores the hamburger after Escape", () => {

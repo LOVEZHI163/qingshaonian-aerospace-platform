@@ -3,15 +3,15 @@ import { accountEntry } from "./public-navigation.js";
 
 const TITLES = {
   about: "大赛简介",
-  rules: "赛事章程",
+  rules: "大赛章程",
   registration: "报名流程",
   contact: "联系我们",
   projects: "赛事项目与组别"
 };
 
 const GENERIC_COPY = {
-  about: [{ heading: "赛事介绍", paragraphs: ["赛事详细介绍正在整理中，请以通知公告为准。"] }],
-  rules: [{ heading: "赛事规则", paragraphs: ["请按照通知公告、赛项规程和现场安全要求参赛。"] }],
+  about: [{ heading: "大赛简介", paragraphs: ["赛事详细介绍正在整理中，请以通知公告为准。"] }],
+  rules: [{ heading: "大赛章程", paragraphs: ["请按照通知公告、赛项规程和现场安全要求参赛。"] }],
   registration: [{ heading: "报名说明", paragraphs: ["请登录赛事报名系统，选择赛事后按照页面要求提交信息。"] }],
   contact: []
 };

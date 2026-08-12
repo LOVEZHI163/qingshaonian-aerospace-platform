@@ -18,7 +18,7 @@ describe("public navigation model", () => {
   it("exposes three independent drawer groups and three direct destinations", () => {
     expect(PUBLIC_PRIMARY_NAVIGATION.map(({ label, children }) => [label, children?.map((row) => row.label) || []])).toEqual([
       ["首页", ["赛事服务", "报名流程", "关于大赛"]],
-      ["关于大赛", ["赛事简章", "赛事章程"]],
+      ["关于大赛", ["大赛简介", "大赛章程"]],
       ["赛事资讯", ["通知公告", "新闻动态", "赛事回顾"]],
       ["获奖查询", []],
       ["联系我们", []],

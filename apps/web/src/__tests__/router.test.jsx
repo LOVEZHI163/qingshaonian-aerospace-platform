@@ -78,7 +78,7 @@ describe("public site router", () => {
 
   it.each([
     ["/about", "大赛简介"],
-    ["/rules", "赛事章程"],
+    ["/rules", "大赛章程"],
     ["/registration-guide", "报名流程"],
     ["/contact", "联系我们"],
     ["/projects", "赛事项目与组别"]
