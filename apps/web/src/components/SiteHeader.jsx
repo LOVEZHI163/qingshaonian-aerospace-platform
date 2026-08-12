@@ -9,7 +9,7 @@ import {
 
 const BRAND_NAME = "温州市青少年航空航天创新比赛";
 const MOBILE_BRAND_NAME = "温州少航";
-const MOBILE_NAVIGATION_QUERY = "(max-width: 1120px)";
+const MOBILE_NAVIGATION_QUERY = "(max-width: 1280px)";
 const HOVER_NAVIGATION_QUERY = "(hover: hover) and (pointer: fine)";
 const HOVER_CLOSE_DELAY_MS = 300;
 

@@ -14,8 +14,10 @@ describe("web build cleanup", () => {
     expect(styles).toContain('@import "./styles/event-information.css"');
     expect(navigationStyles).not.toMatch(/\.mobile-brand-name\s*,\s*\.menu-trigger\s*\{[^}]*display:\s*none/);
     expect(navigationStyles).toMatch(/\.menu-trigger\s*\{[^}]*display:\s*none/);
-    expect(navigationStyles).toMatch(/@media\s*\(max-width:\s*1120px\)[\s\S]*\.menu-trigger\s*\{[^}]*display:\s*grid/);
-    expect(navigationStyles).toMatch(/@media\s*\(max-width:\s*1120px\)[\s\S]*\.public-mobile-navigation:not\(\[hidden\]\)\s*\{[^}]*display:\s*block/);
+    expect(navigationStyles).toMatch(/\.site-header-inner\s*\{[^}]*grid-template-columns:\s*minmax\(14rem,\s*auto\)\s+minmax\(0,\s*1fr\)\s+auto/);
+    expect(navigationStyles).toMatch(/\.brand-wordmark\s*\{[^}]*width:\s*min\(20rem,\s*22vw\)/);
+    expect(navigationStyles).toMatch(/@media\s*\(max-width:\s*1280px\)[\s\S]*\.menu-trigger\s*\{[^}]*display:\s*grid/);
+    expect(navigationStyles).toMatch(/@media\s*\(max-width:\s*1280px\)[\s\S]*\.public-mobile-navigation:not\(\[hidden\]\)\s*\{[^}]*display:\s*block/);
     expect(navigationStyles).not.toContain(".public-mega-drawer-featured");
     expect(navigationStyles).not.toContain(".public-mega-drawer-mobile-navigation");
     expect(eventInformationStyles).toMatch(/\.event-information-hero p\s*\{[^}]*min-width:\s*0[^}]*overflow-wrap:\s*anywhere/);
@@ -42,7 +44,7 @@ describe("web build cleanup", () => {
     const css = readFileSync(resolve(assets, cssBundle), "utf8");
 
     expect(css).toContain(".public-mega-drawer{position:absolute");
-    expect(css).toContain("@media(max-width:1120px)");
+    expect(css).toContain("@media(max-width:1280px)");
     expect(css).toContain("prefers-reduced-motion:reduce");
     expect(css).toContain(".event-information-page{width:min(var(--content-max),calc(100% - 2.5rem))");
     expect(css).toContain(".public-mobile-navigation{display:none");

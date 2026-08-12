@@ -43,7 +43,7 @@ function createMediaQueryList(media, initialMatches) {
 
 function installMatchMedia({ hover = false, mobile = false, reducedMotion = false } = {}) {
   const hoverQuery = createMediaQueryList("(hover: hover) and (pointer: fine)", hover);
-  const mobileQuery = createMediaQueryList("(max-width: 1120px)", mobile);
+  const mobileQuery = createMediaQueryList("(max-width: 1280px)", mobile);
   const reducedMotionQuery = createMediaQueryList("(prefers-reduced-motion: reduce)", reducedMotion);
   vi.stubGlobal("matchMedia", vi.fn((media) => {
     if (media === mobileQuery.media) return mobileQuery;

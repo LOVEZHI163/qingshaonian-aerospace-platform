@@ -8,12 +8,12 @@
 
 .site-header-inner {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  grid-template-columns: minmax(14rem, auto) minmax(0, 1fr) auto;
   width: min(var(--content-max), calc(100% - 2.5rem));
   min-height: 82px;
   margin-inline: auto;
   align-items: center;
-  gap: clamp(0.75rem, 1.5vw, 1.5rem);
+  gap: clamp(0.75rem, 1.1vw, 1.25rem);
 }
 
 .brand {
@@ -32,7 +32,7 @@
 }
 .brand img { display: block; filter: brightness(0) invert(1); }
 .brand-mark { width: 3.125rem; height: 3.125rem; object-fit: contain; }
-.brand-wordmark { flex: 1 1 auto; width: min(24.375rem, 31vw); min-width: 0; height: 2.625rem; object-fit: contain; object-position: left center; }
+.brand-wordmark { flex: 1 1 auto; width: min(20rem, 22vw); min-width: 0; height: 2.625rem; object-fit: contain; object-position: left center; }
 
 .site-navigation { display: contents; }
 .primary-navigation-links {
@@ -42,7 +42,7 @@
   min-width: 0;
   align-items: stretch;
   justify-content: center;
-  gap: clamp(0.75rem, 1.45vw, 1.5rem);
+  gap: clamp(0.625rem, 1vw, 1.125rem);
 }
 .primary-navigation-item { position: relative; display: flex; min-width: 0; align-items: stretch; }
 .primary-navigation-links > a,
@@ -203,7 +203,7 @@
 .public-mobile-navigation button:focus-visible,
 .public-mobile-navigation a:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 
-@media (max-width: 1120px) {
+@media (max-width: 1280px) {
   .site-header-inner {
     display: flex;
     width: min(var(--content-max), calc(100% - 2.5rem));

@@ -366,7 +366,7 @@ describe("site header mobile menu", () => {
     window.history.replaceState({}, "", "/");
     vi.stubGlobal("fetch", vi.fn(async () => jsonResponse({ site: {} })));
     vi.stubGlobal("matchMedia", vi.fn((media) => ({
-      matches: media === "(max-width: 1120px)",
+      matches: media === "(max-width: 1280px)",
       media,
       addEventListener: vi.fn(),
       removeEventListener: vi.fn()
