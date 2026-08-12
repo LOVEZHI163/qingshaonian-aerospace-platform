@@ -168,6 +168,8 @@ describe("public site keyboard and semantics", () => {
     const actions = navigationStyleAt(".header-actions", { width: 1440 });
     const mobileBrand = navigationStyleAt(".mobile-brand-name", { width: 1440 });
     const menuTrigger = navigationStyleAt(".menu-trigger", { width: 1440 });
+    const primaryLink = navigationStyleAt(".primary-navigation-links > a", { width: 1440 });
+    const primaryTrigger = navigationStyleAt(".primary-navigation-trigger", { width: 1440 });
     const drawer = navigationStyleAt(".public-mega-drawer", { width: 1440 });
     const drawerInner = navigationStyleAt(".public-mega-drawer-inner", { width: 1440 });
     const drawerLink = navigationStyleAt(".public-mega-drawer a", { width: 1440 });
@@ -181,6 +183,10 @@ describe("public site keyboard and semantics", () => {
     expect(actions.display).toBe("flex");
     expect(mobileBrand.display).toBe("none");
     expect(menuTrigger.display).toBe("none");
+    expect(primaryLink["font-size"]).toBe("1rem");
+    expect(primaryLink["font-weight"]).toBe("700");
+    expect(primaryTrigger["font-size"]).toBe("1rem");
+    expect(primaryTrigger["font-weight"]).toBe("700");
     expect(drawer.position).toBe("absolute");
     expect(drawer["inline-size"]).toBe("11rem");
     expect(drawer["max-inline-size"]).toBe("min(22rem, calc(100vw - 2rem))");
