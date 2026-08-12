@@ -47,7 +47,7 @@ export default function ServiceGrid({ services = [] }) {
   if (!services.length) return null;
 
   return (
-    <section className="home-section service-section" aria-labelledby="service-title">
+    <section id="services" className="home-section service-section" aria-labelledby="service-title">
       <div className="section-heading">
         <div>
           <p className="section-kicker">一站式服务</p>

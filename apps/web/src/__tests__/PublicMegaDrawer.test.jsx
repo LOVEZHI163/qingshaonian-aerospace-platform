@@ -122,7 +122,7 @@ describe("per-module public navigation", () => {
     expect(screen.queryByRole("navigation", { name: "赛事资讯子导航" })).not.toBeInTheDocument();
   });
 
-  it("moves focus to the first child after click or keyboard opening without stealing it on hover", () => {
+  it("moves focus only after a newly mounted drawer reports it is ready", async () => {
     installMatchMedia({ hover: true });
     render(
       <>
@@ -131,20 +131,34 @@ describe("per-module public navigation", () => {
       </>
     );
     const sentinel = screen.getByRole("button", { name: "焦点哨兵" });
-    const trigger = screen.getByRole("button", { name: "关于大赛" });
+    const hoverTrigger = screen.getByRole("button", { name: "首页" });
+    const clickTrigger = screen.getByRole("button", { name: "关于大赛" });
+    const keyboardTrigger = screen.getByRole("button", { name: "赛事资讯" });
     sentinel.focus();
 
-    fireEvent.mouseEnter(trigger);
+    fireEvent.mouseEnter(hoverTrigger);
     expect(sentinel).toHaveFocus();
-    fireEvent.click(trigger);
-    expect(screen.getByRole("link", { name: "赛事简介" })).toHaveFocus();
-    fireEvent.keyDown(document, { key: "Escape" });
-    expect(trigger).toHaveFocus();
+    fireEvent.mouseLeave(hoverTrigger);
 
-    fireEvent.keyDown(trigger, { key: "Enter", code: "Enter" });
-    expect(screen.getByRole("link", { name: "赛事简介" })).toHaveFocus();
+    fireEvent.click(clickTrigger);
+    expect(await screen.findByRole("link", { name: "赛事简章" })).toHaveFocus();
     fireEvent.keyDown(document, { key: "Escape" });
-    expect(trigger).toHaveFocus();
+    expect(clickTrigger).toHaveFocus();
+
+    fireEvent.keyDown(keyboardTrigger, { key: "Enter", code: "Enter" });
+    expect(await screen.findByRole("link", { name: "通知公告" })).toHaveFocus();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(keyboardTrigger).toHaveFocus();
+  });
+
+  it("marks registration guide as home and contact as its direct primary entry", () => {
+    const { rerender } = render(<SiteHeader routeKey="/registration-guide" homeData={home} homeStatus="success" />);
+    expect(screen.getByRole("button", { name: "首页" })).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("button", { name: "关于大赛" })).not.toHaveAttribute("aria-current");
+
+    rerender(<SiteHeader routeKey="/contact" homeData={home} homeStatus="success" />);
+    expect(screen.getByRole("link", { name: "联系我们" })).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("button", { name: "关于大赛" })).not.toHaveAttribute("aria-current");
   });
 
   it("renders grouped entries as buttons and direct entries as plain anchors", () => {

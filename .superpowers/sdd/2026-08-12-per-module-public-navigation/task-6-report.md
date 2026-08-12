@@ -36,3 +36,31 @@ The production web build was served locally and checked in a real Chromium brows
 ## Result
 
 No confirmed product regression was found. The feature is locally verified for release preparation; deployment remains a separate root-agent step after review.
+
+## Final review fix round 1
+
+Review date: 2026-08-12 (Asia/Shanghai)
+
+Verified base: `e9734f9face808611d2eaf0c39b761d053a10e19`. Scope remained local-only; no SSH, remote server, DNS, container, or deployment action was performed.
+
+### Root causes and minimal fixes
+
+1. The approved `/#services` link had no matching DOM target because `ServiceGrid` only exposed an accessible heading. The root section now owns `id="services"`, covered by an anchor/accessibility contract test.
+2. The primary model still carried the superseded label “赛事简介”. The single primary navigation source now uses the approved “赛事简章” label.
+3. `ABOUT_ROUTES` incorrectly grouped both `/registration-guide` and `/contact` under “关于大赛”, and direct links did not render current-page semantics. Home-flow routes now map to “首页”; `/contact` maps to the direct “联系我们” entry; desktop and mobile direct links receive `aria-current` from the same model.
+4. `SiteHeader` tried to focus a drawer child in a parent layout effect before a newly opened `PublicMegaDrawer` had mounted its content. The parent timing guess was removed. The drawer now reports deterministic readiness through `focusFirstChild`/`onFocusComplete` only after its mounted DOM exists, while hover still never steals focus and Escape still restores the owning trigger.
+5. `PUBLIC_NAVIGATION_GROUPS` was an unreferenced legacy export parallel to `PUBLIC_PRIMARY_NAVIGATION`. It was deleted; production source has no remaining reference and a namespace contract prevents reintroduction of the second source.
+
+### TDD evidence
+
+- RED: the focused command ran `49` tests with `6` intentional failures: missing services target, stale label, two incorrect route mappings/render semantics, legacy export, and newly mounted drawer focus.
+- GREEN: the same focused command passed `49/49`; the dedicated drawer suite passed `17/17`, including click on a never-mounted group and Enter on a different never-mounted group, Escape, and exact trigger focus restoration.
+- Fresh web full suite: `10` files, `200/200` tests passed.
+- Fresh root production build: exit `0`; web transformed `55` modules and admin transformed `122` modules. Only the previously accepted mixed-import and admin chunk-size warnings remained.
+- Fresh `git diff --check`: exit `0`.
+- Production-source search found no `PUBLIC_NAVIGATION_GROUPS` reference; the name remains only in its negative export-contract test and historical plan text.
+- Admin `581/581` and API `610/610` results from the immediately preceding local verification remain applicable because this review round changed only web source/tests and this report.
+
+### Browser acceptance status
+
+The earlier local production browser pass remains valid for the unchanged 1440/1024/768/390 layout, hover bridge, outside close, breakpoints, mobile accordion/order/scroll/overflow, and Escape restoration. During this review round the connected browser surface was no longer available after tab cleanup, so a fresh real-browser replay of the corrected first-child focus handshake could not be captured. No alternative browser backend was substituted. The strengthened real-behavior component test now specifically covers both fresh click and fresh Enter mount paths, rather than relying on a drawer pre-mounted by hover.

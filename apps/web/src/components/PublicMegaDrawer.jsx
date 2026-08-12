@@ -20,11 +20,20 @@ function normalizedDrawerLocation(location) {
   }
 }
 
-export default function PublicMegaDrawer({ item, open, activeEvent, currentPath, onClose }) {
+export default function PublicMegaDrawer({
+  item,
+  open,
+  activeEvent,
+  currentPath,
+  focusFirstChild = false,
+  onFocusComplete,
+  onClose
+}) {
   const [mounted, setMounted] = useState(open);
   const [visible, setVisible] = useState(open);
   const animationFrameRef = useRef(null);
   const hideTimerRef = useRef(null);
+  const firstLinkRef = useRef(null);
 
   useLayoutEffect(() => {
     const cancelPending = () => {
@@ -68,6 +77,12 @@ export default function PublicMegaDrawer({ item, open, activeEvent, currentPath,
     window.clearTimeout(hideTimerRef.current);
   }, []);
 
+  useLayoutEffect(() => {
+    if (!open || !mounted || !focusFirstChild) return;
+    firstLinkRef.current?.focus();
+    onFocusComplete?.();
+  }, [focusFirstChild, mounted, onFocusComplete, open]);
+
   const currentLocation = normalizedDrawerLocation(eventScopedPath(currentPath, activeEvent));
 
   return (
@@ -85,11 +100,12 @@ export default function PublicMegaDrawer({ item, open, activeEvent, currentPath,
       <div className="public-mega-drawer-inner">
         <nav aria-label={`${item.label}子导航`}>
           <ul>
-            {item.children.map((child) => {
+            {item.children.map((child, index) => {
               const href = navigationHref(child, activeEvent);
               return (
                 <li key={child.id}>
                   <a
+                    ref={index === 0 ? firstLinkRef : undefined}
                     href={href}
                     data-router-ignore={child.accountView ? "true" : undefined}
                     aria-current={currentLocation === normalizedDrawerLocation(href) ? "page" : undefined}

@@ -1,33 +1,3 @@
-export const PUBLIC_NAVIGATION_GROUPS = [
-  {
-    label: "赛事服务",
-    links: [
-      { label: "报名入口", accountView: "eventCenter" },
-      { label: "报名流程", path: "/registration-guide" },
-      { label: "参赛指南", path: "/registration-guide" },
-      { label: "成绩查询", accountView: "records" },
-      { label: "证书查询", accountView: "certificates" }
-    ]
-  },
-  {
-    label: "关于大赛",
-    links: [
-      { label: "大赛简介", path: "/about" },
-      { label: "赛事章程", path: "/rules" },
-      { label: "赛事项目与组别", path: "/projects" }
-    ]
-  },
-  {
-    label: "赛事资讯",
-    links: [
-      { label: "通知公告", path: "/announcements" },
-      { label: "新闻动态", path: "/news" },
-      { label: "优秀作品", path: "/news?type=work" },
-      { label: "赛事回顾", path: "/history" }
-    ]
-  }
-];
-
 export const PUBLIC_PRIMARY_NAVIGATION = [
   {
     id: "home",
@@ -44,7 +14,7 @@ export const PUBLIC_PRIMARY_NAVIGATION = [
     label: "关于大赛",
     path: "/about",
     children: [
-      { id: "about-introduction", label: "赛事简介", path: "/about" },
+      { id: "about-introduction", label: "赛事简章", path: "/about" },
       { id: "rules", label: "赛事章程", path: "/rules" }
     ]
   },
@@ -66,11 +36,9 @@ export const PUBLIC_PRIMARY_NAVIGATION = [
 const ABOUT_ROUTES = new Set([
   "/about",
   "/rules",
-  "/registration-process",
-  "/registration-guide",
-  "/projects",
-  "/contact"
+  "/projects"
 ]);
+const HOME_ROUTES = new Set(["/", "/registration-process", "/registration-guide"]);
 const NEWS_ROUTES = new Set(["/announcements", "/news", "/history"]);
 
 export function activePrimaryNavigationLabel(location) {
@@ -80,9 +48,10 @@ export function activePrimaryNavigationLabel(location) {
   } catch {
     return null;
   }
-  if (pathname === "/") return "首页";
+  if (HOME_ROUTES.has(pathname)) return "首页";
   if (ABOUT_ROUTES.has(pathname)) return "关于大赛";
   if (NEWS_ROUTES.has(pathname)) return "赛事资讯";
+  if (pathname === "/contact") return "联系我们";
   return null;
 }
 

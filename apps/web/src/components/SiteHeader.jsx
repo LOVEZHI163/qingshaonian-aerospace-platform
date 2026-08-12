@@ -1,4 +1,4 @@
-import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import PublicMegaDrawer from "./PublicMegaDrawer.jsx";
 import {
   activePrimaryNavigationLabel,
@@ -93,12 +93,6 @@ export default function SiteHeader({ routeKey, homeData }) {
   useEffect(() => {
     closeAllNavigation();
   }, [routeKey]);
-
-  useLayoutEffect(() => {
-    if (!focusGroupId || openGroupId !== focusGroupId) return;
-    navigationZoneRef.current?.querySelector(`#public-drawer-${focusGroupId} a[href]`)?.focus();
-    setFocusGroupId(null);
-  }, [focusGroupId, openGroupId]);
 
   useEffect(() => {
     if (!openGroupId && !mobileOpen) return undefined;
@@ -220,6 +214,8 @@ export default function SiteHeader({ routeKey, homeData }) {
                       open={open}
                       activeEvent={activeEvent}
                       currentPath={routeKey || "/"}
+                      focusFirstChild={focusGroupId === item.id}
+                      onFocusComplete={() => setFocusGroupId(null)}
                       onClose={closeAllNavigation}
                     />
                   </div>
@@ -230,6 +226,7 @@ export default function SiteHeader({ routeKey, homeData }) {
                   className={item.id === "registration" ? "registration-link" : undefined}
                   href={navigationHref(item, activeEvent)}
                   data-router-ignore={item.accountView ? "true" : undefined}
+                  aria-current={current ? "page" : undefined}
                   key={item.id}
                   onClick={closeAllNavigation}
                 >
@@ -297,6 +294,7 @@ export default function SiteHeader({ routeKey, homeData }) {
                 <a
                   href={navigationHref(item, activeEvent)}
                   data-router-ignore={item.accountView ? "true" : undefined}
+                  aria-current={activePrimaryLabel === item.label ? "page" : undefined}
                   onClick={closeAllNavigation}
                   key={item.id}
                 >

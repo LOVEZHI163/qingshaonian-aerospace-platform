@@ -92,21 +92,25 @@ describe("public site keyboard and semantics", () => {
   });
 
   it.each([
-    ["/", "首页"],
-    ["/about", "关于大赛"],
-    ["/rules", "关于大赛"],
-    ["/registration-process", "关于大赛"],
-    ["/projects", "关于大赛"],
-    ["/contact", "关于大赛"],
-    ["/announcements", "赛事资讯"],
-    ["/news", "赛事资讯"],
-    ["/history", "赛事资讯"]
-  ])("marks the route family for %s as %s", (path, label) => {
+    ["/", "首页", "button"],
+    ["/about", "关于大赛", "button"],
+    ["/rules", "关于大赛", "button"],
+    ["/registration-process", "首页", "button"],
+    ["/projects", "关于大赛", "button"],
+    ["/contact", "联系我们", "link"],
+    ["/announcements", "赛事资讯", "button"],
+    ["/news", "赛事资讯", "button"],
+    ["/history", "赛事资讯", "button"]
+  ])("marks the route family for %s as %s", (path, label, role) => {
     render(<SiteHeader routeKey={path} homeData={{}} homeStatus="empty" />);
     const primaryNavigation = screen.getByRole("navigation", { name: "主导航" });
 
-    expect(within(primaryNavigation).getByRole("button", { name: label })).toHaveAttribute("aria-current", "page");
-    expect(within(primaryNavigation).getAllByRole("button").filter((button) => button.hasAttribute("aria-current"))).toHaveLength(1);
+    expect(within(primaryNavigation).getByRole(role, { name: label })).toHaveAttribute("aria-current", "page");
+    const visiblePrimaryItems = [
+      ...within(primaryNavigation).getAllByRole("button"),
+      ...within(primaryNavigation).getAllByRole("link")
+    ];
+    expect(visiblePrimaryItems.filter((item) => item.hasAttribute("aria-current"))).toHaveLength(1);
   });
 
   it("moves focus into the opened mobile menu and returns it after Escape", () => {

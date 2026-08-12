@@ -103,6 +103,17 @@ function home(overrides = {}) {
 }
 
 describe("adaptive public home", () => {
+  it("exposes the services section as the approved home navigation target", () => {
+    render(<ServiceGrid services={[{
+      key: "guide",
+      label: "参赛指南",
+      eventId: "E1",
+      available: true,
+      href: "/registration-guide"
+    }]} />);
+
+    expect(document.querySelector("section#services")).toHaveAccessibleName("赛事服务");
+  });
   beforeEach(() => window.history.replaceState({}, "", "/"));
 
   it("uses a safe platform history state when zero events are available", () => {
