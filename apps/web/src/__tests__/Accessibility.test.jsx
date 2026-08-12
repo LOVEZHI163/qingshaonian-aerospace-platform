@@ -169,6 +169,8 @@ describe("public site keyboard and semantics", () => {
     const mobileBrand = navigationStyleAt(".mobile-brand-name", { width: 1440 });
     const menuTrigger = navigationStyleAt(".menu-trigger", { width: 1440 });
     const drawer = navigationStyleAt(".public-mega-drawer", { width: 1440 });
+    const drawerInner = navigationStyleAt(".public-mega-drawer-inner", { width: 1440 });
+    const drawerLink = navigationStyleAt(".public-mega-drawer a", { width: 1440 });
 
     expect(header.display).toBe("grid");
     expect(header.width).toBe("min(var(--content-max), calc(100% - 2.5rem))");
@@ -180,8 +182,14 @@ describe("public site keyboard and semantics", () => {
     expect(mobileBrand.display).toBe("none");
     expect(menuTrigger.display).toBe("none");
     expect(drawer.position).toBe("absolute");
-    expect(drawer["inline-size"]).toBe("max-content");
+    expect(drawer["inline-size"]).toBe("15rem");
     expect(drawer["max-inline-size"]).toBe("min(22rem, calc(100vw - 2rem))");
+    expect(drawerInner.padding).toBe("0.625rem");
+    expect(drawerLink["min-width"]).toBe("0");
+    expect(drawerLink.width).toBe("100%");
+    expect(drawerLink["min-height"]).toBe("3rem");
+    expect(drawerLink["font-size"]).toBe("1rem");
+    expect(drawerLink["font-weight"]).toBe("600");
 
     for (const trigger of screen.getAllByRole("button", { expanded: false }).filter((button) => button.classList.contains("primary-navigation-trigger"))) {
       const item = trigger.closest(".primary-navigation-item");
