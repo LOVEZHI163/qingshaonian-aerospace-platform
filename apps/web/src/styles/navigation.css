@@ -42,7 +42,7 @@
   min-width: 0;
   align-items: stretch;
   justify-content: center;
-  gap: 1.5rem;
+  gap: 2rem;
 }
 .primary-navigation-item { position: relative; display: flex; min-width: 0; align-items: stretch; }
 .primary-navigation-links > a,
@@ -111,7 +111,7 @@
   z-index: 2;
   top: 100%;
   inset-inline-start: 50%;
-  inline-size: 11rem;
+  inline-size: 9.5rem;
   max-inline-size: min(22rem, calc(100vw - 2rem));
   visibility: hidden;
   opacity: 0;

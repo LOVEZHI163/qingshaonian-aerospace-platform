@@ -180,7 +180,7 @@ describe("public site keyboard and semantics", () => {
     expect(navigation["grid-row"]).toBe("1");
     expect(actions["grid-row"]).toBe("1");
     expect(navigation.display).toBe("flex");
-    expect(navigation.gap).toBe("1.5rem");
+    expect(navigation.gap).toBe("2rem");
     expect(actions.display).toBe("flex");
     expect(mobileBrand.display).toBe("none");
     expect(menuTrigger.display).toBe("none");
@@ -189,7 +189,7 @@ describe("public site keyboard and semantics", () => {
     expect(primaryTrigger["font-size"]).toBe("1rem");
     expect(primaryTrigger["font-weight"]).toBe("700");
     expect(drawer.position).toBe("absolute");
-    expect(drawer["inline-size"]).toBe("11rem");
+    expect(drawer["inline-size"]).toBe("9.5rem");
     expect(drawer["max-inline-size"]).toBe("min(22rem, calc(100vw - 2rem))");
     expect(drawerInner.padding).toBe("0.25rem");
     expect(drawerLink["min-width"]).toBe("0");
