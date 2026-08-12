@@ -142,6 +142,7 @@ describe("adaptive public home", () => {
 
     expect(screen.getByRole("heading", { name: "通知公告" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "新闻动态" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "优秀作品" })).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "E1 动态赛事名称" })).toBeInTheDocument();
     expect(screen.getByText("E1 动态赛事主题")).toBeInTheDocument();
     expect(screen.getByText("E1 动态比赛日期")).toBeInTheDocument();
@@ -306,8 +307,7 @@ describe("adaptive public home", () => {
     });
     render(<HomePage data={home({
       featuredEvent: protectedHero,
-      news: [protectedNews],
-      works: [content("无封面作品", "work")]
+      news: [protectedNews]
     })} />);
 
     fireEvent.error(screen.getByRole("img", { name: "E1 动态赛事名称赛事封面" }));
@@ -316,7 +316,6 @@ describe("adaptive public home", () => {
     expect(screen.getAllByText("预览资源需要重新登录")).toHaveLength(2);
     expect(screen.getByLabelText("E1 动态赛事名称预览资源需要重新登录")).toBeInTheDocument();
     expect(screen.getByLabelText("私有新闻图片 动态内容标题预览资源需要重新登录")).toBeInTheDocument();
-    expect(screen.getByLabelText("无封面作品 动态内容标题暂无封面")).toBeInTheDocument();
   });
 
   it("renders all sections and footer from the single home response", async () => {
@@ -328,7 +327,7 @@ describe("adaptive public home", () => {
 
     expect(await screen.findByText("公告一 动态内容标题")).toBeInTheDocument();
     expect(screen.getByText("新闻一 动态内容标题")).toBeInTheDocument();
-    expect(screen.getByText("作品一 动态内容标题")).toBeInTheDocument();
+    expect(screen.queryByText("作品一 动态内容标题")).not.toBeInTheDocument();
     expect(screen.getByText("回顾一 动态内容标题")).toBeInTheDocument();
     expect(screen.getByText("来自聚合接口的平台简介")).toBeInTheDocument();
     expect(screen.getByText("测试主办单位")).toBeInTheDocument();

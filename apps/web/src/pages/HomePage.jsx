@@ -38,14 +38,6 @@ export default function HomePage({ data = {} }) {
         emptyText="暂无最新新闻动态"
       />
       <ContentSection
-        id="works"
-        title={PUBLIC_CONTENT_TYPE_LABELS.work}
-        kicker="创意展示"
-        items={rows(data.works)}
-        moreHref="/news"
-        emptyText="暂无公开作品"
-      />
-      <ContentSection
         id="history"
         title="历届赛事"
         kicker="逐梦足迹"
