@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  PUBLIC_PRIMARY_NAVIGATION,
   accountEntry,
   eventScopedPath,
+  navigationHref,
   publicEventOptions,
   selectedPublicEvent
 } from "../public-navigation.js";
@@ -11,6 +13,24 @@ const second = { id: "E2", slug: "second", name: "同期赛事" };
 const home = { featuredEvent: featured, concurrentEvents: [second, featured, null] };
 
 describe("public navigation model", () => {
+  it("exposes three independent drawer groups and three direct destinations", () => {
+    expect(PUBLIC_PRIMARY_NAVIGATION.map(({ label, children }) => [label, children?.map((row) => row.label) || []])).toEqual([
+      ["首页", ["赛事服务", "报名流程", "关于大赛"]],
+      ["关于大赛", ["赛事简介", "赛事章程"]],
+      ["赛事资讯", ["通知公告", "新闻动态", "赛事回顾"]],
+      ["获奖查询", []],
+      ["联系我们", []],
+      ["报名入口", []]
+    ]);
+  });
+
+  it("scopes public and account navigation without inventing children for direct links", () => {
+    const items = Object.fromEntries(PUBLIC_PRIMARY_NAVIGATION.map((row) => [row.label, row]));
+    expect(navigationHref(items["联系我们"], second)).toBe("/contact?event=second");
+    expect(navigationHref(items["获奖查询"], second)).toBe("/admin/?view=certificates&eventId=E2");
+    expect(navigationHref(items["报名入口"], second)).toBe("/admin/?view=eventCenter&eventId=E2");
+  });
+
   it("deduplicates the current public event options", () => {
     expect(publicEventOptions(home).map((row) => row.id)).toEqual(["E1", "E2"]);
   });

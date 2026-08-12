@@ -28,6 +28,41 @@ export const PUBLIC_NAVIGATION_GROUPS = [
   }
 ];
 
+export const PUBLIC_PRIMARY_NAVIGATION = [
+  {
+    id: "home",
+    label: "首页",
+    path: "/",
+    children: [
+      { id: "services", label: "赛事服务", path: "/#services" },
+      { id: "registration-guide", label: "报名流程", path: "/registration-guide" },
+      { id: "about", label: "关于大赛", path: "/about" }
+    ]
+  },
+  {
+    id: "about",
+    label: "关于大赛",
+    path: "/about",
+    children: [
+      { id: "about-introduction", label: "赛事简介", path: "/about" },
+      { id: "rules", label: "赛事章程", path: "/rules" }
+    ]
+  },
+  {
+    id: "news",
+    label: "赛事资讯",
+    path: "/news",
+    children: [
+      { id: "announcements", label: "通知公告", path: "/announcements" },
+      { id: "news-list", label: "新闻动态", path: "/news" },
+      { id: "history", label: "赛事回顾", path: "/history" }
+    ]
+  },
+  { id: "certificates", label: "获奖查询", accountView: "certificates" },
+  { id: "contact", label: "联系我们", path: "/contact" },
+  { id: "registration", label: "报名入口", accountView: "eventCenter" }
+];
+
 const ABOUT_ROUTES = new Set([
   "/about",
   "/rules",
@@ -78,4 +113,10 @@ export function accountEntry(view, event) {
   const params = new URLSearchParams({ view });
   if (event?.id) params.set("eventId", event.id);
   return `/admin/?${params.toString()}`;
+}
+
+export function navigationHref(item, activeEvent) {
+  return item.accountView
+    ? accountEntry(item.accountView, activeEvent)
+    : eventScopedPath(item.path, activeEvent);
 }
