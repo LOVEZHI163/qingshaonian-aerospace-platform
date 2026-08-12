@@ -3,6 +3,7 @@ import { computed, reactive, ref } from "vue";
 
 import { api, apiUrl } from "../lib/api.js";
 import { contentImportError } from "../lib/content-import-errors.js";
+import { CONTENT_TYPE_OPTIONS } from "../lib/content-type-labels.js";
 
 const props = defineProps({ events: { type: Array, default: () => [] } });
 const emit = defineEmits(["cancel", "committed"]);
@@ -126,7 +127,7 @@ defineExpose({ requestLeave });
         <label>标题<input v-model="form.title" data-field="importTitle" required></label>
         <label>公开地址 slug<input v-model="form.slug" data-field="importSlug" required></label>
         <label>归属赛事<select v-model="form.eventId" data-field="importEvent"><option value="">平台通用</option><option v-for="event in props.events" :key="event.id" :value="event.id">{{ event.name }}</option></select></label>
-        <label>内容类型<select v-model="form.type" data-field="importType"><option value="news">新闻</option><option value="announcement">公告</option><option value="work">作品</option><option value="recap">回顾</option><option value="guide">指南</option></select></label>
+        <label>内容类型<select v-model="form.type" data-field="importType"><option v-for="type in CONTENT_TYPE_OPTIONS" :key="type.value" :value="type.value">{{ type.label }}</option></select></label>
         <label class="content-import-summary">摘要<textarea v-model="form.summary" rows="3"></textarea></label>
       </div>
       <div class="content-import-layout">

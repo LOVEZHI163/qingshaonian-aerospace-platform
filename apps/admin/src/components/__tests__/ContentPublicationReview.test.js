@@ -109,6 +109,30 @@ describe("contentPublicationState", () => {
 });
 
 describe("ContentPublicationReview", () => {
+  it.each([
+    ["announcement", "通知公告"],
+    ["news", "新闻动态"],
+    ["work", "优秀作品"],
+    ["recap", "赛事回顾"],
+    ["guide", "参赛指南"]
+  ])("renders %s with its approved label", (type, label) => {
+    const wrapper = mount(ContentPublicationReview, {
+      props: { content: { ...content, type } }
+    });
+
+    expect(wrapper.findAll(".event-facts > div")[1].text()).toContain(label);
+  });
+
+  it("renders unknown inherited object keys as their original safe fallback", () => {
+    const wrapper = mount(ContentPublicationReview, {
+      props: { content: { ...content, type: "toString" } }
+    });
+
+    const typeFact = wrapper.findAll(".event-facts > div")[1];
+    expect(typeFact.text()).toContain("toString");
+    expect(typeFact.text()).not.toContain("function");
+  });
+
   it("disables publication for a draft event and links to event settings", async () => {
     const wrapper = mount(ContentPublicationReview, {
       props: { content, event: { id: "E1", name: "2026赛事", status: "draft" } }

@@ -1,11 +1,11 @@
 <script setup>
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import { api } from "../lib/api.js";
+import { CONTENT_TYPE_OPTIONS, contentTypeLabel } from "../lib/content-type-labels.js";
 
 const props = defineProps({ events: { type: Array, default: () => [] }, selectedId: { type: String, default: null } });
 const emit = defineEmits(["select", "new", "import"]);
 const states = { draft: "草稿", scheduled: "定时发布", published: "已发布", offline: "已下线" };
-const types = { announcement: "公告", news: "新闻", work: "作品", recap: "回顾", guide: "指南" };
 const rows = ref([]);
 const loading = ref(true);
 const error = ref("");
@@ -73,12 +73,12 @@ defineExpose({ load, clearFilters });
 <template>
   <section class="panel content-list-panel">
     <div class="panel-title"><div><h3>内容列表</h3><p>按类型、赛事、状态和关键词筛选。</p></div><div class="form-actions"><button type="button" @click="load">刷新</button><button type="button" data-action="import-content" @click="emit('import')">转载内容</button><button type="button" class="primary" data-action="new-content" @click="emit('new')">新建内容</button></div></div>
-    <div class="content-filter-grid"><label>类型<select v-model="filters.type" data-content-filter="type"><option value="">全部类型</option><option v-for="(label,value) in types" :key="value" :value="value">{{ label }}</option></select></label><label>赛事<select v-model="filters.eventId" data-content-filter="eventId"><option value="">全部赛事</option><option :value="PLATFORM_FILTER">平台通用</option><option v-for="event in events" :key="event.id" :value="event.id">{{ event.name }}</option></select></label><label>状态<select v-model="filters.status" data-content-filter="status"><option value="">全部状态</option><option v-for="(label,value) in states" :key="value" :value="value">{{ label }}</option></select></label><label>关键词<input v-model="filters.keyword" data-content-filter="keyword" placeholder="标题、slug 或摘要"></label></div>
+    <div class="content-filter-grid"><label>类型<select v-model="filters.type" data-content-filter="type"><option value="">全部类型</option><option v-for="type in CONTENT_TYPE_OPTIONS" :key="type.value" :value="type.value">{{ type.label }}</option></select></label><label>赛事<select v-model="filters.eventId" data-content-filter="eventId"><option value="">全部赛事</option><option :value="PLATFORM_FILTER">平台通用</option><option v-for="event in events" :key="event.id" :value="event.id">{{ event.name }}</option></select></label><label>状态<select v-model="filters.status" data-content-filter="status"><option value="">全部状态</option><option v-for="(label,value) in states" :key="value" :value="value">{{ label }}</option></select></label><label>关键词<input v-model="filters.keyword" data-content-filter="keyword" placeholder="标题、slug 或摘要"></label></div>
     <div class="content-list-summary"><span data-content-list-count>共 {{ filtered.length }} 条内容</span><button v-if="hasActiveFilters" type="button" data-action="clear-content-filters" @click="clearFilters">清空筛选</button></div>
     <p v-if="loading" role="status">正在加载内容列表…</p>
     <div v-else-if="error"><p class="message" role="alert">{{ error }}</p><button type="button" @click="load">重试</button></div>
     <div v-else-if="!rows.length" class="empty-state content-list-empty">
-      <p>尚未创建官网内容。创建新闻、公告或赛事资料，让访客及时了解最新动态。</p>
+      <p>尚未创建官网内容。创建新闻动态、通知公告或赛事资料，让访客及时了解最新动态。</p>
       <button type="button" class="primary" data-action="create-first-content" @click="emit('new')">创建第一篇内容</button>
     </div>
     <div v-else-if="!filtered.length" class="empty-state content-list-empty">
@@ -89,7 +89,7 @@ defineExpose({ load, clearFilters });
       <article v-for="row in paged" :key="row.id" :class="{ selected: row.id === selectedId }" :data-content-row="row.id" @click="emit('select', row.id)">
         <div class="content-list-row-main">
           <div class="content-list-row-heading">
-            <span><strong>{{ row.title }}</strong><small>{{ types[row.type] || row.type }} · {{ row.slug }}</small></span>
+            <span><strong>{{ row.title }}</strong><small>{{ contentTypeLabel(row.type) }} · {{ row.slug }}</small></span>
             <em :class="row.status">{{ states[row.status] || row.status }}</em>
           </div>
           <dl class="content-list-row-facts">

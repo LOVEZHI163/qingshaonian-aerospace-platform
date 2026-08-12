@@ -46,6 +46,20 @@ async function mountEditor(contentId = "POST-1") {
 describe("ContentEditorPanel", () => {
   beforeEach(() => { apiMock.mockReset(); installApi(); });
 
+  it("shows approved content names while retaining API type values", async () => {
+    const wrapper = await mountEditor();
+    const options = wrapper.get('[data-content-field="type"]').findAll("option");
+
+    expect(options.map((option) => [option.attributes("value"), option.text()])).toEqual([
+      ["announcement", "通知公告"],
+      ["news", "新闻动态"],
+      ["work", "优秀作品"],
+      ["recap", "赛事回顾"],
+      ["guide", "参赛指南"]
+    ]);
+    expect(wrapper.get('[data-content-field="type"]').element.value).toBe("news");
+  });
+
   it("saves the complete draft, reloads it, and previews only server-sanitized HTML", async () => {
     const wrapper = await mountEditor();
     await wrapper.get('[data-content-field="title"]').setValue("管理员修改");

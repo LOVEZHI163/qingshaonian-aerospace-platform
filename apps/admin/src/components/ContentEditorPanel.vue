@@ -1,6 +1,7 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import { api } from "../lib/api.js";
+import { CONTENT_TYPE_OPTIONS } from "../lib/content-type-labels.js";
 import ContentPublicationReview from "./ContentPublicationReview.vue";
 import ContentPreviewDialog from "./ContentPreviewDialog.vue";
 import MediaPicker from "./MediaPicker.vue";
@@ -8,7 +9,6 @@ import RichTextEditor from "./RichTextEditor.vue";
 
 const props = defineProps({ contentId: { type: String, default: null }, events: { type: Array, default: () => [] }, profiles: { type: Array, default: () => [] } });
 const emit = defineEmits(["saved", "deleted", "navigate", "missing"]);
-const types = [["announcement","公告"],["news","新闻"],["work","作品"],["recap","回顾"],["guide","指南"]];
 const states = { draft: "草稿", scheduled: "定时发布", published: "已发布", offline: "已下线" };
 const SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const blank = () => ({ id: null, slug: "", eventId: null, type: "news", title: "", summary: "", bodyHtml: "", status: "draft", publishAt: null, pinned: false, sortOrder: 0, coverMediaId: null, coverMedia: null, attachments: [], version: null });
@@ -444,7 +444,7 @@ defineExpose({
     <form v-if="!loading && !loadFailed && !reviewing" class="content-editor-form" @submit.prevent="save">
       <section class="content-editor-section" data-content-section="basics"><h4>基本信息</h4>
       <div class="site-form-grid"><label>标题<input v-model="form.title" data-content-field="title" :disabled="published"></label><label class="content-slug-field">公开地址 slug<input ref="slugInput" v-model="form.slug" data-content-field="slug" :disabled="published || slugLocked" autocomplete="off" :aria-invalid="slugFieldError ? 'true' : 'false'" :aria-describedby="slugFieldError ? 'content-slug-guidance content-slug-error' : 'content-slug-guidance'" @input="handleSlugInput"><small id="content-slug-guidance" class="hint" data-slug-guidance>{{ slugGuidance }}</small><small v-if="slugFieldError" id="content-slug-error" class="content-field-error" data-slug-error>{{ slugFieldError }}</small></label></div>
-      <div class="site-form-grid"><label>归属赛事<select v-model="form.eventId" data-content-field="eventId" :disabled="published"><option :value="null">平台通用</option><option v-for="event in events" :key="event.id" :value="event.id">{{ event.name }}</option></select></label><label>内容类型<select v-model="form.type" data-content-field="type" :disabled="published"><option v-for="type in types" :key="type[0]" :value="type[0]">{{ type[1] }}</option></select></label></div>
+      <div class="site-form-grid"><label>归属赛事<select v-model="form.eventId" data-content-field="eventId" :disabled="published"><option :value="null">平台通用</option><option v-for="event in events" :key="event.id" :value="event.id">{{ event.name }}</option></select></label><label>内容类型<select v-model="form.type" data-content-field="type" :disabled="published"><option v-for="type in CONTENT_TYPE_OPTIONS" :key="type.value" :value="type.value">{{ type.label }}</option></select></label></div>
       <label>摘要<textarea v-model="form.summary" data-content-field="summary" :disabled="published"></textarea></label>
       </section>
       <section ref="bodyMediaSection" class="content-editor-section" data-content-section="body-media" tabindex="-1"><h4>正文与媒体</h4>

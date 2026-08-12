@@ -58,9 +58,31 @@ describe("ContentListPanel", () => {
     const wrapper = await mountLoaded();
 
     expect(wrapper.text()).toContain("尚未创建官网内容");
-    expect(wrapper.text()).toContain("创建新闻、公告或赛事资料");
+    expect(wrapper.text()).toContain("创建新闻动态、通知公告或赛事资料");
     await wrapper.get('[data-action="create-first-content"]').trigger("click");
     expect(wrapper.emitted("new")).toEqual([[]]);
+  });
+
+  it("uses the approved content names in the filter and rendered rows", async () => {
+    apiMock.mockResolvedValue({ rows: [
+      { ...rows[0], id: "NEWS", type: "news" },
+      { ...rows[1], id: "NOTICE", type: "announcement" },
+      { ...rows[1], id: "RECAP", type: "recap", title: "赛后报道" }
+    ] });
+    const wrapper = await mountLoaded();
+
+    const options = wrapper.get('[data-content-filter="type"]').findAll("option");
+    expect(options.map((option) => [option.attributes("value"), option.text()])).toEqual([
+      ["", "全部类型"],
+      ["announcement", "通知公告"],
+      ["news", "新闻动态"],
+      ["work", "优秀作品"],
+      ["recap", "赛事回顾"],
+      ["guide", "参赛指南"]
+    ]);
+    expect(wrapper.get('[data-content-row="NEWS"]').text()).toContain("新闻动态");
+    expect(wrapper.get('[data-content-row="NOTICE"]').text()).toContain("通知公告");
+    expect(wrapper.get('[data-content-row="RECAP"]').text()).toContain("赛事回顾");
   });
 
   it("keeps the no-content guidance when an empty list has active filters", async () => {

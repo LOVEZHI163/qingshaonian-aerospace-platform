@@ -41,6 +41,24 @@ describe("ContentImportPanel", () => {
     expect(apiMock).toHaveBeenLastCalledWith("/api/admin/content-imports/SCI-1/images/IMG-2/retry", { method: "POST" });
   });
 
+  it("shows approved content names while retaining imported API type values", async () => {
+    apiMock.mockResolvedValueOnce({ row: batch });
+    const wrapper = mount(ContentImportPanel, { props: { events } });
+    await wrapper.get('[data-field="sourceUrl"]').setValue(batch.sourceUrl);
+    await wrapper.get('[data-action="inspect-import"]').trigger("submit");
+    await flushPromises();
+
+    const options = wrapper.get('[data-field="importType"]').findAll("option");
+    expect(options.map((option) => [option.attributes("value"), option.text()])).toEqual([
+      ["announcement", "通知公告"],
+      ["news", "新闻动态"],
+      ["work", "优秀作品"],
+      ["recap", "赛事回顾"],
+      ["guide", "参赛指南"]
+    ]);
+    expect(wrapper.get('[data-field="importType"]').element.value).toBe("news");
+  });
+
   it("commits only as a draft and emits the new content id", async () => {
     apiMock.mockResolvedValueOnce({ row: batch }).mockResolvedValueOnce({ row: { id: "POST-1", status: "draft" } });
     const wrapper = mount(ContentImportPanel, { props: { events } });

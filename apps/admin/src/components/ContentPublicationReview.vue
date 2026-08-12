@@ -1,6 +1,7 @@
 <script setup>
 import { computed } from "vue";
 import { contentPublicationState } from "../lib/content-publication-state.js";
+import { contentTypeLabel } from "../lib/content-type-labels.js";
 
 const props = defineProps({
   content: { type: Object, required: true },
@@ -10,7 +11,6 @@ const props = defineProps({
 });
 const emit = defineEmits(["back", "preview", "publish", "navigate"]);
 const state = computed(() => contentPublicationState(props));
-const typeLabels = { announcement: "公告", news: "新闻", work: "作品", recap: "回顾", guide: "指南" };
 const statusLabels = { draft: "草稿", scheduled: "定时发布", published: "已发布", offline: "已下线" };
 
 function publishTime(value) {
@@ -29,7 +29,7 @@ function publishTime(value) {
     </div>
     <dl class="event-facts">
       <div><dt>标题</dt><dd>{{ content.title || "未填写" }}</dd></div>
-      <div><dt>类型</dt><dd>{{ typeLabels[content.type] || content.type || "未填写" }}</dd></div>
+      <div><dt>类型</dt><dd>{{ contentTypeLabel(content.type) }}</dd></div>
       <div><dt>归属赛事</dt><dd>{{ event?.name || (content.eventId ? content.eventId : "平台通用") }}</dd></div>
       <div><dt>公开地址</dt><dd>{{ content.slug || "未填写" }}</dd></div>
       <div><dt>内容状态</dt><dd>{{ statusLabels[content.status] || content.status || "草稿" }}</dd></div>
