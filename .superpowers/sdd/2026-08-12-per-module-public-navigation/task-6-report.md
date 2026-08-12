@@ -64,3 +64,34 @@ Verified base: `e9734f9face808611d2eaf0c39b761d053a10e19`. Scope remained local-
 ### Browser acceptance status
 
 The earlier local production browser pass remains valid for the unchanged 1440/1024/768/390 layout, hover bridge, outside close, breakpoints, mobile accordion/order/scroll/overflow, and Escape restoration. During this review round the connected browser surface was no longer available after tab cleanup, so a fresh real-browser replay of the corrected first-child focus handshake could not be captured. No alternative browser backend was substituted. The strengthened real-behavior component test now specifically covers both fresh click and fresh Enter mount paths, rather than relying on a drawer pre-mounted by hover.
+
+## Drawer visual polish and production rollout
+
+Rollout date: 2026-08-13 (Asia/Shanghai)
+
+Deployed release: `ebd7d89584d9e432f8aab59c7688739fa04e8a5d`
+
+### Change and regression evidence
+
+- Root cause: desktop drawers used `inline-size: max-content` while links only had a minimum width and heavy `700` text, so group boundaries and text density varied visually.
+- RED: the focused accessibility suite failed exactly on the old `max-content` width before production CSS changed.
+- GREEN: focused navigation tests passed `65/65`; fresh web full suite passed `204/204`; root production build exited `0` with web `55` and admin `122` transformed modules; `git diff --check` exited `0`.
+- Local Chromium at 1329 px measured all three desktop drawers at exactly 240 px; every link measured 48 px high with 16 px / 600 text. The document scroll width equaled the viewport width. At 390 px the mobile menu retained its full action area and produced no horizontal overflow.
+- Approved labels and links were unchanged: 首页 group, 关于大赛 group, 赛事资讯 group, plus direct 获奖查询 and 联系我们 entries.
+
+### Backups and rollback
+
+- PostgreSQL: `backups/aerogp-20260812T155603Z.dump`.
+- Uploads: `backups/uploads/aerogp-uploads-20260812T155604Z-iPembM.tar.gz` (backup script verification passed).
+- Previous source: `backups/source-before-drawer-polish-20260812T235544.tgz`.
+- Rollback images: `aerogp-api:rollback-20260812T235544` and `aerogp-web:rollback-20260812T235544`.
+- Candidate Git archive SHA-256 matched locally and remotely: `8eacc61af35ba0a803496d8b1b29c0192aa1d7c4309722e408a0fd9f67d3386b`.
+- PostgreSQL, uploads, Caddy, environment secrets, and named volumes were preserved; no destructive volume operation ran.
+
+### Production verification
+
+- Upgrade preflight passed; API and Web were rebuilt and recreated with the same full release SHA. Both containers became healthy.
+- Release consistency verification passed against `https://aerogp.cn`; public home, event, content, sitemap, brand assets, admin shell, and system version returned expected status.
+- Full authenticated smoke passed, covering admin login, organization isolation/lifecycle, personal registration eligibility, image/video submission, account records, certificate history, cleanup, and all applied migrations.
+- `/opt/aerogp/.release`, `.env` `RELEASE_SHA`, and `/api/system/version` all report `ebd7d89584d9e432f8aab59c7688739fa04e8a5d`.
+- Live stylesheet `/assets/index-CJVoZfom.css` contains the deployed `15rem` drawer width, `3rem` link height and `600` text weight contract.
