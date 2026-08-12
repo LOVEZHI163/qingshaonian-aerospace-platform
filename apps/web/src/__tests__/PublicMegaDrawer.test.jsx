@@ -156,9 +156,10 @@ describe("per-module public navigation", () => {
       "关于大赛",
       "赛事资讯"
     ]);
-    for (const label of ["获奖查询", "联系我们", "报名入口"]) {
+    for (const label of ["获奖查询", "联系我们"]) {
       expect(within(primary).getByRole("link", { name: label })).not.toHaveAttribute("aria-expanded");
     }
+    expect(within(document.querySelector(".header-actions")).getByRole("link", { name: "报名入口" })).not.toHaveAttribute("aria-expanded");
   });
 
   it("closes the active drawer on Escape and restores its own trigger focus", () => {

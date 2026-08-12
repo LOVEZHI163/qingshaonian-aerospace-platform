@@ -86,7 +86,7 @@
 }
 .login-link { color: var(--color-white); background: rgba(255, 255, 255, 0.08); }
 .registration-link { color: var(--color-brand-ink); background: var(--color-white); }
-.primary-navigation-links > .registration-link { color: var(--color-brand-ink); background: var(--color-white); }
+.header-actions > .registration-link { color: var(--color-brand-ink); background: var(--color-white); }
 .login-link:hover,
 .registration-link:hover { transform: translateY(-1px); }
 

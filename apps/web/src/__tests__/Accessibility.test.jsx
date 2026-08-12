@@ -83,12 +83,11 @@ describe("public site keyboard and semantics", () => {
     expect(screen.getByRole("link", { name: "用户登录" })).toHaveAttribute("data-router-ignore", "true");
     expect(within(primaryNavigation).getAllByRole("link").map((link) => link.textContent)).toEqual([
       "获奖查询",
-      "联系我们",
-      "报名入口"
+      "联系我们"
     ]);
     expect(within(primaryNavigation).getByRole("button", { name: "首页" })).not.toHaveAttribute("aria-current");
     expect(within(primaryNavigation).getByRole("link", { name: "获奖查询" })).toHaveAttribute("data-router-ignore", "true");
-    expect(within(primaryNavigation).getByRole("link", { name: "报名入口" })).toHaveAttribute("data-router-ignore", "true");
+    expect(within(document.querySelector(".header-actions")).getByRole("link", { name: "报名入口" })).toHaveAttribute("data-router-ignore", "true");
     expect(await screen.findByRole("heading", { name: "动态与优秀作品" })).toBeInTheDocument();
   });
 
@@ -136,6 +135,24 @@ describe("public site keyboard and semantics", () => {
     expect(registration).toHaveAttribute("href", "/admin/?view=eventCenter");
     expect(registration).toHaveAttribute("data-router-ignore", "true");
     expect(login.compareDocumentPosition(registration) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("keeps desktop navigation before the login and registration action group in keyboard order", () => {
+    render(<SiteHeader routeKey="/" homeData={{}} homeStatus="empty" />);
+
+    const siteNavigation = document.querySelector(".site-navigation");
+    const primaryNavigation = within(siteNavigation).getByRole("navigation", { name: "主导航" });
+    const actions = siteNavigation.querySelector(".header-actions");
+    const login = within(actions).getByRole("link", { name: "用户登录" });
+    const registration = within(actions).getByRole("link", { name: "报名入口" });
+    const primaryTabStops = [...primaryNavigation.querySelectorAll("a[href], button:not([disabled])")];
+    const desktopTabStops = [...siteNavigation.querySelectorAll("a[href], button:not([disabled])")];
+
+    expect(within(primaryNavigation).queryByRole("link", { name: "报名入口" })).not.toBeInTheDocument();
+    expect([...actions.querySelectorAll("a[href]")]).toEqual([login, registration]);
+    expect(primaryNavigation.compareDocumentPosition(actions) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(desktopTabStops).toEqual([...primaryTabStops, login, registration]);
+    expect(desktopTabStops.every((element) => element.tabIndex === 0)).toBe(true);
   });
 
   it("computes a three-part desktop header and anchors each bounded drawer to its trigger item", () => {
@@ -204,7 +221,7 @@ describe("public site keyboard and semantics", () => {
   it("keeps the desktop wordmark inside its grid track and the primary action legible", () => {
     const brand = navigationStyleAt(".brand", { width: 1440 });
     const wordmark = navigationStyleAt(".brand-wordmark", { width: 1440 });
-    const registration = navigationStyleAt(".primary-navigation-links > .registration-link", { width: 1440 });
+    const registration = navigationStyleAt(".header-actions > .registration-link", { width: 1440 });
 
     expect(brand["max-width"]).toBe("100%");
     expect(brand.overflow).toBe("hidden");

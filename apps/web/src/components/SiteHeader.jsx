@@ -189,11 +189,8 @@ export default function SiteHeader({ routeKey, homeData }) {
         </button>
 
         <div id="site-navigation" className="site-navigation">
-          <div className="header-actions">
-            <a className="login-link" href="/admin/" data-router-ignore="true" onClick={closeAllNavigation}>用户登录</a>
-          </div>
           <nav className="primary-navigation-links" aria-label="主导航">
-            {PUBLIC_PRIMARY_NAVIGATION.map((item) => {
+            {PUBLIC_PRIMARY_NAVIGATION.filter((item) => item.id !== "registration").map((item) => {
               const current = activePrimaryLabel === item.label;
               if (item.children?.length > 0) {
                 const open = openGroupId === item.id;
@@ -241,6 +238,17 @@ export default function SiteHeader({ routeKey, homeData }) {
               );
             })}
           </nav>
+          <div className="header-actions">
+            <a className="login-link" href="/admin/" data-router-ignore="true" onClick={closeAllNavigation}>用户登录</a>
+            <a
+              className="registration-link"
+              href={navigationHref(PUBLIC_PRIMARY_NAVIGATION.find((item) => item.id === "registration"), activeEvent)}
+              data-router-ignore="true"
+              onClick={closeAllNavigation}
+            >
+              报名入口
+            </a>
+          </div>
         </div>
       </div>
 
