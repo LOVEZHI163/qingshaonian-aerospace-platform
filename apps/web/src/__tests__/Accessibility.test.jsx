@@ -182,12 +182,14 @@ describe("public site keyboard and semantics", () => {
     expect(mobileBrand.display).toBe("none");
     expect(menuTrigger.display).toBe("none");
     expect(drawer.position).toBe("absolute");
-    expect(drawer["inline-size"]).toBe("15rem");
+    expect(drawer["inline-size"]).toBe("11rem");
     expect(drawer["max-inline-size"]).toBe("min(22rem, calc(100vw - 2rem))");
-    expect(drawerInner.padding).toBe("0.625rem");
+    expect(drawerInner.padding).toBe("0.25rem");
     expect(drawerLink["min-width"]).toBe("0");
     expect(drawerLink.width).toBe("100%");
-    expect(drawerLink["min-height"]).toBe("3rem");
+    expect(drawerLink["min-height"]).toBe("2.75rem");
+    expect(drawerLink["justify-content"]).toBe("center");
+    expect(drawerLink["text-align"]).toBe("center");
     expect(drawerLink["font-size"]).toBe("1rem");
     expect(drawerLink["font-weight"]).toBe("600");
 
