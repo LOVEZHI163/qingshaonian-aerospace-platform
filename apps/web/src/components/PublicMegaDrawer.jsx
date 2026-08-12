@@ -75,6 +75,7 @@ export default function PublicMegaDrawer({ item, open, activeEvent, currentPath,
       id={`public-drawer-${item.id}`}
       className="public-mega-drawer"
       data-group-id={item.id}
+      data-navigation-hover-group={item.id}
       data-open={visible || undefined}
       aria-hidden={!open}
       inert={!open ? "" : undefined}

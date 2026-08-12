@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import PublicMegaDrawer from "./PublicMegaDrawer.jsx";
 import {
   activePrimaryNavigationLabel,
@@ -16,6 +16,7 @@ const HOVER_CLOSE_DELAY_MS = 300;
 export default function SiteHeader({ routeKey, homeData }) {
   const [hoverGroupId, setHoverGroupId] = useState(null);
   const [lockedGroupId, setLockedGroupId] = useState(null);
+  const [focusGroupId, setFocusGroupId] = useState(null);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [mobileGroupId, setMobileGroupId] = useState(null);
   const openGroupId = hoverGroupId || lockedGroupId;
@@ -65,13 +66,40 @@ export default function SiteHeader({ routeKey, homeData }) {
 
   const toggleDesktopGroup = (groupId) => {
     cancelHoverClose();
+    setFocusGroupId(lockedGroupId === groupId ? null : groupId);
     setHoverGroupId(null);
     setLockedGroupId((current) => current === groupId ? null : groupId);
+  };
+
+  const handleDesktopTriggerKeyDown = (event, groupId) => {
+    if (event.repeat || (event.key !== "Enter" && event.key !== " ")) return;
+    event.preventDefault();
+    toggleDesktopGroup(groupId);
+  };
+
+  const handleHoverOver = (event) => {
+    const zone = event.target.closest?.("[data-navigation-hover-group]");
+    if (!zone || !navigationZoneRef.current?.contains(zone)) return;
+    openFromHover(zone.dataset.navigationHoverGroup);
+  };
+
+  const handleHoverOut = (event) => {
+    const zone = event.target.closest?.("[data-navigation-hover-group]");
+    if (!zone || !navigationZoneRef.current?.contains(zone)) return;
+    const nextZone = event.relatedTarget?.closest?.("[data-navigation-hover-group]");
+    if (nextZone?.dataset.navigationHoverGroup === zone.dataset.navigationHoverGroup) return;
+    scheduleHoverClose();
   };
 
   useEffect(() => {
     closeAllNavigation();
   }, [routeKey]);
+
+  useLayoutEffect(() => {
+    if (!focusGroupId || openGroupId !== focusGroupId) return;
+    navigationZoneRef.current?.querySelector(`#public-drawer-${focusGroupId} a[href]`)?.focus();
+    setFocusGroupId(null);
+  }, [focusGroupId, openGroupId]);
 
   useEffect(() => {
     if (!openGroupId && !mobileOpen) return undefined;
@@ -111,13 +139,18 @@ export default function SiteHeader({ routeKey, homeData }) {
     mobilePanelRef.current?.querySelector("button:not([disabled]), a[href]")?.focus();
     const mediaQuery = window.matchMedia?.(MOBILE_NAVIGATION_QUERY);
     const previousOverflow = document.body.style.overflow;
-    const syncBodyScroll = () => {
-      document.body.style.overflow = !mediaQuery || mediaQuery.matches ? "hidden" : previousOverflow;
+    const syncMobileState = () => {
+      if (mediaQuery && !mediaQuery.matches) {
+        document.body.style.overflow = previousOverflow;
+        closeMobileNavigation();
+        return;
+      }
+      document.body.style.overflow = "hidden";
     };
-    syncBodyScroll();
-    mediaQuery?.addEventListener?.("change", syncBodyScroll);
+    syncMobileState();
+    mediaQuery?.addEventListener?.("change", syncMobileState);
     return () => {
-      mediaQuery?.removeEventListener?.("change", syncBodyScroll);
+      mediaQuery?.removeEventListener?.("change", syncMobileState);
       document.body.style.overflow = previousOverflow;
     };
   }, [mobileOpen]);
@@ -130,8 +163,8 @@ export default function SiteHeader({ routeKey, homeData }) {
       className="site-header"
       role="banner"
       data-testid="public-navigation-zone"
-      onMouseEnter={cancelHoverClose}
-      onMouseLeave={scheduleHoverClose}
+      onMouseOver={handleHoverOver}
+      onMouseOut={handleHoverOut}
     >
       <div className="site-header-inner">
         <a className="brand" href="/" aria-label="网站首页">
@@ -176,9 +209,10 @@ export default function SiteHeader({ routeKey, homeData }) {
                     aria-expanded={open}
                     aria-controls={`public-drawer-${item.id}`}
                     aria-current={current ? "page" : undefined}
+                    data-navigation-hover-group={item.id}
                     key={item.id}
-                    onMouseEnter={() => openFromHover(item.id)}
                     onClick={() => toggleDesktopGroup(item.id)}
+                    onKeyDown={(event) => handleDesktopTriggerKeyDown(event, item.id)}
                   >
                     {item.label}
                   </button>

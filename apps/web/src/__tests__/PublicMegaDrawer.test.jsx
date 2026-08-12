@@ -73,6 +73,80 @@ describe("per-module public navigation", () => {
     expect(screen.getByRole("navigation", { name: "关于大赛子导航" })).toBeVisible();
   });
 
+  it("waits before hover closing, cancels on drawer entry, and closes after leaving the bridge", () => {
+    vi.useFakeTimers();
+    installMatchMedia({ hover: true });
+    render(<SiteHeader routeKey="/" homeData={home} homeStatus="success" />);
+    const trigger = screen.getByRole("button", { name: "首页" });
+
+    fireEvent.mouseEnter(trigger);
+    const drawer = screen.getByRole("navigation", { name: "首页子导航" });
+    fireEvent.mouseLeave(trigger);
+    act(() => vi.advanceTimersByTime(299));
+    expect(drawer).toBeVisible();
+    fireEvent.mouseEnter(drawer);
+    act(() => vi.advanceTimersByTime(1));
+    expect(drawer).toBeVisible();
+
+    fireEvent.mouseLeave(drawer);
+    act(() => vi.advanceTimersByTime(300));
+    expect(screen.queryByRole("navigation", { name: "首页子导航" })).not.toBeInTheDocument();
+  });
+
+  it("keeps a click-locked drawer open after the hover bridge is left", () => {
+    vi.useFakeTimers();
+    installMatchMedia({ hover: true });
+    render(<SiteHeader routeKey="/" homeData={home} homeStatus="success" />);
+    const trigger = screen.getByRole("button", { name: "关于大赛" });
+
+    fireEvent.click(trigger);
+    fireEvent.mouseLeave(trigger);
+    act(() => vi.advanceTimersByTime(300));
+
+    expect(screen.getByRole("navigation", { name: "关于大赛子导航" })).toBeVisible();
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("does not extend the hover bridge to the logo or other header controls", () => {
+    vi.useFakeTimers();
+    installMatchMedia({ hover: true });
+    render(<SiteHeader routeKey="/" homeData={home} homeStatus="success" />);
+    const trigger = screen.getByRole("button", { name: "赛事资讯" });
+
+    fireEvent.mouseEnter(trigger);
+    expect(screen.getByRole("navigation", { name: "赛事资讯子导航" })).toBeVisible();
+    fireEvent.mouseLeave(trigger);
+    fireEvent.mouseEnter(screen.getByRole("link", { name: "网站首页" }));
+    act(() => vi.advanceTimersByTime(300));
+
+    expect(screen.queryByRole("navigation", { name: "赛事资讯子导航" })).not.toBeInTheDocument();
+  });
+
+  it("moves focus to the first child after click or keyboard opening without stealing it on hover", () => {
+    installMatchMedia({ hover: true });
+    render(
+      <>
+        <button type="button">焦点哨兵</button>
+        <SiteHeader routeKey="/" homeData={home} homeStatus="success" />
+      </>
+    );
+    const sentinel = screen.getByRole("button", { name: "焦点哨兵" });
+    const trigger = screen.getByRole("button", { name: "关于大赛" });
+    sentinel.focus();
+
+    fireEvent.mouseEnter(trigger);
+    expect(sentinel).toHaveFocus();
+    fireEvent.click(trigger);
+    expect(screen.getByRole("link", { name: "赛事简介" })).toHaveFocus();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(trigger).toHaveFocus();
+
+    fireEvent.keyDown(trigger, { key: "Enter", code: "Enter" });
+    expect(screen.getByRole("link", { name: "赛事简介" })).toHaveFocus();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(trigger).toHaveFocus();
+  });
+
   it("renders grouped entries as buttons and direct entries as plain anchors", () => {
     render(<SiteHeader routeKey="/" homeData={home} homeStatus="success" />);
     const primary = screen.getByRole("navigation", { name: "主导航" });
@@ -134,6 +208,20 @@ describe("per-module public navigation", () => {
     expect(drawer).toHaveAttribute("inert");
     expect(drawer).not.toHaveAttribute("hidden");
     act(() => vi.advanceTimersByTime(200));
+    expect(drawer).toHaveAttribute("hidden");
+  });
+
+  it("hides a closed desktop drawer immediately when reduced motion is requested", () => {
+    installMatchMedia({ reducedMotion: true });
+    render(<SiteHeader routeKey="/" homeData={home} homeStatus="success" />);
+    const trigger = screen.getByRole("button", { name: "关于大赛" });
+    fireEvent.click(trigger);
+    const drawer = document.querySelector('[data-group-id="about"]');
+
+    fireEvent.click(trigger);
+
+    expect(drawer).toHaveAttribute("aria-hidden", "true");
+    expect(drawer).toHaveAttribute("inert");
     expect(drawer).toHaveAttribute("hidden");
   });
 
@@ -214,5 +302,22 @@ describe("mobile public navigation", () => {
     expect(trigger).toHaveFocus();
     expect(trigger).toHaveAttribute("aria-expanded", "false");
     expect(document.body.style.overflow).toBe("");
+  });
+
+  it("closes and releases the focus trap when the viewport crosses to desktop", () => {
+    const { mobileQuery } = installMatchMedia({ mobile: true });
+    render(<SiteHeader routeKey="/" homeData={home} homeStatus="success" />);
+    const trigger = screen.getByRole("button", { name: "打开赛事导航" });
+    fireEvent.click(trigger);
+    expect(document.body.style.overflow).toBe("hidden");
+
+    act(() => mobileQuery.setMatches(false));
+
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("navigation", { name: "移动端主导航" })).not.toBeInTheDocument();
+    expect(document.body.style.overflow).toBe("");
+    act(() => mobileQuery.setMatches(true));
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("navigation", { name: "移动端主导航" })).not.toBeInTheDocument();
   });
 });
