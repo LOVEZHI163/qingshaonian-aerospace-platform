@@ -180,6 +180,7 @@ describe("public site keyboard and semantics", () => {
     expect(navigation["grid-row"]).toBe("1");
     expect(actions["grid-row"]).toBe("1");
     expect(navigation.display).toBe("flex");
+    expect(navigation.gap).toBe("1.5rem");
     expect(actions.display).toBe("flex");
     expect(mobileBrand.display).toBe("none");
     expect(menuTrigger.display).toBe("none");

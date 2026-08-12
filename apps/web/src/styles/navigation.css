@@ -42,7 +42,7 @@
   min-width: 0;
   align-items: stretch;
   justify-content: center;
-  gap: clamp(0.625rem, 1vw, 1.125rem);
+  gap: 1.5rem;
 }
 .primary-navigation-item { position: relative; display: flex; min-width: 0; align-items: stretch; }
 .primary-navigation-links > a,
