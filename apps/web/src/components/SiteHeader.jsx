@@ -27,7 +27,6 @@ export default function SiteHeader({ routeKey, homeData }) {
   const closeTimerRef = useRef(null);
   const activeEvent = selectedPublicEvent(homeData, routeKey);
   const activePrimaryLabel = activePrimaryNavigationLabel(routeKey);
-  const groupedItems = PUBLIC_PRIMARY_NAVIGATION.filter((item) => item.children?.length > 0);
 
   const cancelHoverClose = () => {
     window.clearTimeout(closeTimerRef.current);
@@ -193,29 +192,40 @@ export default function SiteHeader({ routeKey, homeData }) {
           <div className="header-actions">
             <a className="login-link" href="/admin/" data-router-ignore="true" onClick={closeAllNavigation}>用户登录</a>
           </div>
-          <nav aria-label="主导航">
+          <nav className="primary-navigation-links" aria-label="主导航">
             {PUBLIC_PRIMARY_NAVIGATION.map((item) => {
               const current = activePrimaryLabel === item.label;
               if (item.children?.length > 0) {
                 const open = openGroupId === item.id;
                 return (
-                  <button
-                    ref={(node) => {
-                      if (node) triggerRefs.current.set(item.id, node);
-                      else triggerRefs.current.delete(item.id);
-                    }}
-                    className="primary-navigation-trigger"
-                    type="button"
-                    aria-expanded={open}
-                    aria-controls={`public-drawer-${item.id}`}
-                    aria-current={current ? "page" : undefined}
+                  <div
+                    className="primary-navigation-item"
                     data-navigation-hover-group={item.id}
                     key={item.id}
-                    onClick={() => toggleDesktopGroup(item.id)}
-                    onKeyDown={(event) => handleDesktopTriggerKeyDown(event, item.id)}
                   >
-                    {item.label}
-                  </button>
+                    <button
+                      ref={(node) => {
+                        if (node) triggerRefs.current.set(item.id, node);
+                        else triggerRefs.current.delete(item.id);
+                      }}
+                      className="primary-navigation-trigger"
+                      type="button"
+                      aria-expanded={open}
+                      aria-controls={`public-drawer-${item.id}`}
+                      aria-current={current ? "page" : undefined}
+                      onClick={() => toggleDesktopGroup(item.id)}
+                      onKeyDown={(event) => handleDesktopTriggerKeyDown(event, item.id)}
+                    >
+                      {item.label}
+                    </button>
+                    <PublicMegaDrawer
+                      item={item}
+                      open={open}
+                      activeEvent={activeEvent}
+                      currentPath={routeKey || "/"}
+                      onClose={closeAllNavigation}
+                    />
+                  </div>
                 );
               }
               return (
@@ -233,17 +243,6 @@ export default function SiteHeader({ routeKey, homeData }) {
           </nav>
         </div>
       </div>
-
-      {groupedItems.map((item) => (
-        <PublicMegaDrawer
-          item={item}
-          open={openGroupId === item.id}
-          activeEvent={activeEvent}
-          currentPath={routeKey || "/"}
-          onClose={closeAllNavigation}
-          key={item.id}
-        />
-      ))}
 
       <div
         ref={mobilePanelRef}

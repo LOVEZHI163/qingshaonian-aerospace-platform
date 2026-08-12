@@ -2,11 +2,36 @@ import React from "react";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { parse } from "postcss";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import App from "../App.jsx";
 import SiteHeader from "../components/SiteHeader.jsx";
 import HomePage from "../pages/HomePage.jsx";
+
+const navigationStyles = readFileSync(resolve(process.cwd(), "src/styles/navigation.css"), "utf8");
+
+function mediaMatches(params, { width, reducedMotion = false }) {
+  const maxWidth = params.match(/max-width:\s*(\d+)px/);
+  const minWidth = params.match(/min-width:\s*(\d+)px/);
+  if (maxWidth && width > Number(maxWidth[1])) return false;
+  if (minWidth && width < Number(minWidth[1])) return false;
+  if (/prefers-reduced-motion:\s*reduce/.test(params) && !reducedMotion) return false;
+  return true;
+}
+
+function navigationStyleAt(selector, viewport) {
+  const declarations = {};
+  parse(navigationStyles).walkRules((rule) => {
+    if (!rule.selectors.includes(selector)) return;
+    const media = rule.parent?.type === "atrule" && rule.parent.name === "media" ? rule.parent.params : null;
+    if (media && !mediaMatches(media, viewport)) return;
+    rule.walkDecls((declaration) => {
+      declarations[declaration.prop] = declaration.value;
+    });
+  });
+  return declarations;
+}
 
 const jsonResponse = (body, init = {}) => new Response(JSON.stringify(body), {
   status: 200,
@@ -111,6 +136,82 @@ describe("public site keyboard and semantics", () => {
     expect(registration).toHaveAttribute("href", "/admin/?view=eventCenter");
     expect(registration).toHaveAttribute("data-router-ignore", "true");
     expect(login.compareDocumentPosition(registration) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("computes a three-part desktop header and anchors each bounded drawer to its trigger item", () => {
+    render(<SiteHeader routeKey="/" homeData={{}} homeStatus="empty" />);
+
+    const header = navigationStyleAt(".site-header-inner", { width: 1440 });
+    const brand = navigationStyleAt(".brand", { width: 1440 });
+    const navigation = navigationStyleAt(".primary-navigation-links", { width: 1440 });
+    const actions = navigationStyleAt(".header-actions", { width: 1440 });
+    const mobileBrand = navigationStyleAt(".mobile-brand-name", { width: 1440 });
+    const menuTrigger = navigationStyleAt(".menu-trigger", { width: 1440 });
+    const drawer = navigationStyleAt(".public-mega-drawer", { width: 1440 });
+
+    expect(header.display).toBe("grid");
+    expect(header.width).toBe("min(var(--content-max), calc(100% - 2.5rem))");
+    expect(brand["grid-row"]).toBe("1");
+    expect(navigation["grid-row"]).toBe("1");
+    expect(actions["grid-row"]).toBe("1");
+    expect(navigation.display).toBe("flex");
+    expect(actions.display).toBe("flex");
+    expect(mobileBrand.display).toBe("none");
+    expect(menuTrigger.display).toBe("none");
+    expect(drawer.position).toBe("absolute");
+    expect(drawer["inline-size"]).toBe("max-content");
+    expect(drawer["max-inline-size"]).toBe("min(22rem, calc(100vw - 2rem))");
+
+    for (const trigger of screen.getAllByRole("button", { expanded: false }).filter((button) => button.classList.contains("primary-navigation-trigger"))) {
+      const item = trigger.closest(".primary-navigation-item");
+      expect(item).not.toBeNull();
+      expect(item.querySelector(`#${trigger.getAttribute("aria-controls")}`)).not.toBeNull();
+    }
+  });
+
+  it("computes a complete, scrollable and inline-safe mobile navigation at 390px", () => {
+    render(<SiteHeader routeKey="/" homeData={{}} homeStatus="empty" />);
+
+    const desktopNavigation = navigationStyleAt(".site-navigation", { width: 390 });
+    const mobileBrand = navigationStyleAt(".mobile-brand-name", { width: 390 });
+    const menuTrigger = navigationStyleAt(".menu-trigger", { width: 390 });
+    const mobilePanel = navigationStyleAt(".public-mobile-navigation", { width: 390 });
+    const visibleMobilePanel = navigationStyleAt(".public-mobile-navigation:not([hidden])", { width: 390 });
+
+    expect(desktopNavigation.display).toBe("none");
+    expect(mobileBrand.display).toBe("block");
+    expect(menuTrigger.display).toBe("grid");
+    expect(visibleMobilePanel.display).toBe("block");
+    expect(mobilePanel["max-inline-size"]).toBe("100vw");
+    expect(mobilePanel["max-block-size"]).toBe("calc(100dvh - 72px)");
+    expect(mobilePanel["overflow-x"]).toBe("hidden");
+    expect(mobilePanel["overflow-y"]).toBe("auto");
+    expect(document.querySelectorAll("#public-mobile-navigation nav > a")).toHaveLength(2);
+  });
+
+  it("keeps navigation targets at least 44px and removes navigation motion on request", () => {
+    const desktopTrigger = navigationStyleAt(".primary-navigation-trigger", { width: 1440 });
+    const mobileLink = navigationStyleAt(".public-mobile-navigation a", { width: 390 });
+    const drawerReduced = navigationStyleAt(".public-mega-drawer", { width: 1440, reducedMotion: true });
+    const actionReduced = navigationStyleAt(".login-link:hover", { width: 1440, reducedMotion: true });
+
+    expect(desktopTrigger["min-height"]).toBe("2.75rem");
+    expect(mobileLink["min-height"]).toBe("2.75rem");
+    expect(drawerReduced.transition).toBe("none");
+    expect(actionReduced.transform).toBe("none");
+  });
+
+  it("keeps the desktop wordmark inside its grid track and the primary action legible", () => {
+    const brand = navigationStyleAt(".brand", { width: 1440 });
+    const wordmark = navigationStyleAt(".brand-wordmark", { width: 1440 });
+    const registration = navigationStyleAt(".primary-navigation-links > .registration-link", { width: 1440 });
+
+    expect(brand["max-width"]).toBe("100%");
+    expect(brand.overflow).toBe("hidden");
+    expect(wordmark.flex).toBe("1 1 auto");
+    expect(wordmark["min-width"]).toBe("0");
+    expect(registration.color).toBe("var(--color-brand-ink)");
+    expect(registration.background).toBe("var(--color-white)");
   });
 
   it("keeps controls named, loading status announced and images meaningful", () => {
