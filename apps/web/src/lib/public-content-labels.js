@@ -8,5 +8,7 @@ export const PUBLIC_CONTENT_TYPE_LABELS = Object.freeze({
 
 export function publicContentTypeLabel(type) {
   const normalizedType = typeof type === "string" ? type : "";
-  return PUBLIC_CONTENT_TYPE_LABELS[normalizedType] || normalizedType;
+  return Object.hasOwn(PUBLIC_CONTENT_TYPE_LABELS, normalizedType)
+    ? PUBLIC_CONTENT_TYPE_LABELS[normalizedType]
+    : normalizedType;
 }

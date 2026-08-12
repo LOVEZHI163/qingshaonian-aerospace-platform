@@ -154,6 +154,13 @@ describe("adaptive public home", () => {
     );
   });
 
+  it("uses the public content names in empty homepage sections", () => {
+    render(<HomePage data={home({ announcements: [], news: [] })} />);
+
+    expect(screen.getByText("暂无最新通知公告")).toBeInTheDocument();
+    expect(screen.getByText("暂无最新新闻动态")).toBeInTheDocument();
+  });
+
   it.each([
     [2, 1],
     [3, 2]

@@ -27,7 +27,7 @@ export default function HomePage({ data = {} }) {
         items={rows(data.announcements)}
         variant="announcements"
         moreHref="/announcements"
-        emptyText="暂无最新公告"
+        emptyText="暂无最新通知公告"
       />
       <ContentSection
         id="news"
@@ -35,7 +35,7 @@ export default function HomePage({ data = {} }) {
         kicker="新闻聚焦"
         items={rows(data.news)}
         moreHref="/news"
-        emptyText="暂无最新动态"
+        emptyText="暂无最新新闻动态"
       />
       <ContentSection
         id="works"

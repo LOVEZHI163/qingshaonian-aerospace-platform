@@ -158,7 +158,9 @@ describe("public event page", () => {
           content("NEWS", "news"),
           content("WORK", "work"),
           content("RECAP", "recap"),
-          content("SPECIAL", "special")
+          content("SPECIAL", "special"),
+          content("TOSTRING", "toString"),
+          content("CONSTRUCTOR", "constructor")
         ]
       }
     });
@@ -187,6 +189,8 @@ describe("public event page", () => {
       expect(within(eventContent).getByText(label)).toBeInTheDocument();
     }
     expect(within(eventContent).getByText("special")).toBeInTheDocument();
+    expect(within(eventContent).getByText("toString")).toBeInTheDocument();
+    expect(within(eventContent).getByText("constructor")).toBeInTheDocument();
   });
 
   it("uses the API registration window verbatim and removes registration for archived events", async () => {
