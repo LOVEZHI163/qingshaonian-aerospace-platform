@@ -1,10 +1,9 @@
 import React, { useEffect, useRef, useState } from "react";
 import PublicMegaDrawer from "./PublicMegaDrawer.jsx";
 import {
-  accountEntry,
   activePrimaryNavigationLabel,
-  eventScopedPath,
-  publicEventOptions,
+  navigationHref,
+  PUBLIC_PRIMARY_NAVIGATION,
   selectedPublicEvent
 } from "../lib/public-navigation.js";
 
@@ -12,135 +11,118 @@ const BRAND_NAME = "温州市青少年航空航天创新比赛";
 const MOBILE_BRAND_NAME = "温州少航";
 const MOBILE_NAVIGATION_QUERY = "(max-width: 1120px)";
 const HOVER_NAVIGATION_QUERY = "(hover: hover) and (pointer: fine)";
+const HOVER_CLOSE_DELAY_MS = 300;
 
-export default function SiteHeader({ routeKey, homeData, homeStatus }) {
-  const [hoverOpen, setHoverOpen] = useState(false);
-  const [lockedOpen, setLockedOpen] = useState(false);
-  const menuOpen = hoverOpen || lockedOpen;
-  const menuButtonRef = useRef(null);
+export default function SiteHeader({ routeKey, homeData }) {
+  const [hoverGroupId, setHoverGroupId] = useState(null);
+  const [lockedGroupId, setLockedGroupId] = useState(null);
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const [mobileGroupId, setMobileGroupId] = useState(null);
+  const openGroupId = hoverGroupId || lockedGroupId;
   const navigationZoneRef = useRef(null);
+  const mobilePanelRef = useRef(null);
+  const menuButtonRef = useRef(null);
+  const triggerRefs = useRef(new Map());
   const closeTimerRef = useRef(null);
-  const focusDrawerOnOpenRef = useRef(false);
-  const events = publicEventOptions(homeData);
   const activeEvent = selectedPublicEvent(homeData, routeKey);
   const activePrimaryLabel = activePrimaryNavigationLabel(routeKey);
-  const primaryLinks = [
-    { label: "首页", href: "/" },
-    { label: "关于大赛", href: eventScopedPath("/about", activeEvent) },
-    { label: "赛事资讯", href: eventScopedPath("/news", activeEvent) },
-    { label: "获奖查询", href: accountEntry("certificates", activeEvent), routerIgnore: true },
-    { label: "联系我们", href: eventScopedPath("/contact", activeEvent) },
-    { label: "报名入口", href: accountEntry("eventCenter", activeEvent), routerIgnore: true }
-  ];
+  const groupedItems = PUBLIC_PRIMARY_NAVIGATION.filter((item) => item.children?.length > 0);
 
-  const cancelClose = () => {
+  const cancelHoverClose = () => {
     window.clearTimeout(closeTimerRef.current);
     closeTimerRef.current = null;
   };
-  const closeMenu = () => {
-    cancelClose();
-    setHoverOpen(false);
-    setLockedOpen(false);
+
+  const closeDesktopNavigation = () => {
+    cancelHoverClose();
+    setHoverGroupId(null);
+    setLockedGroupId(null);
   };
-  const openFromHover = () => {
+
+  const closeMobileNavigation = () => {
+    setMobileOpen(false);
+    setMobileGroupId(null);
+  };
+
+  const closeAllNavigation = () => {
+    closeDesktopNavigation();
+    closeMobileNavigation();
+  };
+
+  const openFromHover = (groupId) => {
     if (!window.matchMedia?.(HOVER_NAVIGATION_QUERY).matches) return;
-    cancelClose();
-    setHoverOpen(true);
+    cancelHoverClose();
+    setHoverGroupId(groupId);
   };
+
   const scheduleHoverClose = () => {
-    if (lockedOpen) return;
-    cancelClose();
-    closeTimerRef.current = window.setTimeout(() => setHoverOpen(false), 300);
+    cancelHoverClose();
+    closeTimerRef.current = window.setTimeout(() => {
+      closeTimerRef.current = null;
+      setHoverGroupId(null);
+    }, HOVER_CLOSE_DELAY_MS);
+  };
+
+  const toggleDesktopGroup = (groupId) => {
+    cancelHoverClose();
+    setHoverGroupId(null);
+    setLockedGroupId((current) => current === groupId ? null : groupId);
   };
 
   useEffect(() => {
-    cancelClose();
-    setHoverOpen(false);
-    setLockedOpen(false);
+    closeAllNavigation();
   }, [routeKey]);
 
   useEffect(() => {
-    if (!menuOpen) return undefined;
-    let focusFrame = null;
-    if (focusDrawerOnOpenRef.current) {
-      focusDrawerOnOpenRef.current = false;
-      const focusFirstDrawerLink = () => {
-        navigationZoneRef.current?.querySelector("#public-mega-drawer a[href]")?.focus();
-      };
-      focusFirstDrawerLink();
-      if (document.activeElement === menuButtonRef.current) {
-        focusFrame = window.requestAnimationFrame?.(focusFirstDrawerLink) ?? null;
-      }
-    }
+    if (!openGroupId && !mobileOpen) return undefined;
     const handleKeyDown = (event) => {
       if (event.key === "Escape") {
-        closeMenu();
-        menuButtonRef.current?.focus();
+        const focusTarget = mobileOpen
+          ? menuButtonRef.current
+          : triggerRefs.current.get(openGroupId);
+        closeAllNavigation();
+        focusTarget?.focus();
         return;
       }
-      if (event.key !== "Tab" || !window.matchMedia?.(MOBILE_NAVIGATION_QUERY).matches) return;
-      const drawerLinks = navigationZoneRef.current?.querySelectorAll("#public-mega-drawer a[href]") || [];
-      const focusable = [
-        menuButtonRef.current,
-        ...drawerLinks
-      ].filter(Boolean);
+      if (!mobileOpen || event.key !== "Tab") return;
+      const focusable = [...(mobilePanelRef.current?.querySelectorAll("button:not([disabled]), a[href]") || [])];
       if (!focusable.length) return;
       const currentIndex = focusable.indexOf(document.activeElement);
-      const direction = event.shiftKey ? -1 : 1;
-      const nextIndex = currentIndex < 0
-        ? (event.shiftKey ? focusable.length - 1 : 0)
-        : (currentIndex + direction + focusable.length) % focusable.length;
+      const nextIndex = event.shiftKey
+        ? (currentIndex <= 0 ? focusable.length - 1 : currentIndex - 1)
+        : (currentIndex < 0 || currentIndex === focusable.length - 1 ? 0 : currentIndex + 1);
       event.preventDefault();
       focusable[nextIndex].focus();
     };
     const handlePointerDown = (event) => {
       if (navigationZoneRef.current?.contains(event.target)) return;
-      closeMenu();
+      closeAllNavigation();
     };
     document.addEventListener("keydown", handleKeyDown);
     document.addEventListener("pointerdown", handlePointerDown);
     return () => {
-      if (focusFrame !== null) window.cancelAnimationFrame?.(focusFrame);
       document.removeEventListener("keydown", handleKeyDown);
       document.removeEventListener("pointerdown", handlePointerDown);
     };
-  }, [menuOpen]);
+  }, [mobileOpen, openGroupId]);
 
   useEffect(() => {
-    if (!menuOpen) return undefined;
+    if (!mobileOpen) return undefined;
+    mobilePanelRef.current?.querySelector("button:not([disabled]), a[href]")?.focus();
     const mediaQuery = window.matchMedia?.(MOBILE_NAVIGATION_QUERY);
-    if (!mediaQuery) return undefined;
     const previousOverflow = document.body.style.overflow;
     const syncBodyScroll = () => {
-      document.body.style.overflow = mediaQuery.matches ? "hidden" : previousOverflow;
+      document.body.style.overflow = !mediaQuery || mediaQuery.matches ? "hidden" : previousOverflow;
     };
     syncBodyScroll();
-    mediaQuery.addEventListener?.("change", syncBodyScroll);
+    mediaQuery?.addEventListener?.("change", syncBodyScroll);
     return () => {
-      mediaQuery.removeEventListener?.("change", syncBodyScroll);
+      mediaQuery?.removeEventListener?.("change", syncBodyScroll);
       document.body.style.overflow = previousOverflow;
     };
-  }, [menuOpen]);
+  }, [mobileOpen]);
 
-  useEffect(() => () => cancelClose(), []);
-
-  const toggleLockedOpen = () => {
-    if (lockedOpen) {
-      closeMenu();
-      return;
-    }
-    if (menuOpen) {
-      navigationZoneRef.current?.querySelector("#public-mega-drawer a[href]")?.focus();
-    } else {
-      focusDrawerOnOpenRef.current = true;
-    }
-    setLockedOpen(true);
-  };
-  const handleMenuButtonKeyDown = (event) => {
-    if (event.repeat || (event.key !== "Enter" && event.key !== " ")) return;
-    event.preventDefault();
-    toggleLockedOpen();
-  };
+  useEffect(() => () => cancelHoverClose(), []);
 
   return (
     <header
@@ -148,7 +130,7 @@ export default function SiteHeader({ routeKey, homeData, homeStatus }) {
       className="site-header"
       role="banner"
       data-testid="public-navigation-zone"
-      onMouseEnter={openFromHover}
+      onMouseEnter={cancelHoverClose}
       onMouseLeave={scheduleHoverClose}
     >
       <div className="site-header-inner">
@@ -162,44 +144,138 @@ export default function SiteHeader({ routeKey, homeData, homeStatus }) {
           ref={menuButtonRef}
           className="menu-trigger"
           type="button"
-          aria-label={lockedOpen ? "关闭赛事导航" : hoverOpen ? "固定赛事导航" : "打开赛事导航"}
-          aria-expanded={menuOpen}
-          aria-controls="public-mega-drawer"
-          onClick={toggleLockedOpen}
-          onKeyDown={handleMenuButtonKeyDown}
+          aria-label={mobileOpen ? "关闭赛事导航" : "打开赛事导航"}
+          aria-expanded={mobileOpen}
+          aria-controls="public-mobile-navigation"
+          onClick={() => {
+            closeDesktopNavigation();
+            setMobileOpen((current) => !current);
+            if (mobileOpen) setMobileGroupId(null);
+          }}
         >
-          <span aria-hidden="true">{menuOpen ? "×" : "☰"}</span>
+          <span aria-hidden="true">{mobileOpen ? "×" : "☰"}</span>
         </button>
 
-        <div id="site-navigation" className="site-navigation" data-open={menuOpen || undefined}>
+        <div id="site-navigation" className="site-navigation">
           <div className="header-actions">
-            <a className="login-link" href="/admin/" data-router-ignore="true" onClick={closeMenu}>用户登录</a>
+            <a className="login-link" href="/admin/" data-router-ignore="true" onClick={closeAllNavigation}>用户登录</a>
           </div>
           <nav aria-label="主导航">
-            {primaryLinks.map((link) => (
-              <a
-                className={link.label === "报名入口" ? "registration-link" : undefined}
-                href={link.href}
-                data-router-ignore={link.routerIgnore ? "true" : undefined}
-                aria-current={activePrimaryLabel === link.label ? "page" : undefined}
-                key={link.label}
-                onClick={closeMenu}
-              >
-                {link.label}
-              </a>
-            ))}
+            {PUBLIC_PRIMARY_NAVIGATION.map((item) => {
+              const current = activePrimaryLabel === item.label;
+              if (item.children?.length > 0) {
+                const open = openGroupId === item.id;
+                return (
+                  <button
+                    ref={(node) => {
+                      if (node) triggerRefs.current.set(item.id, node);
+                      else triggerRefs.current.delete(item.id);
+                    }}
+                    className="primary-navigation-trigger"
+                    type="button"
+                    aria-expanded={open}
+                    aria-controls={`public-drawer-${item.id}`}
+                    aria-current={current ? "page" : undefined}
+                    key={item.id}
+                    onMouseEnter={() => openFromHover(item.id)}
+                    onClick={() => toggleDesktopGroup(item.id)}
+                  >
+                    {item.label}
+                  </button>
+                );
+              }
+              return (
+                <a
+                  className={item.id === "registration" ? "registration-link" : undefined}
+                  href={navigationHref(item, activeEvent)}
+                  data-router-ignore={item.accountView ? "true" : undefined}
+                  key={item.id}
+                  onClick={closeAllNavigation}
+                >
+                  {item.label}
+                </a>
+              );
+            })}
           </nav>
         </div>
       </div>
-      <PublicMegaDrawer
-        open={menuOpen}
-        activeEvent={activeEvent}
-        events={events}
-        currentPath={routeKey || "/"}
-        primaryLinks={primaryLinks}
-        activePrimaryLabel={activePrimaryLabel}
-        onClose={closeMenu}
-      />
+
+      {groupedItems.map((item) => (
+        <PublicMegaDrawer
+          item={item}
+          open={openGroupId === item.id}
+          activeEvent={activeEvent}
+          currentPath={routeKey || "/"}
+          onClose={closeAllNavigation}
+          key={item.id}
+        />
+      ))}
+
+      <div
+        ref={mobilePanelRef}
+        id="public-mobile-navigation"
+        className="public-mobile-navigation"
+        aria-hidden={!mobileOpen}
+        inert={!mobileOpen ? "" : undefined}
+        hidden={!mobileOpen}
+      >
+        <div className="public-mega-drawer-inner">
+          <nav aria-label="移动端主导航">
+            {PUBLIC_PRIMARY_NAVIGATION.filter((item) => item.id !== "registration").map((item) => {
+              if (item.children?.length > 0) {
+                const expanded = mobileGroupId === item.id;
+                return (
+                  <div className="mobile-navigation-group" key={item.id}>
+                    <button
+                      type="button"
+                      aria-expanded={expanded}
+                      aria-controls={`mobile-navigation-group-${item.id}`}
+                      aria-current={activePrimaryLabel === item.label ? "page" : undefined}
+                      onClick={() => setMobileGroupId((current) => current === item.id ? null : item.id)}
+                    >
+                      {item.label}
+                    </button>
+                    {expanded ? (
+                      <div id={`mobile-navigation-group-${item.id}`}>
+                        {item.children.map((child) => (
+                          <a
+                            href={navigationHref(child, activeEvent)}
+                            data-router-ignore={child.accountView ? "true" : undefined}
+                            onClick={closeAllNavigation}
+                            key={child.id}
+                          >
+                            {child.label}
+                          </a>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              }
+              return (
+                <a
+                  href={navigationHref(item, activeEvent)}
+                  data-router-ignore={item.accountView ? "true" : undefined}
+                  onClick={closeAllNavigation}
+                  key={item.id}
+                >
+                  {item.label}
+                </a>
+              );
+            })}
+          </nav>
+          <div className="mobile-navigation-actions">
+            <a href="/admin/" data-router-ignore="true" onClick={closeAllNavigation}>用户登录</a>
+            <a
+              href={navigationHref(PUBLIC_PRIMARY_NAVIGATION.find((item) => item.id === "registration"), activeEvent)}
+              data-router-ignore="true"
+              onClick={closeAllNavigation}
+            >
+              报名入口
+            </a>
+          </div>
+        </div>
+      </div>
     </header>
   );
 }

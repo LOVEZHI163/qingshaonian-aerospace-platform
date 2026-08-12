@@ -114,7 +114,8 @@ describe("public site router", () => {
 
   it("uses History API navigation and responds to popstate", async () => {
     render(<App />);
-    fireEvent.click(within(screen.getByRole("navigation", { name: "主导航" })).getByRole("link", { name: "赛事资讯" }));
+    fireEvent.click(within(screen.getByRole("navigation", { name: "主导航" })).getByRole("button", { name: "赛事资讯" }));
+    fireEvent.click(within(screen.getByRole("navigation", { name: "赛事资讯子导航" })).getByRole("link", { name: "新闻动态" }));
     expect(window.location.pathname).toBe("/news");
     expect(screen.getByRole("heading", { name: "动态与优秀作品" })).toBeInTheDocument();
 
@@ -364,6 +365,12 @@ describe("site header mobile menu", () => {
   beforeEach(() => {
     window.history.replaceState({}, "", "/");
     vi.stubGlobal("fetch", vi.fn(async () => jsonResponse({ site: {} })));
+    vi.stubGlobal("matchMedia", vi.fn((media) => ({
+      matches: media === "(max-width: 1120px)",
+      media,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn()
+    })));
   });
 
   it("has accessible menu state, closes on Escape and restores trigger focus", () => {
@@ -382,11 +389,13 @@ describe("site header mobile menu", () => {
     render(<App />);
     const trigger = screen.getByRole("button", { name: "打开赛事导航" });
     fireEvent.click(trigger);
-    const drawerNavigation = screen.getByRole("navigation", { name: "赛事导航" });
-    fireEvent.click(within(drawerNavigation).getByRole("link", { name: "通知公告" }));
+    const mobileNavigation = screen.getByRole("navigation", { name: "移动端主导航" });
+    const registration = within(document.querySelector(".mobile-navigation-actions")).getByRole("link", { name: "报名入口" });
+    expect(registration).toHaveAttribute("href", "/admin/?view=eventCenter");
+    fireEvent.click(within(mobileNavigation).getByRole("button", { name: "赛事资讯" }));
+    fireEvent.click(within(mobileNavigation).getByRole("link", { name: "通知公告" }));
     expect(trigger).toHaveAttribute("aria-expanded", "false");
     expect(window.location.pathname).toBe("/announcements");
-    expect(within(screen.getByRole("navigation", { name: "主导航" })).getByRole("link", { name: "报名入口" })).toHaveAttribute("href", "/admin/?view=eventCenter");
     expect(screen.getByRole("link", { name: "用户登录" })).toHaveAttribute("href", "/admin/");
     expect(screen.getByRole("link", { name: "用户登录" })).toHaveAttribute("data-router-ignore", "true");
     expect(screen.getByRole("link", { name: "管理入口" })).toHaveAttribute("data-router-ignore", "true");

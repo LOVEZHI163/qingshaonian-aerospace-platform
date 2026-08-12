@@ -52,20 +52,16 @@ describe("public site keyboard and semantics", () => {
     render(<App />);
 
     expect(screen.getByRole("link", { name: "跳到主要内容" })).toHaveAttribute("href", "#main-content");
-    expect(document.getElementById("public-mega-drawer")).toHaveAttribute("hidden");
     const primaryNavigation = screen.getByRole("navigation", { name: "主导航" });
-    expect(within(primaryNavigation).getByRole("link", { name: "赛事资讯" })).toHaveAttribute("aria-current", "page");
+    expect(within(primaryNavigation).getByRole("button", { name: "赛事资讯" })).toHaveAttribute("aria-current", "page");
     expect(screen.getByRole("link", { name: "用户登录" })).toHaveAttribute("href", "/admin/");
     expect(screen.getByRole("link", { name: "用户登录" })).toHaveAttribute("data-router-ignore", "true");
     expect(within(primaryNavigation).getAllByRole("link").map((link) => link.textContent)).toEqual([
-      "首页",
-      "关于大赛",
-      "赛事资讯",
       "获奖查询",
       "联系我们",
       "报名入口"
     ]);
-    expect(within(primaryNavigation).getByRole("link", { name: "首页" })).not.toHaveAttribute("aria-current");
+    expect(within(primaryNavigation).getByRole("button", { name: "首页" })).not.toHaveAttribute("aria-current");
     expect(within(primaryNavigation).getByRole("link", { name: "获奖查询" })).toHaveAttribute("data-router-ignore", "true");
     expect(within(primaryNavigation).getByRole("link", { name: "报名入口" })).toHaveAttribute("data-router-ignore", "true");
     expect(await screen.findByRole("heading", { name: "动态与优秀作品" })).toBeInTheDocument();
@@ -85,8 +81,8 @@ describe("public site keyboard and semantics", () => {
     render(<SiteHeader routeKey={path} homeData={{}} homeStatus="empty" />);
     const primaryNavigation = screen.getByRole("navigation", { name: "主导航" });
 
-    expect(within(primaryNavigation).getByRole("link", { name: label })).toHaveAttribute("aria-current", "page");
-    expect(within(primaryNavigation).getAllByRole("link").filter((link) => link.hasAttribute("aria-current"))).toHaveLength(1);
+    expect(within(primaryNavigation).getByRole("button", { name: label })).toHaveAttribute("aria-current", "page");
+    expect(within(primaryNavigation).getAllByRole("button").filter((button) => button.hasAttribute("aria-current"))).toHaveLength(1);
   });
 
   it("moves focus into the opened mobile menu and returns it after Escape", () => {
@@ -94,8 +90,8 @@ describe("public site keyboard and semantics", () => {
     const trigger = screen.getByRole("button", { name: "打开赛事导航" });
 
     fireEvent.click(trigger);
-    const drawerNavigation = screen.getByRole("navigation", { name: "赛事导航" });
-    expect(within(drawerNavigation).getAllByRole("link")[0]).toHaveFocus();
+    const mobileNavigation = screen.getByRole("navigation", { name: "移动端主导航" });
+    expect(within(mobileNavigation).getByRole("button", { name: "首页" })).toHaveFocus();
 
     fireEvent.keyDown(document, { key: "Escape" });
     expect(trigger).toHaveFocus();
@@ -107,9 +103,9 @@ describe("public site keyboard and semantics", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "打开赛事导航" }));
 
-    const mobileNavigation = screen.getByRole("navigation", { name: "移动端主导航" });
-    const login = within(mobileNavigation).getByRole("link", { name: "用户登录" });
-    const registration = within(mobileNavigation).getByRole("link", { name: "报名入口" });
+    const actions = document.querySelector(".mobile-navigation-actions");
+    const login = within(actions).getByRole("link", { name: "用户登录" });
+    const registration = within(actions).getByRole("link", { name: "报名入口" });
     expect(login).toHaveAttribute("href", "/admin/");
     expect(login).toHaveAttribute("data-router-ignore", "true");
     expect(registration).toHaveAttribute("href", "/admin/?view=eventCenter");
@@ -339,7 +335,9 @@ describe("public site SEO", () => {
     render(<App />);
     await waitFor(() => expect(document.title).toBe("温州青少年航空航天赛事平台"));
     fireEvent.click(screen.getByRole("button", { name: "打开赛事导航" }));
-    fireEvent.click(within(screen.getByRole("navigation", { name: "赛事导航" })).getByRole("link", { name: "通知公告" }));
+    const mobileNavigation = screen.getByRole("navigation", { name: "移动端主导航" });
+    fireEvent.click(within(mobileNavigation).getByRole("button", { name: "赛事资讯" }));
+    fireEvent.click(within(mobileNavigation).getByRole("link", { name: "通知公告" }));
     await waitFor(() => expect(document.title).toBe("赛事公告"));
 
     expect(document.head.querySelectorAll('meta[name="description"]')).toHaveLength(1);

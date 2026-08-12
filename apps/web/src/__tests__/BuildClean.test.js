@@ -13,9 +13,11 @@ describe("web build cleanup", () => {
     expect(styles).toContain('@import "./styles/navigation.css"');
     expect(styles).toContain('@import "./styles/event-information.css"');
     expect(navigationStyles).not.toMatch(/\.mobile-brand-name\s*,\s*\.menu-trigger\s*\{[^}]*display:\s*none/);
-    expect(navigationStyles).toMatch(/\.menu-trigger\s*\{[^}]*display:\s*grid/);
-    expect(navigationStyles).toMatch(/@media\s*\(max-width:\s*1120px\)[\s\S]*\.public-mega-drawer-mobile-navigation\s*\{[^}]*display:\s*grid/);
-    expect(navigationStyles).toMatch(/\.public-mega-drawer-featured p\s*\{[^}]*min-width:\s*0[^}]*overflow-wrap:\s*anywhere/);
+    expect(navigationStyles).toMatch(/\.menu-trigger\s*\{[^}]*display:\s*none/);
+    expect(navigationStyles).toMatch(/@media\s*\(max-width:\s*1120px\)[\s\S]*\.menu-trigger\s*\{[^}]*display:\s*grid/);
+    expect(navigationStyles).toMatch(/@media\s*\(max-width:\s*1120px\)[\s\S]*\.public-mobile-navigation:not\(\[hidden\]\)\s*\{[^}]*display:\s*block/);
+    expect(navigationStyles).not.toContain(".public-mega-drawer-featured");
+    expect(navigationStyles).not.toContain(".public-mega-drawer-mobile-navigation");
     expect(eventInformationStyles).toMatch(/\.event-information-hero p\s*\{[^}]*min-width:\s*0[^}]*overflow-wrap:\s*anywhere/);
     expect(eventInformationStyles).toMatch(/\.event-information-contact\s*\{[^}]*min-width:\s*0[^}]*overflow-wrap:\s*anywhere/);
     expect(eventInformationStyles).toMatch(/\.event-information-sections li\s*\{[^}]*min-width:\s*0[^}]*overflow-wrap:\s*anywhere/);
@@ -40,7 +42,8 @@ describe("web build cleanup", () => {
     expect(css).toContain("@media(max-width:1120px)");
     expect(css).toContain("prefers-reduced-motion:reduce");
     expect(css).toContain(".event-information-page{width:min(var(--content-max),calc(100% - 2.5rem))");
-    expect(css).toMatch(/\.public-mega-drawer-featured strong\{[^}]*min-width:0[^}]*overflow-wrap:anywhere/);
+    expect(css).toContain(".public-mobile-navigation{display:none");
+    expect(css).not.toContain(".public-mega-drawer-featured");
     expect(css).toMatch(/\.event-information-facts dd\{[^}]*min-width:0[^}]*overflow-wrap:anywhere/);
   });
 
