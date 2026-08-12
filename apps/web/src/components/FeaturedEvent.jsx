@@ -5,12 +5,14 @@ function isProtectedPreviewMedia(url) {
   return /^\/api\/admin\/site-media\/[^/?#]+\/preview(?:[?#]|$)/.test(String(url || ""));
 }
 
-export function EventPicture({ event, className = "" }) {
+export function EventPicture({ event, className = "", decorative = false, testId }) {
   const [failedUrl, setFailedUrl] = useState("");
   const hero = event?.hero;
   const label = event?.name || "赛事";
   const failed = Boolean(hero?.url) && failedUrl === hero.url;
   const needsLogin = failed && isProtectedPreviewMedia(hero.url);
+
+  if ((!hero?.url || failed) && decorative) return null;
 
   if (!hero?.url || failed) {
     return (
@@ -26,12 +28,12 @@ export function EventPicture({ event, className = "" }) {
   }
 
   return (
-    <picture className={className}>
+    <picture className={className} aria-hidden={decorative ? "true" : undefined} data-testid={testId}>
       {hero.mobileUrl ? <source media="(max-width: 767px)" srcSet={hero.mobileUrl} /> : null}
       {hero.desktopUrl ? <source srcSet={hero.desktopUrl} /> : null}
       <img
         src={hero.url}
-        alt={`${label}赛事封面`}
+        alt={decorative ? "" : `${label}赛事封面`}
         fetchPriority="high"
         onError={() => setFailedUrl(hero.url)}
       />

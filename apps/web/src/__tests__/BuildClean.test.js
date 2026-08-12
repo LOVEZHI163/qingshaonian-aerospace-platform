@@ -19,6 +19,9 @@ describe("web build cleanup", () => {
     expect(navigationStyles).not.toContain(".public-mega-drawer-featured");
     expect(navigationStyles).not.toContain(".public-mega-drawer-mobile-navigation");
     expect(eventInformationStyles).toMatch(/\.event-information-hero p\s*\{[^}]*min-width:\s*0[^}]*overflow-wrap:\s*anywhere/);
+    expect(eventInformationStyles).toMatch(/\.event-information-hero\s*\{[^}]*position:\s*relative[^}]*overflow:\s*hidden/);
+    expect(eventInformationStyles).toMatch(/\.event-information-hero-media img\s*\{[^}]*object-fit:\s*cover/);
+    expect(eventInformationStyles).toMatch(/\.event-information-hero-copy\s*\{[^}]*width:\s*min\(42rem,\s*66%\)/);
     expect(eventInformationStyles).toMatch(/\.event-information-contact\s*\{[^}]*min-width:\s*0[^}]*overflow-wrap:\s*anywhere/);
     expect(eventInformationStyles).toMatch(/\.event-information-sections li\s*\{[^}]*min-width:\s*0[^}]*overflow-wrap:\s*anywhere/);
 

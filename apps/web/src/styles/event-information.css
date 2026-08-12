@@ -1,5 +1,9 @@
 .event-information-page { width: min(var(--content-max), calc(100% - 2.5rem)); margin: 0 auto; padding: clamp(2rem, 5vw, 5rem) 0; }
-.event-information-hero { padding: clamp(1.5rem, 5vw, 4rem); border-radius: var(--radius-lg); color: var(--color-white); background: linear-gradient(135deg, var(--color-brand-deep), var(--color-brand) 62%, var(--color-brand-accent)); box-shadow: var(--shadow-lg); }
+.event-information-hero { position: relative; isolation: isolate; display: flex; min-height: clamp(18rem, 29vw, 23rem); padding: clamp(1.5rem, 5vw, 4rem); align-items: center; overflow: hidden; border-radius: var(--radius-lg); color: var(--color-white); background: linear-gradient(135deg, var(--color-brand-deep), var(--color-brand) 62%, var(--color-brand-accent)); box-shadow: var(--shadow-lg); }
+.event-information-hero::after { content: ""; position: absolute; z-index: -1; inset: 0; background: linear-gradient(90deg, rgba(3, 24, 85, 0.96), rgba(7, 45, 137, 0.72) 48%, rgba(30, 49, 180, 0.12)); }
+.event-information-hero-media { position: absolute; z-index: -2; inset: 0; width: 100%; height: 100%; }
+.event-information-hero-media img { display: block; width: 100%; height: 100%; object-fit: cover; object-position: center; }
+.event-information-hero-copy { width: min(42rem, 66%); min-width: 0; }
 .event-information-hero p { min-width: 0; max-width: 48rem; margin: 0; line-height: 1.7; overflow-wrap: anywhere; }
 .event-information-hero p:first-child { margin-bottom: 0.75rem; font-weight: 800; letter-spacing: 0.08em; }
 .event-information-hero h1 { margin: 0 0 1rem; font-size: clamp(2rem, 5vw, 4rem); line-height: 1.15; }
@@ -36,5 +40,8 @@
 
 @media (max-width: 720px) {
   .event-information-page { width: min(var(--content-max), calc(100% - 1.5rem)); }
+  .event-information-hero { min-height: 20rem; }
+  .event-information-hero::after { background: linear-gradient(90deg, rgba(3, 24, 85, 0.96), rgba(7, 45, 137, 0.82) 70%, rgba(30, 49, 180, 0.42)); }
+  .event-information-hero-copy { width: 100%; }
   .event-information-facts, .event-information-sections { grid-template-columns: 1fr; }
 }

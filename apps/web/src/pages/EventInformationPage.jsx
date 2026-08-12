@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { fetchJson } from "../api/client.js";
+import { EventPicture } from "../components/FeaturedEvent.jsx";
 import Seo from "../components/Seo.jsx";
 import { buildPublicEventContent } from "../lib/public-event-content.js";
 import { eventScopedPath, publicEventOptions, selectedPublicEvent } from "../lib/public-navigation.js";
@@ -42,9 +43,19 @@ export default function EventInformationPage({ section, homeData, homeStatus, lo
     <section className="event-information-page" aria-labelledby="event-information-title">
       <Seo title={model.title} description={model.lead} pathname={new URL(location, window.location.origin).pathname} />
       <header className="event-information-hero">
-        <p>{model.eyebrow}</p>
-        <h1 id="event-information-title">{model.title}</h1>
-        <p>{model.lead}</p>
+        {event?.hero?.url ? (
+          <EventPicture
+            event={event}
+            className="event-information-hero-media"
+            decorative
+            testId="event-information-hero-media"
+          />
+        ) : null}
+        <div className="event-information-hero-copy">
+          <p>{model.eyebrow}</p>
+          <h1 id="event-information-title">{model.title}</h1>
+          <p>{model.lead}</p>
+        </div>
       </header>
       {options.length > 1 ? (
         <nav className="event-information-switcher" aria-label="切换公开赛事">

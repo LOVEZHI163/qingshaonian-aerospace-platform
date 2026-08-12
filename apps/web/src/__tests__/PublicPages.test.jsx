@@ -264,6 +264,40 @@ describe("public event page", () => {
 describe("public event information page", () => {
   beforeEach(() => window.history.replaceState({}, "", "/projects"));
 
+  it("uses the selected event poster as a decorative information-page hero", async () => {
+    window.history.replaceState({}, "", "/about?event=wenzhou-2026");
+    const selectedEvent = event();
+    installApi({
+      "/api/public/events/wenzhou-2026": {
+        event: selectedEvent, projects: [], groups: [], resources: [], content: []
+      }
+    }, home({ featuredEvent: selectedEvent }));
+
+    render(<App />);
+
+    expect(await screen.findByRole("heading", { level: 1, name: "大赛简介" })).toBeInTheDocument();
+    const media = document.querySelector(".event-information-hero-media");
+    expect(media).toHaveAttribute("aria-hidden", "true");
+    expect(media.querySelector("img")).toHaveAttribute("src", selectedEvent.hero.url);
+    expect(media.querySelector("img")).toHaveAttribute("alt", "");
+  });
+
+  it("keeps the branded information hero fallback when the event has no poster", async () => {
+    window.history.replaceState({}, "", "/rules?event=wenzhou-2026");
+    const selectedEvent = event({ hero: null });
+    installApi({
+      "/api/public/events/wenzhou-2026": {
+        event: selectedEvent, projects: [], groups: [], resources: [], content: []
+      }
+    }, home({ featuredEvent: selectedEvent }));
+
+    render(<App />);
+
+    expect(await screen.findByRole("heading", { level: 1, name: "大赛章程" })).toBeInTheDocument();
+    expect(document.querySelector(".event-information-hero")).toBeInTheDocument();
+    expect(document.querySelector(".event-information-hero-media")).toBeNull();
+  });
+
   it("renders only the projects returned for the featured public event", async () => {
     const summerCup = event({ id: "SUMMER", slug: "summer-cup", name: "暑期航空挑战赛" });
     const request = installApi({
