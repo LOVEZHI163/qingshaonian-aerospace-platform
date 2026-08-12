@@ -63,8 +63,8 @@ describe("public site router", () => {
   it.each([
     ["/", "首页"],
     ["/events/summer-cup", "测试赛事详情"],
-    ["/announcements", "公告"],
-    ["/news", "动态与优秀作品"],
+    ["/announcements", "通知公告"],
+    ["/news", "新闻动态与优秀作品"],
     ["/history", "历届赛事"],
     ["/content/opening-notice", "测试内容详情"]
   ])("renders the %s route inside the persistent site shell", async (path, heading) => {
@@ -117,7 +117,7 @@ describe("public site router", () => {
     fireEvent.click(within(screen.getByRole("navigation", { name: "主导航" })).getByRole("button", { name: "赛事资讯" }));
     fireEvent.click(within(screen.getByRole("navigation", { name: "赛事资讯子导航" })).getByRole("link", { name: "新闻动态" }));
     expect(window.location.pathname).toBe("/news");
-    expect(screen.getByRole("heading", { name: "动态与优秀作品" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "新闻动态与优秀作品" })).toBeInTheDocument();
 
     window.history.pushState({}, "", "/history");
     window.dispatchEvent(new PopStateEvent("popstate"));

@@ -156,7 +156,9 @@ describe("public event page", () => {
         content: [
           content("NOTICE", "announcement"),
           content("NEWS", "news"),
-          content("WORK", "work")
+          content("WORK", "work"),
+          content("RECAP", "recap"),
+          content("SPECIAL", "special")
         ]
       }
     });
@@ -180,6 +182,11 @@ describe("public event page", () => {
     expect(screen.getByRole("link", { name: "查询证书" })).toHaveAttribute("href", "/admin/?view=certificates&eventId=E-2026");
     expect(screen.getByRole("link", { name: /赛事规程/ })).toHaveAttribute("href", "/api/public/media/RULES?variant=original");
     expect(screen.getByRole("link", { name: "announcement-NOTICE 标题" })).toHaveAttribute("href", "/content/announcement-notice");
+    const eventContent = screen.getByRole("heading", { name: "赛事内容" }).closest("section");
+    for (const label of ["通知公告", "新闻动态", "优秀作品", "赛事回顾"]) {
+      expect(within(eventContent).getByText(label)).toBeInTheDocument();
+    }
+    expect(within(eventContent).getByText("special")).toBeInTheDocument();
   });
 
   it("uses the API registration window verbatim and removes registration for archived events", async () => {
@@ -479,7 +486,7 @@ describe("public content lists", () => {
 
     render(<App />);
     await screen.findByText("news-N1 标题");
-    const newsTab = screen.getByRole("tab", { name: "动态" });
+    const newsTab = screen.getByRole("tab", { name: "新闻动态" });
     const workTab = screen.getByRole("tab", { name: "优秀作品" });
     expect(newsTab).toHaveAttribute("tabindex", "0");
     expect(workTab).toHaveAttribute("tabindex", "-1");
@@ -510,7 +517,7 @@ describe("public content lists", () => {
 
     render(<App />);
     expect(await screen.findByText("work-W1 标题")).toBeInTheDocument();
-    const newsTab = screen.getByRole("tab", { name: "动态" });
+    const newsTab = screen.getByRole("tab", { name: "新闻动态" });
     const workTab = screen.getByRole("tab", { name: "优秀作品" });
     const newsPanelId = newsTab.getAttribute("aria-controls");
     const workPanelId = workTab.getAttribute("aria-controls");
@@ -618,7 +625,7 @@ describe("public content lists", () => {
     fireEvent.click(screen.getByRole("tab", { name: "优秀作品" }));
     expect(await screen.findByText("work-W1 标题")).toBeInTheDocument();
     expect(window.location.search).toContain("type=work");
-    fireEvent.click(screen.getByRole("tab", { name: "动态" }));
+    fireEvent.click(screen.getByRole("tab", { name: "新闻动态" }));
     expect(await screen.findByText("news-N1 标题")).toBeInTheDocument();
     expect(window.location.search).toContain("type=news");
 
@@ -626,7 +633,7 @@ describe("public content lists", () => {
     await waitFor(() => expect(screen.getByRole("tab", { name: "优秀作品" })).toHaveAttribute("aria-selected", "true"));
     expect(screen.getByText("work-W1 标题")).toBeInTheDocument();
     window.history.forward();
-    await waitFor(() => expect(screen.getByRole("tab", { name: "动态" })).toHaveAttribute("aria-selected", "true"));
+    await waitFor(() => expect(screen.getByRole("tab", { name: "新闻动态" })).toHaveAttribute("aria-selected", "true"));
     expect(screen.getByText("news-N1 标题")).toBeInTheDocument();
   });
 
@@ -663,7 +670,7 @@ describe("public content lists", () => {
 
       const { unmount } = render(<App />);
       expect(await screen.findByText("news-N1 标题")).toBeInTheDocument();
-      expect(screen.getByRole("tab", { name: "动态" })).toHaveAttribute("aria-selected", "true");
+      expect(screen.getByRole("tab", { name: "新闻动态" })).toHaveAttribute("aria-selected", "true");
       expect(request.mock.calls.every(([url]) => !url.includes("type=invalid") && !url.includes("type=&"))).toBe(true);
       unmount();
     }

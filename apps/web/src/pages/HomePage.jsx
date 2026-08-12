@@ -3,6 +3,7 @@ import ConcurrentEvents from "../components/ConcurrentEvents.jsx";
 import ContentSection from "../components/ContentSection.jsx";
 import FeaturedEvent from "../components/FeaturedEvent.jsx";
 import ServiceGrid from "../components/ServiceGrid.jsx";
+import { PUBLIC_CONTENT_TYPE_LABELS } from "../lib/public-content-labels.js";
 
 const rows = (value) => Array.isArray(value) ? value : [];
 
@@ -21,7 +22,7 @@ export default function HomePage({ data = {} }) {
       <ServiceGrid services={rows(data.services)} />
       <ContentSection
         id="announcements"
-        title="赛事公告"
+        title={PUBLIC_CONTENT_TYPE_LABELS.announcement}
         kicker="重要通知"
         items={rows(data.announcements)}
         variant="announcements"
@@ -30,7 +31,7 @@ export default function HomePage({ data = {} }) {
       />
       <ContentSection
         id="news"
-        title="赛事动态"
+        title={PUBLIC_CONTENT_TYPE_LABELS.news}
         kicker="新闻聚焦"
         items={rows(data.news)}
         moreHref="/news"
@@ -38,7 +39,7 @@ export default function HomePage({ data = {} }) {
       />
       <ContentSection
         id="works"
-        title="优秀作品"
+        title={PUBLIC_CONTENT_TYPE_LABELS.work}
         kicker="创意展示"
         items={rows(data.works)}
         moreHref="/news"

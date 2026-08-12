@@ -88,7 +88,7 @@ describe("public site keyboard and semantics", () => {
     expect(within(primaryNavigation).getByRole("button", { name: "首页" })).not.toHaveAttribute("aria-current");
     expect(within(primaryNavigation).getByRole("link", { name: "获奖查询" })).toHaveAttribute("data-router-ignore", "true");
     expect(within(document.querySelector(".header-actions")).getByRole("link", { name: "报名入口" })).toHaveAttribute("data-router-ignore", "true");
-    expect(await screen.findByRole("heading", { name: "动态与优秀作品" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "新闻动态与优秀作品" })).toBeInTheDocument();
   });
 
   it.each([
@@ -316,8 +316,8 @@ describe("public site SEO", () => {
 
   it.each([
     ["/", "温州青少年航空航天赛事平台"],
-    ["/announcements", "赛事公告"],
-    ["/news", "动态与优秀作品"],
+    ["/announcements", "通知公告"],
+    ["/news", "新闻动态与优秀作品"],
     ["/history", "历届赛事"]
   ])("updates metadata for the public route %s", async (path, title) => {
     vi.stubEnv("VITE_PUBLIC_SITE_URL", "https://aerogp.cn/");
@@ -339,7 +339,7 @@ describe("public site SEO", () => {
     vi.stubGlobal("fetch", vi.fn(async (url) => jsonResponse(apiPayload(url))));
 
     render(<App />);
-    await waitFor(() => expect(document.title).toBe("动态与优秀作品"));
+    await waitFor(() => expect(document.title).toBe("新闻动态与优秀作品"));
     expect(document.head.querySelector('link[rel="canonical"]')).toBeNull();
     expect(document.head.querySelector('meta[property="og:url"]')).toBeNull();
   });
@@ -425,7 +425,7 @@ describe("public site SEO", () => {
     ["/events/missing", "/api/public/events/missing", 404, "赛事不存在", "该赛事可能尚未公开或已经停止展示。"],
     ["/content/missing", "/api/public/content/missing", 404, "内容不存在", "该内容可能尚未发布或已经停止展示。"],
     ["/events/broken", "/api/public/events/broken", 500, "赛事详情", "查看赛事介绍、时间地点、赛项组别和报名信息。"],
-    ["/content/broken", "/api/public/content/broken", 500, "内容详情", "查看赛事公告、动态与优秀作品详情。"]
+    ["/content/broken", "/api/public/content/broken", 500, "内容详情", "查看通知公告、新闻动态与优秀作品详情。"]
   ])("keeps complete non-stale metadata for error route %s", async (path, apiPath, status, title, description) => {
     vi.stubEnv("VITE_PUBLIC_SITE_URL", "https://aerogp.cn");
     window.history.replaceState({}, "", path);
@@ -456,14 +456,14 @@ describe("public site SEO", () => {
     const mobileNavigation = screen.getByRole("navigation", { name: "移动端主导航" });
     fireEvent.click(within(mobileNavigation).getByRole("button", { name: "赛事资讯" }));
     fireEvent.click(within(mobileNavigation).getByRole("link", { name: "通知公告" }));
-    await waitFor(() => expect(document.title).toBe("赛事公告"));
+    await waitFor(() => expect(document.title).toBe("通知公告"));
 
     expect(document.head.querySelectorAll('meta[name="description"]')).toHaveLength(1);
     expect(document.head.querySelector('meta[name="description"]')).toHaveAttribute("content", "查看平台及赛事最新通知。");
     expect(document.head.querySelectorAll('link[rel="canonical"]')).toHaveLength(1);
     expect(document.head.querySelector('link[rel="canonical"]')).toHaveAttribute("href", "https://aerogp.cn/announcements");
     expect(document.head.querySelectorAll('meta[property^="og:"]')).toHaveLength(4);
-    expect(document.head.querySelector('meta[property="og:title"]')).toHaveAttribute("content", "赛事公告");
+    expect(document.head.querySelector('meta[property="og:title"]')).toHaveAttribute("content", "通知公告");
     expect(document.head.querySelector('meta[property="og:image"]')).toBeNull();
   });
 });

@@ -115,7 +115,7 @@ export default function App() {
             <div className="home-route">
               <Seo
                 title={bootstrap.data?.site?.seoTitle || bootstrap.data?.site?.platformName || "温州市青少年航空航天创新比赛"}
-                description={bootstrap.data?.site?.seoDescription || bootstrap.data?.site?.platformIntro || "温州市青少年航空航天创新赛事、公告、动态与优秀作品平台。"}
+                description={bootstrap.data?.site?.seoDescription || bootstrap.data?.site?.platformIntro || "温州市青少年航空航天创新赛事、通知公告、新闻动态与优秀作品平台。"}
                 pathname="/"
                 image={bootstrap.data?.site?.shareImage || bootstrap.data?.featuredEvent?.hero}
               />

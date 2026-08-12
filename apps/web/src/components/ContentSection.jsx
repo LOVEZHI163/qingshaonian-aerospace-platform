@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { PUBLIC_CONTENT_TYPE_LABELS } from "../lib/public-content-labels.js";
 
 function isProtectedPreviewMedia(url) {
   return /^\/api\/admin\/site-media\/[^/?#]+\/preview(?:[?#]|$)/.test(String(url || ""));
@@ -70,7 +71,7 @@ export default function ContentSection({
             const href = contentHref(item);
             return (
               <li key={item.id || item.slug}>
-                <span className="announcement-mark" aria-hidden="true">{item.pinned ? "置顶" : "公告"}</span>
+                <span className="announcement-mark" aria-hidden="true">{item.pinned ? "置顶" : PUBLIC_CONTENT_TYPE_LABELS.announcement}</span>
                 {href ? <a href={href}>{item.title}</a> : <span>{item.title}</span>}
                 <time dateTime={item.publishAt || undefined}>{item.publishAt ? new Date(item.publishAt).toLocaleDateString("zh-CN") : ""}</time>
               </li>

@@ -129,6 +129,8 @@ describe("adaptive public home", () => {
   it("renders one featured event without an empty concurrent section and follows the media contract", () => {
     render(<HomePage data={home()} />);
 
+    expect(screen.getByRole("heading", { name: "通知公告" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "新闻动态" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "E1 动态赛事名称" })).toBeInTheDocument();
     expect(screen.getByText("E1 动态赛事主题")).toBeInTheDocument();
     expect(screen.getByText("E1 动态比赛日期")).toBeInTheDocument();

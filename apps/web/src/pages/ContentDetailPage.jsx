@@ -6,6 +6,8 @@ import AttachmentList from "../components/AttachmentList.jsx";
 import Seo from "../components/Seo.jsx";
 import { enhanceBilibiliVideos } from "../lib/bilibili-video.js";
 
+const DEFAULT_CONTENT_DESCRIPTION = "查看通知公告、新闻动态与优秀作品详情。";
+
 function ContentNotFound() {
   return (
     <>
@@ -55,7 +57,7 @@ export function ContentDetailView({ row, preview = false, canonicalPath = null }
     <article className="content-page content-detail-page">
       <Seo
         title={row?.title || "内容详情"}
-        description={row?.summary || "查看赛事公告、动态与优秀作品详情。"}
+        description={row?.summary || DEFAULT_CONTENT_DESCRIPTION}
         {...(!preview ? { pathname: canonicalPath || `/content/${encodeURIComponent(row?.slug || "")}` } : {})}
         image={row?.cover}
         type="article"
@@ -120,7 +122,7 @@ export default function ContentDetailPage({ slug }) {
       <article className="content-page content-detail-page">
         <Seo
           title="内容详情"
-          description="查看赛事公告、动态与优秀作品详情。"
+          description={DEFAULT_CONTENT_DESCRIPTION}
           pathname={`/content/${encodeURIComponent(slug)}`}
           type="article"
         />

@@ -3,9 +3,8 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { fetchJson } from "../api/client.js";
 import AsyncState from "../components/AsyncState.jsx";
 import Seo from "../components/Seo.jsx";
+import { PUBLIC_CONTENT_TYPE_LABELS, publicContentTypeLabel } from "../lib/public-content-labels.js";
 import { navigatePublicListPage, navigatePublicListType, parsePublicListLocation, publicContentListPath } from "../router.js";
-
-const labels = { announcement: "公告", news: "动态", work: "优秀作品", recap: "赛事回顾" };
 
 function dateLabel(value) {
   const date = new Date(value);
@@ -20,7 +19,7 @@ function ContentRows({ payload, emptyText }) {
       {rows.map((row) => (
         <article key={row.id || row.slug}>
           <div>
-            <span>{labels[row.type] || "公开内容"}{row.pinned ? " · 置顶" : ""}</span>
+            <span>{publicContentTypeLabel(row.type) || "公开内容"}{row.pinned ? " · 置顶" : ""}</span>
             {row.publishAt ? <time dateTime={row.publishAt}>{dateLabel(row.publishAt)}</time> : null}
           </div>
           <h2>{row.slug ? <a href={`/content/${encodeURIComponent(row.slug)}`}>{row.title}</a> : row.title}</h2>
@@ -97,24 +96,26 @@ export default function ContentListPage({ mode = "announcements", location = win
     activateTab(types[nextIndex], true);
   }
 
-  const heading = newsMode ? "动态与优秀作品" : "公告";
+  const heading = newsMode
+    ? `${PUBLIC_CONTENT_TYPE_LABELS.news}与${PUBLIC_CONTENT_TYPE_LABELS.work}`
+    : PUBLIC_CONTENT_TYPE_LABELS.announcement;
 
   return (
     <section className="content-page content-list-page" aria-labelledby="content-list-title">
       <Seo
-        title={newsMode ? "动态与优秀作品" : "赛事公告"}
-        description={newsMode ? "了解赛事动态，浏览青少年优秀航空航天作品。" : "查看平台及赛事最新通知。"}
+        title={heading}
+        description={newsMode ? "了解新闻动态，浏览青少年优秀航空航天作品。" : "查看平台及赛事最新通知。"}
         pathname={newsMode ? "/news" : "/announcements"}
       />
       <div className="content-page-heading">
         <p className="section-kicker">官方发布</p>
         <h1 id="content-list-title">{heading}</h1>
-        <p>{newsMode ? "了解赛事动态，浏览青少年优秀航空航天作品。" : "查看平台及赛事最新通知。"}</p>
+        <p>{newsMode ? "了解新闻动态，浏览青少年优秀航空航天作品。" : "查看平台及赛事最新通知。"}</p>
       </div>
 
       {newsMode ? (
         <div className="content-tabs" role="tablist" aria-label="内容分类">
-          {[["news", "动态"], ["work", "优秀作品"]].map(([type, label]) => (
+          {["news", "work"].map((type) => (
             <button
               type="button"
               role="tab"
@@ -126,7 +127,7 @@ export default function ContentListPage({ mode = "announcements", location = win
               ref={(node) => { tabRefs.current[type] = node; }}
               onClick={() => activateTab(type)}
               onKeyDown={(event) => handleTabKeyDown(event, type)}
-            >{label}</button>
+            >{publicContentTypeLabel(type)}</button>
           ))}
         </div>
       ) : null}

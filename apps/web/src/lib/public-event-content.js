@@ -10,8 +10,8 @@ const TITLES = {
 };
 
 const GENERIC_COPY = {
-  about: [{ heading: "赛事介绍", paragraphs: ["赛事详细介绍正在整理中，请以赛事公告为准。"] }],
-  rules: [{ heading: "赛事规则", paragraphs: ["请按照赛事公告、赛项规程和现场安全要求参赛。"] }],
+  about: [{ heading: "赛事介绍", paragraphs: ["赛事详细介绍正在整理中，请以通知公告为准。"] }],
+  rules: [{ heading: "赛事规则", paragraphs: ["请按照通知公告、赛项规程和现场安全要求参赛。"] }],
   registration: [{ heading: "报名说明", paragraphs: ["请登录赛事报名系统，选择赛事后按照页面要求提交信息。"] }],
   contact: []
 };

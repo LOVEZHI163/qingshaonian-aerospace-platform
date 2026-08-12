@@ -7,14 +7,8 @@ import EventStatus from "../components/EventStatus.jsx";
 import { EventPicture } from "../components/FeaturedEvent.jsx";
 import ProjectGroups from "../components/ProjectGroups.jsx";
 import Seo from "../components/Seo.jsx";
+import { publicContentTypeLabel } from "../lib/public-content-labels.js";
 
-const contentLabels = {
-  announcement: "赛事公告",
-  news: "赛事动态",
-  work: "优秀作品",
-  guide: "参赛指南",
-  recap: "赛事回顾"
-};
 const SAFE_EVENT_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 
 function ResourceNotFound() {
@@ -40,7 +34,7 @@ function EventContent({ rows = [] }) {
       <div className="event-content-grid">
         {rows.map((row) => (
           <article key={row.id || row.slug}>
-            <span>{contentLabels[row.type] || "赛事内容"}</span>
+            <span>{publicContentTypeLabel(row.type) || "赛事内容"}</span>
             <h3>{row.slug ? <a href={`/content/${encodeURIComponent(row.slug)}`}>{row.title}</a> : row.title}</h3>
             {row.summary ? <p>{row.summary}</p> : null}
           </article>
