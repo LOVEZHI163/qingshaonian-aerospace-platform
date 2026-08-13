@@ -26,6 +26,7 @@ describe("web build cleanup", () => {
     expect(eventInformationStyles).toMatch(/\.event-information-hero-copy\s*\{[^}]*width:\s*min\(42rem,\s*66%\)/);
     expect(eventInformationStyles).toMatch(/\.event-information-contact\s*\{[^}]*min-width:\s*0[^}]*overflow-wrap:\s*anywhere/);
     expect(eventInformationStyles).toMatch(/\.event-information-sections li\s*\{[^}]*min-width:\s*0[^}]*overflow-wrap:\s*anywhere/);
+    expect(eventInformationStyles).toMatch(/\.event-information-section-wide\s*\{[^}]*grid-column:\s*1\s*\/\s*-1/);
     expect(eventInformationStyles).toMatch(/\.event-information-document\s*\{[^}]*margin:\s*1\.25rem\s+0/);
 
     const buildCommand = process.platform === "win32"

@@ -99,7 +99,10 @@ export default function EventInformationPage({ section, homeData, homeStatus, lo
       ) : null}
       <div className="event-information-sections">
         {model.sections.map((item) => (
-          <article key={item.heading}>
+          <article
+            key={item.heading}
+            className={item.wide ? "event-information-section-wide" : undefined}
+          >
             <h2>{item.heading}</h2>
             {(item.paragraphs || []).map((paragraph) => <p key={paragraph}>{paragraph}</p>)}
             {item.contact ? (

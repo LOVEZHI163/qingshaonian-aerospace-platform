@@ -65,6 +65,7 @@ function normalizedSection(section) {
   const contact = normalizedContact(section?.contact);
   return {
     heading: text(section?.heading),
+    ...(section?.wide === true ? { wide: true } : {}),
     ...(paragraphs.length ? { paragraphs } : {}),
     ...(items.length ? { items } : {}),
     ...(contact ? { contact } : {})

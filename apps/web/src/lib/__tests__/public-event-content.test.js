@@ -12,6 +12,27 @@ const current = {
 };
 
 describe("public event content", () => {
+  it("places the approved introduction and organization copy in full-width sections", () => {
+    const model = buildPublicEventContent("about", { event: current, detail: null, site: {} });
+
+    expect(model.sections.slice(0, 2)).toEqual([
+      {
+        heading: "大赛介绍",
+        paragraphs: [
+          "温州市青少年航空航天创新比赛由温州市关心下一代工作委员会、温州市教育局、温州市体育局、共青团温州市委员会、温州市妇女联合会、温州市科学技术协会面向中小学生开展的全市竞赛活动。大赛坚持公益性、规范性、普惠性原则，将充分发挥竞赛育人功能，丰富中小学生课余生活，以提升青少年航空航天学习实践、激发创新创造思维和探索实践能力为核心目标，推动全市青少年科技体育活动的蓬勃开展，引导广大青少年树立科学志向、崇尚探索精神、勤于动手实践、勇于创新成才。"
+        ],
+        wide: true
+      },
+      {
+        heading: "组织机构",
+        paragraphs: [
+          "大赛由温州市关心下一代工作委员会、温州市教育局、温州市体育局、共青团温州市委员会、温州市妇女联合会、温州市科学技术协会共同主办，2026年由文成县关心下一代工作委员会、文成县教育局、文成县文化和广电旅游体育局、共青团文成县委员会、文成县妇女联合会、文成县科学技术协会承办。"
+        ],
+        wide: true
+      }
+    ]);
+  });
+
   it("maps the approved document copy onto the current event", () => {
     const model = buildPublicEventContent("registration", { event: current, detail: null, site: {} });
     expect(model.title).toBe("报名流程");

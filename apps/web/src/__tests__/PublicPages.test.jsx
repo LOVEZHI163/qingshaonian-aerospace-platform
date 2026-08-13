@@ -284,6 +284,25 @@ describe("public event information page", () => {
     expect(media.querySelector("img")).toHaveAttribute("alt", "");
   });
 
+  it("renders the approved introduction and organization as full-width cards", async () => {
+    window.history.replaceState({}, "", "/about?event=wz-aerospace-2026");
+    const selectedEvent = event({ id: "WZ-2026", slug: "wz-aerospace-2026" });
+    installApi({
+      "/api/public/events/wz-aerospace-2026": {
+        event: selectedEvent, projects: [], groups: [], resources: [], content: []
+      }
+    }, home({ featuredEvent: selectedEvent }));
+
+    render(<App />);
+
+    const introduction = await screen.findByRole("heading", { level: 2, name: "大赛介绍" });
+    const organization = screen.getByRole("heading", { level: 2, name: "组织机构" });
+    expect(introduction.closest("article")).toHaveClass("event-information-section-wide");
+    expect(organization.closest("article")).toHaveClass("event-information-section-wide");
+    expect(screen.getByText(/大赛坚持公益性、规范性、普惠性原则/)).toBeInTheDocument();
+    expect(screen.getByText(/2026年由文成县关心下一代工作委员会/)).toBeInTheDocument();
+  });
+
   it("keeps the branded information hero fallback when the event has no poster", async () => {
     window.history.replaceState({}, "", "/rules?event=wenzhou-2026");
     const selectedEvent = event({ hero: null });
