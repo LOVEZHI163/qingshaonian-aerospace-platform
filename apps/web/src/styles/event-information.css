@@ -12,7 +12,8 @@
 .event-information-switcher a { display: inline-flex; min-width: 0; min-height: 2.75rem; align-items: center; padding-inline: 1rem; border: 1px solid var(--color-border-strong); border-radius: 999px; color: var(--color-brand-ink); font-weight: 700; overflow-wrap: anywhere; text-decoration: none; background: var(--color-white); }
 .event-information-switcher a[aria-current="page"] { border-color: var(--color-brand); color: var(--color-white); background: var(--color-brand); }
 
-.event-information-facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; margin: 0 0 1.25rem; }
+.event-information-facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; margin: 1.25rem 0; }
+.event-information-document + .event-information-facts { margin-top: 0; }
 .event-information-facts div { min-width: 0; padding: 1.25rem; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-white); }
 .event-information-facts dt { color: var(--color-text-muted); font-size: 0.875rem; font-weight: 800; }
 .event-information-facts dd { min-width: 0; margin: 0.5rem 0 0; color: var(--color-brand-ink); font-weight: 800; line-height: 1.5; overflow-wrap: anywhere; }

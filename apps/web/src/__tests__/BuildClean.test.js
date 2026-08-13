@@ -27,6 +27,8 @@ describe("web build cleanup", () => {
     expect(eventInformationStyles).toMatch(/\.event-information-contact\s*\{[^}]*min-width:\s*0[^}]*overflow-wrap:\s*anywhere/);
     expect(eventInformationStyles).toMatch(/\.event-information-sections li\s*\{[^}]*min-width:\s*0[^}]*overflow-wrap:\s*anywhere/);
     expect(eventInformationStyles).toMatch(/\.event-information-sections\s*\{[^}]*grid-template-columns:\s*repeat\(3,\s*minmax\(0,\s*1fr\)\)/);
+    expect(eventInformationStyles).toMatch(/\.event-information-facts\s*\{[^}]*margin:\s*1\.25rem\s+0/);
+    expect(eventInformationStyles).toMatch(/\.event-information-document\s*\+\s*\.event-information-facts\s*\{[^}]*margin-top:\s*0/);
     expect(eventInformationStyles).toMatch(/\.event-information-section-wide\s*\{[^}]*grid-column:\s*1\s*\/\s*-1/);
     expect(eventInformationStyles).toMatch(/\.event-information-document\s*\{[^}]*margin:\s*1\.25rem\s+0\s+2rem/);
 
