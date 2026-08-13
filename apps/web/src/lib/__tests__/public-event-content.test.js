@@ -15,7 +15,7 @@ describe("public event content", () => {
   it("places the approved introduction and organization copy in full-width sections", () => {
     const model = buildPublicEventContent("about", { event: current, detail: null, site: {} });
 
-    expect(model.sections.slice(0, 2)).toEqual([
+    expect(model.sections).toEqual([
       {
         heading: "大赛介绍",
         paragraphs: [

@@ -301,6 +301,9 @@ describe("public event information page", () => {
     expect(organization.closest("article")).toHaveClass("event-information-section-wide");
     expect(screen.getByText(/大赛坚持公益性、规范性、普惠性原则/)).toBeInTheDocument();
     expect(screen.getByText(/2026年由文成县关心下一代工作委员会/)).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { level: 2, name: "赛事主题" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { level: 2, name: "举办宗旨" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { level: 2, name: "参赛对象" })).not.toBeInTheDocument();
   });
 
   it("keeps the branded information hero fallback when the event has no poster", async () => {
