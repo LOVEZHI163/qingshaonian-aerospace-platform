@@ -267,6 +267,7 @@ textarea {
 .admin-sidebar [data-nav="certificates"]::before { content: "证"; }
 .admin-sidebar [data-nav="siteContent"]::before { content: "站"; }
 .admin-sidebar [data-nav="organizations"]::before { content: "组"; }
+.admin-sidebar [data-nav="leaders"]::before { content: "领"; }
 .admin-sidebar [data-nav="users"]::before { content: "人"; }
 
 .admin-sidebar nav button:hover,
