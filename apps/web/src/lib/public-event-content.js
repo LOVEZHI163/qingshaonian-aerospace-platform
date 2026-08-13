@@ -63,11 +63,15 @@ function normalizedSection(section) {
     .map((item) => ({ ...item, name: text(item?.name) }))
     .filter((item) => item.name);
   const contact = normalizedContact(section?.contact);
+  const steps = (Array.isArray(section?.steps) ? section.steps : [])
+    .map((step) => ({ title: text(step?.title), description: text(step?.description) }))
+    .filter((step) => step.title && step.description);
   return {
     heading: text(section?.heading),
     ...(section?.wide === true ? { wide: true } : {}),
     ...(paragraphs.length ? { paragraphs } : {}),
     ...(items.length ? { items } : {}),
+    ...(steps.length ? { steps } : {}),
     ...(contact ? { contact } : {})
   };
 }
@@ -76,7 +80,7 @@ function visibleSections(sections) {
   return sections
     .map(normalizedSection)
     .filter((section) => section.heading && (
-      section.paragraphs?.length || section.items?.length || section.contact
+      section.paragraphs?.length || section.items?.length || section.steps?.length || section.contact
     ));
 }
 

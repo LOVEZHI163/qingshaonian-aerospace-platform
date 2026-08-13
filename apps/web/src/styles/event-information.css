@@ -27,6 +27,15 @@
 .event-information-contact a { min-width: 0; overflow-wrap: anywhere; }
 .event-information-sections article > :last-child { margin-bottom: 0; }
 
+.event-information-process { border-color: color-mix(in srgb, var(--color-brand) 34%, var(--color-border)); background: linear-gradient(180deg, color-mix(in srgb, var(--color-brand) 6%, var(--color-white)), var(--color-white)); }
+.event-information-process > p { max-width: 56rem; color: var(--color-text-muted); }
+.event-information-process-list { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 1rem; margin: 1.5rem 0 0; padding: 0; list-style: none; counter-reset: registration-step; }
+.event-information-process-list li { position: relative; display: flex; min-width: 0; gap: 0.85rem; padding: 1.15rem; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-white); box-shadow: var(--shadow-sm); }
+.event-information-process-list li > span { display: inline-flex; width: 2rem; height: 2rem; flex: 0 0 2rem; align-items: center; justify-content: center; border-radius: 50%; color: var(--color-white); font-weight: 900; background: var(--color-brand); }
+.event-information-process-list li > div { min-width: 0; }
+.event-information-process-list h3 { margin: 0 0 0.5rem; color: var(--color-brand-ink); font-size: 1rem; line-height: 1.45; }
+.event-information-process-list p { margin: 0; color: var(--color-text-muted); font-size: 0.925rem; line-height: 1.65; overflow-wrap: anywhere; }
+
 .event-information-document { margin: 1.25rem 0 2rem; padding: clamp(1.25rem, 3vw, 2.5rem); border: 1px solid color-mix(in srgb, var(--color-brand) 34%, var(--color-border)); border-radius: var(--radius-md); background: var(--color-white); box-shadow: var(--shadow-sm); }
 .event-information-document-header { display: flex; gap: 1.5rem; padding-bottom: 1.5rem; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--color-border); }
 .event-information-document-header > div:first-child { min-width: 0; }
@@ -63,6 +72,7 @@
   .event-information-hero::after { background: linear-gradient(90deg, rgba(3, 24, 85, 0.96), rgba(7, 45, 137, 0.82) 70%, rgba(30, 49, 180, 0.42)); }
   .event-information-hero-copy { width: 100%; }
   .event-information-facts, .event-information-sections { grid-template-columns: 1fr; }
+  .event-information-process-list { grid-template-columns: 1fr; }
   .event-information-document-header { align-items: stretch; flex-direction: column; }
   .event-information-document-actions { flex-direction: column; }
   .event-information-document-actions a { width: 100%; }
