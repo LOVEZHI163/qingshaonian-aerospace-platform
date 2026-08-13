@@ -13,3 +13,5 @@ dev-server*.log
 /backups/
 /tmp/
 /.codex-tmp/
+/.deploy-*.tar
+/.online-*.png
