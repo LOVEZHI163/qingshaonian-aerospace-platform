@@ -33,6 +33,7 @@ const restoring = session.restoring;
 const eventData = ref({ event: {}, projects: [], grades: [] });
 const currentView = ref("login");
 const message = ref("");
+const loginMessage = ref("");
 const releaseReady = ref(false);
 const releaseBlocked = ref(false);
 const releaseMessage = ref("");
@@ -190,6 +191,7 @@ function invalidateAdminEventContextRequests({ clearContext = false, clearMessag
   adminContextRefreshSequence += 1;
   if (clearMessages) {
     message.value = "";
+    loginMessage.value = "";
     adminContextMessage.value = "";
   }
   if (clearContext) {
@@ -339,7 +341,7 @@ async function login(credentials) {
     await loadAdminEventsSafely();
     currentView.value = user.mustChangePassword ? "password" : targetView(user);
   } catch (error) {
-    message.value = error?.message || "登录失败，请稍后重试";
+    loginMessage.value = error?.message || "登录失败，请稍后重试";
   }
 }
 
@@ -360,6 +362,7 @@ async function performLogout() {
   selectEventContext("");
   currentView.value = "login";
   message.value = "";
+  loginMessage.value = "";
   adminContextMessage.value = "";
   const url = new URL(window.location.href);
   ["view", "eventId", "eventSlug", "contentId", "panel"].forEach((key) => url.searchParams.delete(key));
@@ -556,7 +559,7 @@ onMounted(async () => {
 
   <div v-else-if="restoring" class="app-loading">正在恢复登录状态…</div>
 
-  <AuthPage v-else-if="!currentUser" :event-name="eventData.event.name" :login-error="message" @login="login" @clear-message="message = ''" />
+  <AuthPage v-else-if="!currentUser" :event-name="eventData.event.name" :login-error="loginMessage" @login="login" @clear-message="loginMessage = ''" />
 
   <section v-else-if="currentUser.mustChangePassword" class="auth-shell force-password-shell">
     <PasswordSettingsPage forced @changed="passwordChanged" @logout="logout" />

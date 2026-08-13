@@ -100,6 +100,21 @@ describe("App session integration", () => {
     expect(wrapper.get('[data-testid="login-error"]').text()).toContain("手机号或密码错误");
   });
 
+  it("does not present an event bootstrap failure as a login failure before submission", async () => {
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/public/event") throw new Error("当前赛事尚未配置");
+      if (path === "/api/public/features") return { smsPasswordResetEnabled: false };
+      return { rows: [] };
+    });
+
+    const wrapper = mount(App);
+    await flushPromises();
+
+    expect(wrapper.find('[data-testid="login-error"]').exists()).toBe(false);
+    expect(wrapper.text()).not.toContain("登录失败：当前赛事尚未配置");
+    expect(session.login).not.toHaveBeenCalled();
+  });
+
   it("blocks the admin shell when production release identities differ", async () => {
     vi.stubEnv("VITE_RELEASE_SHA", "new-web");
     sessionUser.value = { id: "A1", type: "admin", name: "管理员", mustChangePassword: false };
