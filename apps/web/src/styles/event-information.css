@@ -26,7 +26,7 @@
 .event-information-contact a { min-width: 0; overflow-wrap: anywhere; }
 .event-information-sections article > :last-child { margin-bottom: 0; }
 
-.event-information-document { display: flex; gap: 1.5rem; margin-top: 1.25rem; padding: clamp(1.25rem, 3vw, 2rem); align-items: center; justify-content: space-between; border: 1px solid color-mix(in srgb, var(--color-brand) 34%, var(--color-border)); border-radius: var(--radius-md); background: linear-gradient(135deg, var(--color-white), color-mix(in srgb, var(--color-brand) 7%, var(--color-white))); box-shadow: var(--shadow-sm); }
+.event-information-document { display: flex; gap: 1.5rem; margin: 1.25rem 0; padding: clamp(1.25rem, 3vw, 2rem); align-items: center; justify-content: space-between; border: 1px solid color-mix(in srgb, var(--color-brand) 34%, var(--color-border)); border-radius: var(--radius-md); background: linear-gradient(135deg, var(--color-white), color-mix(in srgb, var(--color-brand) 7%, var(--color-white))); box-shadow: var(--shadow-sm); }
 .event-information-document > div:first-child { min-width: 0; }
 .event-information-document h2 { margin: 0.25rem 0 0.5rem; color: var(--color-brand-ink); }
 .event-information-document p { margin: 0; line-height: 1.65; overflow-wrap: anywhere; }
