@@ -102,6 +102,7 @@ test("registration guide serves the standalone illustrated HTML", async () => {
   const guideHtml = await fs.readFile(path.join(guideDir, "index.html"), "utf8");
 
   assert.match(nginx, /location = \/registration-guide\s*\{[\s\S]*return 302 \/registration-flow\//);
+  assert.match(nginx, /location = \/registration-guide\s*\{[\s\S]*absolute_redirect off;[\s\S]*return 302 \/registration-flow\//);
   assert.match(guideHtml, /青少年航空航天创新比赛报名流程/);
   assert.match(guideHtml, /第一块：注册登录流程/);
   assert.match(guideHtml, /第二块：正式报名流程/);
