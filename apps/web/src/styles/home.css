@@ -49,10 +49,6 @@
 .featured-event-media { max-width: 100%; }
 .featured-event-media.media-placeholder { display: grid; place-items: center; font-size: 8rem; color: rgba(255, 255, 255, 0.14); }
 
-.featured-event-interaction {
-  display: none;
-}
-
 .featured-event-copy {
   position: relative;
   z-index: 2;
@@ -180,10 +176,6 @@
 
 @media (max-width: 640px) {
   .home-page { width: min(100% - 1.5rem, var(--content-max)); padding-top: var(--space-2); }
-  .featured-event { color: var(--color-text); background: var(--color-white); }
-  .featured-event-poster { aspect-ratio: auto; overflow: visible; }
-  .featured-event-media { position: relative; display: block; aspect-ratio: 1549 / 434; background: var(--color-brand-deep); }
-  .featured-event-interaction { display: flex; position: relative; inset: auto; color: var(--color-text); background: var(--color-white); }
   .featured-event-copy { width: 100%; padding: var(--space-3); transform: none; }
   .featured-event h2 { color: var(--color-brand-ink); font-size: clamp(1.75rem, 8.5vw, 2.5rem); }
   .featured-event .section-kicker { color: var(--color-brand); }
@@ -204,21 +196,6 @@
   .announcement-list time { grid-column: 2; }
   .button, .text-link { min-height: 44px; }
   .button { width: 100%; }
-}
-
-@media (hover: none) {
-  .featured-event { color: var(--color-text); background: var(--color-white); }
-  .featured-event-poster { aspect-ratio: auto; overflow: visible; }
-  .featured-event-media { position: relative; display: block; aspect-ratio: 1549 / 434; background: var(--color-brand-deep); }
-  .featured-event-interaction { display: flex; position: relative; inset: auto; color: var(--color-text); background: var(--color-white); }
-  .featured-event-copy { width: 100%; transform: none; }
-  .featured-event h2 { color: var(--color-brand-ink); }
-  .featured-event .section-kicker { color: var(--color-brand); }
-  .featured-event-slogan { color: var(--color-text-muted); }
-  .event-facts div { border-left-color: var(--color-brand-accent); }
-  .event-facts dt { color: var(--color-text-muted); }
-  .button-primary { color: var(--color-white); background: var(--color-brand); }
-  .button-secondary { border-color: var(--color-brand); color: var(--color-brand); background: var(--color-white); }
 }
 
 @media (prefers-reduced-motion: no-preference) {

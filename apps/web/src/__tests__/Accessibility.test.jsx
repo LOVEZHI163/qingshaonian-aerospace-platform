@@ -291,7 +291,7 @@ describe("public site keyboard and semantics", () => {
     expect(homeStyles).toMatch(/@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*\.button:hover\s*\{[^}]*transform:\s*none\s*!important/);
   });
 
-  it("preserves the poster composition without desktop hover or focus overlays", () => {
+  it("preserves an image-only poster on desktop, touch and mobile layouts", () => {
     const tokens = readFileSync(resolve(process.cwd(), "src/styles/tokens.css"), "utf8");
     const homeStyles = readFileSync(resolve(process.cwd(), "src/styles/home.css"), "utf8");
 
@@ -301,8 +301,7 @@ describe("public site keyboard and semantics", () => {
     expect(homeStyles).toMatch(/\.featured-event-media img\s*\{[^}]*object-fit:\s*contain/);
     expect(homeStyles).not.toMatch(/\.featured-event-poster:hover\s+\.featured-event-interaction/);
     expect(homeStyles).not.toMatch(/\.featured-event-poster:focus(?:-within)?\s+\.featured-event-interaction/);
-    expect(homeStyles).toMatch(/\.featured-event-interaction\s*\{[^}]*display:\s*none/);
-    expect(homeStyles).toMatch(/@media\s*\(hover:\s*none\)[\s\S]*\.featured-event-interaction\s*\{[^}]*display:\s*flex[^}]*position:\s*relative/);
+    expect(homeStyles).not.toMatch(/\.featured-event-interaction/);
   });
 
   it("aligns desktop poster copy with the lower safe area and resets it on mobile", () => {

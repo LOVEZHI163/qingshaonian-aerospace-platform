@@ -143,28 +143,16 @@ describe("adaptive public home", () => {
     expect(screen.getByRole("heading", { name: "通知公告" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "新闻动态" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "优秀作品" })).not.toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "E1 动态赛事名称" })).toBeInTheDocument();
-    expect(screen.getByText("E1 动态赛事主题")).toBeInTheDocument();
-    expect(screen.getByText("E1 动态比赛日期")).toBeInTheDocument();
-    expect(screen.getByText("E1 动态比赛地点")).toBeInTheDocument();
-    expect(screen.getByText("报名中")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "立即报名" })).toHaveAttribute(
-      "href",
-      "/admin/?view=registration&eventId=E1"
-    );
-    const posterActions = document.querySelector(".featured-event-poster");
-    expect(posterActions).toHaveClass("featured-event-poster");
-    expect(posterActions).not.toHaveAttribute("role");
-    expect(posterActions).not.toHaveAttribute("tabindex");
-    expect(within(posterActions).getByRole("link", { name: "立即报名" })).toHaveAttribute(
-      "href",
-      "/admin/?view=registration&eventId=E1"
-    );
-    expect(within(posterActions).getByRole("link", { name: "了解赛事" })).toHaveAttribute(
-      "href",
-      "/events/event-e1"
-    );
-    expect(screen.getByTestId("featured-event-mobile-copy")).toBeInTheDocument();
+    const featuredSection = document.querySelector("#events");
+    const poster = document.querySelector(".featured-event-poster");
+    expect(featuredSection).toHaveAttribute("aria-label", "E1 动态赛事名称赛事海报");
+    expect(poster).toHaveClass("featured-event-poster");
+    expect(poster).not.toHaveAttribute("role");
+    expect(poster).not.toHaveAttribute("tabindex");
+    expect(poster.querySelector(".featured-event-interaction")).toBeNull();
+    expect(screen.queryByTestId("featured-event-mobile-copy")).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "立即报名" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "了解赛事" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "同期赛事" })).not.toBeInTheDocument();
 
     const picture = screen.getByRole("img", { name: "E1 动态赛事名称赛事封面" }).closest("picture");
