@@ -291,7 +291,7 @@ describe("public site keyboard and semantics", () => {
     expect(homeStyles).toMatch(/@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*\.button:hover\s*\{[^}]*transform:\s*none\s*!important/);
   });
 
-  it("preserves the poster composition and exposes actions without hover-only access", () => {
+  it("preserves the poster composition without desktop hover or focus overlays", () => {
     const tokens = readFileSync(resolve(process.cwd(), "src/styles/tokens.css"), "utf8");
     const homeStyles = readFileSync(resolve(process.cwd(), "src/styles/home.css"), "utf8");
 
@@ -299,10 +299,10 @@ describe("public site keyboard and semantics", () => {
     expect(tokens).toMatch(/--color-brand-deep:\s*#07185e/i);
     expect(tokens).toMatch(/--color-brand-accent:\s*#6e35e7/i);
     expect(homeStyles).toMatch(/\.featured-event-media img\s*\{[^}]*object-fit:\s*contain/);
-    expect(homeStyles).toMatch(/\.featured-event-poster:hover\s+\.featured-event-interaction/);
-    expect(homeStyles).toMatch(/\.featured-event-poster:focus-within\s+\.featured-event-interaction/);
-    expect(homeStyles).toMatch(/@media\s*\(hover:\s*none\)[\s\S]*\.featured-event-interaction\s*\{[^}]*position:\s*relative/);
-    expect(homeStyles).toMatch(/@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*\.featured-event-interaction\s*\{[^}]*transition:\s*none/);
+    expect(homeStyles).not.toMatch(/\.featured-event-poster:hover\s+\.featured-event-interaction/);
+    expect(homeStyles).not.toMatch(/\.featured-event-poster:focus(?:-within)?\s+\.featured-event-interaction/);
+    expect(homeStyles).toMatch(/\.featured-event-interaction\s*\{[^}]*display:\s*none/);
+    expect(homeStyles).toMatch(/@media\s*\(hover:\s*none\)[\s\S]*\.featured-event-interaction\s*\{[^}]*display:\s*flex[^}]*position:\s*relative/);
   });
 
   it("aligns desktop poster copy with the lower safe area and resets it on mobile", () => {

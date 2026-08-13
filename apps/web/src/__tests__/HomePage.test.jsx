@@ -152,8 +152,10 @@ describe("adaptive public home", () => {
       "href",
       "/admin/?view=registration&eventId=E1"
     );
-    const posterActions = screen.getByRole("group", { name: "E1 动态赛事名称赛事操作" });
+    const posterActions = document.querySelector(".featured-event-poster");
     expect(posterActions).toHaveClass("featured-event-poster");
+    expect(posterActions).not.toHaveAttribute("role");
+    expect(posterActions).not.toHaveAttribute("tabindex");
     expect(within(posterActions).getByRole("link", { name: "立即报名" })).toHaveAttribute(
       "href",
       "/admin/?view=registration&eventId=E1"

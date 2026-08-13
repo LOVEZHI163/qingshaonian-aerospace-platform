@@ -72,9 +72,6 @@ export default function FeaturedEvent({ event, mode = "active" }) {
     <section id="events" className="featured-event" aria-labelledby="featured-event-title">
       <div
         className="featured-event-poster"
-        role="group"
-        aria-label={`${event.name}赛事操作`}
-        tabIndex={0}
       >
         <EventPicture event={event} className="featured-event-media" />
         <div className="featured-event-interaction" data-testid="featured-event-mobile-copy">

@@ -50,26 +50,7 @@
 .featured-event-media.media-placeholder { display: grid; place-items: center; font-size: 8rem; color: rgba(255, 255, 255, 0.14); }
 
 .featured-event-interaction {
-  position: absolute;
-  inset: 0;
-  z-index: 1;
-  display: flex;
-  align-items: flex-end;
-  opacity: 0;
-  pointer-events: none;
-  transform: translateY(0.75rem);
-  background:
-    linear-gradient(90deg, rgba(7, 24, 94, 0.96) 0%, rgba(21, 90, 221, 0.78) 48%, rgba(110, 53, 231, 0.18) 100%),
-    linear-gradient(0deg, rgba(7, 24, 94, 0.72), transparent 58%);
-  transition: opacity 220ms ease, transform 220ms ease;
-}
-
-.featured-event-poster:hover .featured-event-interaction,
-.featured-event-poster:focus .featured-event-interaction,
-.featured-event-poster:focus-within .featured-event-interaction {
-  opacity: 1;
-  pointer-events: auto;
-  transform: translateY(0);
+  display: none;
 }
 
 .featured-event-copy {
@@ -202,6 +183,7 @@
   .featured-event { color: var(--color-text); background: var(--color-white); }
   .featured-event-poster { aspect-ratio: auto; overflow: visible; }
   .featured-event-media { position: relative; display: block; aspect-ratio: 1549 / 434; background: var(--color-brand-deep); }
+  .featured-event-interaction { display: flex; position: relative; inset: auto; color: var(--color-text); background: var(--color-white); }
   .featured-event-copy { width: 100%; padding: var(--space-3); transform: none; }
   .featured-event h2 { color: var(--color-brand-ink); font-size: clamp(1.75rem, 8.5vw, 2.5rem); }
   .featured-event .section-kicker { color: var(--color-brand); }
@@ -228,7 +210,7 @@
   .featured-event { color: var(--color-text); background: var(--color-white); }
   .featured-event-poster { aspect-ratio: auto; overflow: visible; }
   .featured-event-media { position: relative; display: block; aspect-ratio: 1549 / 434; background: var(--color-brand-deep); }
-  .featured-event-interaction { position: relative; inset: auto; opacity: 1; pointer-events: auto; transform: none; color: var(--color-text); background: var(--color-white); }
+  .featured-event-interaction { display: flex; position: relative; inset: auto; color: var(--color-text); background: var(--color-white); }
   .featured-event-copy { width: 100%; transform: none; }
   .featured-event h2 { color: var(--color-brand-ink); }
   .featured-event .section-kicker { color: var(--color-brand); }
@@ -248,7 +230,6 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .featured-event-interaction { transition: none; }
   .button:hover { transform: none !important; }
 }
 
