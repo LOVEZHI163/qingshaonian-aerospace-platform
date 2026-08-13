@@ -284,6 +284,72 @@ describe("public event information page", () => {
     expect(media.querySelector("img")).toHaveAttribute("alt", "");
   });
 
+  it("places the illustrated registration HTML directly below the event poster", async () => {
+    window.history.replaceState({}, "", "/registration-guide?event=wz-aerospace-2026");
+    const selectedEvent = event({ id: "WZ-2026", slug: "wz-aerospace-2026" });
+    installApi({
+      "/api/public/events/wz-aerospace-2026": {
+        event: selectedEvent, projects: [], groups: [], resources: [], content: []
+      }
+    }, home({ featuredEvent: selectedEvent }));
+
+    render(<App />);
+
+    expect(await screen.findByRole("heading", { level: 1, name: "报名流程" })).toBeInTheDocument();
+    const hero = document.querySelector(".event-information-hero");
+    const guide = screen.getByTitle("报名操作详细流程");
+    const facts = document.querySelector(".event-information-facts");
+
+    expect(guide).toHaveAttribute("src", "/registration-flow/?embed=1");
+    expect(hero.compareDocumentPosition(guide)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(guide.compareDocumentPosition(facts)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+  });
+
+  it("resizes the embedded guide in both directions and releases its observer", async () => {
+    window.history.replaceState({}, "", "/registration-guide?event=wz-aerospace-2026");
+    const selectedEvent = event({ id: "WZ-2026", slug: "wz-aerospace-2026" });
+    installApi({
+      "/api/public/events/wz-aerospace-2026": {
+        event: selectedEvent, projects: [], groups: [], resources: [], content: []
+      }
+    }, home({ featuredEvent: selectedEvent }));
+    let resizeCallback;
+    const disconnect = vi.fn();
+    const observe = vi.fn();
+    class ResizeObserverStub {
+      constructor(callback) {
+        resizeCallback = callback;
+      }
+
+      observe(target) {
+        observe(target);
+      }
+
+      disconnect() {
+        disconnect();
+      }
+    }
+    vi.stubGlobal("ResizeObserver", ResizeObserverStub);
+    const { unmount } = render(<App />);
+    const guide = await screen.findByTitle("报名操作详细流程");
+    const guideMain = { scrollHeight: 1280 };
+    Object.defineProperty(guide, "contentDocument", {
+      configurable: true,
+      value: { querySelector: vi.fn(() => guideMain) }
+    });
+
+    fireEvent.load(guide);
+    expect(guide.style.height).toBe("1280px");
+    expect(observe).toHaveBeenCalledWith(guideMain);
+
+    guideMain.scrollHeight = 720;
+    resizeCallback();
+    expect(guide.style.height).toBe("720px");
+
+    unmount();
+    expect(disconnect).toHaveBeenCalled();
+  });
+
   it("renders the approved introduction and organization as full-width cards", async () => {
     window.history.replaceState({}, "", "/about?event=wz-aerospace-2026");
     const selectedEvent = event({ id: "WZ-2026", slug: "wz-aerospace-2026" });

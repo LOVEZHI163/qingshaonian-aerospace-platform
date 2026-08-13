@@ -96,13 +96,18 @@ test("nginx protects HTML and public media while caching immutable assets", asyn
   assert.match(nginx, /location \/\s*\{[\s\S]*\/index\.html/);
 });
 
-test("registration guide serves the standalone illustrated HTML", async () => {
+test("registration guide keeps the event page and embeds the standalone illustrated HTML", async () => {
   const nginx = await read("deploy/nginx.conf");
   const guideDir = path.join(root, "apps/web/public/registration-flow");
   const guideHtml = await fs.readFile(path.join(guideDir, "index.html"), "utf8");
+  const embedScript = await fs.readFile(path.join(guideDir, "embed.js"), "utf8");
 
-  assert.match(nginx, /location = \/registration-guide\s*\{[\s\S]*return 302 \/registration-flow\//);
-  assert.match(nginx, /location = \/registration-guide\s*\{[\s\S]*absolute_redirect off;[\s\S]*return 302 \/registration-flow\//);
+  assert.doesNotMatch(nginx, /location = \/registration-guide\s*\{/);
+  assert.match(guideHtml, /<script src="embed\.js" defer><\/script>/);
+  assert.match(guideHtml, /body\.embedded > header,[\s\S]*body\.embedded \.overview-poster[\s\S]*display: none/);
+  assert.match(guideHtml, /body\.embedded main[\s\S]*width: 100%/);
+  assert.match(embedScript, /URLSearchParams\(window\.location\.search\)/);
+  assert.match(embedScript, /classList\.add\("embedded"\)/);
   assert.match(guideHtml, /青少年航空航天创新比赛报名流程/);
   assert.match(guideHtml, /第一块：注册登录流程/);
   assert.match(guideHtml, /第二块：正式报名流程/);

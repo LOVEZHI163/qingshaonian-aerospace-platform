@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { fetchJson } from "../api/client.js";
 import { EventPicture } from "../components/FeaturedEvent.jsx";
 import Seo from "../components/Seo.jsx";
@@ -38,6 +38,27 @@ export default function EventInformationPage({ section, homeData, homeStatus, lo
     [section, event, detail, homeData?.site]
   );
   const options = publicEventOptions(homeData);
+  const guideFrameRef = useRef(null);
+  const guideObserverRef = useRef(null);
+
+  const resizeGuideFrame = () => {
+    const frame = guideFrameRef.current;
+    const guideMain = frame?.contentDocument?.querySelector("main");
+    if (!frame || !guideMain) return;
+    const applyHeight = () => {
+      frame.style.height = `${guideMain.scrollHeight}px`;
+    };
+    applyHeight();
+    guideObserverRef.current?.disconnect();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(applyHeight);
+    observer.observe(guideMain);
+    guideObserverRef.current = observer;
+  };
+
+  useEffect(() => () => {
+    guideObserverRef.current?.disconnect();
+  }, []);
 
   return (
     <section className="event-information-page" aria-labelledby="event-information-title">
@@ -57,6 +78,15 @@ export default function EventInformationPage({ section, homeData, homeStatus, lo
           <p>{model.lead}</p>
         </div>
       </header>
+      {section === "registration" ? (
+        <iframe
+          ref={guideFrameRef}
+          className="event-information-registration-guide"
+          src="/registration-flow/?embed=1"
+          title="报名操作详细流程"
+          onLoad={resizeGuideFrame}
+        />
+      ) : null}
       {options.length > 1 ? (
         <nav className="event-information-switcher" aria-label="切换公开赛事">
           {options.map((row) => (
