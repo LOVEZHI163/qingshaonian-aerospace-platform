@@ -106,7 +106,13 @@ test("registration guide serves the standalone illustrated HTML", async () => {
   assert.match(guideHtml, /青少年航空航天创新比赛报名流程/);
   assert.match(guideHtml, /第一块：注册登录流程/);
   assert.match(guideHtml, /第二块：正式报名流程/);
+  assert.match(guideHtml, /<img src="00-registration-flow-overview\.png" alt="报名操作总览海报"/);
+  assert.ok(
+    guideHtml.indexOf("00-registration-flow-overview.png") < guideHtml.indexOf('id="account-flow"'),
+    "the overview poster must remain above the detailed registration steps"
+  );
   await Promise.all([
+    "00-registration-flow-overview.png",
     "01-entry.png",
     "02-register-account.png",
     "03-login.png",
