@@ -322,29 +322,6 @@ describe("public event information page", () => {
     expect(document.querySelector(".event-information-hero-media")).toBeNull();
   });
 
-  it("shows the complete numbered registration process for the current event", async () => {
-    window.history.replaceState({}, "", "/registration-guide?event=wz-aerospace-2026");
-    const selectedEvent = event({ id: "WZ-2026", slug: "wz-aerospace-2026" });
-    installApi({
-      "/api/public/events/wz-aerospace-2026": {
-        event: selectedEvent, projects: [], groups: [], resources: [], content: []
-      }
-    }, home({ featuredEvent: selectedEvent }));
-
-    render(<App />);
-
-    const process = await screen.findByRole("region", { name: "报名操作流程" });
-    const steps = within(process).getAllByRole("listitem");
-    expect(steps).toHaveLength(5);
-    expect(steps[0]).toHaveTextContent("注册并登录账号");
-    expect(steps[1]).toHaveTextContent("加入组织并完善领队资料");
-    expect(steps[2]).toHaveTextContent("选择赛事进入报名");
-    expect(steps[3]).toHaveTextContent("填写并核对参赛信息");
-    expect(steps[3]).toHaveTextContent("18位学生身份证号");
-    expect(steps[4]).toHaveTextContent("提交后查看报名记录");
-    expect(screen.getByRole("heading", { level: 2, name: "报名资格与方式" })).toBeInTheDocument();
-  });
-
   it("renders the complete current-event rules inline with only the original DOC download", async () => {
     window.history.replaceState({}, "", "/rules?event=wz-aerospace-2026");
     const selectedEvent = event({ id: "WZ-2026", slug: "wz-aerospace-2026" });

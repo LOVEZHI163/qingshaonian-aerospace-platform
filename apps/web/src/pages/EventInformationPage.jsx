@@ -118,28 +118,10 @@ export default function EventInformationPage({ section, homeData, homeStatus, lo
         {model.sections.map((item) => (
           <article
             key={item.heading}
-            className={[
-              item.wide ? "event-information-section-wide" : "",
-              item.steps?.length ? "event-information-process" : ""
-            ].filter(Boolean).join(" ") || undefined}
-            role={item.steps?.length ? "region" : undefined}
-            aria-label={item.steps?.length ? item.heading : undefined}
+            className={item.wide ? "event-information-section-wide" : undefined}
           >
             <h2>{item.heading}</h2>
             {(item.paragraphs || []).map((paragraph) => <p key={paragraph}>{paragraph}</p>)}
-            {item.steps?.length ? (
-              <ol className="event-information-process-list">
-                {item.steps.map((step, index) => (
-                  <li key={step.title}>
-                    <span aria-hidden="true">{index + 1}</span>
-                    <div>
-                      <h3>{step.title}</h3>
-                      <p>{step.description}</p>
-                    </div>
-                  </li>
-                ))}
-              </ol>
-            ) : null}
             {item.contact ? (
               <div className="event-information-contact">
                 {item.contact.name ? <p>联系人：{item.contact.name}</p> : null}

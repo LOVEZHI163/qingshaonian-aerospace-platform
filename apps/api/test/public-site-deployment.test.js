@@ -96,6 +96,24 @@ test("nginx protects HTML and public media while caching immutable assets", asyn
   assert.match(nginx, /location \/\s*\{[\s\S]*\/index\.html/);
 });
 
+test("registration guide serves the standalone illustrated HTML", async () => {
+  const nginx = await read("deploy/nginx.conf");
+  const guideDir = path.join(root, "apps/web/public/registration-flow");
+  const guideHtml = await fs.readFile(path.join(guideDir, "index.html"), "utf8");
+
+  assert.match(nginx, /location = \/registration-guide\s*\{[\s\S]*return 302 \/registration-flow\//);
+  assert.match(guideHtml, /青少年航空航天创新比赛报名流程/);
+  assert.match(guideHtml, /第一块：注册登录流程/);
+  assert.match(guideHtml, /第二块：正式报名流程/);
+  await Promise.all([
+    "01-entry.png",
+    "02-register-account.png",
+    "03-login.png",
+    "04-submit-registration.png",
+    "05-registration-records.png"
+  ].map((name) => fs.access(path.join(guideDir, name))));
+});
+
 test("public pages allow only the official Bilibili player as an external frame", async () => {
   const nginx = await read("deploy/nginx.conf");
   const serverPrelude = nginx.match(/server\s*\{([\s\S]*?)\n\s*location\b/)?.[1] || "";

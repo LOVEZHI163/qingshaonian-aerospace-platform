@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>报名流程 HTML</title>
+    <style>
+      body {
+        margin: 0;
+        color: #142033;
+        background: #f4f8fc;
+        font-family: "Microsoft YaHei", "PingFang SC", "Segoe UI", Arial, sans-serif;
+      }
+
+      header {
+        position: sticky;
+        top: 0;
+        z-index: 10;
+        padding: 22px clamp(18px, 5vw, 70px);
+        background: rgba(255, 255, 255, 0.94);
+        border-bottom: 1px solid #dbe4ef;
+        backdrop-filter: blur(12px);
+      }
+
+      h1 {
+        margin: 0;
+        font-size: clamp(26px, 4vw, 42px);
+        line-height: 1.2;
+      }
+
+      p {
+        margin: 8px 0 0;
+        color: #5d6b7e;
+        line-height: 1.7;
+      }
+
+      nav {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 18px;
+      }
+
+      nav a {
+        padding: 9px 13px;
+        color: #1768c9;
+        background: #eaf3ff;
+        border-radius: 8px;
+        text-decoration: none;
+        font-weight: 800;
+      }
+
+      main {
+        display: grid;
+        gap: 30px;
+        width: min(1440px, calc(100% - 36px));
+        margin: 28px auto 60px;
+      }
+
+      .block {
+        padding: 18px;
+        border: 1px solid #dbe4ef;
+        border-radius: 8px;
+        background: white;
+        box-shadow: 0 18px 40px rgba(20, 32, 51, 0.08);
+      }
+
+      h2 {
+        margin: 0 0 14px;
+        font-size: 24px;
+      }
+
+      .block-title {
+        display: flex;
+        align-items: end;
+        justify-content: space-between;
+        gap: 24px;
+        margin-bottom: 18px;
+      }
+
+      .block-title p {
+        max-width: 560px;
+        text-align: right;
+      }
+
+      .flow-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 18px;
+      }
+
+      .flow-grid.two {
+        grid-template-columns: repeat(2, 1fr);
+      }
+
+      .card {
+        padding: 14px;
+        border: 1px solid #dbe4ef;
+        border-radius: 8px;
+        background: #fbfdff;
+      }
+
+      .card h3 {
+        margin: 0 0 12px;
+        font-size: 20px;
+      }
+
+      img {
+        display: block;
+        width: 100%;
+        height: auto;
+        border: 1px solid #dbe4ef;
+        border-radius: 8px;
+      }
+
+      @media (max-width: 980px) {
+        .block-title {
+          display: block;
+        }
+
+        .block-title p {
+          text-align: left;
+        }
+
+        .flow-grid,
+        .flow-grid.two {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>青少年航空航天创新比赛报名流程</h1>
+      <p>注册账号不等于完成报名。必须进入“报名端”填写参赛信息并点击“提交报名”，看到“报名记录”后才算完成提交。</p>
+      <nav>
+        <a href="#account-flow">第一块：注册登录</a>
+        <a href="#registration-flow">第二块：正式报名</a>
+      </nav>
+    </header>
+    <main>
+      <section class="block" id="account-flow">
+        <div class="block-title">
+          <h2>第一块：注册登录流程</h2>
+          <p>先从官网进入报名入口，完成账号注册或登录。学生、家长、个人参赛者选择普通用户；学校、青少年宫、活动中心选择组织用户。</p>
+        </div>
+        <div class="flow-grid">
+          <article class="card">
+            <h3>1. 进入报名入口</h3>
+            <img src="01-entry.png" alt="进入报名入口" />
+          </article>
+          <article class="card">
+            <h3>2. 注册账号</h3>
+            <img src="02-register-account.png" alt="注册账号" />
+          </article>
+          <article class="card">
+            <h3>3. 登录系统</h3>
+            <img src="03-login.png" alt="登录系统" />
+          </article>
+        </div>
+      </section>
+
+      <section class="block" id="registration-flow">
+        <div class="block-title">
+          <h2>第二块：正式报名流程</h2>
+          <p>登录后还没有完成报名，必须进入“报名端”填写参赛信息并点击“提交报名”，最后到“报名记录”确认记录生成。</p>
+        </div>
+        <div class="flow-grid two">
+          <article class="card">
+            <h3>4. 填写并提交报名</h3>
+            <img src="04-submit-registration.png" alt="填写并提交报名" />
+          </article>
+          <article class="card">
+            <h3>5. 查看报名记录</h3>
+            <img src="05-registration-records.png" alt="查看报名记录" />
+          </article>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>
