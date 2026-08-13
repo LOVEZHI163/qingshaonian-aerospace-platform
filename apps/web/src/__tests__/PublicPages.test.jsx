@@ -325,6 +325,13 @@ describe("public event information page", () => {
       "href",
       "/documents/wz-aerospace-2026-rules.doc"
     );
+
+    const hero = document.querySelector(".event-information-hero");
+    const documentCard = document.querySelector(".event-information-document");
+    const facts = document.querySelector(".event-information-facts");
+
+    expect(hero.compareDocumentPosition(documentCard)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(documentCard.compareDocumentPosition(facts)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
   });
 
   it("does not reuse the Wenzhou rules document for another event", async () => {
