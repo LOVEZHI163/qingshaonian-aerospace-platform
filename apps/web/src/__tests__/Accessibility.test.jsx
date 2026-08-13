@@ -78,38 +78,34 @@ describe("public site keyboard and semantics", () => {
 
     expect(screen.getByRole("link", { name: "跳到主要内容" })).toHaveAttribute("href", "#main-content");
     const primaryNavigation = screen.getByRole("navigation", { name: "主导航" });
-    expect(within(primaryNavigation).getByRole("button", { name: "赛事资讯" })).toHaveAttribute("aria-current", "page");
+    expect(within(primaryNavigation).getByRole("link", { name: "赛事资讯" })).toHaveAttribute("aria-current", "page");
     expect(screen.getByRole("link", { name: "用户登录" })).toHaveAttribute("href", "/admin/");
     expect(screen.getByRole("link", { name: "用户登录" })).toHaveAttribute("data-router-ignore", "true");
     expect(within(primaryNavigation).getAllByRole("link").map((link) => link.textContent)).toEqual([
-      "获奖查询",
-      "联系我们"
+      "首页", "关于大赛", "赛事资讯", "获奖查询", "联系我们"
     ]);
-    expect(within(primaryNavigation).getByRole("button", { name: "首页" })).not.toHaveAttribute("aria-current");
+    expect(within(primaryNavigation).getByRole("link", { name: "首页" })).not.toHaveAttribute("aria-current");
     expect(within(primaryNavigation).getByRole("link", { name: "获奖查询" })).toHaveAttribute("data-router-ignore", "true");
     expect(within(document.querySelector(".header-actions")).getByRole("link", { name: "报名入口" })).toHaveAttribute("data-router-ignore", "true");
     expect(await screen.findByRole("heading", { name: "新闻动态" })).toBeInTheDocument();
   });
 
   it.each([
-    ["/", "首页", "button"],
-    ["/about", "关于大赛", "button"],
-    ["/rules", "关于大赛", "button"],
-    ["/registration-process", "首页", "button"],
-    ["/projects", "关于大赛", "button"],
+    ["/", "首页", "link"],
+    ["/about", "关于大赛", "link"],
+    ["/rules", "关于大赛", "link"],
+    ["/registration-process", "首页", "link"],
+    ["/projects", "关于大赛", "link"],
     ["/contact", "联系我们", "link"],
-    ["/announcements", "赛事资讯", "button"],
-    ["/news", "赛事资讯", "button"],
-    ["/history", "赛事资讯", "button"]
+    ["/announcements", "赛事资讯", "link"],
+    ["/news", "赛事资讯", "link"],
+    ["/history", "赛事资讯", "link"]
   ])("marks the route family for %s as %s", (path, label, role) => {
     render(<SiteHeader routeKey={path} homeData={{}} homeStatus="empty" />);
     const primaryNavigation = screen.getByRole("navigation", { name: "主导航" });
 
     expect(within(primaryNavigation).getByRole(role, { name: label })).toHaveAttribute("aria-current", "page");
-    const visiblePrimaryItems = [
-      ...within(primaryNavigation).getAllByRole("button"),
-      ...within(primaryNavigation).getAllByRole("link")
-    ];
+    const visiblePrimaryItems = within(primaryNavigation).getAllByRole("link");
     expect(visiblePrimaryItems.filter((item) => item.hasAttribute("aria-current"))).toHaveLength(1);
   });
 

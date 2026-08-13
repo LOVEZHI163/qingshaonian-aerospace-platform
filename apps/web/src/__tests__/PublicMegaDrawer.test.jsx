@@ -60,15 +60,29 @@ afterEach(() => {
 });
 
 describe("per-module public navigation", () => {
+  it("uses grouped desktop headings as destinations while hover still reveals their drawers", () => {
+    installMatchMedia({ hover: true });
+    render(<SiteHeader routeKey="/about?event=first" homeData={home} homeStatus="success" />);
+
+    const homeLink = screen.getByRole("link", { name: "首页" });
+    const aboutLink = screen.getByRole("link", { name: "关于大赛" });
+    expect(homeLink).toHaveAttribute("href", "/?event=first");
+    expect(aboutLink).toHaveAttribute("href", "/about?event=first");
+
+    fireEvent.mouseEnter(aboutLink);
+    expect(screen.getByRole("navigation", { name: "关于大赛子导航" })).toBeVisible();
+  });
+
   it("opens only the hovered group and switches to the clicked group", () => {
     installMatchMedia({ hover: true });
     render(<SiteHeader routeKey="/" homeData={home} homeStatus="success" />);
 
-    fireEvent.mouseEnter(screen.getByRole("button", { name: "首页" }));
+    const primary = screen.getByRole("navigation", { name: "主导航" });
+    fireEvent.mouseEnter(primary.querySelector('[aria-controls="public-drawer-home"]'));
     expect(screen.getByRole("navigation", { name: "首页子导航" })).toBeVisible();
     expect(screen.queryByRole("link", { name: "大赛章程" })).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "关于大赛" }));
+    fireEvent.mouseEnter(primary.querySelector('[aria-controls="public-drawer-about"]'));
     expect(screen.queryByRole("navigation", { name: "首页子导航" })).not.toBeInTheDocument();
     expect(screen.getByRole("navigation", { name: "关于大赛子导航" })).toBeVisible();
   });
@@ -77,7 +91,7 @@ describe("per-module public navigation", () => {
     vi.useFakeTimers();
     installMatchMedia({ hover: true });
     render(<SiteHeader routeKey="/" homeData={home} homeStatus="success" />);
-    const trigger = screen.getByRole("button", { name: "首页" });
+    const trigger = screen.getByRole("link", { name: "首页" });
 
     fireEvent.mouseEnter(trigger);
     const drawer = screen.getByRole("navigation", { name: "首页子导航" });
@@ -97,9 +111,9 @@ describe("per-module public navigation", () => {
     vi.useFakeTimers();
     installMatchMedia({ hover: true });
     render(<SiteHeader routeKey="/" homeData={home} homeStatus="success" />);
-    const trigger = screen.getByRole("button", { name: "关于大赛" });
+    const trigger = screen.getByRole("link", { name: "关于大赛" });
 
-    fireEvent.click(trigger);
+    fireEvent.keyDown(trigger, { key: " ", code: "Space" });
     fireEvent.mouseLeave(trigger);
     act(() => vi.advanceTimersByTime(300));
 
@@ -111,7 +125,7 @@ describe("per-module public navigation", () => {
     vi.useFakeTimers();
     installMatchMedia({ hover: true });
     render(<SiteHeader routeKey="/" homeData={home} homeStatus="success" />);
-    const trigger = screen.getByRole("button", { name: "赛事资讯" });
+    const trigger = screen.getByRole("link", { name: "赛事资讯" });
 
     fireEvent.mouseEnter(trigger);
     expect(screen.getByRole("navigation", { name: "赛事资讯子导航" })).toBeVisible();
@@ -131,21 +145,21 @@ describe("per-module public navigation", () => {
       </>
     );
     const sentinel = screen.getByRole("button", { name: "焦点哨兵" });
-    const hoverTrigger = screen.getByRole("button", { name: "首页" });
-    const clickTrigger = screen.getByRole("button", { name: "关于大赛" });
-    const keyboardTrigger = screen.getByRole("button", { name: "赛事资讯" });
+    const hoverTrigger = screen.getByRole("link", { name: "首页" });
+    const clickTrigger = screen.getByRole("link", { name: "关于大赛" });
+    const keyboardTrigger = screen.getByRole("link", { name: "赛事资讯" });
     sentinel.focus();
 
     fireEvent.mouseEnter(hoverTrigger);
     expect(sentinel).toHaveFocus();
     fireEvent.mouseLeave(hoverTrigger);
 
-    fireEvent.click(clickTrigger);
+    fireEvent.keyDown(clickTrigger, { key: " ", code: "Space" });
     expect(await screen.findByRole("link", { name: "大赛简介" })).toHaveFocus();
     fireEvent.keyDown(document, { key: "Escape" });
     expect(clickTrigger).toHaveFocus();
 
-    fireEvent.keyDown(keyboardTrigger, { key: "Enter", code: "Enter" });
+    fireEvent.keyDown(keyboardTrigger, { key: " ", code: "Space" });
     expect(await screen.findByRole("link", { name: "通知公告" })).toHaveFocus();
     fireEvent.keyDown(document, { key: "Escape" });
     expect(keyboardTrigger).toHaveFocus();
@@ -153,22 +167,20 @@ describe("per-module public navigation", () => {
 
   it("marks registration guide as home and contact as its direct primary entry", () => {
     const { rerender } = render(<SiteHeader routeKey="/registration-guide" homeData={home} homeStatus="success" />);
-    expect(screen.getByRole("button", { name: "首页" })).toHaveAttribute("aria-current", "page");
-    expect(screen.getByRole("button", { name: "关于大赛" })).not.toHaveAttribute("aria-current");
+    expect(screen.getByRole("link", { name: "首页" })).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("link", { name: "关于大赛" })).not.toHaveAttribute("aria-current");
 
     rerender(<SiteHeader routeKey="/contact" homeData={home} homeStatus="success" />);
     expect(screen.getByRole("link", { name: "联系我们" })).toHaveAttribute("aria-current", "page");
-    expect(screen.getByRole("button", { name: "关于大赛" })).not.toHaveAttribute("aria-current");
+    expect(screen.getByRole("link", { name: "关于大赛" })).not.toHaveAttribute("aria-current");
   });
 
-  it("renders grouped entries as buttons and direct entries as plain anchors", () => {
+  it("renders every desktop destination as an anchor", () => {
     render(<SiteHeader routeKey="/" homeData={home} homeStatus="success" />);
     const primary = screen.getByRole("navigation", { name: "主导航" });
 
-    expect(within(primary).getAllByRole("button").map((button) => button.textContent)).toEqual([
-      "首页",
-      "关于大赛",
-      "赛事资讯"
+    expect(within(primary).getAllByRole("link").map((link) => link.textContent)).toEqual([
+      "首页", "关于大赛", "赛事资讯", "获奖查询", "联系我们"
     ]);
     for (const label of ["获奖查询", "联系我们"]) {
       expect(within(primary).getByRole("link", { name: label })).not.toHaveAttribute("aria-expanded");
@@ -178,9 +190,9 @@ describe("per-module public navigation", () => {
 
   it("closes the active drawer on Escape and restores its own trigger focus", () => {
     render(<SiteHeader routeKey="/" homeData={home} homeStatus="success" />);
-    const trigger = screen.getByRole("button", { name: "赛事资讯" });
+    const trigger = screen.getByRole("link", { name: "赛事资讯" });
 
-    fireEvent.click(trigger);
+    fireEvent.keyDown(trigger, { key: " ", code: "Space" });
     expect(screen.getByRole("navigation", { name: "赛事资讯子导航" })).toBeVisible();
     fireEvent.keyDown(document, { key: "Escape" });
 
@@ -191,33 +203,33 @@ describe("per-module public navigation", () => {
 
   it("closes the active drawer after an outside pointer down", () => {
     render(<SiteHeader routeKey="/" homeData={home} homeStatus="success" />);
-    fireEvent.click(screen.getByRole("button", { name: "首页" }));
+    fireEvent.keyDown(screen.getByRole("link", { name: "首页" }), { key: " ", code: "Space" });
 
     fireEvent.pointerDown(document.body);
 
     expect(screen.queryByRole("navigation", { name: "首页子导航" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "首页" })).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByRole("link", { name: "首页" })).toHaveAttribute("aria-expanded", "false");
   });
 
   it("closes any drawer when the route changes", () => {
     const { rerender } = render(<SiteHeader routeKey="/" homeData={home} homeStatus="success" />);
-    fireEvent.click(screen.getByRole("button", { name: "关于大赛" }));
+    fireEvent.keyDown(screen.getByRole("link", { name: "关于大赛" }), { key: " ", code: "Space" });
 
     rerender(<SiteHeader routeKey="/news?event=first" homeData={home} homeStatus="success" />);
 
     expect(screen.queryByRole("navigation", { name: "关于大赛子导航" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "关于大赛" })).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByRole("link", { name: "关于大赛" })).toHaveAttribute("aria-expanded", "false");
   });
 
   it("keeps closing content inert until its transition finishes", () => {
     vi.useFakeTimers();
     installMatchMedia();
     render(<SiteHeader routeKey="/" homeData={home} homeStatus="success" />);
-    fireEvent.click(screen.getByRole("button", { name: "关于大赛" }));
+    fireEvent.keyDown(screen.getByRole("link", { name: "关于大赛" }), { key: " ", code: "Space" });
     act(() => vi.advanceTimersByTime(16));
     const drawer = document.querySelector('[data-group-id="about"]');
 
-    fireEvent.click(screen.getByRole("button", { name: "关于大赛" }));
+    fireEvent.keyDown(screen.getByRole("link", { name: "关于大赛" }), { key: " ", code: "Space" });
 
     expect(drawer).toHaveAttribute("aria-hidden", "true");
     expect(drawer).toHaveAttribute("inert");
@@ -229,11 +241,11 @@ describe("per-module public navigation", () => {
   it("hides a closed desktop drawer immediately when reduced motion is requested", () => {
     installMatchMedia({ reducedMotion: true });
     render(<SiteHeader routeKey="/" homeData={home} homeStatus="success" />);
-    const trigger = screen.getByRole("button", { name: "关于大赛" });
-    fireEvent.click(trigger);
+    const trigger = screen.getByRole("link", { name: "关于大赛" });
+    fireEvent.keyDown(trigger, { key: " ", code: "Space" });
     const drawer = document.querySelector('[data-group-id="about"]');
 
-    fireEvent.click(trigger);
+    fireEvent.keyDown(trigger, { key: " ", code: "Space" });
 
     expect(drawer).toHaveAttribute("aria-hidden", "true");
     expect(drawer).toHaveAttribute("inert");
@@ -242,7 +254,7 @@ describe("per-module public navigation", () => {
 
   it("scopes drawer links to the selected event and marks the normalized location", () => {
     render(<SiteHeader routeKey="/news?event=second&page=2" homeData={home} homeStatus="success" />);
-    fireEvent.click(screen.getByRole("button", { name: "赛事资讯" }));
+    fireEvent.keyDown(screen.getByRole("link", { name: "赛事资讯" }), { key: " ", code: "Space" });
     const drawer = screen.getByRole("navigation", { name: "赛事资讯子导航" });
 
     expect(within(drawer).getAllByRole("link").map((link) => link.textContent)).toEqual([

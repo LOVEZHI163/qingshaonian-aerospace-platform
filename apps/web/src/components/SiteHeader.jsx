@@ -71,7 +71,7 @@ export default function SiteHeader({ routeKey, homeData }) {
   };
 
   const handleDesktopTriggerKeyDown = (event, groupId) => {
-    if (event.repeat || (event.key !== "Enter" && event.key !== " ")) return;
+    if (event.repeat || event.key !== " ") return;
     event.preventDefault();
     toggleDesktopGroup(groupId);
   };
@@ -194,21 +194,21 @@ export default function SiteHeader({ routeKey, homeData }) {
                     data-navigation-hover-group={item.id}
                     key={item.id}
                   >
-                    <button
+                    <a
                       ref={(node) => {
                         if (node) triggerRefs.current.set(item.id, node);
                         else triggerRefs.current.delete(item.id);
                       }}
                       className="primary-navigation-trigger"
-                      type="button"
+                      href={navigationHref(item, activeEvent)}
                       aria-expanded={open}
                       aria-controls={`public-drawer-${item.id}`}
                       aria-current={current ? "page" : undefined}
-                      onClick={() => toggleDesktopGroup(item.id)}
+                      onClick={closeAllNavigation}
                       onKeyDown={(event) => handleDesktopTriggerKeyDown(event, item.id)}
                     >
                       {item.label}
-                    </button>
+                    </a>
                     <PublicMegaDrawer
                       item={item}
                       open={open}

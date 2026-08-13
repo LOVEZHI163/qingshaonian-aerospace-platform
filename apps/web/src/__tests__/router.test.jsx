@@ -114,8 +114,7 @@ describe("public site router", () => {
 
   it("uses History API navigation and responds to popstate", async () => {
     render(<App />);
-    fireEvent.click(within(screen.getByRole("navigation", { name: "主导航" })).getByRole("button", { name: "赛事资讯" }));
-    fireEvent.click(within(screen.getByRole("navigation", { name: "赛事资讯子导航" })).getByRole("link", { name: "新闻动态" }));
+    fireEvent.click(within(screen.getByRole("navigation", { name: "主导航" })).getByRole("link", { name: "赛事资讯" }));
     expect(window.location.pathname).toBe("/news");
     expect(screen.getByRole("heading", { name: "新闻动态" })).toBeInTheDocument();
 

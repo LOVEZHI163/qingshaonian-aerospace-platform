@@ -218,6 +218,7 @@ test("public content list and detail never allow admin-cookie or preview draft b
       ];
       db.contentPosts = [
         post("PUBLIC", { slug: "public-story", eventId: "E1", coverMediaId: "COVER" }),
+        post("PLATFORM", { slug: "platform-story", eventId: null }),
         post("DRAFT", { slug: "draft-story", eventId: "E1", status: "draft" }),
         post("SCHEDULED", { slug: "scheduled-story", eventId: "E1", status: "scheduled", publishAt: "2999-01-01T00:00:00.000Z" }),
         post("OFFLINE", { slug: "offline-story", eventId: "E1", status: "offline" })
@@ -232,8 +233,8 @@ test("public content list and detail never allow admin-cookie or preview draft b
     );
     assert.equal(listResponse.status, 200);
     const list = await payload(listResponse);
-    assert.deepEqual(list.rows.map((row) => row.slug), ["public-story"]);
-    assert.deepEqual(list.pagination, { page: 1, pageSize: 10, total: 1, totalPages: 1 });
+    assert.deepEqual(new Set(list.rows.map((row) => row.slug)), new Set(["platform-story", "public-story"]));
+    assert.deepEqual(list.pagination, { page: 1, pageSize: 10, total: 2, totalPages: 1 });
 
     for (const slug of ["draft-story", "scheduled-story", "offline-story", "missing-story"]) {
       const hidden = await fetch(`${baseUrl}/api/public/content/${slug}?preview=1`, withSession(admin.cookie));

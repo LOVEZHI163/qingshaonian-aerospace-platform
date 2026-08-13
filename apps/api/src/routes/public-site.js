@@ -129,7 +129,7 @@ export function createPublicSiteRouter({
     }
     const rows = visiblePosts(db, now).filter((row) =>
       (req.query.type === undefined || row.type === req.query.type)
-      && (!eventId || row.eventId === eventId)
+      && (!eventId || !row.eventId || row.eventId === eventId)
     );
     const total = rows.length;
     const offset = (page - 1) * pageSize;
