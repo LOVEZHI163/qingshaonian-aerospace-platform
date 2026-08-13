@@ -322,7 +322,7 @@ describe("public event information page", () => {
     expect(document.querySelector(".event-information-hero-media")).toBeNull();
   });
 
-  it("offers the current event rules as an online PDF and original DOC download", async () => {
+  it("renders the complete current-event rules inline with only the original DOC download", async () => {
     window.history.replaceState({}, "", "/rules?event=wz-aerospace-2026");
     const selectedEvent = event({ id: "WZ-2026", slug: "wz-aerospace-2026" });
     installApi({
@@ -333,12 +333,8 @@ describe("public event information page", () => {
 
     render(<App />);
 
-    expect(await screen.findByRole("heading", { level: 2, name: "章程文件" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "在线查看章程" })).toMatchObject({
-      pathname: "/documents/wz-aerospace-2026-rules.pdf",
-      target: "_blank",
-      rel: "noopener"
-    });
+    expect(await screen.findByRole("heading", { level: 2, name: "章程原文" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "在线查看章程" })).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: "下载章程原文件" })).toHaveAttribute(
       "download",
       "2026年温州市青少年航空航天创新比赛大赛章程.doc"
@@ -347,13 +343,36 @@ describe("public event information page", () => {
       "href",
       "/documents/wz-aerospace-2026-rules.doc"
     );
+    [
+      "第一章 总则",
+      "第二章 组织架构",
+      "第三章 参赛对象",
+      "第四章 报名条件",
+      "第五章 报名流程",
+      "第六章 赛事内容",
+      "第七章 赛制规则",
+      "第八章 申诉制度",
+      "第九章 附则"
+    ].forEach((heading) => {
+      expect(screen.getByRole("heading", { level: 3, name: heading })).toBeInTheDocument();
+    });
+    expect(screen.getByText(/为深入贯彻党的二十大关于加快建设航天强国的战略部署/)).toBeInTheDocument();
+    expect(screen.getByText(/主办单位：温州市关心下一代工作委员会/)).toBeInTheDocument();
+    expect(screen.getByText(/青少年航空航天创意创作比赛/)).toBeInTheDocument();
+    expect(screen.getByText("温州市青少年航空航天创新比赛组委会")).toBeInTheDocument();
+    const finalCompetitionItem = screen.getByText("（五）多轴无人机足球比赛");
+    const groupDescription = screen.getByText(/比赛设小学低年级组/);
+    expect(finalCompetitionItem.compareDocumentPosition(groupDescription)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(screen.queryByRole("heading", { level: 2, name: "竞赛组织" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { level: 2, name: "竞赛办法" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { level: 2, name: "奖项设置" })).not.toBeInTheDocument();
 
     const hero = document.querySelector(".event-information-hero");
-    const documentCard = document.querySelector(".event-information-document");
     const facts = document.querySelector(".event-information-facts");
+    const documentCard = document.querySelector(".event-information-document");
 
-    expect(hero.compareDocumentPosition(documentCard)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
-    expect(documentCard.compareDocumentPosition(facts)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(hero.compareDocumentPosition(facts)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(facts.compareDocumentPosition(documentCard)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
   });
 
   it("does not reuse the Wenzhou rules document for another event", async () => {

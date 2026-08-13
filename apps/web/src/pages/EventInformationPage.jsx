@@ -57,19 +57,6 @@ export default function EventInformationPage({ section, homeData, homeStatus, lo
           <p>{model.lead}</p>
         </div>
       </header>
-      {model.document ? (
-        <section className="event-information-document" aria-labelledby="event-information-document-title">
-          <div>
-            <p className="event-information-document-eyebrow">官方文件</p>
-            <h2 id="event-information-document-title">章程文件</h2>
-            <p>{model.document.title}</p>
-          </div>
-          <div className="event-information-document-actions">
-            <a href={model.document.previewUrl} target="_blank" rel="noopener">在线查看章程</a>
-            <a href={model.document.downloadUrl} download={model.document.downloadName}>下载章程原文件</a>
-          </div>
-        </section>
-      ) : null}
       {options.length > 1 ? (
         <nav className="event-information-switcher" aria-label="切换公开赛事">
           {options.map((row) => (
@@ -87,6 +74,36 @@ export default function EventInformationPage({ section, homeData, homeStatus, lo
         <dl className="event-information-facts">
           {model.facts.map(({ label, value }) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}
         </dl>
+      ) : null}
+      {model.document ? (
+        <section className="event-information-document" aria-labelledby="event-information-document-title">
+          <header className="event-information-document-header">
+            <div>
+              <p className="event-information-document-eyebrow">官方文件</p>
+              <h2 id="event-information-document-title">章程原文</h2>
+              <p>{model.document.title}</p>
+            </div>
+            <div className="event-information-document-actions">
+              <a href={model.document.downloadUrl} download={model.document.downloadName}>下载章程原文件</a>
+            </div>
+          </header>
+          <div className="event-information-document-body">
+            {(model.document.chapters || []).map((chapter) => (
+              <article className="event-information-document-chapter" key={chapter.heading}>
+                <h3>{chapter.heading}</h3>
+                {chapter.items?.length ? (
+                  <ul>{chapter.items.map((item) => <li key={item}>{item}</li>)}</ul>
+                ) : null}
+                {(chapter.paragraphs || []).map((paragraph) => <p key={paragraph}>{paragraph}</p>)}
+                {chapter.signature?.length ? (
+                  <div className="event-information-document-signature">
+                    {chapter.signature.map((line) => <p key={line}>{line}</p>)}
+                  </div>
+                ) : null}
+              </article>
+            ))}
+          </div>
+        </section>
       ) : null}
       {homeStatus === "loading" || (detailStatus === "loading" && section === "projects") ? (
         <p role="status">正在加载赛事信息…</p>

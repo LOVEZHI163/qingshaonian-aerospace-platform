@@ -13,7 +13,6 @@
 .event-information-switcher a[aria-current="page"] { border-color: var(--color-brand); color: var(--color-white); background: var(--color-brand); }
 
 .event-information-facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; margin: 1.25rem 0; }
-.event-information-document + .event-information-facts { margin-top: 0; }
 .event-information-facts div { min-width: 0; padding: 1.25rem; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-white); }
 .event-information-facts dt { color: var(--color-text-muted); font-size: 0.875rem; font-weight: 800; }
 .event-information-facts dd { min-width: 0; margin: 0.5rem 0 0; color: var(--color-brand-ink); font-weight: 800; line-height: 1.5; overflow-wrap: anywhere; }
@@ -28,14 +27,22 @@
 .event-information-contact a { min-width: 0; overflow-wrap: anywhere; }
 .event-information-sections article > :last-child { margin-bottom: 0; }
 
-.event-information-document { display: flex; gap: 1.5rem; margin: 1.25rem 0 2rem; padding: clamp(1.25rem, 3vw, 2rem); align-items: center; justify-content: space-between; border: 1px solid color-mix(in srgb, var(--color-brand) 34%, var(--color-border)); border-radius: var(--radius-md); background: linear-gradient(135deg, var(--color-white), color-mix(in srgb, var(--color-brand) 7%, var(--color-white))); box-shadow: var(--shadow-sm); }
-.event-information-document > div:first-child { min-width: 0; }
+.event-information-document { margin: 1.25rem 0 2rem; padding: clamp(1.25rem, 3vw, 2.5rem); border: 1px solid color-mix(in srgb, var(--color-brand) 34%, var(--color-border)); border-radius: var(--radius-md); background: var(--color-white); box-shadow: var(--shadow-sm); }
+.event-information-document-header { display: flex; gap: 1.5rem; padding-bottom: 1.5rem; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--color-border); }
+.event-information-document-header > div:first-child { min-width: 0; }
 .event-information-document h2 { margin: 0.25rem 0 0.5rem; color: var(--color-brand-ink); }
 .event-information-document p { margin: 0; line-height: 1.65; overflow-wrap: anywhere; }
 .event-information-document-eyebrow { color: var(--color-brand); font-size: 0.875rem; font-weight: 800; letter-spacing: 0.12em; }
 .event-information-document-actions { display: flex; flex: 0 0 auto; gap: 0.75rem; }
 .event-information-document-actions a { display: inline-flex; min-height: 2.75rem; align-items: center; justify-content: center; padding-inline: 1.15rem; border: 1px solid var(--color-brand); border-radius: var(--radius-sm); color: var(--color-brand); font-weight: 800; text-decoration: none; background: var(--color-white); }
-.event-information-document-actions a:first-child { color: var(--color-white); background: var(--color-brand); }
+.event-information-document-body { width: 100%; max-width: 58rem; margin: 0 auto; }
+.event-information-document-chapter { padding: clamp(1.5rem, 3vw, 2.25rem) 0; }
+.event-information-document-chapter + .event-information-document-chapter { border-top: 1px solid var(--color-border); }
+.event-information-document-chapter h3 { margin: 0 0 1rem; color: var(--color-brand-ink); font-size: clamp(1.2rem, 2.2vw, 1.55rem); }
+.event-information-document-chapter p + p { margin-top: 0.75rem; }
+.event-information-document-chapter ul { display: grid; gap: 0.75rem; margin: 0.9rem 0 1rem; padding: 0; list-style: none; }
+.event-information-document-chapter li { line-height: 1.75; overflow-wrap: anywhere; }
+.event-information-document-signature { margin-top: 1.5rem; text-align: right; }
 
 .event-information-error { margin: 0 0 1.25rem; padding: 1rem 1.25rem; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-white); }
 .event-information-error p { margin: 0; }
@@ -56,7 +63,7 @@
   .event-information-hero::after { background: linear-gradient(90deg, rgba(3, 24, 85, 0.96), rgba(7, 45, 137, 0.82) 70%, rgba(30, 49, 180, 0.42)); }
   .event-information-hero-copy { width: 100%; }
   .event-information-facts, .event-information-sections { grid-template-columns: 1fr; }
-  .event-information-document { align-items: stretch; flex-direction: column; }
+  .event-information-document-header { align-items: stretch; flex-direction: column; }
   .event-information-document-actions { flex-direction: column; }
   .event-information-document-actions a { width: 100%; }
 }

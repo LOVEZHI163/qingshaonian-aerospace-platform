@@ -28,9 +28,11 @@ describe("web build cleanup", () => {
     expect(eventInformationStyles).toMatch(/\.event-information-sections li\s*\{[^}]*min-width:\s*0[^}]*overflow-wrap:\s*anywhere/);
     expect(eventInformationStyles).toMatch(/\.event-information-sections\s*\{[^}]*grid-template-columns:\s*repeat\(3,\s*minmax\(0,\s*1fr\)\)/);
     expect(eventInformationStyles).toMatch(/\.event-information-facts\s*\{[^}]*margin:\s*1\.25rem\s+0/);
-    expect(eventInformationStyles).toMatch(/\.event-information-document\s*\+\s*\.event-information-facts\s*\{[^}]*margin-top:\s*0/);
     expect(eventInformationStyles).toMatch(/\.event-information-section-wide\s*\{[^}]*grid-column:\s*1\s*\/\s*-1/);
     expect(eventInformationStyles).toMatch(/\.event-information-document\s*\{[^}]*margin:\s*1\.25rem\s+0\s+2rem/);
+    expect(eventInformationStyles).toMatch(/\.event-information-document-header\s*\{[^}]*display:\s*flex/);
+    expect(eventInformationStyles).toMatch(/\.event-information-document-body\s*\{[^}]*max-width:\s*58rem/);
+    expect(eventInformationStyles).toMatch(/\.event-information-document-chapter\s*\+\s*\.event-information-document-chapter\s*\{[^}]*border-top/);
 
     const buildCommand = process.platform === "win32"
       ? { command: process.env.ComSpec || "cmd.exe", args: ["/d", "/s", "/c", "npm run build"] }
