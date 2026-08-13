@@ -300,6 +300,49 @@ describe("public event information page", () => {
     expect(document.querySelector(".event-information-hero-media")).toBeNull();
   });
 
+  it("offers the current event rules as an online PDF and original DOC download", async () => {
+    window.history.replaceState({}, "", "/rules?event=wz-aerospace-2026");
+    const selectedEvent = event({ id: "WZ-2026", slug: "wz-aerospace-2026" });
+    installApi({
+      "/api/public/events/wz-aerospace-2026": {
+        event: selectedEvent, projects: [], groups: [], resources: [], content: []
+      }
+    }, home({ featuredEvent: selectedEvent }));
+
+    render(<App />);
+
+    expect(await screen.findByRole("heading", { level: 2, name: "章程文件" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "在线查看章程" })).toMatchObject({
+      pathname: "/documents/wz-aerospace-2026-rules.pdf",
+      target: "_blank",
+      rel: "noopener"
+    });
+    expect(screen.getByRole("link", { name: "下载章程原文件" })).toHaveAttribute(
+      "download",
+      "2026年温州市青少年航空航天创新比赛大赛章程.doc"
+    );
+    expect(screen.getByRole("link", { name: "下载章程原文件" })).toHaveAttribute(
+      "href",
+      "/documents/wz-aerospace-2026-rules.doc"
+    );
+  });
+
+  it("does not reuse the Wenzhou rules document for another event", async () => {
+    window.history.replaceState({}, "", "/rules?event=summer-cup");
+    const selectedEvent = event({ id: "SUMMER", slug: "summer-cup", name: "暑期航空挑战赛" });
+    installApi({
+      "/api/public/events/summer-cup": {
+        event: selectedEvent, projects: [], groups: [], resources: [], content: []
+      }
+    }, home({ featuredEvent: selectedEvent }));
+
+    render(<App />);
+
+    expect(await screen.findByRole("heading", { level: 1, name: "大赛章程" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { level: 2, name: "章程文件" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "在线查看章程" })).not.toBeInTheDocument();
+  });
+
   it("renders only the projects returned for the featured public event", async () => {
     const summerCup = event({ id: "SUMMER", slug: "summer-cup", name: "暑期航空挑战赛" });
     const request = installApi({

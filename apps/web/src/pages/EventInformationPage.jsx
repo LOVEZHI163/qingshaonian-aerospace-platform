@@ -109,6 +109,19 @@ export default function EventInformationPage({ section, homeData, homeStatus, lo
           </article>
         ))}
       </div>
+      {model.document ? (
+        <section className="event-information-document" aria-labelledby="event-information-document-title">
+          <div>
+            <p className="event-information-document-eyebrow">官方文件</p>
+            <h2 id="event-information-document-title">章程文件</h2>
+            <p>{model.document.title}</p>
+          </div>
+          <div className="event-information-document-actions">
+            <a href={model.document.previewUrl} target="_blank" rel="noopener">在线查看章程</a>
+            <a href={model.document.downloadUrl} download={model.document.downloadName}>下载章程原文件</a>
+          </div>
+        </section>
+      ) : null}
       <div className="event-information-actions">
         {model.actions.map((action) => (
           <a

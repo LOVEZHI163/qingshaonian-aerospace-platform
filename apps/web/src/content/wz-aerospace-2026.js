@@ -1,4 +1,10 @@
 export const WZ_AEROSPACE_2026_COPY = {
+  rulesDocument: {
+    title: "2026年温州市青少年航空航天创新比赛大赛章程",
+    previewUrl: "/documents/wz-aerospace-2026-rules.pdf",
+    downloadUrl: "/documents/wz-aerospace-2026-rules.doc",
+    downloadName: "2026年温州市青少年航空航天创新比赛大赛章程.doc"
+  },
   about: [
     { heading: "赛事主题", paragraphs: ["科技强国，未来有我。"] },
     { heading: "举办宗旨", paragraphs: ["通过航空航天科技实践，培养青少年的科学兴趣、创新精神和实践能力，展示学习实践成果。"] },

@@ -11,3 +11,5 @@ dev-server*.log
 .worktrees/
 /auth/
 /backups/
+/tmp/
+/.codex-tmp/

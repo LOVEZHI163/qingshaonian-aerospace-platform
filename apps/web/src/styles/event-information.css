@@ -26,6 +26,15 @@
 .event-information-contact a { min-width: 0; overflow-wrap: anywhere; }
 .event-information-sections article > :last-child { margin-bottom: 0; }
 
+.event-information-document { display: flex; gap: 1.5rem; margin-top: 1.25rem; padding: clamp(1.25rem, 3vw, 2rem); align-items: center; justify-content: space-between; border: 1px solid color-mix(in srgb, var(--color-brand) 34%, var(--color-border)); border-radius: var(--radius-md); background: linear-gradient(135deg, var(--color-white), color-mix(in srgb, var(--color-brand) 7%, var(--color-white))); box-shadow: var(--shadow-sm); }
+.event-information-document > div:first-child { min-width: 0; }
+.event-information-document h2 { margin: 0.25rem 0 0.5rem; color: var(--color-brand-ink); }
+.event-information-document p { margin: 0; line-height: 1.65; overflow-wrap: anywhere; }
+.event-information-document-eyebrow { color: var(--color-brand); font-size: 0.875rem; font-weight: 800; letter-spacing: 0.12em; }
+.event-information-document-actions { display: flex; flex: 0 0 auto; gap: 0.75rem; }
+.event-information-document-actions a { display: inline-flex; min-height: 2.75rem; align-items: center; justify-content: center; padding-inline: 1.15rem; border: 1px solid var(--color-brand); border-radius: var(--radius-sm); color: var(--color-brand); font-weight: 800; text-decoration: none; background: var(--color-white); }
+.event-information-document-actions a:first-child { color: var(--color-white); background: var(--color-brand); }
+
 .event-information-error { margin: 0 0 1.25rem; padding: 1rem 1.25rem; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-white); }
 .event-information-error p { margin: 0; }
 .event-information-error button { min-height: 2.75rem; margin-top: 0.75rem; padding-inline: 1rem; border: 0; border-radius: var(--radius-sm); color: var(--color-white); font: inherit; font-weight: 800; background: var(--color-brand); cursor: pointer; }
@@ -35,6 +44,7 @@
 .event-information-page h1,
 .event-information-page h2 { scroll-margin-top: 6rem; }
 .event-information-switcher a:focus-visible,
+.event-information-document-actions a:focus-visible,
 .event-information-actions a:focus-visible,
 .event-information-error button:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 
@@ -44,4 +54,7 @@
   .event-information-hero::after { background: linear-gradient(90deg, rgba(3, 24, 85, 0.96), rgba(7, 45, 137, 0.82) 70%, rgba(30, 49, 180, 0.42)); }
   .event-information-hero-copy { width: 100%; }
   .event-information-facts, .event-information-sections { grid-template-columns: 1fr; }
+  .event-information-document { align-items: stretch; flex-direction: column; }
+  .event-information-document-actions { flex-direction: column; }
+  .event-information-document-actions a { width: 100%; }
 }

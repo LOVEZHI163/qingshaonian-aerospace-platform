@@ -128,6 +128,7 @@ export function buildPublicEventContent(section, { event, detail, site = {} }) {
     lead: event.summary || event.slogan || event.theme || `${event.name}公开信息`,
     facts: dynamicFacts(event),
     sections: visibleSections(sections),
+    document: section === "rules" ? eventCopy.rulesDocument || null : null,
     actions: [
       { label: "立即报名", href: accountEntry("eventCenter", event), externalRouter: true },
       { label: "返回首页", href: "/" },
