@@ -8,7 +8,7 @@ import sharp from "sharp";
 
 import { readSiteMedia } from "../src/files/storage.js";
 import { createSiteMediaRouter } from "../src/routes/site-media.js";
-import { assertMediaUnreferenced, mediaReference } from "../src/services/site-media.js";
+import { assertMediaUnreferenced, mediaReference, mediaReferences, replaceMediaReferences } from "../src/services/site-media.js";
 import { withTestServer } from "../test-support/server.js";
 import { loginAs, withSession } from "./helpers/api-client.js";
 
@@ -269,6 +269,165 @@ test("media listing requires a ready administrator and validates limit", async (
     assert.equal((await fetch(`${baseUrl}/api/admin/site-media`)).status, 401);
     assert.equal((await fetch(`${baseUrl}/api/admin/site-media?limit=101`, withSession(admin.cookie))).status, 422);
   }, { prefix: "site-media-list-auth-" });
+});
+
+test("mediaReferences returns every managed website reference with useful context", () => {
+  const db = {
+    siteSettings: { defaultHeroMediaId: "M1", shareMediaId: "M1" },
+    events: [{ id: "E1", name: "2026 航空赛" }],
+    eventPublicProfiles: [{ eventId: "E1", heroMediaId: "M1" }],
+    contentPosts: [
+      { id: "P1", eventId: "E1", title: "赛事通知", coverMediaId: "M1", bodyHtml: '<img src="/api/public/media/M1">' },
+      { id: "P2", eventId: null, title: "平台新闻", bodyHtml: '<img src="/api/public/media/M1">' }
+    ],
+    contentAttachments: [{ contentId: "P1", mediaId: "M1", label: "正文插图" }]
+  };
+
+  assert.deepEqual(mediaReferences(db, "M1").map((row) => row.kind), [
+    "default-hero", "share-image", "event-hero", "content-cover", "content-attachment", "content-body", "content-body"
+  ]);
+  assert.equal(mediaReferences(db, "M1")[2].eventName, "2026 航空赛");
+  assert.equal(mediaReferences(db, "M1")[3].title, "赛事通知");
+  assert.equal(mediaReference(db, "M1"), "首页主视觉");
+});
+
+test("managed media listing supports pagination filters references and summary", async () => {
+  await withTestServer(async ({ baseUrl, dbPath }) => {
+    const admin = await loginAs(baseUrl, "13900000000", "admin123");
+    await mutateDb(dbPath, (db) => {
+      db.mediaAssets = [
+        { id: "M1", eventId: "E1", purpose: "event-hero", visibility: "public", originalName: "hero.png", mimeType: "image/png", sizeBytes: 30, width: 1200, height: 400, createdAt: "2026-08-13T10:00:00.000Z", cleanedAt: null },
+        { id: "M2", eventId: "E1", purpose: "content-cover", visibility: "draft", originalName: "cover.png", mimeType: "image/png", sizeBytes: 20, width: 600, height: 400, createdAt: "2026-08-12T10:00:00.000Z", cleanedAt: null },
+        { id: "M3", eventId: null, purpose: "default-hero", visibility: "draft", originalName: "default.png", mimeType: "image/png", sizeBytes: 10, width: 900, height: 300, createdAt: "2026-08-11T10:00:00.000Z", cleanedAt: null }
+      ];
+      db.siteSettings.defaultHeroMediaId = "M3";
+      db.eventPublicProfiles = [{ eventId: "E1", slug: "event", heroMediaId: "M1" }];
+      db.contentPosts = [];
+      db.contentAttachments = [];
+    });
+
+    const response = await fetch(`${baseUrl}/api/admin/site-media?managed=1&page=1&limit=1&eventId=E1&referenceStatus=referenced`, withSession(admin.cookie));
+    assert.equal(response.status, 200);
+    const payload = await response.json();
+    assert.deepEqual(payload.rows.map((row) => row.id), ["M1"]);
+    assert.equal(payload.rows[0].referenceCount, 1);
+    assert.equal(payload.rows[0].canDelete, false);
+    assert.equal(payload.rows[0].references[0].kind, "event-hero");
+    assert.equal(payload.rows[0].downloadUrl, "/api/admin/site-media/M1/download");
+    assert.deepEqual(payload.pagination, { page: 1, limit: 1, total: 1, pages: 1 });
+    assert.deepEqual(payload.summary, { total: 3, sizeBytes: 60, referenced: 2, unreferenced: 1 });
+
+    const unreferenced = await fetch(`${baseUrl}/api/admin/site-media?managed=1&page=1&limit=20&purpose=content-cover&referenceStatus=unreferenced`, withSession(admin.cookie));
+    assert.deepEqual((await unreferenced.json()).rows.map((row) => row.id), ["M2"]);
+  }, { prefix: "site-media-managed-list-" });
+});
+
+test("administrator can download an original image with a safe filename", async () => {
+  await withTestServer(async ({ baseUrl }) => {
+    const admin = await loginAs(baseUrl, "13900000000", "admin123");
+    const upload = await fetch(`${baseUrl}/api/admin/site-media`, withSession(admin.cookie, {
+      method: "POST",
+      body: mediaForm(PNG, { name: "赛事 海报.png", purpose: "content-cover" })
+    }));
+    const media = (await upload.json()).row;
+
+    assert.equal((await fetch(`${baseUrl}/api/admin/site-media/${media.id}/download`)).status, 401);
+    const response = await fetch(`${baseUrl}/api/admin/site-media/${media.id}/download`, withSession(admin.cookie));
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get("content-disposition"), /^attachment; filename\*=UTF-8''/);
+    assert.equal(response.headers.get("cache-control"), "private, no-store");
+    const downloaded = Buffer.from(await response.arrayBuffer());
+    assert.deepEqual(downloaded.subarray(0, 8), PNG.subarray(0, 8));
+    assert.ok(downloaded.length > 8);
+  }, { prefix: "site-media-download-" });
+});
+
+test("bulk media deletion removes only unreferenced images and reports skipped rows", async () => {
+  await withTestServer(async ({ baseUrl, dbPath }) => {
+    const admin = await loginAs(baseUrl, "13900000000", "admin123");
+    const ids = [];
+    for (const name of ["keep.png", "remove-one.png", "remove-two.png"]) {
+      const response = await fetch(`${baseUrl}/api/admin/site-media`, withSession(admin.cookie, {
+        method: "POST", body: mediaForm(PNG, { name, purpose: "content-cover" })
+      }));
+      ids.push((await response.json()).row.id);
+    }
+    await mutateDb(dbPath, (db) => { db.siteSettings.defaultHeroMediaId = ids[0]; });
+
+    const response = await fetch(`${baseUrl}/api/admin/site-media/bulk-delete`, withSession(admin.cookie, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ids: [ids[0], ids[1], ids[1], ids[2], "MISSING"] })
+    }));
+    assert.equal(response.status, 200);
+    const payload = await response.json();
+    assert.deepEqual(payload.deleted.sort(), [ids[1], ids[2]].sort());
+    assert.deepEqual(payload.skipped.map((row) => row.id).sort(), [ids[0], "MISSING"].sort());
+    assert.equal(payload.skipped.find((row) => row.id === ids[0]).code, "MEDIA_IN_USE");
+
+    const persisted = JSON.parse(await fs.readFile(dbPath, "utf8"));
+    assert.deepEqual(persisted.mediaAssets.map((row) => row.id), [ids[0]]);
+
+    const tooMany = await fetch(`${baseUrl}/api/admin/site-media/bulk-delete`, withSession(admin.cookie, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ids: Array.from({ length: 101 }, (_, index) => `M${index}`) })
+    }));
+    assert.equal(tooMany.status, 422);
+  }, { prefix: "site-media-bulk-delete-" });
+});
+
+test("replaceMediaReferences migrates every website reference including article HTML", () => {
+  const db = {
+    siteSettings: { defaultHeroMediaId: "OLD", shareMediaId: "OLD" },
+    eventPublicProfiles: [{ eventId: "E1", heroMediaId: "OLD" }],
+    contentPosts: [{ id: "P1", coverMediaId: "OLD", bodyHtml: '<img src="/api/public/media/OLD"><img src="/api/public/media/OLD?variant=mobile">' }],
+    contentAttachments: [{ contentId: "P1", mediaId: "OLD", label: "插图" }]
+  };
+
+  assert.equal(replaceMediaReferences(db, "OLD", "NEW"), 6);
+  assert.equal(db.siteSettings.defaultHeroMediaId, "NEW");
+  assert.equal(db.siteSettings.shareMediaId, "NEW");
+  assert.equal(db.eventPublicProfiles[0].heroMediaId, "NEW");
+  assert.equal(db.contentPosts[0].coverMediaId, "NEW");
+  assert.equal(db.contentAttachments[0].mediaId, "NEW");
+  assert.equal(db.contentPosts[0].bodyHtml.includes("/api/public/media/OLD"), false);
+  assert.equal(db.contentPosts[0].bodyHtml.match(/\/api\/public\/media\/NEW/g).length, 2);
+});
+
+test("administrator replaces an image with a new media id and preserves all references", async () => {
+  await withTestServer(async ({ baseUrl, dbPath }) => {
+    const admin = await loginAs(baseUrl, "13900000000", "admin123");
+    const uploaded = await fetch(`${baseUrl}/api/admin/site-media`, withSession(admin.cookie, {
+      method: "POST", body: mediaForm(PNG, { name: "old.png", purpose: "event-hero" })
+    }));
+    const oldMedia = (await uploaded.json()).row;
+    await mutateDb(dbPath, (db) => {
+      db.siteSettings.defaultHeroMediaId = oldMedia.id;
+      db.eventPublicProfiles = [{ eventId: "wz-aerospace-2026", slug: "current", heroMediaId: oldMedia.id }];
+      db.contentPosts = [{ id: "P1", eventId: "wz-aerospace-2026", title: "通知", coverMediaId: oldMedia.id, bodyHtml: `<img src="/api/public/media/${oldMedia.id}">` }];
+      db.contentAttachments = [{ contentId: "P1", mediaId: oldMedia.id, label: "插图", displayOrder: 0 }];
+      db.mediaAssets.find((row) => row.id === oldMedia.id).visibility = "public";
+    });
+
+    const response = await fetch(`${baseUrl}/api/admin/site-media/${oldMedia.id}/replace`, withSession(admin.cookie, {
+      method: "POST", body: mediaForm(PNG, { name: "new.png", purpose: "content-cover" })
+    }));
+    assert.equal(response.status, 201);
+    const payload = await response.json();
+    assert.notEqual(payload.row.id, oldMedia.id);
+    assert.equal(payload.row.purpose, "event-hero");
+    assert.equal(payload.row.visibility, "public");
+    assert.equal(payload.migratedReferences, 5);
+
+    const persisted = JSON.parse(await fs.readFile(dbPath, "utf8"));
+    assert.equal(persisted.mediaAssets.some((row) => row.id === oldMedia.id), false);
+    assert.equal(persisted.siteSettings.defaultHeroMediaId, payload.row.id);
+    assert.equal(persisted.eventPublicProfiles[0].heroMediaId, payload.row.id);
+    assert.equal(persisted.contentPosts[0].coverMediaId, payload.row.id);
+    assert.match(persisted.contentPosts[0].bodyHtml, new RegExp(payload.row.id));
+    assert.equal(persisted.contentAttachments[0].mediaId, payload.row.id);
+  }, { prefix: "site-media-replace-" });
 });
 
 test("temporary-password administrators receive 428 from site media reads and uploads", async () => {

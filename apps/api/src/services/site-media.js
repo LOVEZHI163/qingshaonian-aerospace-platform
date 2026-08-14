@@ -8,19 +8,94 @@ export class SiteMediaError extends Error {
   }
 }
 
+export function mediaReferences(db, mediaId) {
+  const references = [];
+  const events = new Map((db.events || []).map((event) => [event.id, event]));
+  const posts = new Map((db.contentPosts || []).map((post) => [post.id, post]));
+  if (db.siteSettings?.defaultHeroMediaId === mediaId) {
+    references.push({ kind: "default-hero", label: "首页主视觉", entityId: "default", eventId: null });
+  }
+  if (db.siteSettings?.shareMediaId === mediaId) {
+    references.push({ kind: "share-image", label: "首页分享图", entityId: "default", eventId: null });
+  }
+  for (const profile of db.eventPublicProfiles || []) {
+    if (profile.heroMediaId !== mediaId) continue;
+    references.push({
+      kind: "event-hero",
+      label: "赛事封面",
+      entityId: profile.eventId,
+      eventId: profile.eventId,
+      eventName: events.get(profile.eventId)?.name || profile.eventId
+    });
+  }
+  for (const post of db.contentPosts || []) {
+    if (post.coverMediaId === mediaId) {
+      references.push({ kind: "content-cover", label: "文章封面", entityId: post.id, eventId: post.eventId || null, title: post.title || post.id });
+    }
+  }
+  for (const attachment of db.contentAttachments || []) {
+    if (attachment.mediaId !== mediaId) continue;
+    const post = posts.get(attachment.contentId);
+    references.push({
+      kind: "content-attachment",
+      label: attachment.label || "文章附件",
+      entityId: attachment.contentId,
+      eventId: post?.eventId || null,
+      title: post?.title || attachment.contentId
+    });
+  }
+  for (const post of db.contentPosts || []) {
+    if (!contentBodyMediaIds(post.bodyHtml).includes(mediaId)) continue;
+    references.push({ kind: "content-body", label: "文章正文", entityId: post.id, eventId: post.eventId || null, title: post.title || post.id });
+  }
+  return references;
+}
+
 export function mediaReference(db, mediaId) {
-  if (db.siteSettings?.defaultHeroMediaId === mediaId) return "首页主视觉";
-  if (db.siteSettings?.shareMediaId === mediaId) return "首页分享图";
-  if ((db.eventPublicProfiles || []).some((row) => row.heroMediaId === mediaId)) return "赛事公开资料";
-  if ((db.contentPosts || []).some((row) => row.coverMediaId === mediaId)) return "文章封面";
-  if ((db.contentAttachments || []).some((row) => row.mediaId === mediaId)) return "文章附件";
-  if ((db.contentPosts || []).some((post) => contentBodyMediaIds(post.bodyHtml).includes(mediaId))) return "文章正文";
-  return null;
+  return mediaReferences(db, mediaId)[0]?.label || null;
 }
 
 export function assertMediaUnreferenced(db, mediaId) {
   const reference = mediaReference(db, mediaId);
   if (reference) throw new SiteMediaError(409, `媒体仍被${reference}引用`, "MEDIA_IN_USE");
+}
+
+export function replaceMediaReferences(db, oldMediaId, newMediaId) {
+  let migrated = 0;
+  if (db.siteSettings?.defaultHeroMediaId === oldMediaId) {
+    db.siteSettings.defaultHeroMediaId = newMediaId;
+    migrated += 1;
+  }
+  if (db.siteSettings?.shareMediaId === oldMediaId) {
+    db.siteSettings.shareMediaId = newMediaId;
+    migrated += 1;
+  }
+  for (const profile of db.eventPublicProfiles || []) {
+    if (profile.heroMediaId !== oldMediaId) continue;
+    profile.heroMediaId = newMediaId;
+    migrated += 1;
+  }
+  for (const post of db.contentPosts || []) {
+    if (post.coverMediaId === oldMediaId) {
+      post.coverMediaId = newMediaId;
+      migrated += 1;
+    }
+  }
+  for (const attachment of db.contentAttachments || []) {
+    if (attachment.mediaId !== oldMediaId) continue;
+    attachment.mediaId = newMediaId;
+    migrated += 1;
+  }
+  const escaped = oldMediaId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const source = new RegExp(`(/api/public/media/)${escaped}(?=[?\\s\"'<>/#]|$)`, "g");
+  for (const post of db.contentPosts || []) {
+    const current = String(post.bodyHtml || "");
+    const next = current.replace(source, `$1${newMediaId}`);
+    if (next === current) continue;
+    post.bodyHtml = next;
+    migrated += 1;
+  }
+  return migrated;
 }
 
 export function promoteMedia(db, mediaIds) {

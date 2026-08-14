@@ -656,10 +656,12 @@ describe("SiteContentPage", () => {
     const homepage = wrapper.get('[data-site-tab="homepage"]');
     const eventsTab = wrapper.get('[data-site-tab="events"]');
     const content = wrapper.get('[data-site-tab="content"]');
+    const media = wrapper.get('[data-site-tab="media"]');
 
     expect(homepage.attributes("tabindex")).toBe("0");
     expect(eventsTab.attributes("tabindex")).toBe("-1");
     expect(content.attributes("tabindex")).toBe("-1");
+    expect(media.attributes("tabindex")).toBe("-1");
 
     await homepage.trigger("keydown", { key: "ArrowRight" });
     expect(eventsTab.attributes("aria-selected")).toBe("true");
@@ -672,8 +674,8 @@ describe("SiteContentPage", () => {
     expect(document.activeElement).toBe(homepage.element);
 
     await homepage.trigger("keydown", { key: "ArrowLeft" });
-    expect(content.attributes("aria-selected")).toBe("true");
-    expect(document.activeElement).toBe(content.element);
+    expect(media.attributes("aria-selected")).toBe("true");
+    expect(document.activeElement).toBe(media.element);
     wrapper.unmount();
   });
 
@@ -682,21 +684,33 @@ describe("SiteContentPage", () => {
     const homepage = wrapper.get('[data-site-tab="homepage"]');
     const eventsTab = wrapper.get('[data-site-tab="events"]');
     const content = wrapper.get('[data-site-tab="content"]');
+    const media = wrapper.get('[data-site-tab="media"]');
 
     await homepage.trigger("keydown", { key: "End" });
-    expect(content.attributes("aria-selected")).toBe("true");
-    expect(content.attributes("tabindex")).toBe("0");
-    expect(document.activeElement).toBe(content.element);
-    expect(wrapper.get('[data-site-panel="content"]').isVisible()).toBe(true);
+    expect(media.attributes("aria-selected")).toBe("true");
+    expect(media.attributes("tabindex")).toBe("0");
+    expect(document.activeElement).toBe(media.element);
+    expect(wrapper.get('[data-site-panel="media"]').isVisible()).toBe(true);
 
-    await content.trigger("keydown", { key: "Home" });
+    await media.trigger("keydown", { key: "Home" });
     expect(homepage.attributes("aria-selected")).toBe("true");
     expect(homepage.attributes("tabindex")).toBe("0");
     expect(eventsTab.attributes("tabindex")).toBe("-1");
     expect(content.attributes("tabindex")).toBe("-1");
+    expect(media.attributes("tabindex")).toBe("-1");
     expect(document.activeElement).toBe(homepage.element);
     expect(wrapper.get('[data-site-panel="homepage"]').isVisible()).toBe(true);
     wrapper.unmount();
+  });
+
+  it("shows media management as the fourth website-content tab", async () => {
+    const wrapper = await mountLoaded();
+    await activateTab(wrapper, "media");
+
+    expect(wrapper.get('[data-site-tab="media"]').text()).toBe("媒体管理");
+    expect(wrapper.get('[data-site-panel="media"]').isVisible()).toBe(true);
+    expect(wrapper.get('[data-testid="site-media-management"]').text()).toContain("图片媒体管理");
+    expect(wrapper.get('[data-action="preview-site-draft"]').attributes("disabled")).toBeDefined();
   });
 
   it("edits only public profile fields while showing event facts as read only", async () => {

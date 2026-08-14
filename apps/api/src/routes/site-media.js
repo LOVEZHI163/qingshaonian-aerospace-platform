@@ -4,7 +4,7 @@ import path from "node:path";
 
 import { SITE_ATTACHMENT_POLICY } from "../files/policy.js";
 import { deleteSiteMedia, readSiteMedia, saveSiteMedia, siteMediaPolicyForPurpose } from "../files/storage.js";
-import { assertMediaUnreferenced } from "../services/site-media.js";
+import { assertMediaUnreferenced, mediaReferences, replaceMediaReferences } from "../services/site-media.js";
 
 function routeError(status, message, code) {
   return Object.assign(new Error(message), { status, ...(code ? { code } : {}) });
@@ -55,6 +55,40 @@ export function createSiteMediaRouter({
     if (!error) return next();
     return res.status(error.code === "LIMIT_FILE_SIZE" ? 413 : 422).json({ error: "媒体文件上传无效" });
   });
+
+  async function removeMedia(db, media) {
+    assertMediaUnreferenced(db, media.id);
+    const timestamp = now();
+    const marker = {
+      id: makeId("CLN"),
+      filePath: path.dirname(media.filePath),
+      category: "site-media",
+      attempts: 0,
+      lastError: "pending cleanup",
+      createdAt: timestamp,
+      lastAttemptAt: timestamp
+    };
+    db.fileCleanupJournal ||= [];
+    media.cleanedAt = timestamp;
+    db.fileCleanupJournal.push(marker);
+    await store.writeDb(db);
+
+    try {
+      await storage.delete(media);
+    } catch (error) {
+      if (error?.code !== "ENOENT") {
+        marker.attempts += 1;
+        marker.lastError = String(error?.message || error).slice(0, 500);
+        marker.lastAttemptAt = now();
+        await store.writeDb(db);
+        throw error;
+      }
+    }
+
+    db.mediaAssets = db.mediaAssets.filter((row) => row.id !== media.id);
+    db.fileCleanupJournal = db.fileCleanupJournal.filter((row) => row.id !== marker.id);
+    await store.writeDb(db);
+  }
 
   router.post("/admin/site-media", ...admin, uploadOne, mutationAsyncRoute(async (req, res) => {
     if (!req.file) throw routeError(422, "媒体文件不能为空");
@@ -142,17 +176,37 @@ export function createSiteMediaRouter({
     const kind = String(req.query.kind || "").trim();
     if (kind && kind !== "image") throw routeError(422, "媒体类型筛选无效");
     const query = String(req.query.q || "").trim().toLowerCase();
+    const managed = String(req.query.managed || "") === "1";
+    const page = req.query.page === undefined ? 1 : Number(req.query.page);
+    if (!Number.isInteger(page) || page < 1) throw routeError(422, "媒体页码无效");
+    const purpose = String(req.query.purpose || "").trim();
+    const eventId = String(req.query.eventId || "").trim();
+    const referenceStatus = String(req.query.referenceStatus || "").trim();
+    if (referenceStatus && !["referenced", "unreferenced"].includes(referenceStatus)) throw routeError(422, "引用状态筛选无效");
     const db = await store.readDb();
-    const rows = (db.mediaAssets || [])
+    const allImages = (db.mediaAssets || [])
       .filter((row) => !row.cleanedAt)
       .filter((row) => ["image/png", "image/jpeg", "image/webp"].includes(row.mimeType))
+      .map((row) => ({ ...row, references: mediaReferences(db, row.id) }));
+    const summary = {
+      total: allImages.length,
+      sizeBytes: allImages.reduce((total, row) => total + Number(row.sizeBytes || 0), 0),
+      referenced: allImages.filter((row) => row.references.length > 0).length,
+      unreferenced: allImages.filter((row) => row.references.length === 0).length
+    };
+    const filtered = allImages
       .filter((row) => !query || [row.id, row.originalName].some((value) => String(value || "").toLowerCase().includes(query)))
-      .sort((left, right) => String(right.createdAt).localeCompare(String(left.createdAt)) || String(right.id).localeCompare(String(left.id)))
-      .slice(0, limit)
-      .map(({ id, eventId, purpose, visibility, originalName, mimeType, sizeBytes, width, height, createdAt }) => ({
+      .filter((row) => !purpose || row.purpose === purpose)
+      .filter((row) => !eventId || (eventId === "none" ? !row.eventId : row.eventId === eventId))
+      .filter((row) => !referenceStatus || (referenceStatus === "referenced" ? row.references.length > 0 : row.references.length === 0))
+      .sort((left, right) => String(right.createdAt).localeCompare(String(left.createdAt)) || String(right.id).localeCompare(String(left.id)));
+    const offset = managed ? (page - 1) * limit : 0;
+    const rows = filtered
+      .slice(offset, offset + limit)
+      .map(({ id, eventId: rowEventId, purpose: rowPurpose, visibility, originalName, mimeType, sizeBytes, width, height, createdAt, references }) => ({
         id,
-        eventId,
-        purpose,
+        eventId: rowEventId,
+        purpose: rowPurpose,
         visibility,
         originalName,
         mimeType,
@@ -160,9 +214,19 @@ export function createSiteMediaRouter({
         width,
         height,
         createdAt,
-        previewUrl: `/api/admin/site-media/${encodeURIComponent(id)}/preview`
+        previewUrl: `/api/admin/site-media/${encodeURIComponent(id)}/preview`,
+        ...(managed ? {
+          downloadUrl: `/api/admin/site-media/${encodeURIComponent(id)}/download`,
+          references,
+          referenceCount: references.length,
+          canDelete: references.length === 0
+        } : {})
       }));
-    res.json({ rows });
+    res.json(managed ? {
+      rows,
+      pagination: { page, limit, total: filtered.length, pages: Math.max(1, Math.ceil(filtered.length / limit)) },
+      summary
+    } : { rows });
   }));
 
   router.get("/admin/site-media/:id/preview", ...admin, asyncRoute(async (req, res) => {
@@ -187,41 +251,131 @@ export function createSiteMediaRouter({
       .send(file.buffer);
   }));
 
+  router.get("/admin/site-media/:id/download", ...admin, asyncRoute(async (req, res) => {
+    const db = await store.readDb();
+    const media = (db.mediaAssets || []).find((row) => row.id === req.params.id);
+    if (!media || media.cleanedAt) throw routeError(404, "媒体不存在");
+    let file;
+    try {
+      file = await storage.read(media, "original");
+    } catch (error) {
+      if (error?.code === "ENOENT" || /escapes upload root|escapes its media directory|symbolic link|changed during validation/i.test(String(error?.message || ""))) {
+        throw routeError(404, "媒体文件不存在");
+      }
+      throw error;
+    }
+    const fallback = `${media.id}.${media.mimeType?.split("/")[1] || "bin"}`;
+    const filename = String(media.originalName || fallback).replace(/[\r\n]/g, "");
+    res
+      .type(file.mimeType)
+      .set("X-Content-Type-Options", "nosniff")
+      .set("Cache-Control", "private, no-store")
+      .set("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`)
+      .send(file.buffer);
+  }));
+
+  router.post("/admin/site-media/:id/replace", ...admin, uploadOne, mutationAsyncRoute(async (req, res) => {
+    if (!req.file) throw routeError(422, "请选择替换图片");
+    const originalDb = await store.readDb();
+    const oldMedia = (originalDb.mediaAssets || []).find((row) => row.id === req.params.id && !row.cleanedAt);
+    if (!oldMedia) throw routeError(404, "媒体不存在");
+    if (!["image/png", "image/jpeg", "image/webp"].includes(oldMedia.mimeType)) throw routeError(422, "仅支持替换图片");
+    const mediaId = makeId("M");
+    let stored;
+    let committed = false;
+    try {
+      stored = await storage.save({ mediaId, file: req.file, purpose: oldMedia.purpose });
+      const db = structuredClone(originalDb);
+      const timestamp = now();
+      const newMedia = {
+        id: mediaId,
+        eventId: oldMedia.eventId || null,
+        purpose: oldMedia.purpose,
+        visibility: oldMedia.visibility,
+        ...stored,
+        createdBy: req.user.id,
+        createdAt: timestamp,
+        cleanedAt: null
+      };
+      const migratedReferences = replaceMediaReferences(db, oldMedia.id, newMedia.id);
+      db.mediaAssets ||= [];
+      db.mediaAssets.push(newMedia);
+      const oldRow = db.mediaAssets.find((row) => row.id === oldMedia.id);
+      oldRow.cleanedAt = timestamp;
+      const marker = {
+        id: makeId("CLN"),
+        filePath: path.dirname(oldRow.filePath),
+        category: "site-media-replaced",
+        attempts: 0,
+        lastError: "pending cleanup",
+        createdAt: timestamp,
+        lastAttemptAt: timestamp
+      };
+      db.fileCleanupJournal ||= [];
+      db.fileCleanupJournal.push(marker);
+      await store.writeDb(db);
+      committed = true;
+
+      let cleanupWarning = null;
+      try {
+        await storage.delete(oldRow);
+      } catch (error) {
+        if (error?.code !== "ENOENT") {
+          marker.attempts += 1;
+          marker.lastError = String(error?.message || error).slice(0, 500);
+          marker.lastAttemptAt = now();
+          cleanupWarning = "旧图片等待后台清理";
+          await store.writeDb(db);
+        }
+      }
+      if (!cleanupWarning) {
+        db.mediaAssets = db.mediaAssets.filter((row) => row.id !== oldRow.id);
+        db.fileCleanupJournal = db.fileCleanupJournal.filter((row) => row.id !== marker.id);
+        await store.writeDb(db);
+      }
+      res.status(201).json({ row: adminMediaDto(newMedia), migratedReferences, cleanupWarning });
+    } catch (error) {
+      if (!committed && stored?.filePath) {
+        try { await storage.delete({ id: mediaId, ...stored }); } catch { /* cleanup journal will catch future orphan scans */ }
+      }
+      throw uploadError(error);
+    }
+  }));
+
+  router.post("/admin/site-media/bulk-delete", ...admin, mutationAsyncRoute(async (req, res) => {
+    if (!Array.isArray(req.body?.ids) || req.body.ids.length < 1 || req.body.ids.length > 100) {
+      throw routeError(422, "请选择 1 至 100 张图片");
+    }
+    const ids = [...new Set(req.body.ids.map((id) => String(id || "").trim()).filter(Boolean))];
+    if (!ids.length) throw routeError(422, "请选择需要删除的图片");
+    const db = await store.readDb();
+    const deleted = [];
+    const skipped = [];
+    for (const id of ids) {
+      const media = (db.mediaAssets || []).find((row) => row.id === id && !row.cleanedAt);
+      if (!media) {
+        skipped.push({ id, code: "MEDIA_NOT_FOUND", reason: "媒体不存在" });
+        continue;
+      }
+      try {
+        await removeMedia(db, media);
+        deleted.push(id);
+      } catch (error) {
+        if (error?.code === "MEDIA_IN_USE") {
+          skipped.push({ id, code: error.code, reason: error.message, references: mediaReferences(db, id) });
+          continue;
+        }
+        throw error;
+      }
+    }
+    res.json({ deleted, skipped });
+  }));
+
   router.delete("/admin/site-media/:id", ...admin, mutationAsyncRoute(async (req, res) => {
     const db = await store.readDb();
     const media = (db.mediaAssets || []).find((row) => row.id === req.params.id);
     if (!media) throw routeError(404, "媒体不存在");
-    assertMediaUnreferenced(db, media.id);
-    const timestamp = now();
-    const marker = {
-      id: makeId("CLN"),
-      filePath: path.dirname(media.filePath),
-      category: "site-media",
-      attempts: 0,
-      lastError: "pending cleanup",
-      createdAt: timestamp,
-      lastAttemptAt: timestamp
-    };
-    db.fileCleanupJournal ||= [];
-    media.cleanedAt = timestamp;
-    db.fileCleanupJournal.push(marker);
-    await store.writeDb(db);
-
-    try {
-      await storage.delete(media);
-    } catch (error) {
-      if (error?.code !== "ENOENT") {
-        marker.attempts += 1;
-        marker.lastError = String(error?.message || error).slice(0, 500);
-        marker.lastAttemptAt = now();
-        await store.writeDb(db);
-        throw error;
-      }
-    }
-
-    db.mediaAssets = db.mediaAssets.filter((row) => row.id !== media.id);
-    db.fileCleanupJournal = db.fileCleanupJournal.filter((row) => row.id !== marker.id);
-    await store.writeDb(db);
+    await removeMedia(db, media);
     res.status(204).end();
   }));
 

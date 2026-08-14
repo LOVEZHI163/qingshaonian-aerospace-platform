@@ -5,6 +5,7 @@ import ContentEditorPanel from "../components/ContentEditorPanel.vue";
 import ContentImportPanel from "../components/ContentImportPanel.vue";
 import ContentListPanel from "../components/ContentListPanel.vue";
 import EventPublicProfilePanel from "../components/EventPublicProfilePanel.vue";
+import SiteMediaManagementPanel from "../components/SiteMediaManagementPanel.vue";
 import SiteSettingsPanel from "../components/SiteSettingsPanel.vue";
 import { api } from "../lib/api.js";
 import { createPreviewSnapshot } from "../lib/site-preview.js";
@@ -14,7 +15,7 @@ const props = defineProps({
 });
 const emit = defineEmits(["navigate", "content-id"]);
 
-const tabs = [["homepage", "首页设置"], ["events", "赛事视觉"], ["content", "内容发布"]];
+const tabs = [["homepage", "首页设置"], ["events", "赛事视觉"], ["content", "内容发布"], ["media", "媒体管理"]];
 const activeTab = ref(props.initialContentId ? "content" : "homepage");
 const tabButtons = ref([]);
 const loading = ref(true);
@@ -29,6 +30,7 @@ const contentContext = ref(props.initialContentId ? "existing" : "none");
 const contentEditor = ref(null);
 const contentList = ref(null);
 const contentImport = ref(null);
+const mediaManagementPanel = ref(null);
 const previewError = ref("");
 const blockedPreviewUrl = ref("");
 
@@ -36,7 +38,9 @@ const activePreviewPanel = computed(() => activeTab.value === "homepage"
   ? siteSettingsPanel.value
   : activeTab.value === "events"
     ? eventPublicProfilePanel.value
-    : contentEditor.value);
+    : activeTab.value === "content"
+      ? contentEditor.value
+      : null);
 
 const activePreviewDraft = computed(() => {
   if (activeTab.value === "content" && ["none", "import"].includes(contentContext.value)) return null;
@@ -223,6 +227,7 @@ function refreshSiteContent() {
   requestLeave(async () => {
     await load();
     if (activeTab.value === "content" && contentEditor.value) await contentEditor.value.load();
+    if (activeTab.value === "media" && mediaManagementPanel.value) await mediaManagementPanel.value.load();
   });
 }
 
@@ -312,6 +317,7 @@ defineExpose({ requestLeave });
       <section id="site-panel-homepage" v-show="activeTab === 'homepage'" role="tabpanel" aria-labelledby="site-tab-homepage" data-site-panel="homepage"><SiteSettingsPanel v-if="settings" ref="siteSettingsPanel" :settings="settings" :events="events" :profiles="profiles" @saved="updateSettings" /></section>
       <section id="site-panel-events" v-show="activeTab === 'events'" role="tabpanel" aria-labelledby="site-tab-events" data-site-panel="events"><EventPublicProfilePanel ref="eventPublicProfilePanel" :events="events" :profiles="profiles" @saved="updateProfile" @navigate="emit('navigate', $event)" /></section>
       <section id="site-panel-content" v-show="activeTab === 'content'" role="tabpanel" aria-labelledby="site-tab-content" data-site-panel="content" :data-content-context="contentContext"><div class="content-management-layout"><ContentListPanel v-if="contentContext === 'none'" ref="contentList" :events="events" :selected-id="selectedContentId" @select="chooseContent" @new="newContent" @import="importContent" /><ContentImportPanel v-else-if="contentContext === 'import'" ref="contentImport" :events="events" @cancel="importCancelled" @committed="contentImported" /><div v-else class="content-editor-workflow"><button type="button" data-action="back-to-content-list" @click="backToContentList">返回内容列表</button><ContentEditorPanel ref="contentEditor" :content-id="selectedContentId" :events="events" :profiles="profiles" @saved="contentSaved" @deleted="contentDeleted" @missing="contentMissing" @navigate="emit('navigate', $event)" /></div></div></section>
+      <section id="site-panel-media" v-show="activeTab === 'media'" role="tabpanel" aria-labelledby="site-tab-media" data-site-panel="media"><SiteMediaManagementPanel ref="mediaManagementPanel" :events="events" /></section>
     </template>
   </section>
 </template>
