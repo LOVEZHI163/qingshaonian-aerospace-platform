@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onMounted, reactive, ref } from "vue";
 
-import { api } from "../lib/api.js";
+import { api, apiBlob } from "../lib/api.js";
 
 const props = defineProps({ events: { type: Array, default: () => [] } });
 
@@ -14,6 +14,7 @@ const loading = ref(false);
 const busy = ref(false);
 const error = ref("");
 const feedback = ref("");
+const skippedDetails = ref([]);
 
 const purposeOptions = [
   ["default-hero", "默认宣传图"],
@@ -26,6 +27,7 @@ const purposeOptions = [
 const purposeLabels = new Map(purposeOptions);
 const eventNames = computed(() => new Map(props.events.map((event) => [event.id, event.name])));
 const selectedCount = computed(() => selected.value.length);
+const allRowsSelected = computed(() => rows.value.length > 0 && rows.value.every((row) => selected.value.includes(row.id)));
 
 function formatBytes(value) {
   const bytes = Number(value || 0);
@@ -46,7 +48,8 @@ function referenceTitle(reference) {
 function queryPath() {
   const query = new URLSearchParams({ managed: "1", page: String(pagination.value.page), limit: String(pagination.value.limit) });
   for (const [key, value] of Object.entries(filters)) {
-    if (String(value || "").trim()) query.set(key, String(value).trim());
+    if (!String(value || "").trim()) continue;
+    query.set(key === "referenceStatus" ? "reference" : key, String(value).trim());
   }
   return `/api/admin/site-media?${query.toString()}`;
 }
@@ -55,6 +58,7 @@ async function load({ preserveFeedback = false } = {}) {
   loading.value = true;
   error.value = "";
   if (!preserveFeedback) feedback.value = "";
+  if (!preserveFeedback) skippedDetails.value = [];
   try {
     const payload = await api(queryPath());
     rows.value = payload.rows || [];
@@ -84,6 +88,13 @@ function toggleSelected(id, checked) {
     : selected.value.filter((value) => value !== id);
 }
 
+function toggleSelectAll() {
+  const pageIds = rows.value.map((row) => row.id);
+  selected.value = allRowsSelected.value
+    ? selected.value.filter((id) => !pageIds.includes(id))
+    : [...new Set([...selected.value, ...pageIds])];
+}
+
 async function deleteMedia(row) {
   if (!row.canDelete || !window.confirm(`确定删除“${row.originalName || row.id}”吗？删除后无法恢复。`)) return;
   busy.value = true;
@@ -94,13 +105,17 @@ async function deleteMedia(row) {
     await load({ preserveFeedback: true });
   } catch (failure) {
     error.value = failure?.message || "图片删除失败";
+    await load({ preserveFeedback: true });
   } finally {
     busy.value = false;
   }
 }
 
 async function bulkDelete() {
-  if (!selected.value.length || !window.confirm(`确定处理选中的 ${selected.value.length} 张图片吗？被引用图片会自动跳过。`)) return;
+  const selectedRows = rows.value.filter((row) => selected.value.includes(row.id));
+  const referencedCount = selectedRows.filter((row) => row.referenceCount > 0).length;
+  const deletableCount = selectedRows.length - referencedCount;
+  if (!selected.value.length || !window.confirm(`选中 ${selected.value.length} 张，预计删除 ${deletableCount} 张，跳过 ${referencedCount} 张正在使用图片。确定继续吗？`)) return;
   busy.value = true;
   error.value = "";
   try {
@@ -109,6 +124,7 @@ async function bulkDelete() {
       body: JSON.stringify({ ids: selected.value })
     });
     feedback.value = `删除 ${payload.deleted?.length || 0} 张，跳过 ${payload.skipped?.length || 0} 张`;
+    skippedDetails.value = payload.skipped || [];
     selected.value = [];
     await load({ preserveFeedback: true });
   } catch (failure) {
@@ -118,24 +134,64 @@ async function bulkDelete() {
   }
 }
 
-function downloadSelected() {
-  for (const id of selected.value) {
-    const row = rows.value.find((item) => item.id === id);
-    if (!row?.downloadUrl) continue;
+async function downloadMedia(row) {
+  const blob = await apiBlob(row.downloadUrl);
+  const objectUrl = URL.createObjectURL(blob);
+  try {
     const anchor = document.createElement("a");
-    anchor.href = row.downloadUrl;
-    anchor.download = row.originalName || row.id;
+    anchor.href = objectUrl;
+    anchor.download = blob.fileName || row.originalName || row.id;
     anchor.rel = "noopener";
     document.body.append(anchor);
     anchor.click();
     anchor.remove();
+  } finally {
+    URL.revokeObjectURL(objectUrl);
   }
+}
+
+async function downloadOne(row) {
+  busy.value = true;
+  error.value = "";
+  try {
+    await downloadMedia(row);
+    feedback.value = "图片已下载";
+  } catch (failure) {
+    error.value = failure?.message || "图片下载失败";
+  } finally {
+    busy.value = false;
+  }
+}
+
+async function downloadSelected() {
+  if (!selected.value.length) return;
+  busy.value = true;
+  error.value = "";
+  let downloaded = 0;
+  const failures = [];
+  for (const id of selected.value) {
+    const row = rows.value.find((item) => item.id === id);
+    if (!row?.downloadUrl) continue;
+    try {
+      await downloadMedia(row);
+      downloaded += 1;
+    } catch (failure) {
+      failures.push(`${row.originalName || row.id}：${failure?.message || "下载失败"}`);
+    }
+  }
+  feedback.value = downloaded ? `已下载 ${downloaded} 张图片` : "";
+  error.value = failures.join("；");
+  busy.value = false;
 }
 
 async function replaceMedia(row, event) {
   const file = event.target.files?.[0];
   event.target.value = "";
-  if (!file || !window.confirm(`确定用“${file.name}”替换“${row.originalName || row.id}”吗？系统会迁移全部引用。`)) return;
+  const locations = (row.references || []).slice(0, 3).map((reference) => `${reference.label}：${referenceTitle(reference)}`).join("；");
+  const referenceNotice = row.referenceCount
+    ? `系统将迁移 ${row.referenceCount} 处引用${locations ? `（${locations}${row.referenceCount > 3 ? "等" : ""}）` : ""}。`
+    : "当前图片未被引用。";
+  if (!file || !window.confirm(`确定用“${file.name}”替换“${row.originalName || row.id}”吗？${referenceNotice}`)) return;
   busy.value = true;
   error.value = "";
   const body = new FormData();
@@ -185,10 +241,11 @@ defineExpose({ load });
     </section>
 
     <div class="media-bulk-bar">
-      <span>已选 {{ selectedCount }} 张</span>
+      <div class="form-actions"><button type="button" data-action="select-page-media" :disabled="!rows.length" @click="toggleSelectAll">{{ allRowsSelected ? "清除本页选择" : "选择本页全部" }}</button><span>已选 {{ selectedCount }} 张</span></div>
       <div class="form-actions"><button type="button" :disabled="!selectedCount || busy" @click="downloadSelected">下载所选</button><button type="button" class="danger" data-action="bulk-delete-media" :disabled="!selectedCount || busy" @click="bulkDelete">批量删除</button></div>
     </div>
-    <p v-if="feedback" class="message success" data-media-feedback>{{ feedback }}</p>
+    <p v-if="feedback" class="message success" role="status" aria-live="polite" data-media-feedback>{{ feedback }}</p>
+    <ul v-if="skippedDetails.length" class="message media-skipped-list" data-media-skipped><li v-for="item in skippedDetails" :key="item.id"><strong>{{ item.id }}</strong>：{{ item.reason }}</li></ul>
     <p v-if="error" class="message" role="alert">{{ error }}</p>
     <p v-if="loading" role="status">正在加载图片媒体…</p>
 
@@ -206,7 +263,7 @@ defineExpose({ load });
           <details class="media-reference-details"><summary>{{ row.referenceCount ? `正在使用（${row.referenceCount} 处）` : "未被引用" }}</summary><ul v-if="row.references?.length"><li v-for="(reference, index) in row.references" :key="`${reference.kind}-${reference.entityId}-${index}`"><strong>{{ reference.label }}</strong><span>{{ referenceTitle(reference) }}</span></li></ul><p v-else>可安全删除。</p></details>
           <div class="site-media-card-actions">
             <a :href="row.previewUrl" target="_blank" rel="noopener">预览</a>
-            <a :href="row.downloadUrl" :download="row.originalName" :data-download-media="row.id">下载</a>
+            <button type="button" :data-download-media="row.id" :disabled="busy" @click="downloadOne(row)">下载</button>
             <label class="file-action">替换<input type="file" accept="image/png,image/jpeg,image/webp" :data-replace-media="row.id" :disabled="busy" @change="replaceMedia(row, $event)"></label>
             <button type="button" class="danger" :data-delete-media="row.id" :disabled="busy || !row.canDelete" :title="row.canDelete ? '删除图片' : '图片仍被引用，请先替换或解除引用'" @click="deleteMedia(row)">删除</button>
           </div>

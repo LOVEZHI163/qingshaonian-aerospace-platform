@@ -2865,6 +2865,13 @@ em.invited {
   gap: 12px;
 }
 
+.media-skipped-list {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+  padding-left: 34px;
+}
+
 .site-media-card-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));

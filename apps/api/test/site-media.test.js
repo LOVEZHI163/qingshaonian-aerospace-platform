@@ -87,6 +87,7 @@ async function mutateDb(dbPath, mutate) {
 
 async function withRouter(router, fn) {
   const app = express();
+  app.use(express.json());
   app.use("/api", router);
   app.use((error, _req, res, _next) => res.status(error.status || 500).json({ error: error.message, code: error.code }));
   const server = await new Promise((resolve) => {
@@ -311,6 +312,7 @@ test("managed media listing supports pagination filters references and summary",
     const payload = await response.json();
     assert.deepEqual(payload.rows.map((row) => row.id), ["M1"]);
     assert.equal(payload.rows[0].referenceCount, 1);
+    assert.equal(payload.rows[0].referenced, true);
     assert.equal(payload.rows[0].canDelete, false);
     assert.equal(payload.rows[0].references[0].kind, "event-hero");
     assert.equal(payload.rows[0].downloadUrl, "/api/admin/site-media/M1/download");
@@ -319,6 +321,12 @@ test("managed media listing supports pagination filters references and summary",
 
     const unreferenced = await fetch(`${baseUrl}/api/admin/site-media?managed=1&page=1&limit=20&purpose=content-cover&referenceStatus=unreferenced`, withSession(admin.cookie));
     assert.deepEqual((await unreferenced.json()).rows.map((row) => row.id), ["M2"]);
+
+    const formalContract = await fetch(`${baseUrl}/api/admin/site-media?page=1&reference=unreferenced`, withSession(admin.cookie));
+    const formalPayload = await formalContract.json();
+    assert.equal(formalPayload.pagination.limit, 24);
+    assert.deepEqual(formalPayload.rows.map((row) => row.id), ["M2"]);
+    assert.equal(formalPayload.rows[0].referenced, false);
   }, { prefix: "site-media-managed-list-" });
 });
 
@@ -428,6 +436,125 @@ test("administrator replaces an image with a new media id and preserves all refe
     assert.match(persisted.contentPosts[0].bodyHtml, new RegExp(payload.row.id));
     assert.equal(persisted.contentAttachments[0].mediaId, payload.row.id);
   }, { prefix: "site-media-replace-" });
+});
+
+test("image replacement rejects a PDF even when the original purpose accepts attachments", async () => {
+  await withTestServer(async ({ baseUrl, dbPath }) => {
+    const admin = await loginAs(baseUrl, "13900000000", "admin123");
+    const uploaded = await fetch(`${baseUrl}/api/admin/site-media`, withSession(admin.cookie, {
+      method: "POST", body: mediaForm(PNG, { name: "attachment-image.png", purpose: "content-attachment" })
+    }));
+    const oldMedia = (await uploaded.json()).row;
+
+    const response = await fetch(`${baseUrl}/api/admin/site-media/${oldMedia.id}/replace`, withSession(admin.cookie, {
+      method: "POST", body: mediaForm(PDF, { name: "not-an-image.pdf", type: "application/pdf", purpose: "content-attachment" })
+    }));
+    assert.equal(response.status, 422);
+    assert.match((await response.json()).error, /PNG、JPEG 或 WebP/);
+    const persisted = JSON.parse(await fs.readFile(dbPath, "utf8"));
+    assert.equal(persisted.mediaAssets.filter((row) => !row.cleanedAt).length, 1);
+    assert.equal(persisted.mediaAssets[0].id, oldMedia.id);
+  }, { prefix: "site-media-replace-pdf-" });
+});
+
+test("image replacement re-reads persisted state before cleanup writes", async () => {
+  const oldMedia = {
+    id: "M-OLD", eventId: "E1", purpose: "event-hero", visibility: "public", originalName: "old.png",
+    storedName: "original.png", filePath: "C:\\uploads\\site-media\\M-OLD\\original.png",
+    mimeType: "image/png", sizeBytes: PNG.length, width: 1, height: 1, variants: {}, createdAt: "2026-08-14T00:00:00.000Z", cleanedAt: null
+  };
+  let persisted = {
+    revision: 1,
+    mediaAssets: [oldMedia],
+    fileCleanupJournal: [],
+    siteSettings: { defaultHeroMediaId: oldMedia.id, shareMediaId: null },
+    eventPublicProfiles: [], contentPosts: [], contentAttachments: [], events: []
+  };
+  const store = {
+    readDb: async () => structuredClone(persisted),
+    writeDb: async (db) => {
+      if (db.revision !== persisted.revision) throw new Error("version conflict");
+      persisted = structuredClone(db);
+      persisted.revision += 1;
+    }
+  };
+  const pass = (req, _res, next) => { req.user = { id: "ADMIN", type: "admin" }; next(); };
+  const wrap = (handler) => (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
+  let sequence = 0;
+  const router = createSiteMediaRouter({
+    store, requireAdmin: pass, requirePasswordReady: pass, asyncRoute: wrap, mutationAsyncRoute: wrap,
+    makeId: (prefix) => `${prefix}-${++sequence}`, now: () => "2026-08-14T01:00:00.000Z",
+    storage: {
+      save: async () => ({ originalName: "new.png", storedName: "original.png", filePath: "C:\\uploads\\site-media\\M-1\\original.png", mimeType: "image/png", sizeBytes: PNG.length, width: 1, height: 1, variants: {} }),
+      read: async () => { throw new Error("not used"); }, delete: async () => {}
+    }
+  });
+
+  await withRouter(router, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/admin/site-media/${oldMedia.id}/replace`, { method: "POST", body: mediaForm(PNG) });
+    assert.equal(response.status, 201, await response.text());
+  });
+  assert.equal(persisted.mediaAssets.some((row) => row.id === oldMedia.id), false);
+  assert.equal(persisted.mediaAssets.length, 1);
+  assert.equal(persisted.siteSettings.defaultHeroMediaId, persisted.mediaAssets[0].id);
+  assert.deepEqual(persisted.fileCleanupJournal, []);
+});
+
+test("failed replacement persistence journals an orphan when rollback deletion fails", async () => {
+  const oldMedia = {
+    id: "M-OLD", purpose: "content-cover", visibility: "draft", originalName: "old.png",
+    filePath: "C:\\uploads\\site-media\\M-OLD\\original.png", mimeType: "image/png", sizeBytes: 1, variants: {}, cleanedAt: null
+  };
+  let persisted = { mediaAssets: [oldMedia], fileCleanupJournal: [], siteSettings: {}, eventPublicProfiles: [], contentPosts: [], contentAttachments: [], events: [] };
+  let writes = 0;
+  const store = {
+    readDb: async () => structuredClone(persisted),
+    writeDb: async (db) => {
+      writes += 1;
+      if (writes === 1) throw new Error("database unavailable");
+      persisted = structuredClone(db);
+    }
+  };
+  const pass = (req, _res, next) => { req.user = { id: "ADMIN", type: "admin" }; next(); };
+  const wrap = (handler) => (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
+  const router = createSiteMediaRouter({
+    store, requireAdmin: pass, requirePasswordReady: pass, asyncRoute: wrap, mutationAsyncRoute: wrap,
+    makeId: (prefix) => `${prefix}-REPLACE`, now: () => "2026-08-14T02:00:00.000Z",
+    storage: {
+      save: async () => ({ originalName: "new.png", storedName: "original.png", filePath: "C:\\uploads\\site-media\\M-REPLACE\\original.png", mimeType: "image/png", sizeBytes: 1, variants: {} }),
+      read: async () => { throw new Error("not used"); }, delete: async () => { throw new Error("rollback denied"); }
+    }
+  });
+  await withRouter(router, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/admin/site-media/${oldMedia.id}/replace`, { method: "POST", body: mediaForm(PNG) });
+    assert.equal(response.status, 500);
+  });
+  assert.equal(persisted.mediaAssets.length, 1);
+  assert.equal(persisted.fileCleanupJournal.length, 1);
+  assert.equal(persisted.fileCleanupJournal[0].category, "site-media-replace-new");
+  assert.equal(persisted.fileCleanupJournal[0].lastError, "rollback denied");
+});
+
+test("bulk deletion reports a later physical failure without losing earlier results", async () => {
+  const media = ["M1", "M2"].map((id) => ({ id, purpose: "content-cover", visibility: "draft", originalName: `${id}.png`, filePath: `C:\\uploads\\site-media\\${id}\\original.png`, mimeType: "image/png", sizeBytes: 1, variants: {}, cleanedAt: null }));
+  let persisted = { mediaAssets: media, fileCleanupJournal: [], siteSettings: {}, eventPublicProfiles: [], contentPosts: [], contentAttachments: [], events: [] };
+  const store = { readDb: async () => structuredClone(persisted), writeDb: async (db) => { persisted = structuredClone(db); } };
+  const pass = (req, _res, next) => { req.user = { id: "ADMIN", type: "admin" }; next(); };
+  const wrap = (handler) => (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
+  const router = createSiteMediaRouter({
+    store, requireAdmin: pass, requirePasswordReady: pass, asyncRoute: wrap, mutationAsyncRoute: wrap,
+    makeId: (() => { let value = 0; return (prefix) => `${prefix}-${++value}`; })(), now: () => "2026-08-14T03:00:00.000Z",
+    storage: { save: async () => { throw new Error("not used"); }, read: async () => { throw new Error("not used"); }, delete: async (row) => { if (row.id === "M2") throw new Error("disk denied"); } }
+  });
+  await withRouter(router, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/admin/site-media/bulk-delete`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ids: ["M1", "M2"] }) });
+    assert.equal(response.status, 200);
+    const payload = await response.json();
+    assert.deepEqual(payload.deleted, ["M1"]);
+    assert.equal(payload.skipped[0].id, "M2");
+    assert.equal(payload.skipped[0].code, "DELETE_FAILED");
+    assert.equal(payload.skipped[0].reason, "disk denied");
+  });
 });
 
 test("temporary-password administrators receive 428 from site media reads and uploads", async () => {

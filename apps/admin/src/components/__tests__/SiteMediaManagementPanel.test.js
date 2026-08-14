@@ -1,8 +1,8 @@
 import { flushPromises, mount } from "@vue/test-utils";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { apiMock } = vi.hoisted(() => ({ apiMock: vi.fn() }));
-vi.mock("../../lib/api.js", () => ({ api: apiMock }));
+const { apiMock, apiBlobMock } = vi.hoisted(() => ({ apiMock: vi.fn(), apiBlobMock: vi.fn() }));
+vi.mock("../../lib/api.js", () => ({ api: apiMock, apiBlob: apiBlobMock }));
 
 import SiteMediaManagementPanel from "../SiteMediaManagementPanel.vue";
 
@@ -39,7 +39,10 @@ async function mountLoaded() {
 describe("SiteMediaManagementPanel", () => {
   beforeEach(() => {
     apiMock.mockReset();
+    apiBlobMock.mockReset();
     apiMock.mockResolvedValue(listPayload());
+    apiBlobMock.mockResolvedValue(new Blob(["image"], { type: "image/png" }));
+    vi.stubGlobal("URL", { ...URL, createObjectURL: vi.fn(() => "blob:test"), revokeObjectURL: vi.fn() });
     vi.spyOn(window, "confirm").mockReturnValue(true);
   });
 
@@ -51,7 +54,7 @@ describe("SiteMediaManagementPanel", () => {
     expect(wrapper.get('[data-media-card="M1"]').text()).toContain("赛事封面");
     expect(wrapper.get('[data-media-card="M1"]').text()).toContain("2026 赛事");
     expect(wrapper.get('[data-delete-media="M1"]').attributes("disabled")).toBeDefined();
-    expect(wrapper.get('[data-download-media="M2"]').attributes("href")).toBe("/api/admin/site-media/M2/download");
+    expect(wrapper.get('[data-download-media="M2"]').element.tagName).toBe("BUTTON");
   });
 
   it("applies filters through the management API and resets to page one", async () => {
@@ -86,6 +89,30 @@ describe("SiteMediaManagementPanel", () => {
     expect(JSON.parse(bulk[1].body).ids.sort()).toEqual(["M1", "M2"]);
     expect(wrapper.get('[data-media-feedback]').text()).toContain("删除 1 张");
     expect(wrapper.get('[data-media-feedback]').text()).toContain("跳过 1 张");
+    expect(wrapper.get('[data-media-skipped]').text()).toContain("仍被赛事封面引用");
+    expect(window.confirm).toHaveBeenLastCalledWith(expect.stringContaining("预计删除 1 张，跳过 1 张正在使用图片"));
+  });
+
+  it("selects the current page and downloads through the authenticated blob API", async () => {
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    const wrapper = await mountLoaded();
+    await wrapper.get('[data-action="select-page-media"]').trigger("click");
+    expect(wrapper.text()).toContain("已选 2 张");
+    await wrapper.get('[data-download-media="M2"]').trigger("click");
+    await flushPromises();
+    expect(apiBlobMock).toHaveBeenCalledWith("/api/admin/site-media/M2/download");
+    expect(click).toHaveBeenCalled();
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:test");
+    await wrapper.get('[data-action="select-page-media"]').trigger("click");
+    expect(wrapper.text()).toContain("已选 0 张");
+  });
+
+  it("shows authenticated download failures instead of downloading an error payload", async () => {
+    apiBlobMock.mockRejectedValueOnce(new Error("会话已失效"));
+    const wrapper = await mountLoaded();
+    await wrapper.get('[data-download-media="M2"]').trigger("click");
+    await flushPromises();
+    expect(wrapper.get('[role="alert"]').text()).toContain("会话已失效");
   });
 
   it("replaces a referenced image after confirmation", async () => {
@@ -104,5 +131,6 @@ describe("SiteMediaManagementPanel", () => {
     expect(replace[1].method).toBe("POST");
     expect(replace[1].body).toBeInstanceOf(FormData);
     expect(wrapper.get('[data-media-feedback]').text()).toContain("迁移 1 处引用");
+    expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining("赛事封面：2026 赛事"));
   });
 });
