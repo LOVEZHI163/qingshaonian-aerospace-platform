@@ -5,7 +5,12 @@ import path from "node:path";
 import test from "node:test";
 
 import { createDataStore } from "../src/data/index.js";
-import { ensureDbShape, seedDb } from "../src/data/seed.js";
+import { ensureDbShape, EVENT, seedDb } from "../src/data/seed.js";
+
+test("seed keeps the approved Wenzhou event contact label", () => {
+  assert.equal(EVENT.contact, "吴老师 88968723 / 15858799111");
+  assert.equal(seedDb.events.find((event) => event.id === EVENT.id)?.contact, EVENT.contact);
+});
 
 test("website data shape fills missing public site collections and default settings", () => {
   const db = ensureDbShape({});

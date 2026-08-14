@@ -8,7 +8,6 @@ import {
 } from "../lib/public-navigation.js";
 
 const BRAND_NAME = "温州市青少年航空航天创新比赛";
-const MOBILE_BRAND_NAME = "温州少航";
 const MOBILE_NAVIGATION_QUERY = "(max-width: 1280px)";
 const HOVER_NAVIGATION_QUERY = "(hover: hover) and (pointer: fine)";
 const HOVER_CLOSE_DELAY_MS = 300;
@@ -164,7 +163,6 @@ export default function SiteHeader({ routeKey, homeData }) {
           <img className="brand-mark" src="/brand/mark.svg" alt="" />
           <img className="brand-wordmark" src="/brand/wordmark.svg" alt={BRAND_NAME} />
         </a>
-        <p className="mobile-brand-name">{MOBILE_BRAND_NAME}</p>
 
         <button
           ref={menuButtonRef}

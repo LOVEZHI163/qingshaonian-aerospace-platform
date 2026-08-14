@@ -73,7 +73,7 @@ describe("public event content", () => {
     });
 
     expect(approved.sections[0].contact).toEqual({
-      name: "吴琛琛",
+      name: "吴老师",
       phones: [
         { label: "88968723", href: "tel:88968723" },
         { label: "15858799111", href: "tel:15858799111" }

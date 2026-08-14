@@ -113,6 +113,7 @@ describe("adaptive public home", () => {
     }]} />);
 
     expect(document.querySelector("section#services")).toHaveAccessibleName("赛事服务");
+    expect(screen.queryByText("报名、参赛、成绩与证书服务集中办理")).not.toBeInTheDocument();
   });
   beforeEach(() => window.history.replaceState({}, "", "/"));
 

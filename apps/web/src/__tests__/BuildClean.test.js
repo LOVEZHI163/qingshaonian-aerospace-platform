@@ -12,11 +12,12 @@ describe("web build cleanup", () => {
 
     expect(styles).toContain('@import "./styles/navigation.css"');
     expect(styles).toContain('@import "./styles/event-information.css"');
-    expect(navigationStyles).not.toMatch(/\.mobile-brand-name\s*,\s*\.menu-trigger\s*\{[^}]*display:\s*none/);
+    expect(navigationStyles).not.toContain(".mobile-brand-name");
     expect(navigationStyles).toMatch(/\.menu-trigger\s*\{[^}]*display:\s*none/);
     expect(navigationStyles).toMatch(/\.site-header-inner\s*\{[^}]*grid-template-columns:\s*minmax\(14rem,\s*auto\)\s+minmax\(0,\s*1fr\)\s+auto/);
     expect(navigationStyles).toMatch(/\.brand-wordmark\s*\{[^}]*width:\s*min\(20rem,\s*22vw\)/);
     expect(navigationStyles).toMatch(/@media\s*\(max-width:\s*1280px\)[\s\S]*\.menu-trigger\s*\{[^}]*display:\s*grid/);
+    expect(navigationStyles).toMatch(/@media\s*\(max-width:\s*1280px\)[\s\S]*\.brand-wordmark\s*\{[^}]*display:\s*block/);
     expect(navigationStyles).toMatch(/@media\s*\(max-width:\s*1280px\)[\s\S]*\.public-mobile-navigation:not\(\[hidden\]\)\s*\{[^}]*display:\s*block/);
     expect(navigationStyles).not.toContain(".public-mega-drawer-featured");
     expect(navigationStyles).not.toContain(".public-mega-drawer-mobile-navigation");

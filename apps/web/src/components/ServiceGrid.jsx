@@ -53,7 +53,6 @@ export default function ServiceGrid({ services = [] }) {
           <p className="section-kicker">一站式服务</p>
           <h2 id="service-title">赛事服务</h2>
         </div>
-        <p>报名、参赛、成绩与证书服务集中办理</p>
       </div>
       <div className="service-grid">
         {services.map((service) => {

@@ -162,7 +162,6 @@ describe("public site keyboard and semantics", () => {
     const brand = navigationStyleAt(".brand", { width: 1440 });
     const navigation = navigationStyleAt(".primary-navigation-links", { width: 1440 });
     const actions = navigationStyleAt(".header-actions", { width: 1440 });
-    const mobileBrand = navigationStyleAt(".mobile-brand-name", { width: 1440 });
     const menuTrigger = navigationStyleAt(".menu-trigger", { width: 1440 });
     const primaryLink = navigationStyleAt(".primary-navigation-links > a", { width: 1440 });
     const primaryTrigger = navigationStyleAt(".primary-navigation-trigger", { width: 1440 });
@@ -178,7 +177,7 @@ describe("public site keyboard and semantics", () => {
     expect(navigation.display).toBe("flex");
     expect(navigation.gap).toBe("2rem");
     expect(actions.display).toBe("flex");
-    expect(mobileBrand.display).toBe("none");
+    expect(document.querySelector(".mobile-brand-name")).toBeNull();
     expect(menuTrigger.display).toBe("none");
     expect(primaryLink["font-size"]).toBe("1rem");
     expect(primaryLink["font-weight"]).toBe("700");
@@ -207,13 +206,16 @@ describe("public site keyboard and semantics", () => {
     render(<SiteHeader routeKey="/" homeData={{}} homeStatus="empty" />);
 
     const desktopNavigation = navigationStyleAt(".site-navigation", { width: 390 });
-    const mobileBrand = navigationStyleAt(".mobile-brand-name", { width: 390 });
+    const brand = navigationStyleAt(".brand", { width: 390 });
+    const brandWordmark = navigationStyleAt(".brand-wordmark", { width: 390 });
     const menuTrigger = navigationStyleAt(".menu-trigger", { width: 390 });
     const mobilePanel = navigationStyleAt(".public-mobile-navigation", { width: 390 });
     const visibleMobilePanel = navigationStyleAt(".public-mobile-navigation:not([hidden])", { width: 390 });
 
     expect(desktopNavigation.display).toBe("none");
-    expect(mobileBrand.display).toBe("block");
+    expect(document.querySelector(".mobile-brand-name")).toBeNull();
+    expect(brand.flex).toBe("1 1 auto");
+    expect(brandWordmark.display).toBe("block");
     expect(menuTrigger.display).toBe("grid");
     expect(visibleMobilePanel.display).toBe("block");
     expect(mobilePanel["max-inline-size"]).toBe("100vw");

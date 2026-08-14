@@ -7,7 +7,7 @@ export const EVENT = {
   date: "2026年11月21-22日",
   venue: "温州市文成县东方职业技术学院",
   registrationDeadline: "2026-11-01",
-  contact: "吴琛琛 88968723 / 15858799111"
+  contact: "吴老师 88968723 / 15858799111"
 };
 
 export const PROJECTS = [
