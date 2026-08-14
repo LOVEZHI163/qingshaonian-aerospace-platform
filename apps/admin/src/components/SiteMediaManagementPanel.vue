@@ -100,12 +100,13 @@ async function deleteMedia(row) {
   busy.value = true;
   error.value = "";
   try {
-    await api(`/api/admin/site-media/${encodeURIComponent(row.id)}`, { method: "DELETE" });
-    feedback.value = "图片已删除";
+    const payload = await api(`/api/admin/site-media/${encodeURIComponent(row.id)}`, { method: "DELETE" });
+    feedback.value = payload?.cleanupPending ? payload.message : "图片已删除";
     await load({ preserveFeedback: true });
   } catch (failure) {
-    error.value = failure?.message || "图片删除失败";
+    const message = failure?.message || "图片删除失败";
     await load({ preserveFeedback: true });
+    error.value = message;
   } finally {
     busy.value = false;
   }
@@ -123,8 +124,10 @@ async function bulkDelete() {
       method: "POST",
       body: JSON.stringify({ ids: selected.value })
     });
-    feedback.value = `删除 ${payload.deleted?.length || 0} 张，跳过 ${payload.skipped?.length || 0} 张`;
-    skippedDetails.value = payload.skipped || [];
+    const cleanupPending = payload.cleanupPending || [];
+    const skipped = payload.skipped || [];
+    feedback.value = `删除 ${payload.deleted?.length || 0} 张，等待清理 ${cleanupPending.length} 张，跳过 ${skipped.length} 张`;
+    skippedDetails.value = [...cleanupPending, ...skipped];
     selected.value = [];
     await load({ preserveFeedback: true });
   } catch (failure) {

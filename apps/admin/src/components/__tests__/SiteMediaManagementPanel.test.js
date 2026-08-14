@@ -73,7 +73,11 @@ describe("SiteMediaManagementPanel", () => {
   it("deletes an unreferenced image and reports partial bulk deletion", async () => {
     apiMock.mockImplementation(async (path, options = {}) => {
       if (path === "/api/admin/site-media/M2" && options.method === "DELETE") return null;
-      if (path === "/api/admin/site-media/bulk-delete") return { deleted: ["M2"], skipped: [{ id: "M1", code: "MEDIA_IN_USE", reason: "仍被赛事封面引用" }] };
+      if (path === "/api/admin/site-media/bulk-delete") return {
+        deleted: ["M2"],
+        cleanupPending: [{ id: "M3", code: "CLEANUP_PENDING", reason: "已从媒体库移除，物理文件等待后台清理" }],
+        skipped: [{ id: "M1", code: "MEDIA_IN_USE", reason: "仍被赛事封面引用" }]
+      };
       return listPayload();
     });
     const wrapper = await mountLoaded();
@@ -88,7 +92,9 @@ describe("SiteMediaManagementPanel", () => {
     const bulk = apiMock.mock.calls.find(([path]) => path === "/api/admin/site-media/bulk-delete");
     expect(JSON.parse(bulk[1].body).ids.sort()).toEqual(["M1", "M2"]);
     expect(wrapper.get('[data-media-feedback]').text()).toContain("删除 1 张");
+    expect(wrapper.get('[data-media-feedback]').text()).toContain("等待清理 1 张");
     expect(wrapper.get('[data-media-feedback]').text()).toContain("跳过 1 张");
+    expect(wrapper.get('[data-media-skipped]').text()).toContain("物理文件等待后台清理");
     expect(wrapper.get('[data-media-skipped]').text()).toContain("仍被赛事封面引用");
     expect(window.confirm).toHaveBeenLastCalledWith(expect.stringContaining("预计删除 1 张，跳过 1 张正在使用图片"));
   });
@@ -113,6 +119,18 @@ describe("SiteMediaManagementPanel", () => {
     await wrapper.get('[data-download-media="M2"]').trigger("click");
     await flushPromises();
     expect(wrapper.get('[role="alert"]').text()).toContain("会话已失效");
+  });
+
+  it("refreshes a conflicted deletion without clearing its error", async () => {
+    apiMock.mockImplementation(async (path, options = {}) => {
+      if (path === "/api/admin/site-media/M2" && options.method === "DELETE") throw new Error("图片仍被引用");
+      return listPayload();
+    });
+    const wrapper = await mountLoaded();
+    await wrapper.get('[data-delete-media="M2"]').trigger("click");
+    await flushPromises();
+    expect(apiMock.mock.calls.filter(([path]) => path.startsWith("/api/admin/site-media?")).length).toBe(2);
+    expect(wrapper.get('[role="alert"]').text()).toContain("图片仍被引用");
   });
 
   it("replaces a referenced image after confirmation", async () => {

@@ -327,6 +327,10 @@ test("managed media listing supports pagination filters references and summary",
     assert.equal(formalPayload.pagination.limit, 24);
     assert.deepEqual(formalPayload.rows.map((row) => row.id), ["M2"]);
     assert.equal(formalPayload.rows[0].referenced, false);
+
+    const allReferences = await fetch(`${baseUrl}/api/admin/site-media?reference=all`, withSession(admin.cookie));
+    assert.equal(allReferences.status, 200);
+    assert.equal((await allReferences.json()).pagination.limit, 24);
   }, { prefix: "site-media-managed-list-" });
 });
 
@@ -551,9 +555,11 @@ test("bulk deletion reports a later physical failure without losing earlier resu
     assert.equal(response.status, 200);
     const payload = await response.json();
     assert.deepEqual(payload.deleted, ["M1"]);
-    assert.equal(payload.skipped[0].id, "M2");
-    assert.equal(payload.skipped[0].code, "DELETE_FAILED");
-    assert.equal(payload.skipped[0].reason, "disk denied");
+    assert.equal(payload.cleanupPending[0].id, "M2");
+    assert.equal(payload.cleanupPending[0].code, "CLEANUP_PENDING");
+    assert.deepEqual(payload.skipped, []);
+    assert.ok(persisted.mediaAssets.find((row) => row.id === "M2")?.cleanedAt);
+    assert.equal(persisted.fileCleanupJournal.length, 1);
   });
 });
 
@@ -692,7 +698,7 @@ test("body references prevent media deletion until the reference is removed", ()
   assert.doesNotThrow(() => assertMediaUnreferenced(db, "BODY"));
 });
 
-test("site media physical deletion failure preserves metadata and journals the managed directory", async () => {
+test("site media physical deletion failure returns cleanup pending and journals the managed directory", async () => {
   let persisted = {
     mediaAssets: [{
       id: "MEDIA-FAIL",
@@ -731,7 +737,11 @@ test("site media physical deletion failure preserves metadata and journals the m
 
   await withRouter(router, async (baseUrl) => {
     const response = await fetch(`${baseUrl}/api/admin/site-media/MEDIA-FAIL`, { method: "DELETE" });
-    assert.equal(response.status, 500);
+    assert.equal(response.status, 202);
+    assert.deepEqual(await response.json(), {
+      cleanupPending: true,
+      message: "图片已从媒体库移除，物理文件等待后台清理"
+    });
   });
   assert.equal(persisted.mediaAssets.length, 1);
   assert.equal(persisted.mediaAssets[0].cleanedAt, "2026-07-19T12:00:00.000Z");

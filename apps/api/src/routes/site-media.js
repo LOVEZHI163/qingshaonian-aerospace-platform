@@ -124,6 +124,7 @@ export function createSiteMediaRouter({
             await store.writeDb(latest);
           }
         } catch { /* retain the pending marker written before physical cleanup */ }
+        error.cleanupPending = true;
         throw error;
       }
     }
@@ -222,7 +223,8 @@ export function createSiteMediaRouter({
     if (!Number.isInteger(page) || page < 1) throw routeError(422, "媒体页码无效");
     const purpose = String(req.query.purpose || "").trim();
     const eventId = String(req.query.eventId || "").trim();
-    const referenceStatus = String(req.query.reference ?? req.query.referenceStatus ?? "").trim();
+    const requestedReferenceStatus = String(req.query.reference ?? req.query.referenceStatus ?? "").trim();
+    const referenceStatus = requestedReferenceStatus === "all" ? "" : requestedReferenceStatus;
     if (referenceStatus && !["referenced", "unreferenced"].includes(referenceStatus)) throw routeError(422, "引用状态筛选无效");
     const db = await store.readDb();
     const allImages = (db.mediaAssets || [])
@@ -411,6 +413,7 @@ export function createSiteMediaRouter({
     const ids = [...new Set(req.body.ids.map((id) => String(id || "").trim()).filter(Boolean))];
     if (!ids.length) throw routeError(422, "请选择需要删除的图片");
     const deleted = [];
+    const cleanupPending = [];
     const skipped = [];
     for (const id of ids) {
       const db = await store.readDb();
@@ -423,6 +426,10 @@ export function createSiteMediaRouter({
         await removeMedia(db, media);
         deleted.push(id);
       } catch (error) {
+        if (error?.cleanupPending) {
+          cleanupPending.push({ id, code: "CLEANUP_PENDING", reason: "已从媒体库移除，物理文件等待后台清理" });
+          continue;
+        }
         skipped.push({
           id,
           code: error?.code || "DELETE_FAILED",
@@ -431,15 +438,20 @@ export function createSiteMediaRouter({
         });
       }
     }
-    res.json({ deleted, skipped });
+    res.json({ deleted, cleanupPending, skipped });
   }));
 
   router.delete("/admin/site-media/:id", ...admin, mutationAsyncRoute(async (req, res) => {
     const db = await store.readDb();
     const media = (db.mediaAssets || []).find((row) => row.id === req.params.id);
     if (!media) throw routeError(404, "媒体不存在");
-    await removeMedia(db, media);
-    res.status(204).end();
+    try {
+      await removeMedia(db, media);
+      res.status(204).end();
+    } catch (error) {
+      if (!error?.cleanupPending) throw error;
+      res.status(202).json({ cleanupPending: true, message: "图片已从媒体库移除，物理文件等待后台清理" });
+    }
   }));
 
   return router;
