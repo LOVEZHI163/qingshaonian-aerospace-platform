@@ -4,6 +4,7 @@ import { computed, onMounted, reactive, ref, watch } from "vue";
 import AdminShell from "./components/AdminShell.vue";
 import { ApiError, api } from "./lib/api.js";
 import { checkReleaseCompatibility } from "./lib/release.js";
+import { recoverReleaseMismatch } from "./lib/release-recovery.js";
 import AdminLeaderReviewPage from "./pages/AdminLeaderReviewPage.vue";
 import AuthPage from "./pages/AuthPage.vue";
 import CertificateManagementPage from "./pages/CertificateManagementPage.vue";
@@ -320,6 +321,11 @@ async function refreshAdminEventContext() {
 async function verifyRelease() {
   try {
     const result = await checkReleaseCompatibility(api, import.meta.env.VITE_RELEASE_SHA);
+    if (!result.compatible && recoverReleaseMismatch(result.apiRelease)) {
+      releaseBlocked.value = true;
+      releaseMessage.value = "正在加载最新版本…";
+      return;
+    }
     releaseBlocked.value = !result.compatible;
     releaseMessage.value = releaseBlocked.value ? "系统版本不一致，请刷新页面或联系管理员" : "";
   } catch (error) {

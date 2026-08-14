@@ -1,11 +1,13 @@
 import { enableAutoUnmount, flushPromises, mount } from "@vue/test-utils";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-const { apiMock, apiBlobMock, MockApiError } = vi.hoisted(() => ({
+const { apiMock, apiBlobMock, recoverReleaseMismatchMock, MockApiError } = vi.hoisted(() => ({
   apiMock: vi.fn(),
   apiBlobMock: vi.fn(),
+  recoverReleaseMismatchMock: vi.fn(),
   MockApiError: class ApiError extends Error {}
 }));
 vi.mock("../lib/api.js", () => ({ ApiError: MockApiError, api: apiMock, apiBlob: apiBlobMock, apiUrl: (path) => path }));
+vi.mock("../lib/release-recovery.js", () => ({ recoverReleaseMismatch: recoverReleaseMismatchMock }));
 vi.mock("../state/session.js", async () => {
   const { ref } = await import("vue");
   const sessionUser = ref(null);
@@ -46,6 +48,8 @@ describe("App session integration", () => {
     vi.unstubAllEnvs();
     window.history.replaceState({}, "", "/");
     apiMock.mockReset();
+    recoverReleaseMismatchMock.mockReset();
+    recoverReleaseMismatchMock.mockReturnValue(false);
     sessionUser.value = null;
     session.organizations.value = [];
     restoring.value = false;
@@ -129,6 +133,22 @@ describe("App session integration", () => {
 
     expect(wrapper.text()).toContain("系统版本不一致，请刷新页面或联系管理员");
     expect(wrapper.find('[data-testid="admin-shell"]').exists()).toBe(false);
+  });
+
+  it("reloads the current route once when a newer API release is detected", async () => {
+    vi.stubEnv("VITE_RELEASE_SHA", "old-web");
+    recoverReleaseMismatchMock.mockReturnValue(true);
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/system/version") return { releaseSha: "new-api", apiVersion: 1 };
+      return { rows: [] };
+    });
+
+    const wrapper = mount(App);
+    await flushPromises();
+
+    expect(recoverReleaseMismatchMock).toHaveBeenCalledWith("new-api");
+    expect(wrapper.text()).toContain("正在加载最新版本");
+    expect(session.restore).not.toHaveBeenCalled();
   });
 
   it("waits for release verification to resolve before restoring the session", async () => {
