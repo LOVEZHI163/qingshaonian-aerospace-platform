@@ -172,7 +172,7 @@ test("enforces batch ownership and expiry while deleting or retrying only the se
   );
 });
 
-test("commits selected staged images, source attribution, audit, and a draft in one snapshot", async () => {
+test("commits selected staged images inline without duplicating them as attachments", async () => {
   const deps = dependencies();
   const batch = await inspectContentImport(deps, { adminId: "ADMIN", sourceUrl: "https://news.example.test/article" });
   const post = await commitContentImport(deps, {
@@ -188,10 +188,46 @@ test("commits selected staged images, source attribution, audit, and a draft in 
   assert.doesNotMatch(post.bodyHtml, /SITE_IMPORT_IMAGE/);
   assert.equal(db.mediaAssets.length, 2);
   assert.deepEqual(new Set(db.mediaAssets.map((media) => media.purpose)), new Set(["content-body", "content-cover"]));
-  assert.equal(db.contentAttachments.length, 1);
+  assert.equal(db.contentAttachments.length, 0);
   assert.equal(db.siteContentImportBatches[0].status, "committed");
   assert.equal(db.auditLogs[0].action, "content.import");
   assert.equal(deps._deleted.includes(`batch:${batch.id}`), true);
+});
+
+test("appends a selected imported image when the extracted body has no image position", async () => {
+  const deps = dependencies({
+    extractArticle: () => ({
+      sourceType: "web",
+      title: "纯文本原文",
+      summary: "原文摘要",
+      sourceName: "温州新闻网",
+      sourceAuthor: "作者甲",
+      sourcePublishedAt: "2026-08-10T00:00:00.000Z",
+      canonicalUrl: "https://news.example.test/text-only",
+      bodyTemplateHtml: "<p>只有正文文字</p>",
+      images: [{ id: "IMG1", url: "https://cdn.example.test/photo.png", alt: "比赛现场" }]
+    })
+  });
+  const batch = await inspectContentImport(deps, {
+    adminId: "ADMIN",
+    sourceUrl: "https://news.example.test/text-only"
+  });
+
+  const post = await commitContentImport(deps, {
+    adminId: "ADMIN",
+    batchId: batch.id,
+    eventId: "E1",
+    type: "news",
+    title: "纯文本转载",
+    summary: "摘要",
+    slug: "text-only-repost",
+    selectedImageIds: ["IMG1"]
+  });
+
+  assert.match(post.bodyHtml, /只有正文文字/);
+  assert.match(post.bodyHtml, /<img src="\/api\/public\/media\/M-/);
+  assert.match(post.bodyHtml, /alt="现场"/);
+  assert.equal(deps.store.value().contentAttachments.length, 0);
 });
 
 test("expires ready batches and removes their staging directories", async () => {

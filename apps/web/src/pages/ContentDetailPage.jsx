@@ -27,8 +27,31 @@ function formatDate(value) {
   return Number.isFinite(date.getTime()) ? date.toLocaleString("zh-CN", { hour12: false }) : "";
 }
 
+function contentMedia(row) {
+  const bodyHtml = String(row?.bodyHtml || "");
+  const legacyImages = [];
+  const attachments = [];
+  for (const attachment of row?.attachments || []) {
+    if (!attachment?.id) {
+      attachments.push(attachment);
+      continue;
+    }
+    const mediaId = encodeURIComponent(attachment.id);
+    const referenced = bodyHtml.includes(`/api/public/media/${mediaId}`)
+      || bodyHtml.includes(`/api/admin/site-media/${mediaId}/preview`);
+    if (referenced) continue;
+    if (attachment.label === "转载正文图片" && String(attachment.mimeType || "").startsWith("image/") && attachment.url) {
+      legacyImages.push(attachment);
+    } else {
+      attachments.push(attachment);
+    }
+  }
+  return { legacyImages, attachments };
+}
+
 export function ContentDetailView({ row, preview = false, canonicalPath = null }) {
   const bodyRef = useRef(null);
+  const media = contentMedia(row);
 
   useEffect(() => {
     const root = bodyRef.current;
@@ -91,7 +114,20 @@ export function ContentDetailView({ row, preview = false, canonicalPath = null }
             className="rich-content"
             dangerouslySetInnerHTML={{ __html: row.bodyHtml || "" }}
           />
-          <AttachmentList attachments={row.attachments || []} />
+          {media.legacyImages.length ? (
+            <div className="rich-content legacy-imported-images" aria-label="正文图片">
+              {media.legacyImages.map((attachment) => (
+                <figure key={attachment.id}>
+                  <img
+                    src={attachment.url}
+                    alt={attachment.label || attachment.name || "正文图片"}
+                    loading="lazy"
+                  />
+                </figure>
+              ))}
+            </div>
+          ) : null}
+          <AttachmentList attachments={media.attachments} />
         </>
       ) : null}
     </article>

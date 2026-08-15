@@ -110,6 +110,57 @@ test("public content detail exposes only a safe original-source DTO", () => {
   assert.equal(buildContentDetailView(source, "news-one", current).row.source, null);
 });
 
+test("public content detail does not list an inline body image again as an attachment", () => {
+  const source = seededPublicSiteDb();
+  source.contentPosts[0].bodyHtml = '<p>正文</p><img src="/api/public/media/INLINE-IMAGE" alt="现场">';
+  source.mediaAssets.push(
+    {
+      id: "INLINE-IMAGE",
+      visibility: "public",
+      originalName: "inline.jpg",
+      mimeType: "image/jpeg",
+      sizeBytes: 128,
+      width: 800,
+      height: 600,
+      variants: {},
+      cleanedAt: null
+    },
+    {
+      id: "LEGACY-IMAGE",
+      visibility: "public",
+      originalName: "legacy.jpg",
+      mimeType: "image/jpeg",
+      sizeBytes: 96,
+      width: 640,
+      height: 480,
+      variants: {},
+      cleanedAt: null
+    },
+    {
+      id: "REAL-ATTACHMENT",
+      visibility: "public",
+      originalName: "notice.pdf",
+      mimeType: "application/pdf",
+      sizeBytes: 256,
+      width: null,
+      height: null,
+      variants: {},
+      cleanedAt: null
+    }
+  );
+  source.contentAttachments = [
+    { contentId: "NEWS-ONE", mediaId: "INLINE-IMAGE", label: "转载正文图片", displayOrder: 0 },
+    { contentId: "NEWS-ONE", mediaId: "LEGACY-IMAGE", label: "转载正文图片", displayOrder: 1 },
+    { contentId: "NEWS-ONE", mediaId: "REAL-ATTACHMENT", label: "赛事通知", displayOrder: 2 }
+  ];
+
+  const detail = buildContentDetailView(source, "news-one", new Date("2026-07-20T00:00:00.000Z")).row;
+
+  assert.deepEqual(detail.attachments.map((attachment) => attachment.id), ["REAL-ATTACHMENT"]);
+  assert.match(detail.bodyHtml, /<img src="\/api\/public\/media\/INLINE-IMAGE"/);
+  assert.match(detail.bodyHtml, /<img src="\/api\/public\/media\/LEGACY-IMAGE"/);
+});
+
 test("public content hides linked draft events but keeps platform content public", () => {
   const source = seededPublicSiteDb();
   const linked = source.contentPosts[0];

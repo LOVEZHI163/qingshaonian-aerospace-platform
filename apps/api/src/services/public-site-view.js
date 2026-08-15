@@ -1,9 +1,12 @@
 import { APPROVED_GROUP_NAMES } from "../data/seed.js";
+import { sanitizeContentHtml } from "../content/sanitize.js";
 import { isRegistrationOpen } from "../domain/registration-window.js";
+import { contentBodyMediaIds } from "./content-body-media.js";
 import { isPublicPost } from "./content-publishing.js";
 import { selectHomeEvents } from "./public-site.js";
 
 const HOME_LIMITS = { announcement: 5, news: 6, work: 6, recap: 6 };
+const LEGACY_IMPORTED_IMAGE_LABEL = "转载正文图片";
 
 export function mediaView(db, mediaId, {
   allowPrivate = false,
@@ -44,12 +47,38 @@ function attachmentView(db, attachment, mediaOptions) {
   };
 }
 
-function attachmentsFor(db, contentId, mediaOptions) {
-  return (db.contentAttachments || [])
-    .filter((row) => row.contentId === contentId)
+function escapeHtmlAttribute(value) {
+  return String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function contentMedia(db, row, mediaOptions) {
+  const views = (db.contentAttachments || [])
+    .filter((attachment) => attachment.contentId === row.id)
     .sort((left, right) => left.displayOrder - right.displayOrder || String(left.mediaId).localeCompare(String(right.mediaId)))
-    .map((row) => attachmentView(db, row, mediaOptions))
+    .map((attachment) => attachmentView(db, attachment, mediaOptions))
     .filter(Boolean);
+  let bodyHtml = String(row.bodyHtml || "");
+  const bodyMediaIds = new Set(contentBodyMediaIds(bodyHtml));
+  const legacyFigures = [];
+
+  for (const attachment of views) {
+    if (bodyMediaIds.has(attachment.id)) continue;
+    if (attachment.label !== LEGACY_IMPORTED_IMAGE_LABEL || !String(attachment.mimeType || "").startsWith("image/")) continue;
+    bodyMediaIds.add(attachment.id);
+    const alt = escapeHtmlAttribute(attachment.label || attachment.name || "正文图片");
+    legacyFigures.push(`<figure><img src="/api/public/media/${encodeURIComponent(attachment.id)}" alt="${alt}"></figure>`);
+  }
+
+  if (legacyFigures.length) bodyHtml = sanitizeContentHtml(`${bodyHtml}${legacyFigures.join("")}`);
+  const referencedMediaIds = new Set(contentBodyMediaIds(bodyHtml));
+  return {
+    bodyHtml,
+    attachments: views.filter((attachment) => !referencedMediaIds.has(attachment.id))
+  };
 }
 
 function comparePosts(left, right) {
@@ -100,10 +129,11 @@ export function contentSummary(db, row, mediaOptions) {
 }
 
 function contentDetail(db, row, mediaOptions) {
+  const media = contentMedia(db, row, mediaOptions);
   return {
     ...contentSummary(db, row, mediaOptions),
-    bodyHtml: row.bodyHtml,
-    attachments: attachmentsFor(db, row.id, mediaOptions),
+    bodyHtml: media.bodyHtml,
+    attachments: media.attachments,
     source: publicContentSource(row)
   };
 }

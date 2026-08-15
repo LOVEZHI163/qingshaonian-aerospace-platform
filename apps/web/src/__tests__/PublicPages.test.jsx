@@ -956,6 +956,46 @@ describe("public content detail and failures", () => {
     expect(window.__bodyScriptRan).toBe(false);
   });
 
+  it("renders a legacy repost image inline instead of in the attachment download list", async () => {
+    installApi({
+      "/api/public/content/safe-story": {
+        row: {
+          ...content("SAFE", "news", { slug: "safe-story", title: "转载图片正文" }),
+          bodyHtml: "<p>正文</p>",
+          attachments: [
+            {
+              id: "INLINE-IMAGE",
+              label: "转载正文图片",
+              displayOrder: 0,
+              url: "/api/public/media/INLINE-IMAGE?variant=original",
+              name: "inline.jpg",
+              mimeType: "image/jpeg",
+              sizeBytes: 128
+            },
+            {
+              id: "REAL-ATTACHMENT",
+              label: "赛事通知",
+              displayOrder: 1,
+              url: "/api/public/media/REAL-ATTACHMENT?variant=original",
+              name: "notice.pdf",
+              mimeType: "application/pdf",
+              sizeBytes: 256
+            }
+          ]
+        }
+      }
+    });
+
+    render(<App />);
+
+    expect(await screen.findByRole("img", { name: "转载正文图片" })).toHaveAttribute(
+      "src",
+      "/api/public/media/INLINE-IMAGE?variant=original"
+    );
+    expect(screen.queryByText("转载正文图片")).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /赛事通知/ })).toBeInTheDocument();
+  });
+
   it("renders API-cleaned B站 markers through the fixed public player", async () => {
     installApi({
       "/api/public/content/safe-story": {

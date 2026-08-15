@@ -9,6 +9,7 @@ import {
 } from "../files/site-content-import-storage.js";
 import { deleteSiteMedia, saveSiteMedia } from "../files/storage.js";
 import { recordAudit } from "./audit.js";
+import { contentBodyMediaIds } from "./content-body-media.js";
 import { extractImportedArticle } from "./site-content-import/article-extractor.js";
 import { retryArticleImage, stageArticleImages } from "./site-content-import/image-import.js";
 import { fetchPublicResource } from "./site-content-import/public-fetch.js";
@@ -266,6 +267,27 @@ function rewriteImageTokens(template, selected, mediaByImage) {
   return sanitizeContentHtml(html);
 }
 
+function escapeHtmlAttribute(value) {
+  return String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function appendMissingImportedImages(bodyHtml, selected, mediaByImage) {
+  const referenced = new Set(contentBodyMediaIds(bodyHtml));
+  const figures = [];
+  for (const image of selected) {
+    const mediaId = mediaByImage.get(image.id);
+    if (!mediaId || referenced.has(mediaId)) continue;
+    referenced.add(mediaId);
+    const alt = escapeHtmlAttribute(image.alt || image.title || "转载正文图片");
+    figures.push(`<figure><img src="/api/public/media/${encodeURIComponent(mediaId)}" alt="${alt}"></figure>`);
+  }
+  return figures.length ? sanitizeContentHtml(`${bodyHtml}${figures.join("")}`) : bodyHtml;
+}
+
 async function saveImportedMedia(deps, { image, purpose, mediaId, adminId, nowValue }) {
   const buffer = await deps.stagedStorage.read({
     batchId: image.batchId,
@@ -322,7 +344,8 @@ export async function commitContentImport(rawDeps, input) {
     const targetBatch = batchByOwner(db, input.batchId, input.adminId, nowValue);
     db.mediaAssets ||= [];
     db.mediaAssets.push(...savedMedia);
-    const bodyHtml = rewriteImageTokens(targetBatch.bodyTemplateHtml, selected, mediaByImage);
+    const rewrittenBodyHtml = rewriteImageTokens(targetBatch.bodyTemplateHtml, selected, mediaByImage);
+    const bodyHtml = appendMissingImportedImages(rewrittenBodyHtml, selected, mediaByImage);
     const contentId = deps.makeId("POST");
     const actor = (db.users || []).find((user) => user.id === input.adminId) || { id: input.adminId, name: "管理员" };
     const row = createContent(db, {
@@ -333,9 +356,7 @@ export async function commitContentImport(rawDeps, input) {
       slug: input.slug,
       bodyHtml,
       coverMediaId,
-      attachments: selected.map((image, index) => ({
-        mediaId: mediaByImage.get(image.id), label: "转载正文图片", displayOrder: index
-      }))
+      attachments: []
     }, {
       id: contentId,
       actor,
