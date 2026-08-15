@@ -8,6 +8,9 @@ const DEFAULT_MAX_BYTES = 5 * 1024 * 1024;
 const REDIRECT_STATUS = new Set([301, 302, 303, 307, 308]);
 const HTML_CONTENT_TYPES = new Set(["text/html", "application/xhtml+xml"]);
 const IMAGE_CONTENT_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
+const CONTENT_TYPE_ALIASES = new Map([
+  ["png", "image/png"]
+]);
 
 function fetchError(message, code, status) {
   return Object.assign(new Error(message), { code, status });
@@ -30,7 +33,8 @@ function unsupportedError() {
 }
 
 function contentType(headers) {
-  return String(headers["content-type"] || "").split(";", 1)[0].trim().toLowerCase();
+  const type = String(headers["content-type"] || "").split(";", 1)[0].trim().toLowerCase();
+  return CONTENT_TYPE_ALIASES.get(type) || type;
 }
 
 function acceptsContentType(expected, headers) {

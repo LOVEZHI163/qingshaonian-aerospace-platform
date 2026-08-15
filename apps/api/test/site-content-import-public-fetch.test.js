@@ -178,3 +178,20 @@ test("returns supported images and applies their own byte limit", async () => {
     );
   });
 });
+
+test("accepts a public PNG when the source sends the nonstandard png content type", async () => {
+  const image = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+  await withHttpServer((_request, response) => {
+    response.writeHead(200, { "Content-Type": "png" });
+    response.end(image);
+  }, async (port) => {
+    const result = await fetchPublicResource(`http://image.public.test:${port}/photo.png`, {
+      expected: "image",
+      maxBytes: image.length,
+      resolveTarget: localPinnedResolver(port)
+    });
+
+    assert.equal(result.headers["content-type"], "png");
+    assert.deepEqual(result.buffer, image);
+  });
+});
