@@ -7,6 +7,7 @@ import { selectHomeEvents } from "./public-site.js";
 
 const HOME_LIMITS = { announcement: 5, news: 6, work: 6, recap: 6 };
 const LEGACY_IMPORTED_IMAGE_LABEL = "转载正文图片";
+const IMPORT_IMAGE_TOKEN = /<img\b[^>]*\bsrc=(['"])@@SITE_IMPORT_IMAGE:([A-Za-z0-9_-]+)@@\1[^>]*>/gi;
 
 export function mediaView(db, mediaId, {
   allowPrivate = false,
@@ -55,6 +56,60 @@ function escapeHtmlAttribute(value) {
     .replace(/>/g, "&gt;");
 }
 
+function comparableContentHtml(value) {
+  return sanitizeContentHtml(value)
+    .replace(/<figure>\s*<\/figure>/gi, "")
+    .replace(/>\s+</g, "><")
+    .trim();
+}
+
+function legacyImportTemplate(db, row, legacyAttachments) {
+  if (!row.sourceUrlFingerprint || !legacyAttachments.length) return null;
+  const candidates = (db.siteContentImportBatches || [])
+    .filter((batch) => batch.status === "committed"
+      && batch.sourceUrlFingerprint === row.sourceUrlFingerprint
+      && String(batch.bodyTemplateHtml || "").includes("@@SITE_IMPORT_IMAGE:"))
+    .sort((left, right) => Date.parse(right.createdAt || 0) - Date.parse(left.createdAt || 0));
+  for (const batch of candidates) {
+    const textOnlyTemplate = String(batch.bodyTemplateHtml || "").replace(IMPORT_IMAGE_TOKEN, "");
+    if (comparableContentHtml(textOnlyTemplate) === comparableContentHtml(row.bodyHtml)) return batch;
+  }
+  return null;
+}
+
+function restoreLegacyImportedBody(db, row, legacyAttachments) {
+  const batch = legacyImportTemplate(db, row, legacyAttachments);
+  if (!batch) return null;
+
+  const attachmentsByName = new Map();
+  for (const attachment of legacyAttachments) {
+    const key = String(attachment.name || "").trim().toLowerCase();
+    const queue = attachmentsByName.get(key) || [];
+    queue.push(attachment);
+    attachmentsByName.set(key, queue);
+  }
+  const attachmentByImageId = new Map();
+  for (const image of batch.images || []) {
+    const key = String(image.originalName || "").trim().toLowerCase();
+    const attachment = attachmentsByName.get(key)?.shift();
+    if (attachment) attachmentByImageId.set(image.id, attachment);
+  }
+  if (attachmentByImageId.size !== legacyAttachments.length) return null;
+
+  const restored = String(batch.bodyTemplateHtml || "").replace(
+    IMPORT_IMAGE_TOKEN,
+    (tag, _quote, imageId) => {
+      const attachment = attachmentByImageId.get(imageId);
+      if (!attachment) return "";
+      return tag.replace(
+        `@@SITE_IMPORT_IMAGE:${imageId}@@`,
+        `/api/public/media/${encodeURIComponent(attachment.id)}`
+      );
+    }
+  );
+  return sanitizeContentHtml(restored);
+}
+
 function contentMedia(db, row, mediaOptions) {
   const views = (db.contentAttachments || [])
     .filter((attachment) => attachment.contentId === row.id)
@@ -64,16 +119,21 @@ function contentMedia(db, row, mediaOptions) {
   let bodyHtml = String(row.bodyHtml || "");
   const bodyMediaIds = new Set(contentBodyMediaIds(bodyHtml));
   const legacyFigures = [];
+  const legacyAttachments = [];
 
   for (const attachment of views) {
     if (bodyMediaIds.has(attachment.id)) continue;
     if (attachment.label !== LEGACY_IMPORTED_IMAGE_LABEL || !String(attachment.mimeType || "").startsWith("image/")) continue;
     bodyMediaIds.add(attachment.id);
+    legacyAttachments.push(attachment);
     const alt = escapeHtmlAttribute(attachment.label || attachment.name || "正文图片");
     legacyFigures.push(`<figure><img src="/api/public/media/${encodeURIComponent(attachment.id)}" alt="${alt}"></figure>`);
   }
 
-  if (legacyFigures.length) bodyHtml = sanitizeContentHtml(`${bodyHtml}${legacyFigures.join("")}`);
+  if (legacyFigures.length) {
+    bodyHtml = restoreLegacyImportedBody(db, row, legacyAttachments)
+      || sanitizeContentHtml(`${bodyHtml}${legacyFigures.join("")}`);
+  }
   const referencedMediaIds = new Set(contentBodyMediaIds(bodyHtml));
   return {
     bodyHtml,

@@ -161,6 +161,67 @@ test("public content detail does not list an inline body image again as an attac
   assert.match(detail.bodyHtml, /<img src="\/api\/public\/media\/LEGACY-IMAGE"/);
 });
 
+test("public content restores legacy imported images at their original article positions", () => {
+  const source = seededPublicSiteDb();
+  Object.assign(source.contentPosts[0], {
+    bodyHtml: "<p>第一段</p><p>第二段</p><p>第三段</p>",
+    sourceUrlFingerprint: "legacy-import-fingerprint"
+  });
+  source.mediaAssets.push(
+    {
+      id: "LEGACY-FIRST",
+      visibility: "public",
+      originalName: "first.jpg",
+      mimeType: "image/jpeg",
+      sizeBytes: 128,
+      width: 800,
+      height: 600,
+      variants: {},
+      cleanedAt: null
+    },
+    {
+      id: "LEGACY-SECOND",
+      visibility: "public",
+      originalName: "second.jpg",
+      mimeType: "image/jpeg",
+      sizeBytes: 128,
+      width: 800,
+      height: 600,
+      variants: {},
+      cleanedAt: null
+    }
+  );
+  source.contentAttachments = [
+    { contentId: "NEWS-ONE", mediaId: "LEGACY-FIRST", label: "转载正文图片", displayOrder: 0 },
+    { contentId: "NEWS-ONE", mediaId: "LEGACY-SECOND", label: "转载正文图片", displayOrder: 1 }
+  ];
+  source.siteContentImportBatches = [{
+    id: "IMPORT-ONE",
+    sourceUrlFingerprint: "legacy-import-fingerprint",
+    status: "committed",
+    bodyTemplateHtml: [
+      "<p>第一段</p>",
+      '<figure><img src="@@SITE_IMPORT_IMAGE:IMG1@@" alt="现场一"></figure>',
+      "<p>第二段</p>",
+      '<figure><img src="@@SITE_IMPORT_IMAGE:IMG2@@" alt="现场二"></figure>',
+      "<p>第三段</p>"
+    ].join(""),
+    images: [
+      { id: "IMG1", originalName: "first.jpg", status: "ready" },
+      { id: "IMG2", originalName: "second.jpg", status: "ready" }
+    ],
+    createdAt: "2026-07-19T11:00:00.000Z"
+  }];
+
+  const detail = buildContentDetailView(source, "news-one", new Date("2026-07-20T00:00:00.000Z")).row;
+
+  assert.deepEqual(detail.attachments, []);
+  assert.ok(detail.bodyHtml.indexOf("第一段") < detail.bodyHtml.indexOf("LEGACY-FIRST"));
+  assert.ok(detail.bodyHtml.indexOf("LEGACY-FIRST") < detail.bodyHtml.indexOf("第二段"));
+  assert.ok(detail.bodyHtml.indexOf("第二段") < detail.bodyHtml.indexOf("LEGACY-SECOND"));
+  assert.ok(detail.bodyHtml.indexOf("LEGACY-SECOND") < detail.bodyHtml.indexOf("第三段"));
+});
+
 test("public content hides linked draft events but keeps platform content public", () => {
   const source = seededPublicSiteDb();
   const linked = source.contentPosts[0];
