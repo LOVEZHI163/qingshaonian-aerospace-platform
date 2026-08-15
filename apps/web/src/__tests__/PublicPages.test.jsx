@@ -350,7 +350,7 @@ describe("public event information page", () => {
     expect(disconnect).toHaveBeenCalled();
   });
 
-  it("renders the approved introduction and organization as full-width cards", async () => {
+  it("renders the complete approved introduction with its full-width primary cards", async () => {
     window.history.replaceState({}, "", "/about?event=wz-aerospace-2026");
     const selectedEvent = event({ id: "WZ-2026", slug: "wz-aerospace-2026" });
     installApi({
@@ -369,7 +369,10 @@ describe("public event information page", () => {
     expect(screen.getByText(/2026年由文成县关心下一代工作委员会/)).toBeInTheDocument();
     expect(screen.queryByRole("heading", { level: 2, name: "赛事主题" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { level: 2, name: "举办宗旨" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("heading", { level: 2, name: "参赛对象" })).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 2, name: "大赛主题" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 2, name: "参赛对象" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 2, name: "赛程安排" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 2, name: "奖项设置" })).toBeInTheDocument();
   });
 
   it("keeps the branded information hero fallback when the event has no poster", async () => {
