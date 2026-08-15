@@ -230,10 +230,13 @@ test("Web image build receives the required release identity", async () => {
 test("Web image installs only frontend workspace dependencies", async () => {
   const webDockerfile = await fs.readFile(path.join(root, "Dockerfile.web"), "utf8");
 
-  assert.match(
-    webDockerfile,
-    /^RUN npm ci --workspace apps\/web --workspace apps\/admin --include-workspace-root$/m
-  );
+  assert.match(webDockerfile, /^RUN npm ci \\\r?$/m);
+  assert.match(webDockerfile, /^  --workspace apps\/web \\\r?$/m);
+  assert.match(webDockerfile, /^  --workspace apps\/admin \\\r?$/m);
+  assert.match(webDockerfile, /^  --include-workspace-root \\\r?$/m);
+  assert.match(webDockerfile, /^  --registry=https:\/\/registry\.npmmirror\.com \\\r?$/m);
+  assert.match(webDockerfile, /^  --replace-registry-host=always \\\r?$/m);
+  assert.match(webDockerfile, /^  --no-audit$/m);
   assert.doesNotMatch(webDockerfile, /^RUN npm ci$/m);
 });
 
