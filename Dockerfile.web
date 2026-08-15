@@ -9,7 +9,7 @@ COPY package.json package-lock.json ./
 COPY apps/api/package.json apps/api/package.json
 COPY apps/admin/package.json apps/admin/package.json
 COPY apps/web/package.json apps/web/package.json
-RUN npm ci
+RUN npm ci --workspace apps/web --workspace apps/admin --include-workspace-root
 
 COPY apps/web apps/web
 COPY apps/admin apps/admin

@@ -227,6 +227,16 @@ test("Web image build receives the required release identity", async () => {
   assert.equal(webBuild.includes(`RELEASE_SHA: ${"${RELEASE_SHA:?RELEASE_SHA is required}"}`), true);
 });
 
+test("Web image installs only frontend workspace dependencies", async () => {
+  const webDockerfile = await fs.readFile(path.join(root, "Dockerfile.web"), "utf8");
+
+  assert.match(
+    webDockerfile,
+    /^RUN npm ci --workspace apps\/web --workspace apps\/admin --include-workspace-root$/m
+  );
+  assert.doesNotMatch(webDockerfile, /^RUN npm ci$/m);
+});
+
 test("deployment preflight requires cleanup and one-time administrator bootstrap tooling", async () => {
   const [preflight, guide] = await Promise.all([
     fs.readFile(path.join(root, "deploy/preflight-admin-upgrade.sh"), "utf8"),
