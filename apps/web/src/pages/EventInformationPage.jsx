@@ -100,7 +100,7 @@ export default function EventInformationPage({ section, homeData, homeStatus, lo
           ))}
         </nav>
       ) : null}
-      {model.facts.length ? (
+      {section !== "about" && model.facts.length ? (
         <dl className="event-information-facts">
           {model.facts.map(({ label, value }) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}
         </dl>
