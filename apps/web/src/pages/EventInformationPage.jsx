@@ -144,7 +144,7 @@ export default function EventInformationPage({ section, homeData, homeStatus, lo
           <button type="button" onClick={() => setDetailAttempt((value) => value + 1)}>重新加载</button>
         </div>
       ) : null}
-      <div className="event-information-sections">
+      <div className={`event-information-sections${section === "about" ? " event-information-sections-spaced" : ""}`}>
         {model.sections.map((item) => (
           <article
             key={item.heading}

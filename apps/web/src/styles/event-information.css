@@ -19,6 +19,7 @@
 .event-information-facts dd { min-width: 0; margin: 0.5rem 0 0; color: var(--color-brand-ink); font-weight: 800; line-height: 1.5; overflow-wrap: anywhere; }
 
 .event-information-sections { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1.25rem; }
+.event-information-sections-spaced { margin-top: 1.25rem; }
 .event-information-sections article { min-width: 0; padding: 1.5rem; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-white); }
 .event-information-section-wide { grid-column: 1 / -1; }
 .event-information-sections h2 { margin-top: 0; color: var(--color-brand-ink); overflow-wrap: anywhere; }

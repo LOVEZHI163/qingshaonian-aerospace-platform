@@ -374,6 +374,7 @@ describe("public event information page", () => {
     expect(screen.getByRole("heading", { level: 2, name: "赛程安排" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { level: 2, name: "奖项设置" })).toBeInTheDocument();
     expect(document.querySelector(".event-information-facts")).toBeNull();
+    expect(document.querySelector(".event-information-sections")).toHaveClass("event-information-sections-spaced");
   });
 
   it("keeps the branded information hero fallback when the event has no poster", async () => {
