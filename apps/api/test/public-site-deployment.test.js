@@ -123,6 +123,8 @@ test("registration guide embeds the complete document and publishes its PPT down
   assert.match(guideHtml, /<script src="embed\.js" defer><\/script>/);
   assert.match(guideHtml, /body\.embedded > \.standalone-header[\s\S]*display: none/);
   assert.match(guideHtml, /body\.embedded main[\s\S]*width: 100%/);
+  assert.match(guideHtml, /\.guide-cover[^{]*\{[^}]*min-width:\s*0/);
+  assert.match(guideHtml, /\.guide-meta[^{]*\{[^}]*overflow-wrap:\s*anywhere/);
   assert.match(embedScript, /URLSearchParams\(window\.location\.search\)/);
   assert.match(embedScript, /classList\.add\("embedded"\)/);
 

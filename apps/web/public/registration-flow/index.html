@@ -25,7 +25,7 @@
       a { color: var(--brand); }
       .standalone-header { padding: 1.5rem clamp(1rem, 4vw, 3rem); color: #fff; background: linear-gradient(120deg, var(--brand-deep), var(--brand)); }
       .standalone-header h1, .standalone-header p { width: min(72rem, 100%); margin-inline: auto; }
-      .standalone-header h1 { margin-block: 0; font-size: clamp(1.45rem, 3vw, 2.2rem); }
+      .standalone-header h1 { margin-block: 0; overflow-wrap: anywhere; font-size: clamp(1.45rem, 3vw, 2.2rem); }
       .standalone-header p { margin-block: 0.5rem 0; color: #fff; }
       main { width: min(100% - 2rem, 76rem); margin: 1.5rem auto 3rem; }
       body.embedded { background: transparent; }
@@ -34,13 +34,13 @@
       .guide-document { display: grid; gap: 1.25rem; width: min(100%, 72rem); margin: 0 auto; }
       .guide-cover, .guide-toc, .guide-section { border: 1px solid var(--line); border-radius: 1rem; background: var(--paper); box-shadow: var(--shadow); }
       .guide-cover, .guide-section { padding: clamp(1.1rem, 3vw, 2rem); }
-      .guide-cover { position: relative; overflow: hidden; color: #fff; background: radial-gradient(circle at 88% 18%, rgba(102, 191, 255, 0.42), transparent 30%), linear-gradient(135deg, #071f5a 0%, #0c4eb7 62%, #277ff0 100%); }
+      .guide-cover { position: relative; min-width: 0; overflow: hidden; color: #fff; background: radial-gradient(circle at 88% 18%, rgba(102, 191, 255, 0.42), transparent 30%), linear-gradient(135deg, #071f5a 0%, #0c4eb7 62%, #277ff0 100%); }
       .guide-cover::after { content: ""; position: absolute; inset: auto -7rem -8rem auto; width: 20rem; aspect-ratio: 1; border: 2.5rem solid rgba(255, 255, 255, 0.08); border-radius: 50%; pointer-events: none; }
       .guide-cover > * { position: relative; z-index: 1; }
       .eyebrow { margin: 0 0 0.75rem; font-weight: 800; letter-spacing: 0.06em; }
       .guide-cover h1 { margin: 0; font-size: clamp(2rem, 6vw, 4rem); line-height: 1.08; }
       .guide-subtitle { margin: 0.85rem 0 1.5rem; font-size: clamp(1.1rem, 2.5vw, 1.45rem); font-weight: 700; }
-      .guide-meta { display: grid; gap: 0.4rem; margin: 0; padding: 0; list-style: none; }
+      .guide-meta { display: grid; gap: 0.4rem; margin: 0; padding: 0; overflow-wrap: anywhere; word-break: break-word; list-style: none; }
       .guide-meta a { color: #fff; }
       .download-guide { display: inline-flex; min-height: 2.75rem; margin-top: 1.4rem; padding: 0.75rem 1.1rem; align-items: center; justify-content: center; border-radius: 0.65rem; color: var(--brand-deep); font-weight: 800; text-decoration: none; background: #fff; }
       .guide-toc { display: flex; flex-wrap: wrap; gap: 0.75rem; padding: 1rem; }
