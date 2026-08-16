@@ -96,34 +96,92 @@ test("nginx protects HTML and public media while caching immutable assets", asyn
   assert.match(nginx, /location \/\s*\{[\s\S]*\/index\.html/);
 });
 
-test("registration guide keeps the event page and embeds the standalone illustrated HTML", async () => {
+test("registration guide embeds the complete document and publishes its PPT download", async () => {
   const nginx = await read("deploy/nginx.conf");
   const guideDir = path.join(root, "apps/web/public/registration-flow");
   const guideHtml = await fs.readFile(path.join(guideDir, "index.html"), "utf8");
   const embedScript = await fs.readFile(path.join(guideDir, "embed.js"), "utf8");
+  const imageNames = Array.from(
+    { length: 10 },
+    (_, index) => `registration-guide-${String(index + 1).padStart(2, "0")}.png`
+  );
+  const imageAlts = [
+    "官网赛事服务页面：点击用户登录进入报名系统",
+    "报名系统登录页：切换到注册标签",
+    "组织负责人注册页：选择组织负责人账号并提交组织审核",
+    "组织负责人后台：进入领队管理并至少申报一名领队",
+    "组织负责人后台：从赛事工作台进入当前比赛",
+    "组织报名页：选择成员报名或组织代报名并填写参赛资料",
+    "注册页：个人用户选择个人参赛账号并填写注册信息",
+    "个人用户后台：在我的组织中搜索并申请加入组织",
+    "个人用户后台：从赛事中心进入当前比赛报名",
+    "个人报名页：填写学生身份资料、组别和赛项后提交报名"
+  ];
+  const pptName = "温州市青少年航空航天创新比赛注册指南.pptx";
 
   assert.doesNotMatch(nginx, /location = \/registration-guide\s*\{/);
   assert.match(guideHtml, /<script src="embed\.js" defer><\/script>/);
-  assert.match(guideHtml, /body\.embedded > header,[\s\S]*body\.embedded \.overview-poster[\s\S]*display: none/);
+  assert.match(guideHtml, /body\.embedded > \.standalone-header[\s\S]*display: none/);
   assert.match(guideHtml, /body\.embedded main[\s\S]*width: 100%/);
   assert.match(embedScript, /URLSearchParams\(window\.location\.search\)/);
   assert.match(embedScript, /classList\.add\("embedded"\)/);
-  assert.match(guideHtml, /青少年航空航天创新比赛报名流程/);
-  assert.match(guideHtml, /第一块：注册登录流程/);
-  assert.match(guideHtml, /第二块：正式报名流程/);
-  assert.match(guideHtml, /<img src="00-registration-flow-overview\.png" alt="报名操作总览海报"/);
-  assert.ok(
-    guideHtml.indexOf("00-registration-flow-overview.png") < guideHtml.indexOf('id="account-flow"'),
-    "the overview poster must remain above the detailed registration steps"
+
+  for (const heading of [
+    "赛事用户管理系统",
+    "阅读前提示",
+    "一、名词概念介绍",
+    "二、操作前注意事项",
+    "三、账号注册流程操作说明"
+  ]) {
+    assert.match(guideHtml, new RegExp(heading));
+  }
+  assert.doesNotMatch(guideHtml, /第一块：注册登录流程/);
+  assert.doesNotMatch(guideHtml, /第二块：正式报名流程/);
+  assert.match(guideHtml, /往届升学选手解绑规则/);
+  assert.match(guideHtml, /证书以此字段为准/);
+  assert.equal(
+    guideHtml.match(/href="https:\/\/aerogp\.cn" target="_top"/g)?.length,
+    4,
+    "official site links must escape the embedded iframe"
   );
-  await Promise.all([
+  assert.match(
+    guideHtml,
+    new RegExp(`href="${pptName}"[\\s\\S]*download="${pptName}"`)
+  );
+
+  let previousIndex = -1;
+  for (const [index, imageName] of imageNames.entries()) {
+    const token = `src="${imageName}"`;
+    const currentIndex = guideHtml.indexOf(token);
+    assert.ok(currentIndex > previousIndex, `${imageName} must occur in document order`);
+    assert.equal(
+      guideHtml.split(token).length - 1,
+      1,
+      `${imageName} must occur exactly once`
+    );
+    assert.match(guideHtml, new RegExp(`alt="${imageAlts[index]}"`));
+    previousIndex = currentIndex;
+  }
+
+  const imageStats = await Promise.all(
+    imageNames.map((name) => fs.stat(path.join(guideDir, name)))
+  );
+  for (const [index, stats] of imageStats.entries()) {
+    assert.ok(stats.size > 10_000, `${imageNames[index]} must contain a real guide image`);
+  }
+  const pptStats = await fs.stat(path.join(guideDir, pptName));
+  assert.ok(pptStats.size > 1_000_000, "the downloadable PPT must contain the complete guide");
+
+  for (const legacyName of [
     "00-registration-flow-overview.png",
     "01-entry.png",
     "02-register-account.png",
     "03-login.png",
     "04-submit-registration.png",
     "05-registration-records.png"
-  ].map((name) => fs.access(path.join(guideDir, name))));
+  ]) {
+    await assert.rejects(fs.access(path.join(guideDir, legacyName)));
+  }
 });
 
 test("public pages allow only the official Bilibili player as an external frame", async () => {
