@@ -91,8 +91,12 @@ function challengeHarness({ purpose = PURPOSES.login, readDb, sendCode, generate
       }
       return allowed;
     },
-    async saveChallenge(challenge, { enabled = true } = {}) {
-      if (enabled) stored.set(keyFor(challenge.phone), structuredClone(challenge));
+    async saveChallenge(challenge, { enabled = true, expectedDigest } = {}) {
+      const key = keyFor(challenge.phone);
+      if (expectedDigest && stored.get(key)?.digest !== expectedDigest) return false;
+      if (enabled) stored.set(key, structuredClone(challenge));
+      else stored.delete(key);
+      return true;
     },
     async deleteChallenge({ phone, digest }) {
       const key = keyFor(phone);
@@ -197,9 +201,37 @@ test("a failed older SMS delivery cannot delete a newer challenge", async () => 
   await new Promise((resolve) => setImmediate(resolve));
   harness.advance(61_000);
   await harness.service.request({ phone: "13800000001", ip: "10.0.0.1" });
+  assert.equal(await harness.service.consume({ phone: "13800000001", code: "123456" }), false);
   await harness.runNext();
   rejectOld(new Error("old delivery failed"));
   await oldDispatch;
 
+  assert.equal(await harness.service.consume({ phone: "13800000001", code: "654321" }), true);
+});
+
+test("an older delayed SMS task cannot overwrite or send after a newer request", async () => {
+  let releaseOldRead;
+  let readCount = 0;
+  const oldRead = new Promise((resolve) => { releaseOldRead = resolve; });
+  const harness = challengeHarness({
+    readDb: async () => {
+      readCount += 1;
+      if (readCount === 1) return oldRead;
+      return { users: [{ id: "U1", phone: "13800000001", status: "active" }] };
+    },
+    generateCode: () => "654321"
+  });
+
+  await harness.service.request({ phone: "13800000001", ip: "10.0.0.1" });
+  const oldTask = harness.runNext();
+  await new Promise((resolve) => setImmediate(resolve));
+
+  harness.advance(61_000);
+  await harness.service.request({ phone: "13800000001", ip: "10.0.0.1" });
+  await harness.runNext();
+  releaseOldRead({ users: [{ id: "U1", phone: "13800000001", status: "active" }] });
+  await oldTask;
+
+  assert.equal(harness.sent.length, 1);
   assert.equal(await harness.service.consume({ phone: "13800000001", code: "654321" }), true);
 });

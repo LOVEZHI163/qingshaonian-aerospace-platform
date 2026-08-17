@@ -88,13 +88,15 @@ export function createFileAuthState(filePath) {
         await write(state);
       });
     },
-    saveChallenge(challenge, { enabled = true } = {}) {
+    saveChallenge(challenge, { enabled = true, expectedDigest } = {}) {
       return exclusive(filePath, async () => {
         const state = await read();
         const key = challengeKey(challenge.purpose, challenge.phone);
+        if (expectedDigest && state.challenges[key]?.digest !== expectedDigest) return false;
         if (enabled) state.challenges[key] = { ...challenge, attempts: challenge.attempts || 0 };
         else delete state.challenges[key];
         await write(state);
+        return true;
       });
     },
     deleteChallenge({ purpose, phone, digest }) {
@@ -233,7 +235,22 @@ export function createPostgresAuthState(pool) {
       }
       throw conflict();
     },
-    async saveChallenge(challenge, { enabled = true } = {}) {
+    async saveChallenge(challenge, { enabled = true, expectedDigest } = {}) {
+      if (expectedDigest) {
+        const changed = enabled
+          ? await pool.query(
+            `UPDATE password_reset_challenges
+             SET digest = $3, expires_at = $4::timestamptz, attempts = $5::integer, version = version + 1
+             WHERE purpose = $1 AND phone = $2 AND digest = $6
+             RETURNING phone`,
+            [challenge.purpose, challenge.phone, challenge.digest, new Date(challenge.expiresAt), challenge.attempts || 0, expectedDigest]
+          )
+          : await pool.query(
+            "DELETE FROM password_reset_challenges WHERE purpose = $1 AND phone = $2 AND digest = $3 RETURNING phone",
+            [challenge.purpose, challenge.phone, expectedDigest]
+          );
+        return changed.rowCount === 1;
+      }
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
@@ -249,6 +266,7 @@ export function createPostgresAuthState(pool) {
           [challenge.purpose, challenge.phone, enabled]
         );
         await client.query("COMMIT");
+        return true;
       } catch (error) {
         await client.query("ROLLBACK");
         throw error;

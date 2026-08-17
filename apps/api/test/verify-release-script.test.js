@@ -255,6 +255,16 @@ test("verify-release enforces the runtime API and hashed admin asset contract", 
       }));
       return;
     }
+    if (route === "/api/public/features") {
+      response.setHeader("Content-Type", "application/json");
+      response.end(JSON.stringify({
+        smsLoginEnabled: false,
+        smsPasswordResetEnabled: false,
+        emailPasswordResetEnabled: true,
+        captcha: { enabled: false, region: "cn", prefix: "", scenes: {} }
+      }));
+      return;
+    }
     if (route === "/admin/index.html") {
       response.setHeader("Content-Type", "text/html");
       response.end(mode === "duplicate-asset" ? oneEntry + oneEntry : oneEntry);
@@ -286,10 +296,10 @@ test("verify-release enforces the runtime API and hashed admin asset contract", 
     const successRequests = requests.filter(({ mode }) => mode === "success");
     assert.deepEqual(
       successRequests.map(({ route }) => route),
-      ["/api/system/version", "/admin/index.html", "/admin/assets/index-Ab_cd-12.js"]
+      ["/api/system/version", "/api/public/features", "/admin/index.html", "/admin/assets/index-Ab_cd-12.js"]
     );
     assert.equal(successRequests[0].cacheControl, "no-cache");
-    assert.equal(successRequests[1].query, `?release-check=${expectedRelease}`);
+    assert.equal(successRequests[2].query, `?release-check=${expectedRelease}`);
   });
 
   await t.test("rejects a wrong API release before requesting admin HTML", async () => {

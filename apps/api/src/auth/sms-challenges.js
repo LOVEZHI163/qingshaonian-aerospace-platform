@@ -1,4 +1,4 @@
-import { createHmac, randomInt } from "node:crypto";
+import { createHmac, randomBytes, randomInt } from "node:crypto";
 
 const HOUR_MS = 60 * 60 * 1000;
 const UNIFORM_RESPONSE = Object.freeze({
@@ -50,21 +50,25 @@ export function createSmsChallengeService({
     } catch {}
   }
 
-  async function runBackground(phone, currentTime) {
+  async function runBackground(phone, currentTime, requestDigest) {
     let digest;
     try {
       const db = await readDb();
       const user = await resolveEligibleUser(db, phone);
-      if (!user) return;
+      if (!user) {
+        await authState.deleteChallenge({ purpose, phone, digest: requestDigest });
+        return;
+      }
       const code = generateCode();
       digest = digestCode(secret, purpose, phone, code);
-      await authState.saveChallenge({
+      const saved = await authState.saveChallenge({
         purpose,
         phone,
         digest,
         expiresAt: currentTime + 5 * 60 * 1000,
         attempts: 0
-      });
+      }, { expectedDigest: requestDigest });
+      if (!saved) return;
       await smsProvider.sendCode({ purpose, phone, code });
     } catch {
       safeLog("warn", "SMS authentication dispatch failed");
@@ -91,7 +95,15 @@ export function createSmsChallengeService({
 
       const verified = await verifyHuman({ scene: purpose, captchaVerifyParam });
       if (!verified) throw new SmsChallengeError(422, "人机验证未通过，请重试");
-      schedule(() => runBackground(phone, currentTime));
+      const requestDigest = randomBytes(32).toString("hex");
+      await authState.saveChallenge({
+        purpose,
+        phone,
+        digest: requestDigest,
+        expiresAt: currentTime + 5 * 60 * 1000,
+        attempts: 0
+      });
+      schedule(() => runBackground(phone, currentTime, requestDigest));
       return { ...UNIFORM_RESPONSE };
     },
     async consume({ phone: incomingPhone, code: incomingCode }) {

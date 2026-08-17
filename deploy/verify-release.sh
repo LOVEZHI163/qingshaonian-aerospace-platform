@@ -69,6 +69,7 @@ fetch() {
 
 work_dir="$(mktemp -d "${TMPDIR:-/tmp}/aerogp-release.XXXXXX")"
 version_json="$work_dir/version.json"
+features_json="$work_dir/features.json"
 admin_html="$work_dir/admin.html"
 admin_asset="$work_dir/admin.js"
 
@@ -93,6 +94,14 @@ if [ "$actual_release" != "$expected_release" ]; then
   echo "API release does not match EXPECTED_RELEASE" >&2
   exit 1
 fi
+
+fetch "public features" "$features_json" "$base_url/api/public/features"
+for expected_feature in '"smsLoginEnabled":false' '"smsPasswordResetEnabled":false' '"enabled":false'; do
+  if ! grep -F -- "$expected_feature" "$features_json" >/dev/null; then
+    echo "public features do not match the first-stage disabled SMS configuration" >&2
+    exit 1
+  fi
+done
 
 fetch "admin HTML" "$admin_html" \
   "$base_url/admin/index.html?release-check=$expected_release"

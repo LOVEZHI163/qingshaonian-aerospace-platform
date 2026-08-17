@@ -941,6 +941,7 @@ test("PostgreSQL auth challenge purposes are isolated and conditionally delete o
     const resetDigest = "2".repeat(64);
     const oldDigest = "3".repeat(64);
     const newDigest = "4".repeat(64);
+    const deliveredDigest = "5".repeat(64);
 
     await store.authState.saveChallenge({
       purpose: "sms-login", phone, digest: loginDigest, expiresAt: now + 300_000, attempts: 0
@@ -964,9 +965,15 @@ test("PostgreSQL auth challenge purposes are isolated and conditionally delete o
     await store.authState.saveChallenge({
       purpose: "sms-login", phone, digest: newDigest, expiresAt: now + 300_000, attempts: 0
     });
+    assert.equal(await store.authState.saveChallenge({
+      purpose: "sms-login", phone, digest: oldDigest, expiresAt: now + 300_000, attempts: 0
+    }, { expectedDigest: oldDigest }), false);
+    assert.equal(await store.authState.saveChallenge({
+      purpose: "sms-login", phone, digest: deliveredDigest, expiresAt: now + 300_000, attempts: 0
+    }, { expectedDigest: newDigest }), true);
     await store.authState.deleteChallenge({ purpose: "sms-login", phone, digest: oldDigest });
     assert.equal(await store.authState.consumeChallenge({
-      purpose: "sms-login", phone, digest: newDigest, now, maxAttempts: 5
+      purpose: "sms-login", phone, digest: deliveredDigest, now, maxAttempts: 5
     }), true);
   });
 });

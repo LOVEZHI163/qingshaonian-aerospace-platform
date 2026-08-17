@@ -301,6 +301,9 @@ test("deployment verifier is host-runnable and bounds every HTTP request", async
     .join("\n");
 
   assert.match(executable, /api\/system\/version/);
+  assert.match(executable, /api\/public\/features/);
+  assert.match(executable, /smsLoginEnabled/);
+  assert.match(executable, /smsPasswordResetEnabled/);
   assert.match(executable, /EXPECTED_RELEASE/);
   assert.match(executable, /admin\/index\.html/);
   assert.doesNotMatch(executable, /\bnode\b/);
@@ -317,6 +320,17 @@ test("deployment verifier is host-runnable and bounds every HTTP request", async
     assert.match(executable, new RegExp(`${handler}\\(\\) \\{[\\s\\S]*?cleanup[\\s\\S]*?exit ${status}\\r?\\n\\}`));
   }
   assert.doesNotMatch(executable, /set -[^\r\n]*x/);
+});
+
+test("remote smoke keeps disabled SMS endpoints closed without sending messages", async () => {
+  const smoke = await fs.readFile(path.join(root, "deploy/remote-smoke-test.sh"), "utf8");
+
+  assert.match(smoke, /assert_status "public-features" 200/);
+  assert.match(smoke, /assert_status "sms-login-disabled" 503/);
+  assert.match(smoke, /assert_status "sms-reset-disabled" 503/);
+  assert.match(smoke, /assert_status "email-reset-request" 200/);
+  assert.match(smoke, /smsLoginEnabled/);
+  assert.match(smoke, /smsPasswordResetEnabled/);
 });
 
 test("recommended deployment atomically advances the marker only after both verifiers pass", async () => {

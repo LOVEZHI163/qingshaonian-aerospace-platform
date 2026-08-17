@@ -163,6 +163,31 @@ assert_status "home" 200 "$base_url/"
 assert_status "admin" 200 "$base_url/admin/"
 assert_status "public-home" 200 "$base_url/api/public/home"
 
+assert_status "public-features" 200 "$base_url/api/public/features"
+assert_json_response "public-features"
+if ! json_path 'let input="";process.stdin.on("data",chunk=>input+=chunk).on("end",()=>{const data=JSON.parse(input);if(data.smsLoginEnabled!==false||data.smsPasswordResetEnabled!==false||data.captcha?.enabled!==false)process.exit(2);});' >/dev/null; then
+  echo "public-features did not keep first-stage SMS and captcha disabled" >&2
+  exit 1
+fi
+
+printf '%s' '{"phone":"13800000001","captchaVerifyParam":""}' | \
+assert_status "sms-login-disabled" 503 \
+  -H 'Content-Type: application/json' --data-binary @- \
+  "$base_url/api/auth/sms-login/request"
+assert_json_error "sms-login-disabled"
+
+printf '%s' '{"phone":"13800000001","captchaVerifyParam":""}' | \
+assert_status "sms-reset-disabled" 503 \
+  -H 'Content-Type: application/json' --data-binary @- \
+  "$base_url/api/auth/password-reset/sms/request"
+assert_json_error "sms-reset-disabled"
+
+printf '%s' '{"email":"nobody-smoke@example.invalid","captchaVerifyParam":""}' | \
+assert_status "email-reset-request" 200 \
+  -H 'Content-Type: application/json' --data-binary @- \
+  "$base_url/api/auth/password-reset/email/request"
+assert_json_response "email-reset-request"
+
 event_path="$(json_path 'let input="";process.stdin.on("data",chunk=>input+=chunk).on("end",()=>{const data=JSON.parse(input);const event=data.featuredEvent||(data.concurrentEvents||[])[0];if(event&&event.slug)process.stdout.write("/api/public/events/"+encodeURIComponent(event.slug));});')"
 if test -n "$event_path"; then
   assert_status "public-event" 200 "$base_url$event_path"

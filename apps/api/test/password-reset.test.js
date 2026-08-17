@@ -157,9 +157,13 @@ function serviceHarness({ sendCode, logger } = {}) {
       }
       return allowed;
     },
-    async saveChallenge(challenge, { enabled = true } = {}) {
+    async saveChallenge(challenge, { enabled = true, expectedDigest } = {}) {
       challengePreparations += 1;
-      if (enabled) challengeStore.set(`${challenge.purpose}:${challenge.phone}`, structuredClone(challenge));
+      const key = `${challenge.purpose}:${challenge.phone}`;
+      if (expectedDigest && challengeStore.get(key)?.digest !== expectedDigest) return false;
+      if (enabled) challengeStore.set(key, structuredClone(challenge));
+      else challengeStore.delete(key);
+      return true;
     },
     async deleteChallenge({ purpose, phone, digest }) {
       const key = `${purpose}:${phone}`;
@@ -222,7 +226,7 @@ test("SMS reset request is uniform and stores only a code digest", async () => {
   await new Promise((resolve) => setImmediate(resolve));
 
   assert.deepEqual(known, unknown);
-  assert.equal(harness.challengePreparations(), 1);
+  assert.equal(harness.challengePreparations(), 3);
   assert.deepEqual(harness.sent, [{ purpose: "sms-password-reset", phone: "13800000001", code: "123456" }]);
   const stored = harness.challengeStore.get("sms-password-reset:13800000001");
   assert.equal(stored.digest.length, 64);

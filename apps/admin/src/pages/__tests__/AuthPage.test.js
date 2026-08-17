@@ -144,6 +144,15 @@ describe("AuthPage", () => {
     expect(wrapper.emitted("clear-message")).toHaveLength(1);
   });
 
+  it("renders the login error while the SMS login form is selected", async () => {
+    apiMock.mockResolvedValue({ smsLoginEnabled: true, smsPasswordResetEnabled: false });
+    const wrapper = mount(AuthPage, { props: { loginError: "验证码错误或已过期" } });
+    await flushPromises();
+
+    await wrapper.get('[data-login-method="sms"]').trigger("click");
+    expect(wrapper.get('[data-testid="login-error"]').text()).toContain("验证码错误或已过期");
+  });
+
   it("returns to login after ordinary registration without creating a session", async () => {
     apiMock.mockResolvedValueOnce({ user: { id: "U2" } });
     const wrapper = mount(AuthPage);

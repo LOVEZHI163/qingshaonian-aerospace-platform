@@ -140,6 +140,29 @@ describe("App session integration", () => {
     expect(wrapper.find('[data-testid="event-center-page"]').exists()).toBe(true);
   });
 
+  it("shows an invalid SMS login message inside the SMS form", async () => {
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/public/event") return publicData();
+      if (path === "/api/public/features") return {
+        smsLoginEnabled: true,
+        smsPasswordResetEnabled: false,
+        captcha: { enabled: false, region: "cn", prefix: "", scenes: {} }
+      };
+      return { rows: [] };
+    });
+    session.loginWithSms.mockRejectedValueOnce(new Error("验证码错误或已过期"));
+    const wrapper = mount(App);
+    await flushPromises();
+
+    await wrapper.get('[data-login-method="sms"]').trigger("click");
+    await wrapper.get('[data-testid="sms-login-phone"]').setValue("13800000001");
+    await wrapper.get('[data-testid="sms-login-code"]').setValue("123456");
+    await wrapper.get('[data-auth-form="sms-login"]').trigger("submit");
+    await flushPromises();
+
+    expect(wrapper.get('[data-testid="login-error"]').text()).toContain("验证码错误或已过期");
+  });
+
   it("does not present an event bootstrap failure as a login failure before submission", async () => {
     apiMock.mockImplementation(async (path) => {
       if (path === "/api/public/event") throw new Error("当前赛事尚未配置");
