@@ -34,6 +34,10 @@ test("website data shape fills missing public site collections and default setti
   assert.deepEqual(db.mediaAssets, []);
   assert.deepEqual(db.contentAttachments, []);
   assert.deepEqual(db.organizationEventParticipations, []);
+  assert.deepEqual(db.accountEmailTokens, []);
+  assert.equal(db.users.every((row) => row.email === null), true);
+  assert.equal(db.users.every((row) => row.emailVerifiedAt === null), true);
+  assert.equal(db.users.every((row) => row.emailUpdatedAt === null), true);
   assert.equal(db.registrations.every((row) => "createdByUserId" in row), true);
   assert.equal(db.registrations.every((row) => !("userId" in row)), true);
 });
@@ -58,6 +62,23 @@ test("data store selects file persistence and keeps mutations", async () => {
     const initial = await store.readDb();
     assert.deepEqual(initial, seedDb);
 
+    Object.assign(initial.users[0], {
+      email: "owner@example.com",
+      emailVerifiedAt: "2026-08-17T10:00:00.000Z",
+      emailUpdatedAt: "2026-08-17T10:00:00.000Z"
+    });
+    initial.accountEmailTokens.push({
+      id: "ET1",
+      userId: initial.users[0].id,
+      purpose: "reset_password",
+      targetEmail: "owner@example.com",
+      digest: "a".repeat(64),
+      expiresAt: "2026-08-17T10:10:00.000Z",
+      usedAt: null,
+      requestIp: "127.0.0.1",
+      createdAt: "2026-08-17T10:00:00.000Z"
+    });
+
     initial.users.push({
       id: "UTEST",
       name: "测试用户",
@@ -71,6 +92,9 @@ test("data store selects file persistence and keeps mutations", async () => {
 
     const persisted = await store.readDb();
     assert.equal(persisted.users.at(-1).id, "UTEST");
+    assert.equal(persisted.users[0].email, "owner@example.com");
+    assert.equal(persisted.users[0].emailVerifiedAt, "2026-08-17T10:00:00.000Z");
+    assert.deepEqual(persisted.accountEmailTokens, initial.accountEmailTokens);
     assert.equal(persisted.registrations[0].awardName, "");
   } finally {
     await store.close();

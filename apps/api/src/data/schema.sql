@@ -3,6 +3,9 @@ CREATE TABLE IF NOT EXISTS users (
   name TEXT NOT NULL,
   phone TEXT NOT NULL UNIQUE,
   password TEXT NOT NULL,
+  email TEXT,
+  email_verified_at TIMESTAMPTZ,
+  email_updated_at TIMESTAMPTZ,
   type TEXT NOT NULL,
   status TEXT NOT NULL,
   session_version INTEGER NOT NULL DEFAULT 0,
@@ -13,6 +16,25 @@ CREATE TABLE IF NOT EXISTS users (
   temporary_password_created_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS users_email_unique_idx
+  ON users (LOWER(email))
+  WHERE email IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS account_email_tokens (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  purpose TEXT NOT NULL CHECK (purpose IN ('verify_email', 'reset_password')),
+  target_email TEXT NOT NULL,
+  digest TEXT NOT NULL UNIQUE,
+  expires_at TIMESTAMPTZ NOT NULL,
+  used_at TIMESTAMPTZ,
+  request_ip TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS account_email_tokens_user_purpose_idx
+  ON account_email_tokens (user_id, purpose, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS audit_logs (
   id TEXT PRIMARY KEY,

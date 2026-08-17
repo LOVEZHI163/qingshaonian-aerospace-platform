@@ -215,6 +215,15 @@ async function runMigrations(pool) {
           "CREATE TABLE site_content_import_batches"
         );
       }
+      const accountEmailTokens = await client.query(`
+        SELECT 1 FROM information_schema.tables
+        WHERE table_schema = 'public' AND table_name = 'account_email_tokens'
+      `);
+      if (accountEmailTokens.rowCount > 0) {
+        migration = migration
+          .replace(/CREATE TABLE IF NOT EXISTS account_email_tokens \([\s\S]*?\);\s*/, "")
+          .replace(/CREATE INDEX IF NOT EXISTS account_email_tokens_user_purpose_idx[\s\S]*?;\s*/, "");
+      }
       if (!supportsPlpgsql) {
         migration = migration.replace(/DO \$\$[\s\S]*?END \$\$;/g, "");
         if (name === "007-multi-event-accounts.sql") {
@@ -251,6 +260,10 @@ async function runSchema(pool, { deferMigrationDependentIndexes = false } = {}) 
   if (deferMigrationDependentIndexes) {
     schema = schema.replace(
       /CREATE UNIQUE INDEX IF NOT EXISTS content_posts_source_url_fingerprint_unique[\s\S]*?;\s*/,
+      ""
+    );
+    schema = schema.replace(
+      /CREATE UNIQUE INDEX IF NOT EXISTS users_email_unique_idx[\s\S]*?;\s*/,
       ""
     );
   }
@@ -452,11 +465,12 @@ export function createPostgresStore(pool, { seedOnEmpty = true } = {}) {
     },
     async readDb() {
       const executor = activeContext()?.client || pool;
-      const [events, projects, projectGroups, users, organizations, memberships, organizationEventParticipations, registrations, registrationIdentities, organizationLeaders, organizationLeaderDocuments, organizationLeaderReviews, certificates, certificateImportBatches, certificateImportErrors, organizationDocuments, fileCleanupJournal, auditLogs, siteSettings, eventPublicProfiles, contentPosts, siteContentImportBatches, mediaAssets, contentAttachments, registrationUploadSessions, registrationSubmissionAssets] = await Promise.all([
+      const [events, projects, projectGroups, users, accountEmailTokens, organizations, memberships, organizationEventParticipations, registrations, registrationIdentities, organizationLeaders, organizationLeaderDocuments, organizationLeaderReviews, certificates, certificateImportBatches, certificateImportErrors, organizationDocuments, fileCleanupJournal, auditLogs, siteSettings, eventPublicProfiles, contentPosts, siteContentImportBatches, mediaAssets, contentAttachments, registrationUploadSessions, registrationSubmissionAssets] = await Promise.all([
         executor.query("SELECT * FROM events ORDER BY created_at, id"),
         executor.query("SELECT * FROM projects ORDER BY display_order, id"),
         executor.query("SELECT * FROM project_groups ORDER BY project_id, group_name"),
         executor.query("SELECT * FROM users ORDER BY created_at, id"),
+        executor.query("SELECT * FROM account_email_tokens ORDER BY created_at, id"),
         executor.query("SELECT * FROM organizations ORDER BY created_at, id"),
         executor.query("SELECT * FROM memberships ORDER BY created_at, id"),
         executor.query("SELECT * FROM organization_event_participations ORDER BY organization_id, event_id"),
@@ -530,6 +544,9 @@ export function createPostgresStore(pool, { seedOnEmpty = true } = {}) {
           name: row.name,
           phone: row.phone,
           password: row.password,
+          email: row.email,
+          emailVerifiedAt: row.email_verified_at ? iso(row.email_verified_at) : null,
+          emailUpdatedAt: row.email_updated_at ? iso(row.email_updated_at) : null,
           type: row.type,
           status: row.status,
           sessionVersion: row.session_version,
@@ -538,6 +555,17 @@ export function createPostgresStore(pool, { seedOnEmpty = true } = {}) {
           temporaryPasswordIv: row.temporary_password_iv,
           temporaryPasswordTag: row.temporary_password_tag,
           temporaryPasswordCreatedAt: row.temporary_password_created_at ? iso(row.temporary_password_created_at) : null,
+          createdAt: iso(row.created_at)
+        })),
+        accountEmailTokens: accountEmailTokens.rows.map((row) => ({
+          id: row.id,
+          userId: row.user_id,
+          purpose: row.purpose,
+          targetEmail: row.target_email,
+          digest: row.digest,
+          expiresAt: iso(row.expires_at),
+          usedAt: row.used_at ? iso(row.used_at) : null,
+          requestIp: row.request_ip,
           createdAt: iso(row.created_at)
         })),
         organizations: organizations.rows.map((row) => ({
@@ -910,13 +938,16 @@ export function createPostgresStore(pool, { seedOnEmpty = true } = {}) {
         for (const row of db.users) {
           await client.query(
             `INSERT INTO users
-              (id, name, phone, password, type, status, session_version, must_change_password,
+              (id, name, phone, password, email, email_verified_at, email_updated_at, type, status, session_version, must_change_password,
                temporary_password_ciphertext, temporary_password_iv, temporary_password_tag, temporary_password_created_at, created_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
              ON CONFLICT (id) DO UPDATE SET
                name = EXCLUDED.name,
                phone = EXCLUDED.phone,
                password = EXCLUDED.password,
+               email = EXCLUDED.email,
+               email_verified_at = EXCLUDED.email_verified_at,
+               email_updated_at = EXCLUDED.email_updated_at,
                type = EXCLUDED.type,
                status = EXCLUDED.status,
                session_version = EXCLUDED.session_version,
@@ -927,9 +958,28 @@ export function createPostgresStore(pool, { seedOnEmpty = true } = {}) {
                temporary_password_created_at = EXCLUDED.temporary_password_created_at,
                created_at = EXCLUDED.created_at`,
             [
-              row.id, row.name, row.phone, row.password, row.type, row.status, row.sessionVersion, row.mustChangePassword,
+              row.id, row.name, row.phone, row.password, row.email, row.emailVerifiedAt, row.emailUpdatedAt,
+              row.type, row.status, row.sessionVersion, row.mustChangePassword,
               row.temporaryPasswordCiphertext, row.temporaryPasswordIv, row.temporaryPasswordTag, row.temporaryPasswordCreatedAt, row.createdAt
             ]
+          );
+        }
+
+        for (const row of db.accountEmailTokens) {
+          await client.query(
+            `INSERT INTO account_email_tokens
+              (id, user_id, purpose, target_email, digest, expires_at, used_at, request_ip, created_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+             ON CONFLICT (id) DO UPDATE SET
+               user_id = EXCLUDED.user_id,
+               purpose = EXCLUDED.purpose,
+               target_email = EXCLUDED.target_email,
+               digest = EXCLUDED.digest,
+               expires_at = EXCLUDED.expires_at,
+               used_at = EXCLUDED.used_at,
+               request_ip = EXCLUDED.request_ip,
+               created_at = EXCLUDED.created_at`,
+            [row.id, row.userId, row.purpose, row.targetEmail, row.digest, row.expiresAt, row.usedAt, row.requestIp || "", row.createdAt]
           );
         }
 
@@ -1585,6 +1635,7 @@ export function createPostgresStore(pool, { seedOnEmpty = true } = {}) {
         await deleteMissing(client, "memberships", "id", db.memberships.map((row) => row.id));
         await deleteMissing(client, "organizations", "id", db.organizations.map((row) => row.id));
         await deleteMissing(client, "audit_logs", "id", (db.auditLogs || []).map((row) => row.id));
+        await deleteMissing(client, "account_email_tokens", "id", db.accountEmailTokens.map((row) => row.id));
         await deleteMissing(client, "users", "id", db.users.map((row) => row.id));
 
         await client.query("COMMIT");

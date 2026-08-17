@@ -28,8 +28,16 @@ test("PostgreSQL store creates normalized tables and seeds an empty database", a
       WHERE table_schema = 'public'
     `);
     const tables = new Set(tableRows.rows.map((row) => row.table_name));
-    for (const name of ["users", "organizations", "memberships", "events", "projects", "project_groups", "registrations", "results", "certificates", "certificate_import_batches", "certificate_import_errors", "audit_logs", "auth_rate_buckets", "password_reset_challenges"]) {
+    for (const name of ["users", "organizations", "memberships", "events", "projects", "project_groups", "registrations", "results", "certificates", "certificate_import_batches", "certificate_import_errors", "audit_logs", "auth_rate_buckets", "password_reset_challenges", "account_email_tokens"]) {
       assert.equal(tables.has(name), true, `missing table ${name}`);
+    }
+
+    const userColumns = await pool.query(`
+      SELECT column_name FROM information_schema.columns WHERE table_name = 'users'
+    `);
+    const userNames = new Set(userColumns.rows.map((row) => row.column_name));
+    for (const name of ["email", "email_verified_at", "email_updated_at"]) {
+      assert.equal(userNames.has(name), true, `missing users.${name}`);
     }
 
     const eventColumns = await pool.query(`
@@ -68,6 +76,30 @@ test("PostgreSQL store round-trips temporary-password fields", async () => {
       ...user,
       ...fields
     });
+  });
+});
+
+test("PostgreSQL store round-trips verified emails and account email tokens", async () => {
+  await withStore(async (store) => {
+    const db = await store.readDb();
+    const user = db.users[0];
+    Object.assign(user, {
+      email: "owner@example.com",
+      emailVerifiedAt: "2026-08-17T10:00:00.000Z",
+      emailUpdatedAt: "2026-08-17T10:00:00.000Z"
+    });
+    db.accountEmailTokens.push({
+      id: "ET1", userId: user.id, purpose: "reset_password",
+      targetEmail: "owner@example.com", digest: "a".repeat(64),
+      expiresAt: "2026-08-17T10:10:00.000Z", usedAt: null,
+      requestIp: "127.0.0.1", createdAt: "2026-08-17T10:00:00.000Z"
+    });
+
+    await store.writeDb(db);
+    const restored = await store.readDb();
+
+    assert.equal(restored.users.find((row) => row.id === user.id).email, "owner@example.com");
+    assert.deepEqual(restored.accountEmailTokens, db.accountEmailTokens);
   });
 });
 
