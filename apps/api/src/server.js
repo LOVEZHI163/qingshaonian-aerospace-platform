@@ -53,9 +53,11 @@ const readDb = () => dataStore.readDb();
 const writeDb = (db) => dataStore.writeDb(db);
 const smsProvider = createAliyunSmsProvider(process.env);
 const emailProvider = createEmailProvider(process.env);
-const accountEmailTokenStore = createAccountEmailTokenStore(dataStore.pool
-  ? { pool: dataStore.pool }
-  : { readDb, writeDb, withMutationLock: (handler) => dataStore.withMutationLock(handler) });
+const accountEmailTokenStore = createAccountEmailTokenStore({
+  readDb,
+  writeDb,
+  withMutationLock: (handler) => dataStore.withMutationLock(handler)
+});
 const accountEmailService = createAccountEmailService({
   readDb,
   writeDb,

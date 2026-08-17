@@ -23,6 +23,7 @@ test("account email routes protect binding and expose public reset flow", async 
   const calls = [];
   const service = {
     requestVerification: async (input) => { calls.push(input); return { ok: true }; },
+    inspectVerification: async ({ token }) => token === "verify-good" ? { email: "u@example.com" } : null,
     confirmVerification: async () => ({ ok: true }),
     requestPasswordReset: async () => ({ ok: true, message: "uniform" }),
     inspectPasswordReset: async ({ token }) => token === "good" ? { email: "u@example.com" } : null,
@@ -33,6 +34,9 @@ test("account email routes protect binding and expose public reset flow", async 
     const bound = await fetch(`${base}/api/auth/email/verification/request`, { method: "POST", headers: { "content-type": "application/json", authorization: "test" }, body: JSON.stringify({ email: "u@example.com", currentPassword: "OldPass1" }) });
     assert.equal(bound.status, 200);
     assert.equal(calls[0].userId, "U1");
+    assert.equal((await fetch(`${base}/api/auth/email/verification/verify?token=bad`)).status, 422);
+    assert.equal((await fetch(`${base}/api/auth/email/verification/verify?token=verify-good`)).status, 200);
+    assert.equal((await fetch(`${base}/api/auth/email/verification/confirm`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ token: "verify-good" }) })).status, 200);
     assert.equal((await fetch(`${base}/api/auth/password-reset/email/verify?token=bad`)).status, 422);
     assert.equal((await fetch(`${base}/api/auth/password-reset/email/verify?token=good`)).status, 200);
   });

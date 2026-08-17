@@ -9,7 +9,7 @@ const props = defineProps({
   eventName: { type: String, default: "" },
   loginError: { type: String, default: "" }
 });
-const emit = defineEmits(["login", "clear-message"]);
+const emit = defineEmits(["login", "clear-message", "account-email-action-complete"]);
 const currentView = ref("login");
 const registrationType = ref("ordinary");
 const message = ref("");
@@ -20,6 +20,7 @@ const resetStep = ref("request");
 const linkToken = ref("");
 const linkChecking = ref(false);
 const linkValid = ref(false);
+const emailVerificationConfirmed = ref(false);
 const loginForm = reactive({ phone: "13800000001", password: "123456" });
 const resetForm = reactive({ phone: "", code: "", password: "" });
 const emailResetForm = reactive({ email: "", password: "", confirmation: "" });
@@ -86,6 +87,7 @@ async function confirmEmailPasswordReset() {
     Object.assign(emailResetForm, { email: "", password: "", confirmation: "" });
     window.history.replaceState({}, "", window.location.pathname);
     currentView.value = "login";
+    emit("account-email-action-complete");
     message.value = payload.message || "密码已重置，请登录";
   } catch (error) { showError(error.message); }
 }
@@ -100,14 +102,31 @@ async function inspectEmailLink(view, token) {
       linkValid.value = Boolean(payload.ok);
       if (!linkValid.value) message.value = "该重置链接无效或已经过期，请重新申请。";
     } else {
-      const payload = await api(`/api/auth/email/verification/confirm?token=${encodeURIComponent(token)}`);
-      linkValid.value = Boolean(payload.verified ?? true);
-      message.value = payload.message || "邮箱验证成功，请登录。";
+      const payload = await api(`/api/auth/email/verification/verify?token=${encodeURIComponent(token)}`);
+      linkValid.value = Boolean(payload.ok);
     }
   } catch (error) {
     linkValid.value = false;
     message.value = error.message || "链接无效或已经过期";
   } finally { linkChecking.value = false; }
+}
+
+async function confirmEmailVerification() {
+  message.value = "";
+  try {
+    const payload = await api("/api/auth/email/verification/confirm", {
+      method: "POST",
+      body: JSON.stringify({ token: linkToken.value })
+    });
+    emailVerificationConfirmed.value = true;
+    linkValid.value = false;
+    message.value = payload.message || "邮箱验证成功，现在可以用于找回密码。";
+  } catch (error) { showError(error.message); }
+}
+
+function finishEmailAction() {
+  emit("account-email-action-complete");
+  switchView("login");
 }
 
 onMounted(async () => {
@@ -174,7 +193,7 @@ onMounted(async () => {
         <template v-else><p class="hint">该链接无效、已使用或已经过期，请重新申请。</p><button type="button" class="primary" @click="switchView('forgot')">重新找回密码</button></template>
       </form>
     </section>
-    <section v-else-if="currentView === 'verifyEmail'" class="auth-grid single"><section class="panel auth-panel"><h3>验证邮箱</h3><p class="hint">{{ linkChecking ? '正在验证邮箱链接……' : (linkValid ? '邮箱验证成功，现在可以用于找回密码。' : '验证链接无效或已经过期。') }}</p><button type="button" class="primary" @click="switchView('login')">返回登录</button></section></section>
+    <section v-else-if="currentView === 'verifyEmail'" class="auth-grid single"><section class="panel auth-panel"><h3>验证邮箱</h3><p class="hint">{{ linkChecking ? '正在检查邮箱链接……' : (emailVerificationConfirmed ? '邮箱验证成功，现在可以用于找回密码。' : (linkValid ? '链接有效，请点击按钮确认绑定邮箱。' : '验证链接无效或已经过期。')) }}</p><button v-if="linkValid && !emailVerificationConfirmed" type="button" class="primary" data-testid="confirm-email-verification" @click="confirmEmailVerification">确认验证邮箱</button><button v-else type="button" class="primary" @click="finishEmailAction">返回登录</button></section></section>
     <section v-else class="auth-grid single">
       <section class="panel auth-panel"><h3>无法打开链接</h3><button type="button" class="primary" @click="switchView('login')">返回登录</button></section>
     </section>

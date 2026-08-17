@@ -69,6 +69,11 @@ describe("App session integration", () => {
     });
   });
 
+  it("releases the email action gate after the deep-link flow completes", () => {
+    expect(appSource).toMatch(/const accountEmailActionActive = ref/);
+    expect(appSource).toContain('@account-email-action-complete="accountEmailActionActive = false"');
+  });
+
   it("shows a non-skippable password change before application views", async () => {
     sessionUser.value = { id: "U1", type: "ordinary", mustChangePassword: true };
     const wrapper = mount(App);

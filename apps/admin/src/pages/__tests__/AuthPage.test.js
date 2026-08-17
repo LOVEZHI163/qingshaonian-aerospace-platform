@@ -52,8 +52,27 @@ describe("AuthPage", () => {
     await flushPromises();
 
     expect(apiMock).toHaveBeenCalledWith("/api/auth/password-reset/email/confirm", expect.objectContaining({ method: "POST" }));
+    expect(wrapper.emitted("account-email-action-complete")).toHaveLength(1);
     expect(wrapper.get('[data-auth-form="login"]').exists()).toBe(true);
     expect(wrapper.text()).toContain("密码已重置，请登录");
+  });
+
+  it("checks a verification link before explicit confirmation", async () => {
+    window.history.replaceState({}, "", "/admin/?view=verifyEmail&token=verify-token");
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/public/features") return { emailPasswordResetEnabled: true };
+      if (path.startsWith("/api/auth/email/verification/verify")) return { ok: true, email: "user@example.com" };
+      if (path === "/api/auth/email/verification/confirm") return { message: "邮箱验证成功" };
+      return {};
+    });
+    const wrapper = mount(AuthPage);
+    await flushPromises();
+
+    expect(apiMock).not.toHaveBeenCalledWith("/api/auth/email/verification/confirm", expect.anything());
+    await wrapper.get('[data-testid="confirm-email-verification"]').trigger("click");
+    await flushPromises();
+    expect(apiMock).toHaveBeenCalledWith("/api/auth/email/verification/confirm", expect.objectContaining({ method: "POST" }));
+    expect(wrapper.text()).toContain("邮箱验证成功");
   });
 
   it("uses the official brand identity and separates the current event", () => {

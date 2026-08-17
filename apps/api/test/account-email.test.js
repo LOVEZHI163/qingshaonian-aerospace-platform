@@ -4,10 +4,13 @@ import test from "node:test";
 import { createAccountEmailService, normalizeEmail, UNIFORM_EMAIL_RESET_RESPONSE } from "../src/auth/account-email.js";
 import { createAccountEmailTokenStore } from "../src/data/account-email-tokens.js";
 
-function fixture({ sendFailure = false } = {}) {
+function fixture({ sendFailure = false, verifiedEmail = false } = {}) {
   let state = { users: [{
     id: "U1", name: "用户", phone: "13800000001", password: "OldPass1", type: "ordinary", status: "active",
-    email: null, emailVerifiedAt: null, emailUpdatedAt: null, sessionVersion: 3, mustChangePassword: true,
+    email: verifiedEmail ? "user@example.com" : null,
+    emailVerifiedAt: verifiedEmail ? "2026-08-17T09:00:00.000Z" : null,
+    emailUpdatedAt: verifiedEmail ? "2026-08-17T09:00:00.000Z" : null,
+    sessionVersion: 3, mustChangePassword: true,
     temporaryPasswordCiphertext: "cipher", temporaryPasswordIv: "iv", temporaryPasswordTag: "tag", temporaryPasswordCreatedAt: "2026-08-17T09:00:00.000Z"
   }], accountEmailTokens: [], auditLogs: [] };
   let tail = Promise.resolve();
@@ -72,4 +75,12 @@ test("failed delivery revokes the newly created token", async () => {
   const { service, tokenStore } = fixture({ sendFailure: true });
   await assert.rejects(service.requestVerification({ userId: "U1", currentPassword: "OldPass1", email: "user@example.com", ip: "ip" }), (e) => e.code === "EMAIL_DELIVERY_FAILED");
   assert.equal(await tokenStore.inspect({ digest: "missing", purpose: "verify_email", now: "2026-08-17T10:00:00.000Z" }), null);
+});
+
+test("password reset remains uniform when delivery fails and revokes the token asynchronously", async () => {
+  const { service, db } = fixture({ sendFailure: true, verifiedEmail: true });
+  assert.deepEqual(await service.requestPasswordReset({ email: "unknown@example.com", ip: "ip" }), UNIFORM_EMAIL_RESET_RESPONSE);
+  assert.deepEqual(await service.requestPasswordReset({ email: "user@example.com", ip: "another-ip" }), UNIFORM_EMAIL_RESET_RESPONSE);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(db().accountEmailTokens.length, 0);
 });

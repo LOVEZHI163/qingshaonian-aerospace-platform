@@ -43,7 +43,7 @@ const certificateRegistrationId = ref("");
 const DEEP_LINK_VIEWS = new Set(["overview", "events", "siteContent", "organizations", "leaders", "registration", "registrationRecords", "organizationRecords", "records", "certificates", "users", "organization", "eventCenter", "organizationWorkspace", "myOrganization", "password", "passwordSettings"]);
 const SAFE_EVENT_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 const initialParams = new URLSearchParams(window.location.search);
-const hasAccountEmailActionLink = ["resetPassword", "verifyEmail"].includes(initialParams.get("view")) && Boolean(initialParams.get("token"));
+const accountEmailActionActive = ref(["resetPassword", "verifyEmail"].includes(initialParams.get("view")) && Boolean(initialParams.get("token")));
 const requestedView = DEEP_LINK_VIEWS.has(initialParams.get("view")) ? initialParams.get("view") : "";
 const initialView = requestedView === "records" ? "registrationRecords" : requestedView;
 let initialRoutePending = Boolean(initialView);
@@ -566,7 +566,7 @@ onMounted(async () => {
 
   <div v-else-if="restoring" class="app-loading">正在恢复登录状态…</div>
 
-  <AuthPage v-else-if="hasAccountEmailActionLink || !currentUser" :event-name="eventData.event.name" :login-error="loginMessage" @login="login" @clear-message="loginMessage = ''" />
+  <AuthPage v-else-if="accountEmailActionActive || !currentUser" :event-name="eventData.event.name" :login-error="loginMessage" @login="login" @clear-message="loginMessage = ''" @account-email-action-complete="accountEmailActionActive = false" />
 
   <section v-else-if="currentUser.mustChangePassword" class="auth-shell force-password-shell">
     <PasswordSettingsPage forced :user="currentUser" @changed="passwordChanged" @logout="logout" />

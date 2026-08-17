@@ -100,6 +100,10 @@ export function createAccountEmailService({
         return { ok: true, email: user.email };
       });
     },
+    async inspectVerification({ token }) {
+      const row = await tokenStore.inspect({ digest: digestToken(secret, "verify_email", String(token || "")), purpose: "verify_email", now: nowIso() });
+      return row ? { email: row.targetEmail } : null;
+    },
     async requestPasswordReset({ email: incomingEmail, ip = "unknown" }) {
       if (!emailProvider) throw new AccountEmailError(503, "EMAIL_SERVICE_UNAVAILABLE", "邮箱服务暂未启用");
       let email;
@@ -113,12 +117,8 @@ export function createAccountEmailService({
       if (!user) return { ...UNIFORM_EMAIL_RESET_RESPONSE };
       const token = createToken("reset_password");
       await tokenStore.replace({ userId: user.id, purpose: "reset_password", targetEmail: email, digest: token.digest, expiresAt: new Date(clock() + 10 * 60_000).toISOString(), requestIp: ip, createdAt: nowIso() });
-      try {
-        await emailProvider.sendPasswordReset({ to: email, resetUrl: makeUrl(publicAppUrl, "resetPassword", token.raw), expiresMinutes: 10 });
-      } catch (error) {
-        await tokenStore.revokeUserPurpose(user.id, "reset_password");
-        throw error;
-      }
+      Promise.resolve(emailProvider.sendPasswordReset({ to: email, resetUrl: makeUrl(publicAppUrl, "resetPassword", token.raw), expiresMinutes: 10 }))
+        .catch(() => tokenStore.revokeUserPurpose(user.id, "reset_password").catch(() => {}));
       return { ...UNIFORM_EMAIL_RESET_RESPONSE };
     },
     async inspectPasswordReset({ token }) {
