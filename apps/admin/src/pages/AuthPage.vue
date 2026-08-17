@@ -14,9 +14,15 @@ const currentView = ref("login");
 const registrationType = ref("ordinary");
 const message = ref("");
 const smsPasswordResetEnabled = ref(false);
+const emailPasswordResetEnabled = ref(false);
+const resetMethod = ref("email");
 const resetStep = ref("request");
+const linkToken = ref("");
+const linkChecking = ref(false);
+const linkValid = ref(false);
 const loginForm = reactive({ phone: "13800000001", password: "123456" });
 const resetForm = reactive({ phone: "", code: "", password: "" });
+const emailResetForm = reactive({ email: "", password: "", confirmation: "" });
 
 function showError(error) { message.value = error; }
 function switchView(view) {
@@ -55,9 +61,64 @@ async function confirmPasswordReset() {
   } catch (error) { showError(error.message); }
 }
 
+async function requestEmailPasswordReset() {
+  message.value = "";
+  try {
+    const payload = await api("/api/auth/password-reset/email/request", {
+      method: "POST",
+      body: JSON.stringify({ email: emailResetForm.email })
+    });
+    message.value = payload.message || "如果该邮箱已绑定账号，重置邮件将很快发出，请检查收件箱和垃圾邮件。";
+  } catch (error) { showError(error.message); }
+}
+
+async function confirmEmailPasswordReset() {
+  message.value = "";
+  if (emailResetForm.password !== emailResetForm.confirmation) {
+    message.value = "两次输入的新密码不一致";
+    return;
+  }
+  try {
+    const payload = await api("/api/auth/password-reset/email/confirm", {
+      method: "POST",
+      body: JSON.stringify({ token: linkToken.value, password: emailResetForm.password })
+    });
+    Object.assign(emailResetForm, { email: "", password: "", confirmation: "" });
+    window.history.replaceState({}, "", window.location.pathname);
+    currentView.value = "login";
+    message.value = payload.message || "密码已重置，请登录";
+  } catch (error) { showError(error.message); }
+}
+
+async function inspectEmailLink(view, token) {
+  linkToken.value = token;
+  linkChecking.value = true;
+  currentView.value = view;
+  try {
+    if (view === "resetPassword") {
+      const payload = await api(`/api/auth/password-reset/email/verify?token=${encodeURIComponent(token)}`);
+      linkValid.value = Boolean(payload.ok);
+      if (!linkValid.value) message.value = "该重置链接无效或已经过期，请重新申请。";
+    } else {
+      const payload = await api(`/api/auth/email/verification/confirm?token=${encodeURIComponent(token)}`);
+      linkValid.value = Boolean(payload.verified ?? true);
+      message.value = payload.message || "邮箱验证成功，请登录。";
+    }
+  } catch (error) {
+    linkValid.value = false;
+    message.value = error.message || "链接无效或已经过期";
+  } finally { linkChecking.value = false; }
+}
+
 onMounted(async () => {
-  const features = await api("/api/public/features").catch(() => ({ smsPasswordResetEnabled: false }));
+  const features = await api("/api/public/features").catch(() => ({ smsPasswordResetEnabled: false, emailPasswordResetEnabled: false }));
   smsPasswordResetEnabled.value = Boolean(features.smsPasswordResetEnabled);
+  emailPasswordResetEnabled.value = Boolean(features.emailPasswordResetEnabled);
+  resetMethod.value = emailPasswordResetEnabled.value ? "email" : "sms";
+  const params = new URLSearchParams(window.location.search);
+  const view = params.get("view");
+  const token = params.get("token");
+  if ((view === "resetPassword" || view === "verifyEmail") && token) await inspectEmailLink(view, token);
 });
 </script>
 
@@ -72,7 +133,7 @@ onMounted(async () => {
     </header>
     <nav class="auth-tabs"><button type="button" data-auth-tab="login" :class="{ active: currentView === 'login' }" @click="switchView('login')">登录</button><button type="button" data-auth-tab="register" :class="{ active: currentView === 'register' }" @click="switchView('register')">注册</button></nav>
     <p v-if="message" class="message">{{ message }}</p>
-    <section v-if="currentView === 'login'" class="auth-grid single"><form class="panel auth-panel" data-auth-form="login" @submit.prevent="emit('login', { ...loginForm })"><h3>账号登录</h3><p class="hint">普通用户、组织负责人和赛事管理员均从这里登录。</p><label>手机号<input v-model="loginForm.phone" autocomplete="username" inputmode="tel" @input="clearLoginError" /></label><label>密码<input v-model="loginForm.password" type="password" autocomplete="current-password" :aria-invalid="Boolean(props.loginError)" :aria-describedby="props.loginError ? 'login-error' : undefined" @input="clearLoginError" /><span v-if="props.loginError" id="login-error" class="auth-field-error" data-testid="login-error" role="alert">登录失败：{{ props.loginError }}</span></label><button class="primary">登录</button><button type="button" class="link-button" @click="switchView('forgot')">忘记密码？</button><p class="hint auth-test-accounts">测试账号：普通用户 13800000001 / 123456；组织用户 13800000011 / 123456；管理员 13900000000 / admin123。</p></form></section>
+    <section v-if="currentView === 'login'" class="auth-grid single"><form class="panel auth-panel" data-auth-form="login" @submit.prevent="emit('login', { ...loginForm })"><h3>账号登录</h3><p class="hint">普通用户、组织负责人和赛事管理员均从这里登录。</p><label>手机号<input v-model="loginForm.phone" autocomplete="username" inputmode="tel" @input="clearLoginError" /></label><label>密码<input v-model="loginForm.password" type="password" autocomplete="current-password" :aria-invalid="Boolean(props.loginError)" :aria-describedby="props.loginError ? 'login-error' : undefined" @input="clearLoginError" /><span v-if="props.loginError" id="login-error" class="auth-field-error" data-testid="login-error" role="alert">登录失败：{{ props.loginError }}</span></label><button class="primary">登录</button><button type="button" class="link-button" data-auth-view="forgot" @click="switchView('forgot')">忘记密码？</button><p class="hint auth-test-accounts">测试账号：普通用户 13800000001 / 123456；组织用户 13800000011 / 123456；管理员 13900000000 / admin123。</p></form></section>
     <section v-else-if="currentView === 'register'" class="auth-grid register-flow">
       <section class="panel auth-registration-picker" aria-labelledby="registration-type-title">
         <div><p class="eyebrow">选择账号类型</p><h3 id="registration-type-title">你要注册哪种账号？</h3><p class="hint">账号类型关系到后续可以使用的功能，请按实际身份选择。</p></div>
@@ -84,10 +145,35 @@ onMounted(async () => {
       <OrdinaryRegistrationForm v-if="registrationType === 'ordinary'" @registered="registered" @error="showError" />
       <OrganizationRegistrationForm v-else @registered="registered" @error="showError" />
     </section>
+    <section v-else-if="currentView === 'forgot'" class="auth-grid single">
+      <section class="panel auth-panel">
+        <h3>找回密码</h3>
+        <p class="hint">可通过已验证邮箱的安全链接找回；手机短信功能已启用时也可使用验证码。</p>
+        <div v-if="emailPasswordResetEnabled || smsPasswordResetEnabled" class="auth-tabs" aria-label="找回方式">
+          <button v-if="emailPasswordResetEnabled" type="button" data-reset-method="email" :class="{ active: resetMethod === 'email' }" @click="resetMethod = 'email'; resetStep = 'request'">邮箱链接</button>
+          <button v-if="smsPasswordResetEnabled" type="button" data-reset-method="sms" :class="{ active: resetMethod === 'sms' }" @click="resetMethod = 'sms'; resetStep = 'request'">手机验证码</button>
+        </div>
+        <form v-if="emailPasswordResetEnabled && resetMethod === 'email'" data-testid="email-reset-request" @submit.prevent="requestEmailPasswordReset">
+          <label>已验证邮箱<input v-model.trim="emailResetForm.email" data-testid="reset-email" type="email" autocomplete="email" placeholder="name@example.com" required /></label>
+          <p class="hint">提交后请到邮箱点击重置链接。为保护账号安全，无论邮箱是否存在，页面提示都相同。</p>
+          <button class="primary">发送重置链接</button>
+        </form>
+        <form v-else-if="smsPasswordResetEnabled && resetMethod === 'sms' && resetStep === 'request'" @submit.prevent="requestPasswordReset"><p class="hint">验证码将发送到注册手机号，5 分钟内有效。</p><label>手机号<input v-model="resetForm.phone" placeholder="注册手机号" /></label><button class="primary">发送验证码</button></form>
+        <form v-else-if="smsPasswordResetEnabled && resetMethod === 'sms'" @submit.prevent="confirmPasswordReset"><h4>验证并重置密码</h4><label>手机号<input v-model="resetForm.phone" disabled /></label><label>短信验证码<input v-model="resetForm.code" inputmode="numeric" /></label><label>新密码<input v-model="resetForm.password" type="password" /></label><button class="primary">确认重置</button><button type="button" class="link-button" @click="resetStep = 'request'">重新获取验证码</button></form>
+        <p v-else class="hint">自助找回暂未启用，请联系赛事管理员重置临时密码。</p>
+        <button type="button" class="link-button" @click="switchView('login')">返回登录</button>
+      </section>
+    </section>
+    <section v-else-if="currentView === 'resetPassword'" class="auth-grid single">
+      <form class="panel auth-panel" data-auth-form="email-reset-confirm" @submit.prevent="confirmEmailPasswordReset">
+        <h3>设置新密码</h3><p v-if="linkChecking" class="hint">正在验证重置链接……</p>
+        <template v-else-if="linkValid"><p class="hint">链接验证通过，请设置新的登录密码。</p><label>新密码<input v-model="emailResetForm.password" data-testid="reset-new-password" type="password" autocomplete="new-password" required /></label><label>再次输入新密码<input v-model="emailResetForm.confirmation" data-testid="reset-confirm-password" type="password" autocomplete="new-password" required /></label><button class="primary">确认重置密码</button></template>
+        <template v-else><p class="hint">该链接无效、已使用或已经过期，请重新申请。</p><button type="button" class="primary" @click="switchView('forgot')">重新找回密码</button></template>
+      </form>
+    </section>
+    <section v-else-if="currentView === 'verifyEmail'" class="auth-grid single"><section class="panel auth-panel"><h3>验证邮箱</h3><p class="hint">{{ linkChecking ? '正在验证邮箱链接……' : (linkValid ? '邮箱验证成功，现在可以用于找回密码。' : '验证链接无效或已经过期。') }}</p><button type="button" class="primary" @click="switchView('login')">返回登录</button></section></section>
     <section v-else class="auth-grid single">
-      <form v-if="smsPasswordResetEnabled && resetStep === 'request'" class="panel auth-panel" @submit.prevent="requestPasswordReset"><h3>找回密码</h3><p class="hint">验证码将发送到注册手机号，5 分钟内有效。</p><label>手机号<input v-model="resetForm.phone" placeholder="注册手机号" /></label><button class="primary">发送验证码</button></form>
-      <form v-else-if="smsPasswordResetEnabled" class="panel auth-panel" @submit.prevent="confirmPasswordReset"><h3>验证并重置密码</h3><label>手机号<input v-model="resetForm.phone" disabled /></label><label>短信验证码<input v-model="resetForm.code" inputmode="numeric" /></label><label>新密码<input v-model="resetForm.password" type="password" /></label><button class="primary">确认重置</button><button type="button" class="link-button" @click="resetStep = 'request'">重新获取验证码</button></form>
-      <section v-else class="panel auth-panel"><h3>找回密码</h3><p class="hint">短信找回暂未启用，请联系赛事管理员重置临时密码。</p></section>
+      <section class="panel auth-panel"><h3>无法打开链接</h3><button type="button" class="primary" @click="switchView('login')">返回登录</button></section>
     </section>
   </div>
 </template>

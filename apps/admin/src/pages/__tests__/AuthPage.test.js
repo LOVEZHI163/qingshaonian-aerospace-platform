@@ -8,8 +8,52 @@ import AuthPage from "../AuthPage.vue";
 
 describe("AuthPage", () => {
   beforeEach(() => {
+    window.history.replaceState({}, "", "/admin/");
     apiMock.mockReset();
     apiMock.mockResolvedValue({ smsPasswordResetEnabled: false });
+  });
+
+  it("requests an email password-reset link without revealing account existence", async () => {
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/public/features") return { emailPasswordResetEnabled: true, smsPasswordResetEnabled: true };
+      if (path === "/api/auth/password-reset/email/request") return { message: "如果邮箱已绑定，重置邮件将很快发出" };
+      return {};
+    });
+    const wrapper = mount(AuthPage);
+    await flushPromises();
+    await wrapper.get('[data-auth-view="forgot"]').trigger("click");
+    await wrapper.get('[data-reset-method="email"]').trigger("click");
+    await wrapper.get('[data-testid="reset-email"]').setValue("user@example.com");
+    await wrapper.get('[data-testid="email-reset-request"]').trigger("submit");
+    await flushPromises();
+
+    expect(apiMock).toHaveBeenCalledWith("/api/auth/password-reset/email/request", expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({ email: "user@example.com" })
+    }));
+    expect(wrapper.text()).toContain("如果邮箱已绑定");
+  });
+
+  it("opens a valid email reset link and submits the new password", async () => {
+    window.history.replaceState({}, "", "/admin/?view=resetPassword&token=reset-token");
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/public/features") return { emailPasswordResetEnabled: true };
+      if (path.startsWith("/api/auth/password-reset/email/verify")) return { ok: true };
+      if (path === "/api/auth/password-reset/email/confirm") return { message: "密码已重置，请登录" };
+      return {};
+    });
+    const wrapper = mount(AuthPage);
+    await flushPromises();
+
+    expect(wrapper.get('[data-auth-form="email-reset-confirm"]').exists()).toBe(true);
+    await wrapper.get('[data-testid="reset-new-password"]').setValue("NewPassword123!");
+    await wrapper.get('[data-testid="reset-confirm-password"]').setValue("NewPassword123!");
+    await wrapper.get('[data-auth-form="email-reset-confirm"]').trigger("submit");
+    await flushPromises();
+
+    expect(apiMock).toHaveBeenCalledWith("/api/auth/password-reset/email/confirm", expect.objectContaining({ method: "POST" }));
+    expect(wrapper.get('[data-auth-form="login"]').exists()).toBe(true);
+    expect(wrapper.text()).toContain("密码已重置，请登录");
   });
 
   it("uses the official brand identity and separates the current event", () => {

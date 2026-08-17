@@ -43,6 +43,7 @@ const certificateRegistrationId = ref("");
 const DEEP_LINK_VIEWS = new Set(["overview", "events", "siteContent", "organizations", "leaders", "registration", "registrationRecords", "organizationRecords", "records", "certificates", "users", "organization", "eventCenter", "organizationWorkspace", "myOrganization", "password", "passwordSettings"]);
 const SAFE_EVENT_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 const initialParams = new URLSearchParams(window.location.search);
+const hasAccountEmailActionLink = ["resetPassword", "verifyEmail"].includes(initialParams.get("view")) && Boolean(initialParams.get("token"));
 const requestedView = DEEP_LINK_VIEWS.has(initialParams.get("view")) ? initialParams.get("view") : "";
 const initialView = requestedView === "records" ? "registrationRecords" : requestedView;
 let initialRoutePending = Boolean(initialView);
@@ -565,10 +566,10 @@ onMounted(async () => {
 
   <div v-else-if="restoring" class="app-loading">正在恢复登录状态…</div>
 
-  <AuthPage v-else-if="!currentUser" :event-name="eventData.event.name" :login-error="loginMessage" @login="login" @clear-message="loginMessage = ''" />
+  <AuthPage v-else-if="hasAccountEmailActionLink || !currentUser" :event-name="eventData.event.name" :login-error="loginMessage" @login="login" @clear-message="loginMessage = ''" />
 
   <section v-else-if="currentUser.mustChangePassword" class="auth-shell force-password-shell">
-    <PasswordSettingsPage forced @changed="passwordChanged" @logout="logout" />
+    <PasswordSettingsPage forced :user="currentUser" @changed="passwordChanged" @logout="logout" />
   </section>
 
   <AdminShell v-else-if="currentUser.type === 'admin'" :active="adminActive" @navigate="navigateAdmin">
@@ -612,7 +613,7 @@ onMounted(async () => {
       <OrganizationRegistrationRecordsPage v-else-if="currentView === 'organizationRecords'" @back-to-events="navigateUser('eventCenter')" @access-denied="handleOrganizationBusinessError" />
       <OrganizationConsolePage v-else-if="currentView === 'organization'" @error="handleOrganizationBusinessError" />
       <OrganizationLeadersPage v-else-if="currentUser.type === 'organization' && currentView === 'leaders'" />
-      <PasswordSettingsPage v-else-if="['password', 'passwordSettings'].includes(currentView)" @changed="passwordChanged" />
+      <PasswordSettingsPage v-else-if="['password', 'passwordSettings'].includes(currentView)" :user="currentUser" @changed="passwordChanged" />
     </main>
   </div>
 </template>

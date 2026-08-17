@@ -3,18 +3,40 @@ import { reactive, ref } from "vue";
 
 import { api } from "../lib/api.js";
 
-defineProps({ forced: { type: Boolean, default: false } });
+const props = defineProps({ forced: { type: Boolean, default: false }, user: { type: Object, default: null } });
 const emit = defineEmits(["changed", "logout"]);
 const form = reactive({ currentPassword: "", newPassword: "", confirmPassword: "" });
 const busy = ref(false);
 const error = ref("");
 const success = ref("");
+const emailForm = reactive({ email: "", currentPassword: "" });
+const emailBusy = ref(false);
+const emailMessage = ref("");
+const emailError = ref("");
 
 function validateNewPassword(value) {
   if (value.length < 8) return "密码至少 8 位";
   if (value.length > 64) return "密码最多 64 位";
   if (!/[A-Za-z]/.test(value) || !/\d/.test(value)) return "密码必须同时包含字母和数字";
   return "";
+}
+
+async function bindEmail() {
+  emailBusy.value = true;
+  emailMessage.value = "";
+  emailError.value = "";
+  try {
+    await api("/api/auth/email/verification/request", {
+      method: "POST",
+      body: JSON.stringify({ email: emailForm.email, currentPassword: emailForm.currentPassword })
+    });
+    emailForm.currentPassword = "";
+    emailMessage.value = "验证邮件已发送，请在 30 分钟内点击邮件中的链接。";
+  } catch (cause) {
+    emailError.value = cause.message || "验证邮件发送失败";
+  } finally {
+    emailBusy.value = false;
+  }
 }
 
 async function submit() {
@@ -48,6 +70,7 @@ async function submit() {
 
 <template>
   <section class="password-settings-page" :class="{ 'forced-password-settings': forced }" data-testid="password-settings-page">
+    <header v-if="!forced" class="page-title-row"><div><h2>账号安全</h2><p class="hint">管理登录密码和用于找回密码的验证邮箱。</p></div></header>
     <form class="panel password-settings-form" @submit.prevent="submit">
       <h3>{{ forced ? "首次登录请修改密码" : "修改密码" }}</h3>
       <p class="hint">{{ forced ? "管理员为你设置的是临时密码。修改完成后才能进入系统，不能跳过此步骤。" : "修改成功后，其他设备上的登录会话将失效。" }}</p>
@@ -60,6 +83,16 @@ async function submit() {
       </div>
       <p v-if="error" class="message" role="alert">{{ error }}</p>
       <p v-if="success" class="success-message" role="status">{{ success }}</p>
+    </form>
+    <form v-if="!forced" class="panel password-settings-form" data-action="bind-email" @submit.prevent="bindEmail">
+      <h3>验证邮箱</h3>
+      <p class="hint">{{ props.user?.emailVerified ? `已验证：${props.user.email}` : props.user?.email ? `待重新验证：${props.user.email}` : "尚未绑定邮箱" }}</p>
+      <label>登录手机号<input name="phone" :value="props.user?.phone || ''" readonly /></label>
+      <label>邮箱<input v-model="emailForm.email" name="email" type="email" autocomplete="email" :placeholder="props.user?.email || 'name@example.com'" required /></label>
+      <label>当前密码<input v-model="emailForm.currentPassword" name="emailCurrentPassword" type="password" autocomplete="current-password" required /></label>
+      <button class="primary" :disabled="emailBusy">{{ emailBusy ? "正在发送…" : "发送验证邮件" }}</button>
+      <p v-if="emailError" class="message" role="alert">{{ emailError }}</p>
+      <p v-if="emailMessage" class="success-message" role="status">{{ emailMessage }}</p>
     </form>
   </section>
 </template>
