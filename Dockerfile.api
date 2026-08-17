@@ -5,7 +5,12 @@ COPY package.json package-lock.json ./
 COPY apps/api/package.json apps/api/package.json
 COPY apps/admin/package.json apps/admin/package.json
 COPY apps/web/package.json apps/web/package.json
-RUN npm ci --omit=dev --workspace apps/api
+RUN npm ci \
+  --omit=dev \
+  --workspace apps/api \
+  --registry=https://registry.npmmirror.com \
+  --replace-registry-host=always \
+  --no-audit
 
 FROM m.daocloud.io/docker.io/library/node:22-alpine AS runtime
 

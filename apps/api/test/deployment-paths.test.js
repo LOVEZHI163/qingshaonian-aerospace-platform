@@ -231,6 +231,17 @@ test("API runtime receives the required release identity", async () => {
   assert.equal(apiEnvironment.includes(`RELEASE_SHA: ${"${RELEASE_SHA:?RELEASE_SHA is required}"}`), true);
 });
 
+test("API image installs production dependencies through the mainland registry", async () => {
+  const apiDockerfile = await fs.readFile(path.join(root, "Dockerfile.api"), "utf8");
+
+  assert.match(apiDockerfile, /^RUN npm ci \\\r?$/m);
+  assert.match(apiDockerfile, /^  --omit=dev \\\r?$/m);
+  assert.match(apiDockerfile, /^  --workspace apps\/api \\\r?$/m);
+  assert.match(apiDockerfile, /^  --registry=https:\/\/registry\.npmmirror\.com \\\r?$/m);
+  assert.match(apiDockerfile, /^  --replace-registry-host=always \\\r?$/m);
+  assert.match(apiDockerfile, /^  --no-audit$/m);
+});
+
 test("Web image build receives the required release identity", async () => {
   const [webDockerfile, compose] = await Promise.all([
     fs.readFile(path.join(root, "Dockerfile.web"), "utf8"),
