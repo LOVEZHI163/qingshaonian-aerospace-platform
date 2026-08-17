@@ -8,6 +8,7 @@ import { withSession } from "./helpers/api-client.js";
 
 const passwordResetModule = await import("../src/auth/password-reset.js").catch(() => ({}));
 const smsModule = await import("../src/auth/sms.js").catch(() => ({}));
+const smsChallengesModule = await import("../src/auth/sms-challenges.js").catch(() => ({}));
 
 async function withServer(fn) {
   await withTestServer(fn, { prefix: "aerogp-password-reset-" });
@@ -181,15 +182,22 @@ function serviceHarness({ sendCode, logger } = {}) {
     }
   };
   const smsProvider = { sendCode: sendCode || (async (payload) => { sent.push(payload); }) };
-  const service = passwordResetModule.createSmsPasswordResetService?.({
+  smsProvider.enabled = (purpose) => purpose === "sms-password-reset";
+  const challengeService = smsChallengesModule.createSmsChallengeService({
+    purpose: smsChallengesModule.SMS_PURPOSES.passwordReset,
     secret: "s".repeat(32),
     readDb: async () => structuredClone(db),
-    writeDb: async (next) => { db = structuredClone(next); },
     smsProvider,
     authState,
-    logger: logger || { warn() {}, error() {} },
+    resolveEligibleUser: (database, phone) => database.users.find((user) => user.phone === phone && user.status === "active"),
     clock: () => currentTime,
     generateCode: () => "123456",
+    logger: logger || { warn() {}, error() {} }
+  });
+  const service = passwordResetModule.createSmsPasswordResetService?.({
+    challengeService,
+    readDb: async () => structuredClone(db),
+    writeDb: async (next) => { db = structuredClone(next); },
     clearTemporaryPassword: (user) => {
       user.temporaryPasswordCiphertext = null;
       user.temporaryPasswordIv = null;
@@ -211,9 +219,10 @@ test("SMS reset request is uniform and stores only a code digest", async () => {
   const known = await harness.service.request({ phone: "13800000001", ip: "127.0.0.1" });
   harness.advance(61_000);
   const unknown = await harness.service.request({ phone: "13800000002", ip: "127.0.0.1" });
+  await new Promise((resolve) => setImmediate(resolve));
 
   assert.deepEqual(known, unknown);
-  assert.equal(harness.challengePreparations(), 2);
+  assert.equal(harness.challengePreparations(), 1);
   assert.deepEqual(harness.sent, [{ purpose: "sms-password-reset", phone: "13800000001", code: "123456" }]);
   const stored = harness.challengeStore.get("sms-password-reset:13800000001");
   assert.equal(stored.digest.length, 64);
@@ -258,8 +267,10 @@ test("SMS reset response does not synchronously wait for the provider", async ()
     harness.service.request({ phone: "13800000001", ip: "127.0.0.1" }),
     new Promise((_, reject) => setTimeout(() => reject(new Error("request waited for SMS")), 100))
   ]);
-  assert.equal(dispatched, true);
+  assert.equal(dispatched, false);
   assert.equal(response.ok, true);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(dispatched, true);
 });
 
 test("SMS reset enforces cooldown, hourly phone and IP limits", async () => {
@@ -294,6 +305,7 @@ test("SMS reset confirms once, changes the password, and increments session vers
   assert.equal(typeof passwordResetModule.createSmsPasswordResetService, "function");
   const harness = serviceHarness();
   await harness.service.request({ phone: "13800000001", ip: "127.0.0.1" });
+  await new Promise((resolve) => setImmediate(resolve));
   const result = await harness.service.confirm({ phone: "13800000001", code: "123456", password: "NextPass2" });
 
   assert.deepEqual(result, { ok: true });
@@ -311,11 +323,13 @@ test("SMS reset expires after five minutes and allows at most five checks", asyn
   assert.equal(typeof passwordResetModule.createSmsPasswordResetService, "function");
   const expired = serviceHarness();
   await expired.service.request({ phone: "13800000001", ip: "127.0.0.1" });
+  await new Promise((resolve) => setImmediate(resolve));
   expired.advance(5 * 60 * 1000);
   await assert.rejects(expired.service.confirm({ phone: "13800000001", code: "123456", password: "NextPass2" }), (error) => error.statusCode === 422);
 
   const attempts = serviceHarness();
   await attempts.service.request({ phone: "13800000001", ip: "127.0.0.1" });
+  await new Promise((resolve) => setImmediate(resolve));
   for (let index = 0; index < 5; index += 1) {
     await assert.rejects(attempts.service.confirm({ phone: "13800000001", code: "000000", password: "NextPass2" }), (error) => error.statusCode === 422);
   }
@@ -324,7 +338,7 @@ test("SMS reset expires after five minutes and allows at most five checks", asyn
 
 test("Aliyun SMS provider is disabled without config and maps code to the official request", async () => {
   assert.equal(typeof smsModule.createAliyunSmsProvider, "function");
-  assert.equal(smsModule.createAliyunSmsProvider({}), null);
+  assert.equal(smsModule.createAliyunSmsProvider({}).enabled("sms-password-reset"), false);
 
   const requests = [];
   const client = { sendSms: async (request) => { requests.push(request); return { body: { code: "OK" } }; } };
@@ -332,9 +346,9 @@ test("Aliyun SMS provider is disabled without config and maps code to the offici
     ALIBABA_CLOUD_ACCESS_KEY_ID: "id",
     ALIBABA_CLOUD_ACCESS_KEY_SECRET: "secret",
     ALIYUN_SMS_SIGN_NAME: "航空赛事",
-    ALIYUN_SMS_TEMPLATE_CODE: "SMS_123"
+    ALIYUN_SMS_RESET_TEMPLATE_CODE: "SMS_123"
   }, { client });
-  await provider.sendCode({ phone: "13800000001", code: "123456" });
+  await provider.sendCode({ purpose: "sms-password-reset", phone: "13800000001", code: "123456" });
 
   assert.equal(requests[0].phoneNumbers, "13800000001");
   assert.equal(requests[0].signName, "航空赛事");
@@ -346,9 +360,9 @@ test("Aliyun SMS provider is disabled without config and maps code to the offici
     ALIBABA_CLOUD_ACCESS_KEY_ID: "id",
     ALIBABA_CLOUD_ACCESS_KEY_SECRET: "secret",
     ALIYUN_SMS_SIGN_NAME: "test",
-    ALIYUN_SMS_TEMPLATE_CODE: "SMS_123"
+    ALIYUN_SMS_RESET_TEMPLATE_CODE: "SMS_123"
   }, { client: { sendSms: async () => ({ body: {} }) } });
-  await assert.rejects(rejected.sendCode({ phone: "13800000001", code: "123456" }), /delivery failed/);
+  await assert.rejects(rejected.sendCode({ purpose: "sms-password-reset", phone: "13800000001", code: "123456" }), /delivery failed/);
 });
 
 test("public features reports SMS reset disabled when Aliyun is not configured", async () => {

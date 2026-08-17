@@ -5,6 +5,7 @@ import { createSmsPasswordResetService, sendPasswordResetError } from "./auth/pa
 import { createTemporaryPasswordVault } from "./auth/temporary-passwords.js";
 import { asyncRoute, createSessionMiddleware, requireAdmin, requirePasswordReady, requireUser } from "./auth/session.js";
 import { createAliyunSmsProvider } from "./auth/sms.js";
+import { createSmsChallengeService, SMS_PURPOSES } from "./auth/sms-challenges.js";
 import { createEmailProvider } from "./auth/email-provider.js";
 import { createAccountEmailService } from "./auth/account-email.js";
 import { createDataStore } from "./data/index.js";
@@ -78,12 +79,18 @@ function requireTemporaryPasswordVault() {
   if (!temporaryPasswordVault) throw temporaryPasswordKeyUnavailable();
   return temporaryPasswordVault;
 }
-const smsPasswordReset = createSmsPasswordResetService({
+const smsPasswordResetChallenge = createSmsChallengeService({
+  purpose: SMS_PURPOSES.passwordReset,
   secret: process.env.SESSION_SECRET || "test-session-secret-32-characters",
   readDb,
-  writeDb,
   smsProvider,
   authState: dataStore.authState,
+  resolveEligibleUser: (db, phone) => db.users.find((item) => normalizePhone(item.phone) === phone && item.status === "active")
+});
+const smsPasswordReset = createSmsPasswordResetService({
+  challengeService: smsPasswordResetChallenge,
+  readDb,
+  writeDb,
   withMutationLock: (handler) => dataStore.withMutationLock(handler),
   clearTemporaryPassword: clearUserTemporaryPassword
 });
