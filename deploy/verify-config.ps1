@@ -113,6 +113,24 @@ Require-Match $nginx 'max-age=31536000, immutable' "Hashed assets must be cached
 Require-Match $nginx 'Cache-Control\s+"no-store"' "HTML must not be cached"
 Require-Match $envExample '(?m)^POSTGRES_PASSWORD=' ".env.example must document POSTGRES_PASSWORD"
 Require-NoMatch $envExample '(?m)^BASIC_AUTH_' ".env.example must not document removed Basic Auth variables"
+foreach ($name in @(
+  'ALIYUN_SMS_LOGIN_TEMPLATE_CODE',
+  'ALIYUN_SMS_RESET_TEMPLATE_CODE',
+  'ALIYUN_CAPTCHA_ENABLED',
+  'ALIYUN_CAPTCHA_REGION',
+  'ALIYUN_CAPTCHA_PREFIX',
+  'ALIYUN_CAPTCHA_LOGIN_SCENE_ID',
+  'ALIYUN_CAPTCHA_SMS_RESET_SCENE_ID',
+  'ALIYUN_CAPTCHA_EMAIL_RESET_SCENE_ID'
+)) {
+  Require-Match $envExample "(?m)^$name=" ".env.example must document $name"
+  Require-Match $compose "$name`:\s*\`$\{$name`:-" "Compose must pass $name to the API"
+}
+Require-Match $envExample '(?m)^ALIYUN_CAPTCHA_ENABLED=false$' "Aliyun captcha must default to disabled"
+Require-NoMatch $envExample '(?m)^ALIYUN_SMS_TEMPLATE_CODE=' "The legacy shared SMS template must not be documented"
+Require-NoMatch $compose 'ALIYUN_SMS_TEMPLATE_CODE:' "Compose must not pass the legacy shared SMS template"
+Require-Match $compose 'ALIBABA_CLOUD_ACCESS_KEY_ID:\s*\$\{ALIBABA_CLOUD_ACCESS_KEY_ID:-\}' "Compose must inject the Alibaba Cloud access key id from the environment"
+Require-Match $compose 'ALIBABA_CLOUD_ACCESS_KEY_SECRET:\s*\$\{ALIBABA_CLOUD_ACCESS_KEY_SECRET:-\}' "Compose must inject the Alibaba Cloud access key secret from the environment"
 if ([regex]::Matches($compose, 'image:\s+m\.daocloud\.io/docker\.io/library/postgres:16-alpine').Count -lt 2) {
   $failures.Add("PostgreSQL services must use the project-scoped mainland mirror")
 }

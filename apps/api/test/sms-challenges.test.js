@@ -56,8 +56,18 @@ test("Aliyun SMS exposes purpose feature gates and fails closed on partial base 
   assert.equal(resetOnly.enabled(PURPOSES.passwordReset), true);
 
   assert.throws(() => createAliyunSmsProvider({
-    ALIBABA_CLOUD_ACCESS_KEY_ID: "id"
+    ALIYUN_SMS_LOGIN_TEMPLATE_CODE: "SMS_LOGIN"
   }), /configuration is incomplete/);
+});
+
+test("Aliyun credentials used by other products do not implicitly enable SMS", () => {
+  const provider = createAliyunSmsProvider({
+    ALIBABA_CLOUD_ACCESS_KEY_ID: "shared-mail-id",
+    ALIBABA_CLOUD_ACCESS_KEY_SECRET: "shared-mail-secret"
+  });
+
+  assert.equal(provider.enabled(PURPOSES.login), false);
+  assert.equal(provider.enabled(PURPOSES.passwordReset), false);
 });
 
 function challengeHarness({ purpose = PURPOSES.login, readDb, sendCode, generateCode } = {}) {

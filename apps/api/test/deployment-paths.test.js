@@ -171,13 +171,23 @@ test("deployment passes optional Aliyun SMS configuration without generating cre
     "ALIBABA_CLOUD_ACCESS_KEY_ID",
     "ALIBABA_CLOUD_ACCESS_KEY_SECRET",
     "ALIYUN_SMS_SIGN_NAME",
-    "ALIYUN_SMS_TEMPLATE_CODE"
+    "ALIYUN_SMS_LOGIN_TEMPLATE_CODE",
+    "ALIYUN_SMS_RESET_TEMPLATE_CODE",
+    "ALIYUN_CAPTCHA_ENABLED",
+    "ALIYUN_CAPTCHA_REGION",
+    "ALIYUN_CAPTCHA_PREFIX",
+    "ALIYUN_CAPTCHA_LOGIN_SCENE_ID",
+    "ALIYUN_CAPTCHA_SMS_RESET_SCENE_ID",
+    "ALIYUN_CAPTCHA_EMAIL_RESET_SCENE_ID"
   ];
   for (const name of names) {
-    assert.match(example, new RegExp(`^${name}=$`, "m"));
-    assert.equal(compose.includes(`${name}: ` + "${" + `${name}:-}`), true);
+    assert.match(example, new RegExp(`^${name}=`, "m"));
+    assert.match(compose, new RegExp(`${name}:\\s*\\$\\{${name}:-`));
     assert.equal(bootstrap.includes(name), false);
   }
+  assert.doesNotMatch(example, /^ALIYUN_SMS_TEMPLATE_CODE=/m);
+  assert.doesNotMatch(compose, /ALIYUN_SMS_TEMPLATE_CODE:/);
+  assert.match(example, /^ALIYUN_CAPTCHA_ENABLED=false$/m);
   assert.match(smsSource, /dysmsapi\.aliyuncs\.com/);
 });
 
@@ -190,7 +200,7 @@ test("deployment passes optional Aliyun DirectMail SMTP configuration", async ()
   const optionalNames = ["DIRECTMAIL_SMTP_USER", "DIRECTMAIL_SMTP_PASSWORD", "DIRECTMAIL_FROM"];
   for (const name of optionalNames) {
     assert.match(example, new RegExp(`^${name}=`, "m"));
-    assert.equal(compose.includes(`${name}: ` + "${" + `${name}:-}`), true);
+    assert.match(compose, new RegExp(`${name}:\\s*\\$\\{${name}:-`));
     assert.equal(bootstrap.includes(name), false);
   }
   assert.match(compose, /PUBLIC_APP_URL:\s*https:\/\/aerogp\.cn/);

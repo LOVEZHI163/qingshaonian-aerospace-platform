@@ -596,3 +596,31 @@ CONFIRM_RESTORE=yes docker compose run --rm \
 - Nginx 仅对 `/api/upload-sessions/` 使用 `205m` 请求上限、关闭请求缓冲并设置 300 秒读超时；通用 `/api/` 仍保持较小上限。API 容器环境固定传入 `SUBMISSION_SESSION_TTL_MS=86400000`、`UPLOAD_WARNING_PERCENT=80`、`UPLOAD_CRITICAL_PERCENT=90`。
 - 生产 API 启动时会执行一次已过期临时作品会话清理，并以不阻塞退出的定时器继续执行。清理只处理 `active` 且过期的会话，并且只删除未绑定报名、位于受控目录的文件；删除失败写入 `file_cleanup_journal`，已提交、未过期和已绑定材料不会被该任务删除。
 - 在四个 Compose 服务健康、发布一致性校验完成后，以静默提供的管理员密码运行：`ADMIN_TEST_PASSWORD="$ADMIN_TEST_PASSWORD" BASE_URL=http://127.0.0.1 /bin/sh deploy/remote-smoke-test.sh`。该脚本会生成小 PNG 和短 MP4，复制当前赛事进行隔离验证，覆盖会话、上传、报名绑定、管理员材料汇总和匿名访问拒绝；无论正常结束或中断都会尝试恢复原当前赛事并删除临时赛事、临时账户及文件。脚本不会输出密码、Cookie、响应正文或服务器文件路径。
+# 短信登录、短信找回与人机验证分阶段启用
+
+短信签名、运营商报备和两个验证码模板尚未全部可用时，先保持功能关闭。第一阶段在 `/opt/aerogp/.env` 中使用：
+
+```dotenv
+ALIYUN_SMS_SIGN_NAME=温州市少航科创中心
+ALIYUN_SMS_LOGIN_TEMPLATE_CODE=
+ALIYUN_SMS_RESET_TEMPLATE_CODE=
+ALIYUN_CAPTCHA_ENABLED=false
+ALIYUN_CAPTCHA_REGION=cn
+ALIYUN_CAPTCHA_PREFIX=
+ALIYUN_CAPTCHA_LOGIN_SCENE_ID=
+ALIYUN_CAPTCHA_SMS_RESET_SCENE_ID=
+ALIYUN_CAPTCHA_EMAIL_RESET_SCENE_ID=
+```
+
+保存后执行：
+
+```bash
+cd /opt/aerogp
+docker compose config --quiet
+docker compose up -d --build api web
+curl -fsS https://aerogp.cn/api/public/features
+```
+
+第一阶段应返回 `smsLoginEnabled=false`、`smsPasswordResetEnabled=false`、`captcha.enabled=false`。邮箱安全链接找回保持可用。
+
+运营商报备和两个模板审核通过后，第二阶段再填入专用 RAM AccessKey、签名、登录模板代码与找回模板代码，然后重建 `api` 和 `web`。两个短信模板必须分开，禁止共用旧的 `ALIYUN_SMS_TEMPLATE_CODE`。阿里云验证码 2.0 暂不开启时继续保持 `ALIYUN_CAPTCHA_ENABLED=false`；后续准备好 Prefix 和三个场景 ID 后再单独启用，并重复检查公开功能开关。
