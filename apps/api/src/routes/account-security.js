@@ -26,7 +26,13 @@ export function createAccountSecurityRouter({ service, requireUser, asyncRoute }
     try { res.json(await service.confirmVerification({ token: req.body.token })); } catch (error) { return sendError(error, res); }
   }));
   router.post("/auth/password-reset/email/request", asyncRoute(async (req, res) => {
-    try { res.json(await service.requestPasswordReset({ email: req.body.email, ip: req.ip })); } catch (error) { return sendError(error, res); }
+    try {
+      res.json(await service.requestPasswordReset({
+        email: req.body.email,
+        captchaVerifyParam: req.body.captchaVerifyParam,
+        ip: req.ip
+      }));
+    } catch (error) { return sendError(error, res); }
   }));
   router.get("/auth/password-reset/email/verify", asyncRoute(async (req, res) => {
     const result = await service.inspectPasswordReset({ token: req.query.token });

@@ -6,6 +6,8 @@ import { createTemporaryPasswordVault } from "./auth/temporary-passwords.js";
 import { asyncRoute, createSessionMiddleware, requireAdmin, requirePasswordReady, requireUser } from "./auth/session.js";
 import { createAliyunSmsProvider } from "./auth/sms.js";
 import { createSmsChallengeService, SMS_PURPOSES } from "./auth/sms-challenges.js";
+import { createSmsLoginService, isSmsLoginEligible } from "./auth/sms-login.js";
+import { createHumanVerification } from "./auth/human-verification.js";
 import { createEmailProvider } from "./auth/email-provider.js";
 import { createAccountEmailService } from "./auth/account-email.js";
 import { createDataStore } from "./data/index.js";
@@ -54,6 +56,7 @@ const readDb = () => dataStore.readDb();
 const writeDb = (db) => dataStore.writeDb(db);
 const smsProvider = createAliyunSmsProvider(process.env);
 const emailProvider = createEmailProvider(process.env);
+const humanVerification = createHumanVerification(process.env);
 const accountEmailTokenStore = createAccountEmailTokenStore({
   readDb,
   writeDb,
@@ -67,7 +70,8 @@ const accountEmailService = createAccountEmailService({
   authState: dataStore.authState,
   emailProvider,
   secret: process.env.SESSION_SECRET || "test-session-secret-32-characters",
-  publicAppUrl: process.env.PUBLIC_APP_URL || process.env.VITE_PUBLIC_SITE_URL || "https://aerogp.cn"
+  publicAppUrl: process.env.PUBLIC_APP_URL || process.env.VITE_PUBLIC_SITE_URL || "https://aerogp.cn",
+  verifyHuman: (input) => humanVerification.verify(input)
 });
 let temporaryPasswordVault = null;
 try {
@@ -85,7 +89,8 @@ const smsPasswordResetChallenge = createSmsChallengeService({
   readDb,
   smsProvider,
   authState: dataStore.authState,
-  resolveEligibleUser: (db, phone) => db.users.find((item) => normalizePhone(item.phone) === phone && item.status === "active")
+  resolveEligibleUser: (db, phone) => db.users.find((item) => normalizePhone(item.phone) === phone && item.status === "active"),
+  verifyHuman: (input) => humanVerification.verify(input)
 });
 const smsPasswordReset = createSmsPasswordResetService({
   challengeService: smsPasswordResetChallenge,
@@ -94,6 +99,19 @@ const smsPasswordReset = createSmsPasswordResetService({
   withMutationLock: (handler) => dataStore.withMutationLock(handler),
   clearTemporaryPassword: clearUserTemporaryPassword
 });
+const smsLoginChallenge = createSmsChallengeService({
+  purpose: SMS_PURPOSES.login,
+  secret: process.env.SESSION_SECRET || "test-session-secret-32-characters",
+  readDb,
+  smsProvider,
+  authState: dataStore.authState,
+  resolveEligibleUser: (db, phone) => {
+    const user = db.users.find((item) => normalizePhone(item.phone) === phone);
+    return isSmsLoginEligible(db, user) ? user : null;
+  },
+  verifyHuman: (input) => humanVerification.verify(input)
+});
+const smsLogin = createSmsLoginService({ challengeService: smsLoginChallenge, readDb });
 
 function id(prefix) {
   return `${prefix}${Date.now()}${Math.floor(Math.random() * 1000)}`;
@@ -394,8 +412,31 @@ app.use("/api", createPublicSiteRouter({
 }));
 
 app.get("/api/public/features", (_req, res) => {
-  res.json({ smsPasswordResetEnabled: smsPasswordReset.enabled, emailPasswordResetEnabled: Boolean(emailProvider) });
+  const captchaConfig = humanVerification.publicConfig;
+  res.json({
+    smsLoginEnabled: smsLogin.enabled,
+    smsPasswordResetEnabled: smsPasswordReset.enabled,
+    emailPasswordResetEnabled: Boolean(emailProvider),
+    captcha: {
+      enabled: captchaConfig.enabled,
+      region: captchaConfig.region,
+      prefix: captchaConfig.prefix,
+      scenes: {
+        smsLogin: captchaConfig.scenes[SMS_PURPOSES.login] || "",
+        smsPasswordReset: captchaConfig.scenes[SMS_PURPOSES.passwordReset] || "",
+        emailPasswordReset: captchaConfig.scenes["email-password-reset"] || ""
+      }
+    }
+  });
 });
+
+async function establishLoginSession(req, res, db, user) {
+  await new Promise((resolve, reject) => req.session.regenerate((error) => error ? reject(error) : resolve()));
+  req.session.userId = user.id;
+  req.session.sessionVersion = user.sessionVersion;
+  await new Promise((resolve, reject) => req.session.save((error) => error ? reject(error) : resolve()));
+  return res.json({ user: publicUser(user), organizations: userOrganizations(db, user.id) });
+}
 
 app.post("/api/auth/register", mutationAsyncRoute(async (req, res) => {
   const db = await readDb();
@@ -442,11 +483,28 @@ app.post("/api/auth/login", asyncRoute(async (req, res) => {
   }
   await dataStore.authState.releaseRateLimits(rateKeys, attemptTime);
   const { db, user } = authenticated;
-  await new Promise((resolve, reject) => req.session.regenerate((error) => error ? reject(error) : resolve()));
-  req.session.userId = user.id;
-  req.session.sessionVersion = user.sessionVersion;
-  await new Promise((resolve, reject) => req.session.save((error) => error ? reject(error) : resolve()));
-  res.json({ user: publicUser(user), organizations: userOrganizations(db, user.id) });
+  return establishLoginSession(req, res, db, user);
+}));
+
+app.post("/api/auth/sms-login/request", asyncRoute(async (req, res) => {
+  try {
+    res.json(await smsLogin.request({
+      phone: req.body.phone,
+      captchaVerifyParam: req.body.captchaVerifyParam,
+      ip: req.ip
+    }));
+  } catch (error) {
+    return sendPasswordResetError(error, res);
+  }
+}));
+
+app.post("/api/auth/sms-login/confirm", asyncRoute(async (req, res) => {
+  try {
+    const { db, user } = await smsLogin.confirm(req.body);
+    return establishLoginSession(req, res, db, user);
+  } catch (error) {
+    return sendPasswordResetError(error, res);
+  }
 }));
 
 app.get("/api/auth/me", requireUser, asyncRoute(async (req, res) => {
@@ -486,7 +544,11 @@ app.post("/api/auth/logout", asyncRoute(async (req, res) => {
 
 app.post("/api/auth/password-reset/sms/request", asyncRoute(async (req, res) => {
   try {
-    res.json(await smsPasswordReset.request({ phone: req.body.phone, ip: req.ip }));
+    res.json(await smsPasswordReset.request({
+      phone: req.body.phone,
+      captchaVerifyParam: req.body.captchaVerifyParam,
+      ip: req.ip
+    }));
   } catch (error) {
     return sendPasswordResetError(error, res);
   }

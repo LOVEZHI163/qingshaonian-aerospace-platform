@@ -40,7 +40,8 @@ function makeUrl(publicAppUrl, view, token) {
 export function createAccountEmailService({
   readDb, writeDb, withMutationLock = (handler) => handler(), tokenStore, authState, emailProvider,
   secret, publicAppUrl, clock = Date.now, randomBytes = secureRandomBytes,
-  verifyPassword = defaultVerifyPassword, hashPassword = defaultHashPassword
+  verifyPassword = defaultVerifyPassword, hashPassword = defaultHashPassword,
+  verifyHuman = async () => true
 }) {
   if (!tokenStore || !authState || !secret || !publicAppUrl) throw new Error("Account email service configuration is incomplete");
   const nowIso = () => new Date(clock()).toISOString();
@@ -104,7 +105,7 @@ export function createAccountEmailService({
       const row = await tokenStore.inspect({ digest: digestToken(secret, "verify_email", String(token || "")), purpose: "verify_email", now: nowIso() });
       return row ? { email: row.targetEmail } : null;
     },
-    async requestPasswordReset({ email: incomingEmail, ip = "unknown" }) {
+    async requestPasswordReset({ email: incomingEmail, ip = "unknown", captchaVerifyParam = "" }) {
       if (!emailProvider) throw new AccountEmailError(503, "EMAIL_SERVICE_UNAVAILABLE", "邮箱服务暂未启用");
       let email;
       try { email = normalizeEmail(incomingEmail); } catch { email = "invalid"; }
@@ -112,6 +113,7 @@ export function createAccountEmailService({
         { key: `email-reset:email:${email}`, limit: 5, windowMs: HOUR_MS, cooldownMs: 60_000 },
         { key: `email-reset:ip:${ip}`, limit: 20, windowMs: HOUR_MS }
       ]);
+      await verifyHuman({ scene: "email-password-reset", captchaVerifyParam });
       void (async () => {
         const db = await readDb();
         const user = db.users.find((row) => row.status === "active" && row.emailVerifiedAt && row.email?.toLowerCase() === email);

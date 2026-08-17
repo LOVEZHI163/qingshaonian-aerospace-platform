@@ -25,7 +25,7 @@ test("account email routes protect binding and expose public reset flow", async 
     requestVerification: async (input) => { calls.push(input); return { ok: true }; },
     inspectVerification: async ({ token }) => token === "verify-good" ? { email: "u@example.com" } : null,
     confirmVerification: async () => ({ ok: true }),
-    requestPasswordReset: async () => ({ ok: true, message: "uniform" }),
+    requestPasswordReset: async (input) => { calls.push(input); return { ok: true, message: "uniform" }; },
     inspectPasswordReset: async ({ token }) => token === "good" ? { email: "u@example.com" } : null,
     confirmPasswordReset: async () => ({ ok: true })
   };
@@ -39,5 +39,12 @@ test("account email routes protect binding and expose public reset flow", async 
     assert.equal((await fetch(`${base}/api/auth/email/verification/confirm`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ token: "verify-good" }) })).status, 200);
     assert.equal((await fetch(`${base}/api/auth/password-reset/email/verify?token=bad`)).status, 422);
     assert.equal((await fetch(`${base}/api/auth/password-reset/email/verify?token=good`)).status, 200);
+    const requested = await fetch(`${base}/api/auth/password-reset/email/request`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email: "u@example.com", captchaVerifyParam: "signed-param" })
+    });
+    assert.equal(requested.status, 200);
+    assert.deepEqual(calls.at(-1), { email: "u@example.com", captchaVerifyParam: "signed-param", ip: "::ffff:127.0.0.1" });
   });
 });

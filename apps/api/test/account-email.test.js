@@ -4,7 +4,7 @@ import test from "node:test";
 import { createAccountEmailService, normalizeEmail, UNIFORM_EMAIL_RESET_RESPONSE } from "../src/auth/account-email.js";
 import { createAccountEmailTokenStore } from "../src/data/account-email-tokens.js";
 
-function fixture({ sendFailure = false, verifiedEmail = false, deferredReset = false } = {}) {
+function fixture({ sendFailure = false, verifiedEmail = false, deferredReset = false, verifyHuman = async () => true } = {}) {
   let currentTime = Date.parse("2026-08-17T10:00:00.000Z");
   let tokenCounter = 0;
   let state = { users: [{
@@ -39,10 +39,23 @@ function fixture({ sendFailure = false, verifiedEmail = false, deferredReset = f
     authState: { consumeRateLimits: async () => true }, clock: () => currentTime,
     randomBytes: () => Buffer.alloc(32, ++tokenCounter),
     verifyPassword: async (value, stored) => value === stored,
-    hashPassword: async (value) => `hashed:${value}`
+    hashPassword: async (value) => `hashed:${value}`,
+    verifyHuman
   });
   return { service, sent, db: () => structuredClone(state), tokenStore, resetDeliveries, advanceClock: (ms) => { currentTime += ms; } };
 }
+
+test("email password reset verifies the configured human challenge before account lookup", async () => {
+  const calls = [];
+  const { service, sent } = fixture({
+    verifiedEmail: true,
+    verifyHuman: async (input) => { calls.push(input); return true; }
+  });
+  await service.requestPasswordReset({ email: "user@example.com", ip: "ip", captchaVerifyParam: "signed-param" });
+  assert.deepEqual(calls, [{ scene: "email-password-reset", captchaVerifyParam: "signed-param" }]);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(sent.length, 1);
+});
 
 test("email normalization lowercases and rejects malformed values", () => {
   assert.equal(normalizeEmail(" USER@Example.COM "), "user@example.com");
