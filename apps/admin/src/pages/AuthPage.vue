@@ -118,7 +118,10 @@ onMounted(async () => {
   const params = new URLSearchParams(window.location.search);
   const view = params.get("view");
   const token = params.get("token");
-  if ((view === "resetPassword" || view === "verifyEmail") && token) await inspectEmailLink(view, token);
+  if ((view === "resetPassword" || view === "verifyEmail") && token) {
+    window.history.replaceState({}, "", window.location.pathname);
+    await inspectEmailLink(view, token);
+  }
 });
 </script>
 
