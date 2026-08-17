@@ -80,7 +80,7 @@ export function createAccountEmailService({
       try {
         await emailProvider.sendVerification({ to: email, verifyUrl: makeUrl(publicAppUrl, "verifyEmail", token.raw), expiresMinutes: 30 });
       } catch (error) {
-        await tokenStore.revokeUserPurpose(userId, "verify_email");
+        await tokenStore.revokeDigest(token.digest, "verify_email");
         throw error;
       }
       return { ok: true, message: "验证邮件已发送，请在 30 分钟内完成验证。" };
@@ -112,13 +112,18 @@ export function createAccountEmailService({
         { key: `email-reset:email:${email}`, limit: 5, windowMs: HOUR_MS, cooldownMs: 60_000 },
         { key: `email-reset:ip:${ip}`, limit: 20, windowMs: HOUR_MS }
       ]);
-      const db = await readDb();
-      const user = db.users.find((row) => row.status === "active" && row.emailVerifiedAt && row.email?.toLowerCase() === email);
-      if (!user) return { ...UNIFORM_EMAIL_RESET_RESPONSE };
-      const token = createToken("reset_password");
-      await tokenStore.replace({ userId: user.id, purpose: "reset_password", targetEmail: email, digest: token.digest, expiresAt: new Date(clock() + 10 * 60_000).toISOString(), requestIp: ip, createdAt: nowIso() });
-      Promise.resolve(emailProvider.sendPasswordReset({ to: email, resetUrl: makeUrl(publicAppUrl, "resetPassword", token.raw), expiresMinutes: 10 }))
-        .catch(() => tokenStore.revokeUserPurpose(user.id, "reset_password").catch(() => {}));
+      void (async () => {
+        const db = await readDb();
+        const user = db.users.find((row) => row.status === "active" && row.emailVerifiedAt && row.email?.toLowerCase() === email);
+        if (!user) return;
+        const token = createToken("reset_password");
+        await tokenStore.replace({ userId: user.id, purpose: "reset_password", targetEmail: email, digest: token.digest, expiresAt: new Date(clock() + 10 * 60_000).toISOString(), requestIp: ip, createdAt: nowIso() });
+        try {
+          await emailProvider.sendPasswordReset({ to: email, resetUrl: makeUrl(publicAppUrl, "resetPassword", token.raw), expiresMinutes: 10 });
+        } catch {
+          await tokenStore.revokeDigest(token.digest, "reset_password");
+        }
+      })().catch(() => {});
       return { ...UNIFORM_EMAIL_RESET_RESPONSE };
     },
     async inspectPasswordReset({ token }) {

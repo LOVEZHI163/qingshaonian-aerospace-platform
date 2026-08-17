@@ -52,6 +52,10 @@ async function verifySemantics(store, userId = "U1") {
   assert.equal(await store.consume({ digest: "expired", purpose: "reset_password", now }), null);
   await store.revokeUserPurpose(userId, "verify_email");
   assert.equal(await store.inspect({ digest: "v1", purpose: "verify_email", now }), null);
+  await store.replace({ ...input, purpose: "reset_password", digest: "older" });
+  await store.replace({ ...input, purpose: "reset_password", digest: "newer" });
+  await store.revokeDigest("older", "reset_password");
+  assert.equal((await store.inspect({ digest: "newer", purpose: "reset_password", now })).digest, "newer");
 }
 
 test("file account email token store replaces, expires, separates purpose, and consumes once", async () => {

@@ -77,6 +77,10 @@ export function createAccountEmailTokenStore({ readDb, writeDb, pool, withMutati
       async revokeUserPurpose(userId, purpose) {
         assertPurpose(purpose);
         await pool.query("DELETE FROM account_email_tokens WHERE user_id = $1 AND purpose = $2", [userId, purpose]);
+      },
+      async revokeDigest(digest, purpose) {
+        assertPurpose(purpose);
+        await pool.query("DELETE FROM account_email_tokens WHERE digest = $1 AND purpose = $2", [digest, purpose]);
       }
     };
   }
@@ -115,6 +119,14 @@ export function createAccountEmailTokenStore({ readDb, writeDb, pool, withMutati
       return locked(async () => {
         const db = await readDb();
         db.accountEmailTokens = (db.accountEmailTokens || []).filter((row) => row.userId !== userId || row.purpose !== purpose);
+        await writeDb(db);
+      });
+    },
+    revokeDigest(digest, purpose) {
+      assertPurpose(purpose);
+      return locked(async () => {
+        const db = await readDb();
+        db.accountEmailTokens = (db.accountEmailTokens || []).filter((row) => row.digest !== digest || row.purpose !== purpose);
         await writeDb(db);
       });
     }
