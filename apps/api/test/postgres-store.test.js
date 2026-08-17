@@ -920,16 +920,54 @@ test("PostgreSQL auth state atomically enforces limits and consumes challenges o
     const emptyBuckets = await pool.query("SELECT key FROM auth_rate_buckets WHERE key = $1", ["login:ip:127.0.0.1"]);
     assert.equal(emptyBuckets.rowCount, 0);
 
-    await store.authState.saveChallenge({ phone: "13800000001", digest: "b".repeat(64), expiresAt: now + 300_000 });
+    await store.authState.saveChallenge({ purpose: "sms-password-reset", phone: "13800000001", digest: "b".repeat(64), expiresAt: now + 300_000 });
     const consumed = await Promise.all(states.map((state) => state.consumeChallenge({
-      phone: "13800000001", digest: "b".repeat(64), now, maxAttempts: 5
+      purpose: "sms-password-reset", phone: "13800000001", digest: "b".repeat(64), now, maxAttempts: 5
     })));
     assert.equal(consumed.filter(Boolean).length, 1);
 
-    await peer.saveChallenge({ phone: "13800000002", digest: "c".repeat(64), expiresAt: now + 1 });
-    await store.authState.consumeChallenge({ phone: "13800000003", digest: "d".repeat(64), now: now + 2, maxAttempts: 5 });
+    await peer.saveChallenge({ purpose: "sms-password-reset", phone: "13800000002", digest: "c".repeat(64), expiresAt: now + 1 });
+    await store.authState.consumeChallenge({ purpose: "sms-password-reset", phone: "13800000003", digest: "d".repeat(64), now: now + 2, maxAttempts: 5 });
     const expired = await pool.query("SELECT phone FROM password_reset_challenges WHERE phone = $1", ["13800000002"]);
     assert.equal(expired.rowCount, 0);
+  });
+});
+
+test("PostgreSQL auth challenge purposes are isolated and conditionally delete only the expected digest", async () => {
+  await withStore(async (store) => {
+    const now = Date.parse("2026-08-18T00:00:00.000Z");
+    const phone = "13800000009";
+    const loginDigest = "1".repeat(64);
+    const resetDigest = "2".repeat(64);
+    const oldDigest = "3".repeat(64);
+    const newDigest = "4".repeat(64);
+
+    await store.authState.saveChallenge({
+      purpose: "sms-login", phone, digest: loginDigest, expiresAt: now + 300_000, attempts: 0
+    });
+    await store.authState.saveChallenge({
+      purpose: "sms-password-reset", phone, digest: resetDigest, expiresAt: now + 300_000, attempts: 0
+    });
+    assert.equal(await store.authState.consumeChallenge({
+      purpose: "sms-login", phone, digest: resetDigest, now, maxAttempts: 5
+    }), false);
+    assert.equal(await store.authState.consumeChallenge({
+      purpose: "sms-password-reset", phone, digest: resetDigest, now, maxAttempts: 5
+    }), true);
+    assert.equal(await store.authState.consumeChallenge({
+      purpose: "sms-login", phone, digest: loginDigest, now, maxAttempts: 5
+    }), true);
+
+    await store.authState.saveChallenge({
+      purpose: "sms-login", phone, digest: oldDigest, expiresAt: now + 300_000, attempts: 0
+    });
+    await store.authState.saveChallenge({
+      purpose: "sms-login", phone, digest: newDigest, expiresAt: now + 300_000, attempts: 0
+    });
+    await store.authState.deleteChallenge({ purpose: "sms-login", phone, digest: oldDigest });
+    assert.equal(await store.authState.consumeChallenge({
+      purpose: "sms-login", phone, digest: newDigest, now, maxAttempts: 5
+    }), true);
   });
 });
 

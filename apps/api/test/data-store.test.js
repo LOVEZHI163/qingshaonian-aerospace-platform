@@ -139,7 +139,7 @@ test("file auth state persists rate limits and one-time challenges across store 
     assert.equal(await first.authState.consumeRateLimits([
       { key: "sms:phone:13800000001", limit: 1, windowMs: 60_000 }
     ], now), true);
-    await first.authState.saveChallenge({ phone: "13800000001", digest: "a".repeat(64), expiresAt: now + 300_000 });
+    await first.authState.saveChallenge({ purpose: "sms-password-reset", phone: "13800000001", digest: "a".repeat(64), expiresAt: now + 300_000 });
     await first.close();
 
     const second = createDataStore({ DB_PATH: dbPath });
@@ -157,16 +157,64 @@ test("file auth state persists rate limits and one-time challenges across store 
     ], now)));
     assert.equal(concurrent.filter(Boolean).length, 5);
     assert.equal(await second.authState.consumeChallenge({
-      phone: "13800000001", digest: "a".repeat(64), now: now + 1, maxAttempts: 5
+      purpose: "sms-password-reset", phone: "13800000001", digest: "a".repeat(64), now: now + 1, maxAttempts: 5
     }), true);
     assert.equal(await second.authState.consumeChallenge({
-      phone: "13800000001", digest: "a".repeat(64), now: now + 1, maxAttempts: 5
+      purpose: "sms-password-reset", phone: "13800000001", digest: "a".repeat(64), now: now + 1, maxAttempts: 5
     }), false);
-    await second.authState.saveChallenge({ phone: "13800000002", digest: "c".repeat(64), expiresAt: now + 10 });
-    await second.authState.consumeChallenge({ phone: "13800000003", digest: "d".repeat(64), now: now + 11, maxAttempts: 5 });
+    await second.authState.saveChallenge({ purpose: "sms-password-reset", phone: "13800000002", digest: "c".repeat(64), expiresAt: now + 10 });
+    await second.authState.consumeChallenge({ purpose: "sms-password-reset", phone: "13800000003", digest: "d".repeat(64), now: now + 11, maxAttempts: 5 });
     const cleanedAuth = JSON.parse(await fs.readFile(`${dbPath}.auth.json`, "utf8"));
-    assert.equal("13800000002" in cleanedAuth.challenges, false);
+    assert.equal("sms-password-reset:13800000002" in cleanedAuth.challenges, false);
     await second.close();
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("file auth challenge purposes are isolated and an older failure cannot remove a newer challenge", async () => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "aerogp-auth-purpose-"));
+  const dbPath = path.join(tempDir, "db.json");
+  const now = Date.parse("2026-08-18T00:00:00.000Z");
+  const phone = "13800000001";
+  const loginDigest = "1".repeat(64);
+  const resetDigest = "2".repeat(64);
+  const oldDigest = "3".repeat(64);
+  const newDigest = "4".repeat(64);
+
+  try {
+    const store = createDataStore({ DB_PATH: dbPath });
+    await store.initialize();
+
+    await store.authState.saveChallenge({
+      purpose: "sms-login", phone, digest: loginDigest, expiresAt: now + 300_000, attempts: 0
+    });
+    await store.authState.saveChallenge({
+      purpose: "sms-password-reset", phone, digest: resetDigest, expiresAt: now + 300_000, attempts: 0
+    });
+
+    assert.equal(await store.authState.consumeChallenge({
+      purpose: "sms-login", phone, digest: resetDigest, now, maxAttempts: 5
+    }), false);
+    assert.equal(await store.authState.consumeChallenge({
+      purpose: "sms-password-reset", phone, digest: resetDigest, now, maxAttempts: 5
+    }), true);
+    assert.equal(await store.authState.consumeChallenge({
+      purpose: "sms-login", phone, digest: loginDigest, now, maxAttempts: 5
+    }), true);
+
+    await store.authState.saveChallenge({
+      purpose: "sms-login", phone, digest: oldDigest, expiresAt: now + 300_000, attempts: 0
+    });
+    await store.authState.saveChallenge({
+      purpose: "sms-login", phone, digest: newDigest, expiresAt: now + 300_000, attempts: 0
+    });
+    await store.authState.deleteChallenge({ purpose: "sms-login", phone, digest: oldDigest });
+    assert.equal(await store.authState.consumeChallenge({
+      purpose: "sms-login", phone, digest: newDigest, now, maxAttempts: 5
+    }), true);
+
+    await store.close();
   } finally {
     await fs.rm(tempDir, { recursive: true, force: true });
   }

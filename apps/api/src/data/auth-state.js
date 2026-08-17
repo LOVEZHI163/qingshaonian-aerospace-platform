@@ -12,6 +12,10 @@ function sameDigest(left, right) {
   return expected.length > 0 && expected.length === actual.length && timingSafeEqual(expected, actual);
 }
 
+function challengeKey(purpose, phone) {
+  return `${purpose}:${phone}`;
+}
+
 function exclusive(lockKey, operation) {
   const previous = fileLocks.get(lockKey) || Promise.resolve();
   const current = previous.catch(() => {}).then(operation);
@@ -87,37 +91,40 @@ export function createFileAuthState(filePath) {
     saveChallenge(challenge, { enabled = true } = {}) {
       return exclusive(filePath, async () => {
         const state = await read();
-        if (enabled) state.challenges[challenge.phone] = { ...challenge, attempts: challenge.attempts || 0 };
-        else delete state.challenges[challenge.phone];
+        const key = challengeKey(challenge.purpose, challenge.phone);
+        if (enabled) state.challenges[key] = { ...challenge, attempts: challenge.attempts || 0 };
+        else delete state.challenges[key];
         await write(state);
       });
     },
-    deleteChallenge(phone, digest) {
+    deleteChallenge({ purpose, phone, digest }) {
       return exclusive(filePath, async () => {
         const state = await read();
-        if (!digest || state.challenges[phone]?.digest === digest) delete state.challenges[phone];
+        const key = challengeKey(purpose, phone);
+        if (!digest || state.challenges[key]?.digest === digest) delete state.challenges[key];
         await write(state);
       });
     },
-    consumeChallenge({ phone, digest, now = Date.now(), maxAttempts }) {
+    consumeChallenge({ purpose, phone, digest, now = Date.now(), maxAttempts }) {
       return exclusive(filePath, async () => {
         const state = await read();
         for (const [key, item] of Object.entries(state.challenges)) {
           if (item.expiresAt <= now) delete state.challenges[key];
         }
-        const challenge = state.challenges[phone];
+        const key = challengeKey(purpose, phone);
+        const challenge = state.challenges[key];
         if (!challenge || challenge.expiresAt <= now) {
-          delete state.challenges[phone];
+          delete state.challenges[key];
           await write(state);
           return false;
         }
         if (!sameDigest(challenge.digest, digest)) {
           challenge.attempts = (challenge.attempts || 0) + 1;
-          if (challenge.attempts >= maxAttempts) delete state.challenges[phone];
+          if (challenge.attempts >= maxAttempts) delete state.challenges[key];
           await write(state);
           return false;
         }
-        delete state.challenges[phone];
+        delete state.challenges[key];
         await write(state);
         return true;
       });
@@ -231,13 +238,16 @@ export function createPostgresAuthState(pool) {
       try {
         await client.query("BEGIN");
         await client.query(
-          `INSERT INTO password_reset_challenges (phone, digest, expires_at, attempts)
-           SELECT $1, $2, $3::timestamptz, $4::integer WHERE $5::boolean = TRUE
-           ON CONFLICT (phone) DO UPDATE SET digest = EXCLUDED.digest, expires_at = EXCLUDED.expires_at,
+          `INSERT INTO password_reset_challenges (purpose, phone, digest, expires_at, attempts)
+           SELECT $1, $2, $3, $4::timestamptz, $5::integer WHERE $6::boolean = TRUE
+           ON CONFLICT (purpose, phone) DO UPDATE SET digest = EXCLUDED.digest, expires_at = EXCLUDED.expires_at,
              attempts = EXCLUDED.attempts, version = password_reset_challenges.version + 1`,
-          [challenge.phone, challenge.digest, new Date(challenge.expiresAt), challenge.attempts || 0, enabled]
+          [challenge.purpose, challenge.phone, challenge.digest, new Date(challenge.expiresAt), challenge.attempts || 0, enabled]
         );
-        await client.query("DELETE FROM password_reset_challenges WHERE phone = $1 AND $2::boolean = FALSE", [challenge.phone, enabled]);
+        await client.query(
+          "DELETE FROM password_reset_challenges WHERE purpose = $1 AND phone = $2 AND $3::boolean = FALSE",
+          [challenge.purpose, challenge.phone, enabled]
+        );
         await client.query("COMMIT");
       } catch (error) {
         await client.query("ROLLBACK");
@@ -246,20 +256,26 @@ export function createPostgresAuthState(pool) {
         client.release();
       }
     },
-    async deleteChallenge(phone, digest) {
+    async deleteChallenge({ purpose, phone, digest }) {
       if (digest) {
-        await pool.query("DELETE FROM password_reset_challenges WHERE phone = $1 AND digest = $2", [phone, digest]);
+        await pool.query(
+          "DELETE FROM password_reset_challenges WHERE purpose = $1 AND phone = $2 AND digest = $3",
+          [purpose, phone, digest]
+        );
       } else {
-        await pool.query("DELETE FROM password_reset_challenges WHERE phone = $1", [phone]);
+        await pool.query("DELETE FROM password_reset_challenges WHERE purpose = $1 AND phone = $2", [purpose, phone]);
       }
     },
-    async consumeChallenge({ phone, digest, now = Date.now(), maxAttempts }) {
+    async consumeChallenge({ purpose, phone, digest, now = Date.now(), maxAttempts }) {
       await pool.query("DELETE FROM password_reset_challenges WHERE expires_at <= $1", [new Date(now)]);
       for (let attempt = 0; attempt < MAX_AUTH_STATE_RETRIES; attempt += 1) {
         const client = await pool.connect();
         try {
           await client.query("BEGIN");
-          const result = await client.query("SELECT digest, expires_at, attempts, version FROM password_reset_challenges WHERE phone = $1 FOR UPDATE", [phone]);
+          const result = await client.query(
+            "SELECT digest, expires_at, attempts, version FROM password_reset_challenges WHERE purpose = $1 AND phone = $2 FOR UPDATE",
+            [purpose, phone]
+          );
           const challenge = result.rows[0];
           if (!challenge) {
             await client.query("COMMIT");
@@ -268,18 +284,24 @@ export function createPostgresAuthState(pool) {
           let changed;
           if (!sameDigest(challenge.digest, digest)) {
             if (challenge.attempts + 1 >= maxAttempts) {
-              changed = await client.query("DELETE FROM password_reset_challenges WHERE phone = $1 AND version = $2 RETURNING phone", [phone, challenge.version]);
+              changed = await client.query(
+                "DELETE FROM password_reset_challenges WHERE purpose = $1 AND phone = $2 AND version = $3 RETURNING phone",
+                [purpose, phone, challenge.version]
+              );
             } else {
               changed = await client.query(
-                "UPDATE password_reset_challenges SET attempts = attempts + 1, version = version + 1 WHERE phone = $1 AND version = $2 RETURNING phone",
-                [phone, challenge.version]
+                "UPDATE password_reset_challenges SET attempts = attempts + 1, version = version + 1 WHERE purpose = $1 AND phone = $2 AND version = $3 RETURNING phone",
+                [purpose, phone, challenge.version]
               );
             }
             if (changed.rowCount !== 1) throw conflict();
             await client.query("COMMIT");
             return false;
           }
-          changed = await client.query("DELETE FROM password_reset_challenges WHERE phone = $1 AND version = $2 RETURNING phone", [phone, challenge.version]);
+          changed = await client.query(
+            "DELETE FROM password_reset_challenges WHERE purpose = $1 AND phone = $2 AND version = $3 RETURNING phone",
+            [purpose, phone, challenge.version]
+          );
           if (changed.rowCount !== 1) throw conflict();
           await client.query("COMMIT");
           return true;

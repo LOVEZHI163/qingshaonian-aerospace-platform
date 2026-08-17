@@ -4,6 +4,7 @@ import { hashPassword, validatePassword } from "./passwords.js";
 import { clearUserTemporaryPassword } from "../services/account-passwords.js";
 
 const HOUR_MS = 60 * 60 * 1000;
+const PURPOSE = "sms-password-reset";
 const UNIFORM_RESPONSE = { ok: true, message: "如果该手机号已注册，验证码将发送到该号码" };
 
 class PasswordResetError extends Error {
@@ -16,7 +17,7 @@ class PasswordResetError extends Error {
 const normalizePhone = (value) => String(value || "").replace(/\D/g, "");
 
 function digestCode(secret, phone, code) {
-  return createHmac("sha256", secret).update(`${phone}:${code}`).digest("hex");
+  return createHmac("sha256", secret).update(`${PURPOSE}:${phone}:${code}`).digest("hex");
 }
 
 export function createSmsPasswordResetService({
@@ -41,11 +42,11 @@ export function createSmsPasswordResetService({
 
   function dispatchCode(phone, code, digest) {
     const dispatch = Promise.resolve()
-      .then(() => smsProvider.sendCode({ phone, code }))
+      .then(() => smsProvider.sendCode({ purpose: PURPOSE, phone, code }))
       .catch(async () => {
         safeLog("warn", "SMS password-reset dispatch failed");
         try {
-          await authState.deleteChallenge(phone, digest);
+          await authState.deleteChallenge({ purpose: PURPOSE, phone, digest });
         } catch {
           safeLog("error", "SMS password-reset challenge cleanup failed");
         }
@@ -70,6 +71,7 @@ export function createSmsPasswordResetService({
       const code = generateCode();
       const digest = digestCode(secret, phone, code);
       await authState.saveChallenge({
+        purpose: PURPOSE,
         phone,
         digest,
         expiresAt: currentTime + 5 * 60 * 1000,
@@ -83,6 +85,7 @@ export function createSmsPasswordResetService({
       if (passwordError) throw new PasswordResetError(422, passwordError);
       const phone = normalizePhone(incomingPhone);
       const valid = await authState.consumeChallenge({
+        purpose: PURPOSE,
         phone,
         digest: digestCode(secret, phone, String(incomingCode || "")),
         now: clock(),

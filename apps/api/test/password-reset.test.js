@@ -158,23 +158,25 @@ function serviceHarness({ sendCode, logger } = {}) {
     },
     async saveChallenge(challenge, { enabled = true } = {}) {
       challengePreparations += 1;
-      if (enabled) challengeStore.set(challenge.phone, structuredClone(challenge));
+      if (enabled) challengeStore.set(`${challenge.purpose}:${challenge.phone}`, structuredClone(challenge));
     },
-    async deleteChallenge(phone, digest) {
-      if (!digest || challengeStore.get(phone)?.digest === digest) challengeStore.delete(phone);
+    async deleteChallenge({ purpose, phone, digest }) {
+      const key = `${purpose}:${phone}`;
+      if (!digest || challengeStore.get(key)?.digest === digest) challengeStore.delete(key);
     },
-    async consumeChallenge({ phone, digest, now, maxAttempts }) {
-      const challenge = challengeStore.get(phone);
+    async consumeChallenge({ purpose, phone, digest, now, maxAttempts }) {
+      const key = `${purpose}:${phone}`;
+      const challenge = challengeStore.get(key);
       if (!challenge || challenge.expiresAt <= now) {
-        challengeStore.delete(phone);
+        challengeStore.delete(key);
         return false;
       }
       if (challenge.digest !== digest) {
         challenge.attempts += 1;
-        if (challenge.attempts >= maxAttempts) challengeStore.delete(phone);
+        if (challenge.attempts >= maxAttempts) challengeStore.delete(key);
         return false;
       }
-      challengeStore.delete(phone);
+      challengeStore.delete(key);
       return true;
     }
   };
@@ -212,8 +214,8 @@ test("SMS reset request is uniform and stores only a code digest", async () => {
 
   assert.deepEqual(known, unknown);
   assert.equal(harness.challengePreparations(), 2);
-  assert.deepEqual(harness.sent, [{ phone: "13800000001", code: "123456" }]);
-  const stored = harness.challengeStore.get("13800000001");
+  assert.deepEqual(harness.sent, [{ purpose: "sms-password-reset", phone: "13800000001", code: "123456" }]);
+  const stored = harness.challengeStore.get("sms-password-reset:13800000001");
   assert.equal(stored.digest.length, 64);
   assert.equal(JSON.stringify(stored).includes("123456"), false);
   assert.equal(stored.expiresAt - Date.parse("2026-07-17T00:00:00.000Z"), 5 * 60 * 1000);
@@ -225,7 +227,7 @@ test("SMS provider failures keep the request response uniform and store no chall
   const response = await harness.service.request({ phone: "13800000001", ip: "127.0.0.1" });
   await new Promise((resolve) => setImmediate(resolve));
   assert.deepEqual(response, { ok: true, message: "如果该手机号已注册，验证码将发送到该号码" });
-  assert.equal(harness.challengeStore.has("13800000001"), false);
+  assert.equal(harness.challengeStore.has("sms-password-reset:13800000001"), false);
 });
 
 test("SMS dispatch failures remain handled even when the logger throws", async () => {
@@ -239,7 +241,7 @@ test("SMS dispatch failures remain handled even when the logger throws", async (
     });
     await harness.service.request({ phone: "13800000001", ip: "127.0.0.1" });
     await new Promise((resolve) => setImmediate(resolve));
-    assert.equal(harness.challengeStore.has("13800000001"), false);
+    assert.equal(harness.challengeStore.has("sms-password-reset:13800000001"), false);
     assert.deepEqual(unhandled, []);
   } finally {
     process.removeListener("unhandledRejection", onUnhandled);
@@ -302,7 +304,7 @@ test("SMS reset confirms once, changes the password, and increments session vers
   assert.equal(harness.db().users[0].temporaryPasswordIv, null);
   assert.equal(harness.db().users[0].temporaryPasswordTag, null);
   assert.equal(harness.db().users[0].temporaryPasswordCreatedAt, null);
-  assert.equal(harness.challengeStore.has("13800000001"), false);
+  assert.equal(harness.challengeStore.has("sms-password-reset:13800000001"), false);
 });
 
 test("SMS reset expires after five minutes and allows at most five checks", async () => {
@@ -317,7 +319,7 @@ test("SMS reset expires after five minutes and allows at most five checks", asyn
   for (let index = 0; index < 5; index += 1) {
     await assert.rejects(attempts.service.confirm({ phone: "13800000001", code: "000000", password: "NextPass2" }), (error) => error.statusCode === 422);
   }
-  assert.equal(attempts.challengeStore.has("13800000001"), false);
+  assert.equal(attempts.challengeStore.has("sms-password-reset:13800000001"), false);
 });
 
 test("Aliyun SMS provider is disabled without config and maps code to the official request", async () => {
