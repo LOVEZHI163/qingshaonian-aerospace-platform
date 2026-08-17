@@ -66,4 +66,21 @@ describe("session state", () => {
 
     expect(useSession().accountEvents.value).toEqual([{ event: { id: "E2", slug: "spring-cup" } }]);
   });
+
+  it("establishes the same local session after an SMS login", async () => {
+    apiMock.mockResolvedValue({
+      user: { id: "U2", type: "ordinary", name: "短信用户" },
+      organizations: [{ id: "O2", name: "测试学校" }]
+    });
+
+    const loggedIn = await useSession().loginWithSms({ phone: "13800000001", code: "123456" });
+
+    expect(apiMock).toHaveBeenCalledWith("/api/auth/sms-login/confirm", {
+      method: "POST",
+      body: JSON.stringify({ phone: "13800000001", code: "123456" })
+    });
+    expect(loggedIn).toEqual(expect.objectContaining({ id: "U2" }));
+    expect(useSession().user.value).toEqual(expect.objectContaining({ id: "U2" }));
+    expect(useSession().organizations.value).toEqual([{ id: "O2", name: "测试学校" }]);
+  });
 });

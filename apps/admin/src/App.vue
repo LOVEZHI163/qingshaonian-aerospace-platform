@@ -339,10 +339,10 @@ async function verifyRelease() {
   }
 }
 
-async function login(credentials) {
+async function completeLogin(loginAction, credentials) {
   invalidateAdminEventContextRequests({ clearMessages: true });
   try {
-    const user = await session.login(credentials);
+    const user = await loginAction(credentials);
     invalidateAdminEventContextRequests({ clearMessages: true });
     await loadAccountEvents();
     await loadAdminEventsSafely();
@@ -350,6 +350,14 @@ async function login(credentials) {
   } catch (error) {
     loginMessage.value = error?.message || "登录失败，请稍后重试";
   }
+}
+
+async function login(credentials) {
+  await completeLogin(session.login, credentials);
+}
+
+async function smsLogin(credentials) {
+  await completeLogin(session.loginWithSms, credentials);
 }
 
 async function passwordChanged(user) {
@@ -566,7 +574,7 @@ onMounted(async () => {
 
   <div v-else-if="restoring" class="app-loading">正在恢复登录状态…</div>
 
-  <AuthPage v-else-if="accountEmailActionActive || !currentUser" :event-name="eventData.event.name" :login-error="loginMessage" @login="login" @clear-message="loginMessage = ''" @account-email-action-complete="accountEmailActionActive = false" />
+  <AuthPage v-else-if="accountEmailActionActive || !currentUser" :event-name="eventData.event.name" :login-error="loginMessage" @login="login" @sms-login="smsLogin" @clear-message="loginMessage = ''" @account-email-action-complete="accountEmailActionActive = false" />
 
   <section v-else-if="currentUser.mustChangePassword" class="auth-shell force-password-shell">
     <PasswordSettingsPage forced :user="currentUser" @changed="passwordChanged" @logout="logout" />

@@ -29,9 +29,41 @@ describe("AuthPage", () => {
 
     expect(apiMock).toHaveBeenCalledWith("/api/auth/password-reset/email/request", expect.objectContaining({
       method: "POST",
-      body: JSON.stringify({ email: "user@example.com" })
+      body: JSON.stringify({ email: "user@example.com", captchaVerifyParam: "" })
     }));
     expect(wrapper.text()).toContain("如果邮箱已绑定");
+  });
+
+  it("shows SMS login only when enabled and emits a successful existing-account login", async () => {
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/public/features") return {
+        smsLoginEnabled: true,
+        smsPasswordResetEnabled: true,
+        emailPasswordResetEnabled: true,
+        captcha: { enabled: false, region: "cn", prefix: "", scenes: {} }
+      };
+      if (path === "/api/auth/sms-login/request") return { message: "如果该手机号已注册，验证码将发送到该号码" };
+      return {};
+    });
+    const wrapper = mount(AuthPage);
+    await flushPromises();
+    await wrapper.get('[data-login-method="sms"]').trigger("click");
+    await wrapper.get('[data-testid="sms-login-phone"]').setValue("13800000001");
+    await wrapper.get('[data-testid="sms-login-send"]').trigger("click");
+    await flushPromises();
+    expect(apiMock).toHaveBeenCalledWith("/api/auth/sms-login/request", expect.objectContaining({
+      body: JSON.stringify({ phone: "13800000001", captchaVerifyParam: "" })
+    }));
+    expect(wrapper.text()).toContain("重新发送（60s）");
+    await wrapper.get('[data-testid="sms-login-code"]').setValue("123456");
+    await wrapper.get('[data-auth-form="sms-login"]').trigger("submit");
+    expect(wrapper.emitted("sms-login")).toEqual([[{ phone: "13800000001", code: "123456" }]]);
+  });
+
+  it("keeps SMS login hidden when its feature gate is disabled", async () => {
+    const wrapper = mount(AuthPage);
+    await flushPromises();
+    expect(wrapper.find('[data-login-method="sms"]').exists()).toBe(false);
   });
 
   it("opens a valid email reset link and submits the new password", async () => {

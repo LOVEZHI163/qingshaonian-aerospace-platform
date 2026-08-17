@@ -21,9 +21,16 @@
 .event-state-closed { color: #9f1239; background: #ffe4e6; }
 .event-context-switcher { display: inline-flex; align-items: center; gap: .5rem; font-weight: 600; }
 .event-context-switcher select { min-width: 12rem; }
+.auth-inline-input { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: .65rem; }
+.auth-inline-input input { min-width: 0; }
+.auth-inline-input button { white-space: nowrap; }
+.aliyun-captcha-gate > button { display: none; }
+.aliyun-captcha-gate:empty { display: none; }
 
 @media (max-width: 640px) {
   .event-center-heading { align-items: start; flex-direction: column; }
   .event-context-switcher { align-items: start; flex-direction: column; }
   .event-context-switcher select { width: 100%; }
+  .auth-inline-input { grid-template-columns: 1fr; }
+  .auth-inline-input button { width: 100%; }
 }

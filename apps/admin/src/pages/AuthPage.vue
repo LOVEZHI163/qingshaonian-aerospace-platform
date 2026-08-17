@@ -1,20 +1,23 @@
 <script setup>
-import { onMounted, reactive, ref } from "vue";
+import { onBeforeUnmount, onMounted, reactive, ref } from "vue";
 
 import { api } from "../lib/api.js";
 import OrdinaryRegistrationForm from "../components/OrdinaryRegistrationForm.vue";
 import OrganizationRegistrationForm from "../components/OrganizationRegistrationForm.vue";
+import AliyunCaptchaGate from "../components/AliyunCaptchaGate.vue";
 
 const props = defineProps({
   eventName: { type: String, default: "" },
   loginError: { type: String, default: "" }
 });
-const emit = defineEmits(["login", "clear-message", "account-email-action-complete"]);
+const emit = defineEmits(["login", "sms-login", "clear-message", "account-email-action-complete"]);
 const currentView = ref("login");
 const registrationType = ref("ordinary");
 const message = ref("");
 const smsPasswordResetEnabled = ref(false);
+const smsLoginEnabled = ref(false);
 const emailPasswordResetEnabled = ref(false);
+const loginMethod = ref("password");
 const resetMethod = ref("email");
 const resetStep = ref("request");
 const linkToken = ref("");
@@ -22,8 +25,27 @@ const linkChecking = ref(false);
 const linkValid = ref(false);
 const emailVerificationConfirmed = ref(false);
 const loginForm = reactive({ phone: "13800000001", password: "123456" });
+const smsLoginForm = reactive({ phone: "", code: "" });
 const resetForm = reactive({ phone: "", code: "", password: "" });
 const emailResetForm = reactive({ email: "", password: "", confirmation: "" });
+const sendCountdown = reactive({ login: 0, reset: 0 });
+const captcha = reactive({ enabled: false, region: "cn", prefix: "", scenes: {} });
+const smsLoginCaptcha = ref(null);
+const smsResetCaptcha = ref(null);
+const emailResetCaptcha = ref(null);
+let countdownTimer = null;
+
+function startCountdown(kind) {
+  sendCountdown[kind] = 60;
+  if (countdownTimer) return;
+  countdownTimer = window.setInterval(() => {
+    for (const key of ["login", "reset"]) sendCountdown[key] = Math.max(0, sendCountdown[key] - 1);
+    if (!sendCountdown.login && !sendCountdown.reset) {
+      window.clearInterval(countdownTimer);
+      countdownTimer = null;
+    }
+  }, 1_000);
+}
 
 function showError(error) { message.value = error; }
 function switchView(view) {
@@ -44,8 +66,10 @@ function registered(user) {
 async function requestPasswordReset() {
   message.value = "";
   try {
-    const payload = await api("/api/auth/password-reset/sms/request", { method: "POST", body: JSON.stringify({ phone: resetForm.phone }) });
+    const captchaVerifyParam = await smsResetCaptcha.value?.execute?.() || "";
+    const payload = await api("/api/auth/password-reset/sms/request", { method: "POST", body: JSON.stringify({ phone: resetForm.phone, captchaVerifyParam }) });
     resetStep.value = "confirm";
+    startCountdown("reset");
     message.value = payload.message || "验证码已发送，请在 5 分钟内完成验证";
   } catch (error) { showError(error.message); }
 }
@@ -62,12 +86,36 @@ async function confirmPasswordReset() {
   } catch (error) { showError(error.message); }
 }
 
+async function requestSmsLoginCode() {
+  if (sendCountdown.login) return;
+  message.value = "";
+  try {
+    const captchaVerifyParam = await smsLoginCaptcha.value?.execute?.() || "";
+    const payload = await api("/api/auth/sms-login/request", {
+      method: "POST",
+      body: JSON.stringify({ phone: smsLoginForm.phone, captchaVerifyParam })
+    });
+    startCountdown("login");
+    message.value = payload.message || "如果该手机号已注册，验证码将发送到该号码";
+  } catch (error) { showError(error.message); }
+}
+
+function submitSmsLogin() {
+  message.value = "";
+  if (!/^\d{6}$/.test(smsLoginForm.code)) {
+    message.value = "请输入 6 位短信验证码";
+    return;
+  }
+  emit("sms-login", { phone: smsLoginForm.phone, code: smsLoginForm.code });
+}
+
 async function requestEmailPasswordReset() {
   message.value = "";
   try {
+    const captchaVerifyParam = await emailResetCaptcha.value?.execute?.() || "";
     const payload = await api("/api/auth/password-reset/email/request", {
       method: "POST",
-      body: JSON.stringify({ email: emailResetForm.email })
+      body: JSON.stringify({ email: emailResetForm.email, captchaVerifyParam })
     });
     message.value = payload.message || "如果该邮箱已绑定账号，重置邮件将很快发出，请检查收件箱和垃圾邮件。";
   } catch (error) { showError(error.message); }
@@ -132,7 +180,14 @@ function finishEmailAction() {
 onMounted(async () => {
   const features = await api("/api/public/features").catch(() => ({ smsPasswordResetEnabled: false, emailPasswordResetEnabled: false }));
   smsPasswordResetEnabled.value = Boolean(features.smsPasswordResetEnabled);
+  smsLoginEnabled.value = Boolean(features.smsLoginEnabled);
   emailPasswordResetEnabled.value = Boolean(features.emailPasswordResetEnabled);
+  Object.assign(captcha, {
+    enabled: Boolean(features.captcha?.enabled),
+    region: features.captcha?.region || "cn",
+    prefix: features.captcha?.prefix || "",
+    scenes: features.captcha?.scenes || {}
+  });
   resetMethod.value = emailPasswordResetEnabled.value ? "email" : "sms";
   const params = new URLSearchParams(window.location.search);
   const view = params.get("view");
@@ -141,6 +196,10 @@ onMounted(async () => {
     window.history.replaceState({}, "", window.location.pathname);
     await inspectEmailLink(view, token);
   }
+});
+
+onBeforeUnmount(() => {
+  if (countdownTimer) window.clearInterval(countdownTimer);
 });
 </script>
 
@@ -155,7 +214,7 @@ onMounted(async () => {
     </header>
     <nav class="auth-tabs"><button type="button" data-auth-tab="login" :class="{ active: currentView === 'login' }" @click="switchView('login')">登录</button><button type="button" data-auth-tab="register" :class="{ active: currentView === 'register' }" @click="switchView('register')">注册</button></nav>
     <p v-if="message" class="message">{{ message }}</p>
-    <section v-if="currentView === 'login'" class="auth-grid single"><form class="panel auth-panel" data-auth-form="login" @submit.prevent="emit('login', { ...loginForm })"><h3>账号登录</h3><p class="hint">普通用户、组织负责人和赛事管理员均从这里登录。</p><label>手机号<input v-model="loginForm.phone" autocomplete="username" inputmode="tel" @input="clearLoginError" /></label><label>密码<input v-model="loginForm.password" type="password" autocomplete="current-password" :aria-invalid="Boolean(props.loginError)" :aria-describedby="props.loginError ? 'login-error' : undefined" @input="clearLoginError" /><span v-if="props.loginError" id="login-error" class="auth-field-error" data-testid="login-error" role="alert">登录失败：{{ props.loginError }}</span></label><button class="primary">登录</button><button type="button" class="link-button" data-auth-view="forgot" @click="switchView('forgot')">忘记密码？</button><p class="hint auth-test-accounts">测试账号：普通用户 13800000001 / 123456；组织用户 13800000011 / 123456；管理员 13900000000 / admin123。</p></form></section>
+    <section v-if="currentView === 'login'" class="auth-grid single"><section class="panel auth-panel"><h3>账号登录</h3><p class="hint">普通用户、组织负责人和赛事管理员均从这里登录。</p><div v-if="smsLoginEnabled" class="auth-tabs auth-method-tabs" aria-label="登录方式"><button type="button" data-login-method="password" :class="{ active: loginMethod === 'password' }" @click="loginMethod = 'password'">密码登录</button><button type="button" data-login-method="sms" :class="{ active: loginMethod === 'sms' }" @click="loginMethod = 'sms'">短信验证码登录</button></div><form v-if="loginMethod === 'password'" data-auth-form="login" @submit.prevent="emit('login', { ...loginForm })"><label>手机号<input v-model="loginForm.phone" autocomplete="username" inputmode="tel" @input="clearLoginError" /></label><label>密码<input v-model="loginForm.password" type="password" autocomplete="current-password" :aria-invalid="Boolean(props.loginError)" :aria-describedby="props.loginError ? 'login-error' : undefined" @input="clearLoginError" /><span v-if="props.loginError" id="login-error" class="auth-field-error" data-testid="login-error" role="alert">登录失败：{{ props.loginError }}</span></label><button class="primary">登录</button></form><form v-else data-auth-form="sms-login" @submit.prevent="submitSmsLogin"><label>手机号<input v-model="smsLoginForm.phone" data-testid="sms-login-phone" autocomplete="username" inputmode="tel" required /></label><label>短信验证码<span class="auth-inline-input"><input v-model="smsLoginForm.code" data-testid="sms-login-code" inputmode="numeric" maxlength="6" pattern="[0-9]{6}" required /><button type="button" class="mini" data-testid="sms-login-send" :disabled="Boolean(sendCountdown.login)" @click="requestSmsLoginCode">{{ sendCountdown.login ? `重新发送（${sendCountdown.login}s）` : '获取验证码' }}</button></span></label><AliyunCaptchaGate ref="smsLoginCaptcha" :enabled="captcha.enabled" :region="captcha.region" :prefix="captcha.prefix" :scene-id="captcha.scenes.smsLogin || ''" /><button class="primary">登录</button></form><button type="button" class="link-button" data-auth-view="forgot" @click="switchView('forgot')">忘记密码？</button><p class="hint auth-test-accounts">测试账号：普通用户 13800000001 / 123456；组织用户 13800000011 / 123456；管理员 13900000000 / admin123。</p></section></section>
     <section v-else-if="currentView === 'register'" class="auth-grid register-flow">
       <section class="panel auth-registration-picker" aria-labelledby="registration-type-title">
         <div><p class="eyebrow">选择账号类型</p><h3 id="registration-type-title">你要注册哪种账号？</h3><p class="hint">账号类型关系到后续可以使用的功能，请按实际身份选择。</p></div>
@@ -178,9 +237,10 @@ onMounted(async () => {
         <form v-if="emailPasswordResetEnabled && resetMethod === 'email'" data-testid="email-reset-request" @submit.prevent="requestEmailPasswordReset">
           <label>已验证邮箱<input v-model.trim="emailResetForm.email" data-testid="reset-email" type="email" autocomplete="email" placeholder="name@example.com" required /></label>
           <p class="hint">提交后请到邮箱点击重置链接。为保护账号安全，无论邮箱是否存在，页面提示都相同。</p>
+          <AliyunCaptchaGate ref="emailResetCaptcha" :enabled="captcha.enabled" :region="captcha.region" :prefix="captcha.prefix" :scene-id="captcha.scenes.emailPasswordReset || ''" />
           <button class="primary">发送重置链接</button>
         </form>
-        <form v-else-if="smsPasswordResetEnabled && resetMethod === 'sms' && resetStep === 'request'" @submit.prevent="requestPasswordReset"><p class="hint">验证码将发送到注册手机号，5 分钟内有效。</p><label>手机号<input v-model="resetForm.phone" placeholder="注册手机号" /></label><button class="primary">发送验证码</button></form>
+        <form v-else-if="smsPasswordResetEnabled && resetMethod === 'sms' && resetStep === 'request'" @submit.prevent="requestPasswordReset"><p class="hint">验证码将发送到注册手机号，5 分钟内有效。</p><label>手机号<input v-model="resetForm.phone" placeholder="注册手机号" /></label><AliyunCaptchaGate ref="smsResetCaptcha" :enabled="captcha.enabled" :region="captcha.region" :prefix="captcha.prefix" :scene-id="captcha.scenes.smsPasswordReset || ''" /><button class="primary" :disabled="Boolean(sendCountdown.reset)">{{ sendCountdown.reset ? `重新发送（${sendCountdown.reset}s）` : '发送验证码' }}</button></form>
         <form v-else-if="smsPasswordResetEnabled && resetMethod === 'sms'" @submit.prevent="confirmPasswordReset"><h4>验证并重置密码</h4><label>手机号<input v-model="resetForm.phone" disabled /></label><label>短信验证码<input v-model="resetForm.code" inputmode="numeric" /></label><label>新密码<input v-model="resetForm.password" type="password" /></label><button class="primary">确认重置</button><button type="button" class="link-button" @click="resetStep = 'request'">重新获取验证码</button></form>
         <p v-else class="hint">自助找回暂未启用，请联系赛事管理员重置临时密码。</p>
         <button type="button" class="link-button" @click="switchView('login')">返回登录</button>

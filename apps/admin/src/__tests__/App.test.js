@@ -18,6 +18,7 @@ vi.mock("../state/session.js", async () => {
     restoring: ref(false),
     restore: vi.fn(async () => {}),
     login: vi.fn(),
+    loginWithSms: vi.fn(),
     logout: vi.fn(),
     setUser: vi.fn((user) => { sessionUser.value = user; }),
     clear: vi.fn(() => { sessionUser.value = null; }),
@@ -57,6 +58,7 @@ describe("App session integration", () => {
     session.loadAccountEvents.mockClear();
     session.accountEvents.value = [];
     session.login.mockReset();
+    session.loginWithSms.mockReset();
     session.logout.mockReset();
     session.setUser.mockClear();
     session.clear.mockClear();
@@ -107,6 +109,35 @@ describe("App session integration", () => {
     await flushPromises();
 
     expect(wrapper.get('[data-testid="login-error"]').text()).toContain("手机号或密码错误");
+  });
+
+  it("routes a successful SMS login through the same post-login flow", async () => {
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/public/event") return publicData();
+      if (path === "/api/public/features") return {
+        smsLoginEnabled: true,
+        smsPasswordResetEnabled: false,
+        humanVerification: { enabled: false, region: "cn", prefix: "", scenes: {} }
+      };
+      if (path === "/api/me/events") return { rows: [] };
+      return { rows: [] };
+    });
+    session.loginWithSms.mockImplementationOnce(async () => {
+      const user = { id: "U-SMS", type: "ordinary", name: "短信用户", mustChangePassword: false };
+      sessionUser.value = user;
+      return user;
+    });
+    const wrapper = mount(App);
+    await flushPromises();
+
+    await wrapper.get('[data-login-method="sms"]').trigger("click");
+    await wrapper.get('[data-testid="sms-login-phone"]').setValue("13800000001");
+    await wrapper.get('[data-testid="sms-login-code"]').setValue("123456");
+    await wrapper.get('[data-auth-form="sms-login"]').trigger("submit");
+    await flushPromises();
+
+    expect(session.loginWithSms).toHaveBeenCalledWith({ phone: "13800000001", code: "123456" });
+    expect(wrapper.find('[data-testid="event-center-page"]').exists()).toBe(true);
   });
 
   it("does not present an event bootstrap failure as a login failure before submission", async () => {
