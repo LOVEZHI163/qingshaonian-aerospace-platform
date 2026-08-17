@@ -5,7 +5,10 @@ import { createSmsPasswordResetService, sendPasswordResetError } from "./auth/pa
 import { createTemporaryPasswordVault } from "./auth/temporary-passwords.js";
 import { asyncRoute, createSessionMiddleware, requireAdmin, requirePasswordReady, requireUser } from "./auth/session.js";
 import { createAliyunSmsProvider } from "./auth/sms.js";
+import { createEmailProvider } from "./auth/email-provider.js";
+import { createAccountEmailService } from "./auth/account-email.js";
 import { createDataStore } from "./data/index.js";
+import { createAccountEmailTokenStore } from "./data/account-email-tokens.js";
 import { importLeaderCleanupFallbackJournal } from "./files/cleanup-fallback-journal.js";
 import { createLockedAsyncRoute, createMutationAsyncRoute } from "./data/mutation-lock.js";
 import { createEventsRouter } from "./routes/events.js";
@@ -25,6 +28,7 @@ import { createAccountEventsRouter } from "./routes/account-events.js";
 import { createSystemRouter } from "./routes/system.js";
 import { createSubmissionAssetsRouter } from "./routes/submission-assets.js";
 import { createMembershipsRouter } from "./routes/memberships.js";
+import { createAccountSecurityRouter } from "./routes/account-security.js";
 import { startSubmissionSessionExpiryCleanup } from "./services/submission-assets.js";
 import { registrationContext } from "./services/events.js";
 import { replayFileCleanupJournal } from "./services/organizations.js";
@@ -48,6 +52,20 @@ const lockedAsyncRoute = createLockedAsyncRoute(dataStore);
 const readDb = () => dataStore.readDb();
 const writeDb = (db) => dataStore.writeDb(db);
 const smsProvider = createAliyunSmsProvider(process.env);
+const emailProvider = createEmailProvider(process.env);
+const accountEmailTokenStore = createAccountEmailTokenStore(dataStore.pool
+  ? { pool: dataStore.pool }
+  : { readDb, writeDb, withMutationLock: (handler) => dataStore.withMutationLock(handler) });
+const accountEmailService = createAccountEmailService({
+  readDb,
+  writeDb,
+  withMutationLock: (handler) => dataStore.withMutationLock(handler),
+  tokenStore: accountEmailTokenStore,
+  authState: dataStore.authState,
+  emailProvider,
+  secret: process.env.SESSION_SECRET || "test-session-secret-32-characters",
+  publicAppUrl: process.env.PUBLIC_APP_URL || process.env.VITE_PUBLIC_SITE_URL || "https://aerogp.cn"
+});
 let temporaryPasswordVault = null;
 try {
   temporaryPasswordVault = createTemporaryPasswordVault(process.env.TEMP_PASSWORD_ENCRYPTION_KEY);
@@ -109,6 +127,8 @@ function publicUser(user) {
     id: user.id,
     name: user.name,
     phone: user.phone,
+    email: user.email || null,
+    emailVerified: Boolean(user.emailVerifiedAt),
     type: user.type,
     status: user.status,
     mustChangePassword: Boolean(user.mustChangePassword),
@@ -208,6 +228,7 @@ app.use(asyncRoute(async (req, _res, next) => {
   }
   next();
 }));
+app.use("/api", createAccountSecurityRouter({ service: accountEmailService, requireUser, asyncRoute }));
 app.use("/api", createOrganizationsRouter({
   store: dataStore,
   requireUser,
@@ -364,7 +385,7 @@ app.use("/api", createPublicSiteRouter({
 }));
 
 app.get("/api/public/features", (_req, res) => {
-  res.json({ smsPasswordResetEnabled: smsPasswordReset.enabled });
+  res.json({ smsPasswordResetEnabled: smsPasswordReset.enabled, emailPasswordResetEnabled: Boolean(emailProvider) });
 });
 
 app.post("/api/auth/register", mutationAsyncRoute(async (req, res) => {
