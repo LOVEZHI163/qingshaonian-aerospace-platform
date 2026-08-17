@@ -181,6 +181,23 @@ test("deployment passes optional Aliyun SMS configuration without generating cre
   assert.match(smsSource, /dysmsapi\.aliyuncs\.com/);
 });
 
+test("deployment passes optional Aliyun DirectMail SMTP configuration", async () => {
+  const [example, compose, bootstrap] = await Promise.all([
+    fs.readFile(path.join(root, ".env.example"), "utf8"),
+    fs.readFile(path.join(root, "compose.yaml"), "utf8"),
+    fs.readFile(path.join(root, "deploy/bootstrap-secrets.sh"), "utf8")
+  ]);
+  const optionalNames = ["DIRECTMAIL_SMTP_USER", "DIRECTMAIL_SMTP_PASSWORD", "DIRECTMAIL_FROM"];
+  for (const name of optionalNames) {
+    assert.match(example, new RegExp(`^${name}=`, "m"));
+    assert.equal(compose.includes(`${name}: ` + "${" + `${name}:-}`), true);
+    assert.equal(bootstrap.includes(name), false);
+  }
+  assert.match(compose, /PUBLIC_APP_URL:\s*https:\/\/aerogp\.cn/);
+  assert.match(compose, /DIRECTMAIL_SMTP_HOST:\s*\$\{DIRECTMAIL_SMTP_HOST:-smtpdm\.aliyun\.com\}/);
+  assert.match(compose, /DIRECTMAIL_SMTP_PORT:\s*\$\{DIRECTMAIL_SMTP_PORT:-465\}/);
+});
+
 test("deployment publishes the canonical public origin without treating it as a secret", async () => {
   const [compose, webDockerfile] = await Promise.all([
     fs.readFile(path.join(root, "compose.yaml"), "utf8"),

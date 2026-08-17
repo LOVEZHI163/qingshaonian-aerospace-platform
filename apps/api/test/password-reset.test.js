@@ -353,7 +353,7 @@ test("public features reports SMS reset disabled when Aliyun is not configured",
   await withServer(async ({ baseUrl }) => {
     const features = await fetch(`${baseUrl}/api/public/features`);
     assert.equal(features.status, 200);
-    assert.deepEqual(await features.json(), { smsPasswordResetEnabled: false });
+    assert.deepEqual(await features.json(), { smsPasswordResetEnabled: false, emailPasswordResetEnabled: false });
 
     const request = await fetch(`${baseUrl}/api/auth/password-reset/sms/request`, {
       method: "POST",
