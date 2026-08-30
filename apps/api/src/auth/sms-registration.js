@@ -16,6 +16,7 @@ export class SmsRegistrationError extends Error {
 
 const expiredVerification = () => new SmsRegistrationError(422, "手机号验证已过期，请重新验证");
 const invalidCode = () => new SmsRegistrationError(422, "验证码无效或已过期");
+const unavailable = () => new SmsRegistrationError(503, "短信验证暂未启用");
 
 function signingKey(secret) {
   return createHmac("sha256", secret)
@@ -98,12 +99,18 @@ export function createSmsRegistrationService({
 }) {
   if (!challengeService) throw new Error("challengeService is required");
 
+  function requireEnabled() {
+    if (!challengeService.enabled) throw unavailable();
+  }
+
   return {
     enabled: challengeService.enabled,
     request(input) {
+      requireEnabled();
       return challengeService.request(input);
     },
     async confirm({ phone, code }) {
+      requireEnabled();
       const normalized = normalizePhone(phone);
       if (!await challengeService.consume({ phone: normalized, code })) throw invalidCode();
       const db = await readDb();
@@ -116,6 +123,7 @@ export function createSmsRegistrationService({
       });
     },
     verify({ phone, phoneVerificationToken }) {
+      requireEnabled();
       return verifyPhoneRegistrationToken({
         phone,
         phoneVerificationToken,

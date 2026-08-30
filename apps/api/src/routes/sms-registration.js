@@ -7,9 +7,27 @@ const REQUEST_ACCEPTED = Object.freeze({
 
 const asyncRoute = (handler) => (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
 
+const SAFE_STATUS_BY_MESSAGE = new Map([
+  ["短信验证暂未启用", 503],
+  ["手机号格式无效", 422],
+  ["请求过于频繁，请稍后再试", 429],
+  ["人机验证未通过，请重试", 422],
+  ["验证码无效或已过期", 422],
+  ["手机号验证已过期，请重新验证", 422]
+]);
+
+function internalError() {
+  return Object.assign(new Error("SMS registration failed"), {
+    code: "SMS_REGISTRATION_FAILED"
+  });
+}
+
 function sendError(error, res, next) {
-  if (!Number.isInteger(error?.statusCode)) return next(error);
-  return res.status(error.statusCode).json({ error: error.message });
+  const safeStatus = SAFE_STATUS_BY_MESSAGE.get(error?.message);
+  if (safeStatus !== undefined && safeStatus === error?.statusCode) {
+    return res.status(safeStatus).json({ error: error.message });
+  }
+  return next(internalError());
 }
 
 export function createSmsRegistrationRouter({ smsRegistration }) {

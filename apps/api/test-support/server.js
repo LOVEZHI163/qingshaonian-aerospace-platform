@@ -32,7 +32,8 @@ function waitForAddress(child) {
 export async function withTestServer(fn, {
   prefix = "aerogp-api-",
   env = {},
-  approvedOrganizationLeaders = true
+  approvedOrganizationLeaders = true,
+  smsRegistrationEnabled = true
 } = {}) {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
   const dbPath = path.join(tempDir, "db.json");
@@ -54,6 +55,12 @@ export async function withTestServer(fn, {
       TEMP_PASSWORD_ENCRYPTION_KEY: Buffer.alloc(32, 7).toString("base64"),
       REGISTRATION_ID_ENCRYPTION_KEY: Buffer.alloc(32, 8).toString("base64"),
       SESSION_SECRET: sessionSecret,
+      ...(smsRegistrationEnabled ? {
+        ALIBABA_CLOUD_ACCESS_KEY_ID: "test-sms-access-key-id",
+        ALIBABA_CLOUD_ACCESS_KEY_SECRET: "test-sms-access-key-secret",
+        ALIYUN_SMS_SIGN_NAME: "测试签名",
+        ALIYUN_SMS_REGISTRATION_TEMPLATE_CODE: "SMS_REGISTER_TEST"
+      } : {}),
       ...env
     },
     stdio: ["ignore", "pipe", "pipe"]

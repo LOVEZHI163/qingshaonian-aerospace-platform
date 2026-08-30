@@ -7,6 +7,7 @@ import test from "node:test";
 import { newDb } from "pg-mem";
 
 import { CREDENTIAL_POLICY, validateUpload } from "../src/files/policy.js";
+import { createSmsRegistrationService } from "../src/auth/sms-registration.js";
 import { deletePrivateFile, savePrivateFile } from "../src/files/storage.js";
 import { createPostgresStore } from "../src/data/postgres-store.js";
 import { ensureDbShape, seedDb } from "../src/data/seed.js";
@@ -61,6 +62,26 @@ const registrationVerificationError = (error) => (
   && error.message === "手机号验证已过期，请重新验证"
 );
 
+async function historicalTokenWithDisabledVerifier(phone) {
+  const secret = "registration-shutdown-test-secret";
+  const now = Date.parse("2026-08-30T00:00:00.000Z");
+  const enabled = createSmsRegistrationService({
+    challengeService: { enabled: true, consume: async () => true, request: async () => ({ ok: true }) },
+    readDb: async () => ({ users: [] }),
+    secret,
+    clock: () => now,
+    randomNonce: () => "historical-token"
+  });
+  const issued = await enabled.confirm({ phone, code: "123456" });
+  const disabled = createSmsRegistrationService({
+    challengeService: { enabled: false, consume: async () => true, request: async () => ({ ok: true }) },
+    readDb: async () => ({ users: [] }),
+    secret,
+    clock: () => now
+  });
+  return { issued, verifyPhoneRegistration: disabled.verify };
+}
+
 test("ordinary registration rejects failed phone verification before hashing or persistence", async () => {
   let hashed = false;
   let wrote = false;
@@ -94,6 +115,52 @@ test("organization registration rejects failed phone verification before hashing
     hashPassword: async () => { hashed = true; return "hash"; },
     validatePassword: () => "",
     verifyPhoneRegistration: async () => { throw new Error("invalid registration token"); },
+    makeId: (prefix) => `${prefix}1`,
+    now: () => "2026-08-30T00:00:00.000Z",
+    saveFile: async () => { saved = true; return {}; }
+  }), registrationVerificationError);
+  assert.equal(hashed, false);
+  assert.equal(saved, false);
+  assert.equal(wrote, false);
+});
+
+test("ordinary registration rejects a historical phone token after SMS registration is disabled", async () => {
+  const phone = "13600009985";
+  const { issued, verifyPhoneRegistration } = await historicalTokenWithDisabledVerifier(phone);
+  let hashed = false;
+  let wrote = false;
+  await assert.rejects(() => registerOrdinary({
+    input: { name: "普通用户", phone, password: "Strong123", phoneVerificationToken: issued.phoneVerificationToken },
+    readDb: async () => ({ users: [], organizations: [] }),
+    writeDb: async () => { wrote = true; },
+    hashPassword: async () => { hashed = true; return "hash"; },
+    validatePassword: () => "",
+    verifyPhoneRegistration,
+    makeId: (prefix) => `${prefix}1`,
+    now: () => "2026-08-30T00:00:00.000Z"
+  }), registrationVerificationError);
+  assert.equal(hashed, false);
+  assert.equal(wrote, false);
+});
+
+test("organization registration rejects a historical phone token after SMS registration is disabled", async () => {
+  const phone = "13600009986";
+  const { issued, verifyPhoneRegistration } = await historicalTokenWithDisabledVerifier(phone);
+  let hashed = false;
+  let saved = false;
+  let wrote = false;
+  await assert.rejects(() => registerOrganization({
+    input: {
+      name: "组织负责人", phone, password: "Strong123",
+      organizationName: "关闭短信组织", creditCode: "91330300TEST000086", documentType: "business_license",
+      phoneVerificationToken: issued.phoneVerificationToken
+    },
+    file: uploadedFile(pdfBuffer, "license.pdf", "application/pdf"),
+    readDb: async () => ({ users: [], organizations: [], organizationDocuments: [] }),
+    writeDb: async () => { wrote = true; },
+    hashPassword: async () => { hashed = true; return "hash"; },
+    validatePassword: () => "",
+    verifyPhoneRegistration,
     makeId: (prefix) => `${prefix}1`,
     now: () => "2026-08-30T00:00:00.000Z",
     saveFile: async () => { saved = true; return {}; }

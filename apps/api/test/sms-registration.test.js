@@ -19,6 +19,12 @@ function assertExpired(error) {
     && error.message === EXPIRED_MESSAGE;
 }
 
+function assertDisabled(error) {
+  return error instanceof SmsRegistrationError
+    && error.statusCode === 503
+    && error.message === "短信验证暂未启用";
+}
+
 function signPayload(payload, secret = SECRET) {
   const encodedPayload = Buffer.from(JSON.stringify(payload)).toString("base64url");
   const key = createHmac("sha256", secret)
@@ -194,4 +200,39 @@ test("SMS registration rechecks account state after consuming the code", async (
       && error.message === "验证码无效或已过期"
   );
   assert.equal(harness.databaseReads(), 1);
+});
+
+test("disabling SMS registration blocks requests, old challenges, and previously issued tokens", async () => {
+  const enabled = registrationHarness();
+  const historicalToken = await enabled.service.confirm({ phone: "13800000001", code: "123456" });
+  let requests = 0;
+  let consumes = 0;
+  let databaseReads = 0;
+  const disabled = createSmsRegistrationService({
+    challengeService: {
+      enabled: false,
+      async request() { requests += 1; return { ok: true }; },
+      async consume() { consumes += 1; return true; }
+    },
+    readDb: async () => { databaseReads += 1; return { users: [] }; },
+    secret: SECRET,
+    clock: () => NOW,
+    randomNonce: () => "disabled-nonce"
+  });
+
+  const [requestResult, confirmResult] = await Promise.allSettled([
+    Promise.resolve().then(() => disabled.request({ phone: "13800000001", ip: "127.0.0.1" })),
+    disabled.confirm({ phone: "13800000001", code: "123456" })
+  ]);
+  assert.equal(requestResult.status, "rejected");
+  assert.equal(assertDisabled(requestResult.reason), true);
+  assert.equal(confirmResult.status, "rejected");
+  assert.equal(assertDisabled(confirmResult.reason), true);
+  assert.throws(() => disabled.verify({
+    phone: "13800000001",
+    phoneVerificationToken: historicalToken.phoneVerificationToken
+  }), assertDisabled);
+  assert.equal(requests, 0);
+  assert.equal(consumes, 0);
+  assert.equal(databaseReads, 0);
 });

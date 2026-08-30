@@ -5,6 +5,7 @@ import express from "express";
 import { withTestServer } from "../test-support/server.js";
 
 const smsRegistrationRoutesModule = await import("../src/routes/sms-registration.js").catch(() => ({}));
+const apiErrorHandlerModule = await import("../src/middleware/api-error-handler.js").catch(() => ({}));
 
 async function withRouter(smsRegistration, run) {
   const app = express();
@@ -12,6 +13,21 @@ async function withRouter(smsRegistration, run) {
   app.use(express.json());
   app.use("/api", smsRegistrationRoutesModule.createSmsRegistrationRouter({ smsRegistration }));
   app.use((_error, _req, res, _next) => res.status(500).json({ error: "服务器内部错误" }));
+  const server = app.listen(0, "127.0.0.1");
+  await new Promise((resolve) => server.once("listening", resolve));
+  try {
+    await run(`http://127.0.0.1:${server.address().port}`);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+}
+
+async function withProductionErrorHandler(smsRegistration, logger, run) {
+  assert.equal(typeof apiErrorHandlerModule.createApiErrorHandler, "function");
+  const app = express();
+  app.use(express.json());
+  app.use("/api", smsRegistrationRoutesModule.createSmsRegistrationRouter({ smsRegistration }));
+  app.use(apiErrorHandlerModule.createApiErrorHandler({ logger }));
   const server = app.listen(0, "127.0.0.1");
   await new Promise((resolve) => server.once("listening", resolve));
   try {
@@ -128,6 +144,45 @@ test("registration SMS routes preserve safe service status codes and conceal une
     assert.deepEqual(unexpectedBody, { error: "服务器内部错误" });
     assert.doesNotMatch(JSON.stringify(unexpectedBody), /13800000001|654321/);
   });
+});
+
+test("registration SMS routes discard sensitive status and non-status errors before production logging", async () => {
+  const sensitive = "phone=13800000001 code=654321 token=signed-secret-token AccessKey=LTAISecret provider=Aliyun";
+  const logged = [];
+  const logger = { error: (...args) => logged.push(args) };
+  const smsRegistration = {
+    enabled: true,
+    request: async () => {
+      throw Object.assign(new Error(sensitive), { statusCode: 422 });
+    },
+    confirm: async () => {
+      throw new Error(sensitive);
+    }
+  };
+
+  await withProductionErrorHandler(smsRegistration, logger, async (baseUrl) => {
+    const request = await postJson(`${baseUrl}/api/auth/register/sms/request`, { phone: "13800000001" });
+    assert.equal(request.status, 500);
+    assert.deepEqual(await request.json(), {
+      error: "服务器内部错误",
+      code: "SMS_REGISTRATION_FAILED"
+    });
+
+    const confirm = await postJson(`${baseUrl}/api/auth/register/sms/confirm`, {
+      phone: "13800000001",
+      code: "654321"
+    });
+    assert.equal(confirm.status, 500);
+    assert.deepEqual(await confirm.json(), {
+      error: "服务器内部错误",
+      code: "SMS_REGISTRATION_FAILED"
+    });
+  });
+
+  assert.equal(logged.length, 2);
+  const serializedLogs = JSON.stringify(logged);
+  assert.doesNotMatch(serializedLogs, /13800000001|654321|signed-secret-token|LTAISecret|provider=Aliyun/i);
+  assert.match(serializedLogs, /SMS registration failed/);
 });
 
 test("public features independently report SMS registration and conditionally expose its captcha scene", async () => {

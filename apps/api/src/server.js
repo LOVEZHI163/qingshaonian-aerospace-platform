@@ -7,7 +7,7 @@ import { asyncRoute, createSessionMiddleware, requireAdmin, requirePasswordReady
 import { createAliyunSmsProvider } from "./auth/sms.js";
 import { createSmsChallengeService, SMS_PURPOSES } from "./auth/sms-challenges.js";
 import { createSmsLoginService, isSmsLoginEligible } from "./auth/sms-login.js";
-import { createSmsRegistrationService } from "./auth/sms-registration.js";
+import { createSmsRegistrationRuntime } from "./auth/sms-registration-runtime.js";
 import { createHumanVerification } from "./auth/human-verification.js";
 import { createEmailProvider } from "./auth/email-provider.js";
 import { createAccountEmailService } from "./auth/account-email.js";
@@ -34,6 +34,7 @@ import { createSubmissionAssetsRouter } from "./routes/submission-assets.js";
 import { createMembershipsRouter } from "./routes/memberships.js";
 import { createAccountSecurityRouter } from "./routes/account-security.js";
 import { createSmsRegistrationRouter } from "./routes/sms-registration.js";
+import { createApiErrorHandler } from "./middleware/api-error-handler.js";
 import { startSubmissionSessionExpiryCleanup } from "./services/submission-assets.js";
 import { registrationContext } from "./services/events.js";
 import { replayFileCleanupJournal } from "./services/organizations.js";
@@ -86,21 +87,12 @@ function requireTemporaryPasswordVault() {
   if (!temporaryPasswordVault) throw temporaryPasswordKeyUnavailable();
   return temporaryPasswordVault;
 }
-const smsRegistrationChallenge = createSmsChallengeService({
-  purpose: SMS_PURPOSES.registration,
-  secret: sessionSecret,
+const { smsRegistration } = createSmsRegistrationRuntime({
+  sessionSecret,
   readDb,
   smsProvider,
   authState: dataStore.authState,
-  resolveEligibleTarget: (db, phone) => (
-    db.users.some((item) => normalizePhone(item.phone) === phone) ? null : { phone }
-  ),
   verifyHuman: (input) => humanVerification.verify(input)
-});
-const smsRegistration = createSmsRegistrationService({
-  challengeService: smsRegistrationChallenge,
-  readDb,
-  secret: sessionSecret
 });
 const smsPasswordResetChallenge = createSmsChallengeService({
   purpose: SMS_PURPOSES.passwordReset,
@@ -712,28 +704,7 @@ app.get("/api/me/:userId", requireUser, requirePasswordReady, asyncRoute(async (
   });
 }));
 
-app.use((error, req, res, next) => {
-  if (res.headersSent) return next(error);
-  const status = Number.isInteger(error.status) ? error.status : 500;
-  if (status === 500) {
-    console.error("Unhandled API request error", {
-      method: req.method,
-      path: req.originalUrl,
-      message: error?.message || "Unknown error",
-      stack: error?.stack || ""
-    });
-  }
-  const contentRange = error?.headers?.["Content-Range"];
-  if (typeof contentRange === "string" && /^bytes \*\/\d+$/.test(contentRange)) {
-    res.setHeader("Content-Range", contentRange);
-  }
-  res.status(status).json({
-    error: status === 500 ? "服务器内部错误" : error.message,
-    ...(error.code ? { code: error.code } : {}),
-    ...(error.relation ? { relation: error.relation } : {}),
-    ...(error.details ? { details: error.details } : {})
-  });
-});
+app.use(createApiErrorHandler());
 
 await dataStore.initialize();
 await importLeaderCleanupFallbackJournal({ store: dataStore });

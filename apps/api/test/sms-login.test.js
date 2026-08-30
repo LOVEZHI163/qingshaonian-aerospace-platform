@@ -147,5 +147,5 @@ test("public auth features have a stable full shape and disabled SMS login fails
     });
     assert.equal(response.status, 503);
     assert.deepEqual(await response.json(), { error: "短信验证暂未启用" });
-  }, { prefix: "aerogp-sms-login-" });
+  }, { prefix: "aerogp-sms-login-", smsRegistrationEnabled: false });
 });

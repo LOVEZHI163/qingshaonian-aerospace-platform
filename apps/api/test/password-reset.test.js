@@ -403,7 +403,7 @@ test("Aliyun SMS provider is disabled without config and maps code to the offici
 });
 
 test("public features reports SMS reset disabled when Aliyun is not configured", async () => {
-  await withServer(async ({ baseUrl }) => {
+  await withTestServer(async ({ baseUrl }) => {
     const features = await fetch(`${baseUrl}/api/public/features`);
     assert.equal(features.status, 200);
     assert.deepEqual(await features.json(), {
@@ -425,5 +425,5 @@ test("public features reports SMS reset disabled when Aliyun is not configured",
       body: JSON.stringify({ phone: "13800000001" })
     });
     assert.equal(request.status, 503);
-  });
+  }, { prefix: "aerogp-password-reset-disabled-", smsRegistrationEnabled: false });
 });
