@@ -8,7 +8,8 @@ import { createDataStore } from "../src/data/index.js";
 import { ensureDbShape, EVENT, seedDb } from "../src/data/seed.js";
 
 test("seed keeps the approved Wenzhou event contact label", () => {
-  assert.equal(EVENT.contact, "吴老师 88968723 / 15858799111");
+  assert.equal(EVENT.date, "2026年11月下旬");
+  assert.equal(EVENT.contact, "吴老师、干老师 88968723 / 15858799111");
   assert.equal(seedDb.events.find((event) => event.id === EVENT.id)?.contact, EVENT.contact);
 });
 

@@ -4,10 +4,10 @@ export const EVENT = {
   id: "wz-aerospace-2026",
   name: "2026年温州市青少年航空航天创新比赛",
   theme: "瓯越少年、星耀未来",
-  date: "2026年11月21-22日",
+  date: "2026年11月下旬",
   venue: "温州市文成县东方职业技术学院",
   registrationDeadline: "2026-11-01",
-  contact: "吴老师 88968723 / 15858799111"
+  contact: "吴老师、干老师 88968723 / 15858799111"
 };
 
 export const PROJECTS = [
