@@ -22,6 +22,10 @@ validate_boolean_expectation() {
 validate_boolean_expectation EXPECTED_SMS_REGISTRATION_ENABLED "$expected_sms_registration_enabled"
 validate_boolean_expectation EXPECTED_SMS_LOGIN_ENABLED "$expected_sms_login_enabled"
 validate_boolean_expectation EXPECTED_SMS_PASSWORD_RESET_ENABLED "$expected_sms_password_reset_enabled"
+if ! command -v node >/dev/null 2>&1; then
+  echo "node is required to verify public feature JSON" >&2
+  exit 1
+fi
 case "$expected_release" in
   (*[!0-9a-fA-F]*|'')
     echo "EXPECTED_RELEASE must be exactly 40 hexadecimal characters" >&2
@@ -115,19 +119,84 @@ if [ "$actual_release" != "$expected_release" ]; then
 fi
 
 fetch "public features" "$features_json" "$base_url/api/public/features"
-for feature_expectation in \
-  "smsRegistrationEnabled:$expected_sms_registration_enabled" \
-  "smsLoginEnabled:$expected_sms_login_enabled" \
-  "smsPasswordResetEnabled:$expected_sms_password_reset_enabled"
-do
-  feature_name="${feature_expectation%%:*}"
-  expected_value="${feature_expectation#*:}"
-  actual_value="$(LC_ALL=C sed -n "s/.*\"$feature_name\":\(true\|false\).*/\1/p" "$features_json")"
-  if [ "$actual_value" != "$expected_value" ]; then
-    echo "public feature $feature_name does not match its expected value" >&2
-    exit 1
-  fi
-done
+if actual_sms_features="$(node - "$features_json" <<'NODE'
+const fs = require("node:fs");
+const source = fs.readFileSync(process.argv[2], "utf8");
+let data;
+try {
+  data = JSON.parse(source);
+} catch {
+  process.exit(2);
+}
+if (data === null || typeof data !== "object" || Array.isArray(data)) process.exit(2);
+
+const topLevelKeys = [];
+let depth = 0;
+let expectingKey = false;
+for (let index = 0; index < source.length; index += 1) {
+  const character = source[index];
+  if (character === '"') {
+    let end = index + 1;
+    let escaped = false;
+    for (; end < source.length; end += 1) {
+      const stringCharacter = source[end];
+      if (escaped) {
+        escaped = false;
+      } else if (stringCharacter === "\\") {
+        escaped = true;
+      } else if (stringCharacter === '"') {
+        break;
+      }
+    }
+    if (depth === 1 && expectingKey) {
+      topLevelKeys.push(JSON.parse(source.slice(index, end + 1)));
+      expectingKey = false;
+    }
+    index = end;
+  } else if (character === "{" || character === "[") {
+    depth += 1;
+    if (depth === 1) expectingKey = character === "{";
+  } else if (character === "}" || character === "]") {
+    depth -= 1;
+  } else if (character === "," && depth === 1) {
+    expectingKey = true;
+  }
+}
+
+const seenKeys = new Set();
+for (const key of topLevelKeys) {
+  if (seenKeys.has(key)) process.exit(2);
+  seenKeys.add(key);
+}
+
+const names = [
+  "smsRegistrationEnabled",
+  "smsLoginEnabled",
+  "smsPasswordResetEnabled"
+];
+for (const name of names) {
+  if (!Object.prototype.hasOwnProperty.call(data, name) || typeof data[name] !== "boolean") {
+    process.exit(2);
+  }
+}
+process.stdout.write(names.map((name) => String(data[name])).join("\n"));
+NODE
+)"; then
+  :
+else
+  echo "public features did not contain unique top-level boolean SMS flags" >&2
+  exit 1
+fi
+
+actual_sms_registration_enabled="$(printf '%s\n' "$actual_sms_features" | sed -n '1p')"
+actual_sms_login_enabled="$(printf '%s\n' "$actual_sms_features" | sed -n '2p')"
+actual_sms_password_reset_enabled="$(printf '%s\n' "$actual_sms_features" | sed -n '3p')"
+if [ "$actual_sms_registration_enabled" != "$expected_sms_registration_enabled" ] ||
+  [ "$actual_sms_login_enabled" != "$expected_sms_login_enabled" ] ||
+  [ "$actual_sms_password_reset_enabled" != "$expected_sms_password_reset_enabled" ]; then
+  echo "public SMS features do not match their expected values" >&2
+  exit 1
+fi
 
 fetch "admin HTML" "$admin_html" \
   "$base_url/admin/index.html?release-check=$expected_release"

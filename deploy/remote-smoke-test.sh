@@ -16,6 +16,13 @@ work_dir=
 
 cleanup() {
   cleanup_failed=0
+  if [ -n "${smoke_registration_container_file:-}" ]; then
+    if smoke_remove_container_registration_token "$smoke_registration_container_file"; then
+      smoke_registration_container_file=
+    else
+      cleanup_failed=1
+    fi
+  fi
   if command -v cleanup_submission_smoke >/dev/null 2>&1; then
     cleanup_submission_smoke || cleanup_failed=1
   fi
@@ -356,8 +363,8 @@ assert_status "unauthenticated-site-settings" 401 \
   "$base_url/api/admin/site-settings"
 
 if test "$remote_smoke_auth_only" = true; then
-  echo "remote-smoke-auth-only=ok"
-  exit 0
+  echo "remote-smoke=PARTIAL-auth-only-test-contract" >&2
+  exit 3
 fi
 if test "$sms_registration_enabled" = false; then
   echo "registration-dependent-smoke=skipped-feature-disabled"

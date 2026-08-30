@@ -223,10 +223,25 @@ if [ "${#RELEASE_SHA}" -ne 40 ]; then
   echo 'RELEASE_SHA 必须是 40 位十六进制 Git commit SHA' >&2
   exit 1
 fi
+: "${EXPECTED_SMS_REGISTRATION_ENABLED:?请显式导出注册短信功能的预期 true/false}"
+case "$EXPECTED_SMS_REGISTRATION_ENABLED" in
+  true|false) ;;
+  *) echo 'EXPECTED_SMS_REGISTRATION_ENABLED 必须是 true 或 false' >&2; exit 1 ;;
+esac
+: "${EXPECTED_SMS_LOGIN_ENABLED:?请显式导出短信登录功能的预期 true/false}"
+case "$EXPECTED_SMS_LOGIN_ENABLED" in
+  true|false) ;;
+  *) echo 'EXPECTED_SMS_LOGIN_ENABLED 必须是 true 或 false' >&2; exit 1 ;;
+esac
+: "${EXPECTED_SMS_PASSWORD_RESET_ENABLED:?请显式导出短信重置功能的预期 true/false}"
+case "$EXPECTED_SMS_PASSWORD_RESET_ENABLED" in
+  true|false) ;;
+  *) echo 'EXPECTED_SMS_PASSWORD_RESET_ENABLED 必须是 true 或 false' >&2; exit 1 ;;
+esac
 : "${ADMIN_TEST_PASSWORD:?请先按前文通过静默输入导出 ADMIN_TEST_PASSWORD}"
 docker compose build --pull api web
 docker compose up -d --no-deps --wait --wait-timeout 240 api web
-if EXPECTED_RELEASE="$RELEASE_SHA" EXPECTED_SMS_REGISTRATION_ENABLED=false EXPECTED_SMS_LOGIN_ENABLED=false EXPECTED_SMS_PASSWORD_RESET_ENABLED=false BASE_URL=http://127.0.0.1 sh deploy/verify-release.sh &&
+if EXPECTED_RELEASE="$RELEASE_SHA" EXPECTED_SMS_REGISTRATION_ENABLED="$EXPECTED_SMS_REGISTRATION_ENABLED" EXPECTED_SMS_LOGIN_ENABLED="$EXPECTED_SMS_LOGIN_ENABLED" EXPECTED_SMS_PASSWORD_RESET_ENABLED="$EXPECTED_SMS_PASSWORD_RESET_ENABLED" BASE_URL=http://127.0.0.1 sh deploy/verify-release.sh &&
   BASE_URL=http://127.0.0.1 sh deploy/remote-smoke-test.sh; then
   printf '%s\n' "$RELEASE_SHA" > .release.next
   mv .release.next .release
@@ -240,7 +255,7 @@ fi
 `.release` 只能在 `verify-release.sh` 与 `remote-smoke-test.sh` 均成功后写入；任一验证失败时必须保留当前 marker。
 `RELEASE_SHA` 必须由发布负责人根据已经审核并完成对象级校验的源码归档显式提供；服务器 `/opt/aerogp` 不是 Git 仓库，禁止从远端目录推导版本号。
 
-其中 `ADMIN_TEST_PASSWORD` 必须按前文通过静默输入导出，不得写入命令历史、文档或 Git。
+其中三个 `EXPECTED_SMS_*` 必须由发布负责人按当前配置显式导出严格的 `true` 或 `false`，不得从旧发布记录复制固定值。`ADMIN_TEST_PASSWORD` 必须按前文通过静默输入导出，不得写入命令历史、文档或 Git。
 
 ## 恢复与回滚
 
@@ -256,7 +271,6 @@ CONFIRM_RESTORE=yes docker compose run --rm \
 应用回滚只切换到已经验证过的 Git commit。先把上一版本完整 SHA 保存到 `PREVIOUS_RELEASE`，再执行健康等待、版本一致性验证和 smoke；只有所有检查成功后才更新 `.release`：
 
 ```bash
-PREVIOUS_RELEASE='<上一版本完整 SHA>'
 : "${PREVIOUS_RELEASE:?请显式提供已经验证过的上一版本完整 release SHA}"
 case "$PREVIOUS_RELEASE" in
   (*[!0-9a-fA-F]*|'') echo 'PREVIOUS_RELEASE 必须是 40 位十六进制 Git commit SHA' >&2; exit 1 ;;
@@ -265,12 +279,27 @@ if [ "${#PREVIOUS_RELEASE}" -ne 40 ]; then
   echo 'PREVIOUS_RELEASE 必须是 40 位十六进制 Git commit SHA' >&2
   exit 1
 fi
+: "${EXPECTED_SMS_REGISTRATION_ENABLED:?请显式导出回滚目标的注册短信预期 true/false}"
+case "$EXPECTED_SMS_REGISTRATION_ENABLED" in
+  true|false) ;;
+  *) echo 'EXPECTED_SMS_REGISTRATION_ENABLED 必须是 true 或 false' >&2; exit 1 ;;
+esac
+: "${EXPECTED_SMS_LOGIN_ENABLED:?请显式导出回滚目标的短信登录预期 true/false}"
+case "$EXPECTED_SMS_LOGIN_ENABLED" in
+  true|false) ;;
+  *) echo 'EXPECTED_SMS_LOGIN_ENABLED 必须是 true 或 false' >&2; exit 1 ;;
+esac
+: "${EXPECTED_SMS_PASSWORD_RESET_ENABLED:?请显式导出回滚目标的短信重置预期 true/false}"
+case "$EXPECTED_SMS_PASSWORD_RESET_ENABLED" in
+  true|false) ;;
+  *) echo 'EXPECTED_SMS_PASSWORD_RESET_ENABLED 必须是 true 或 false' >&2; exit 1 ;;
+esac
 export RELEASE_SHA="$PREVIOUS_RELEASE"
 docker compose up -d --build --wait --wait-timeout 240
 curl -fsS http://127.0.0.1/healthz
 curl -fsS http://127.0.0.1/api/public/home >/dev/null
 curl -fsS http://127.0.0.1/admin/ >/dev/null
-if EXPECTED_RELEASE="$PREVIOUS_RELEASE" EXPECTED_SMS_REGISTRATION_ENABLED=false EXPECTED_SMS_LOGIN_ENABLED=false EXPECTED_SMS_PASSWORD_RESET_ENABLED=false BASE_URL=http://127.0.0.1 /bin/sh deploy/verify-release.sh &&
+if EXPECTED_RELEASE="$PREVIOUS_RELEASE" EXPECTED_SMS_REGISTRATION_ENABLED="$EXPECTED_SMS_REGISTRATION_ENABLED" EXPECTED_SMS_LOGIN_ENABLED="$EXPECTED_SMS_LOGIN_ENABLED" EXPECTED_SMS_PASSWORD_RESET_ENABLED="$EXPECTED_SMS_PASSWORD_RESET_ENABLED" BASE_URL=http://127.0.0.1 /bin/sh deploy/verify-release.sh &&
   BASE_URL=http://127.0.0.1 /bin/sh deploy/remote-smoke-test.sh; then
   printf '%s\n' "$PREVIOUS_RELEASE" > .release.next
   mv .release.next .release
@@ -597,7 +626,7 @@ CONFIRM_RESTORE=yes docker compose run --rm \
 - 在四个 Compose 服务健康、发布一致性校验完成后，以静默提供的管理员密码运行：`ADMIN_TEST_PASSWORD="$ADMIN_TEST_PASSWORD" BASE_URL=http://127.0.0.1 /bin/sh deploy/remote-smoke-test.sh`。该脚本会生成小 PNG 和短 MP4，复制当前赛事进行隔离验证，覆盖会话、上传、报名绑定、管理员材料汇总和匿名访问拒绝；无论正常结束或中断都会尝试恢复原当前赛事并删除临时赛事、临时账户及文件。脚本不会输出密码、Cookie、响应正文或服务器文件路径。
 # 短信注册、短信登录、短信找回与人机验证分阶段启用
 
-短信签名、运营商报备和两个验证码模板尚未全部可用时，先保持功能关闭。第一阶段在 `/opt/aerogp/.env` 中使用：
+短信签名、运营商报备和三个验证码模板尚未全部可用时，先保持功能关闭。第一阶段在 `/opt/aerogp/.env` 中使用：
 
 ```dotenv
 ALIYUN_SMS_SIGN_NAME=温州市少航科创中心

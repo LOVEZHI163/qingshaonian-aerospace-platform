@@ -136,10 +136,25 @@ docker compose exec -T postgres sh -c 'pg_restore --clean --if-exists -U "$POSTG
 
 ```bash
 cd /opt/aerogp
+: "${EXPECTED_SMS_REGISTRATION_ENABLED:?set the current strict true/false expectation}"
+case "$EXPECTED_SMS_REGISTRATION_ENABLED" in
+  true|false) ;;
+  *) echo 'EXPECTED_SMS_REGISTRATION_ENABLED must be true or false' >&2; exit 1 ;;
+esac
+: "${EXPECTED_SMS_LOGIN_ENABLED:?set the current strict true/false expectation}"
+case "$EXPECTED_SMS_LOGIN_ENABLED" in
+  true|false) ;;
+  *) echo 'EXPECTED_SMS_LOGIN_ENABLED must be true or false' >&2; exit 1 ;;
+esac
+: "${EXPECTED_SMS_PASSWORD_RESET_ENABLED:?set the current strict true/false expectation}"
+case "$EXPECTED_SMS_PASSWORD_RESET_ENABLED" in
+  true|false) ;;
+  *) echo 'EXPECTED_SMS_PASSWORD_RESET_ENABLED must be true or false' >&2; exit 1 ;;
+esac
 EXPECTED_RELEASE="$(sed -n 's/^RELEASE_SHA=//p' .env)" \
-  EXPECTED_SMS_REGISTRATION_ENABLED=false \
-  EXPECTED_SMS_LOGIN_ENABLED=false \
-  EXPECTED_SMS_PASSWORD_RESET_ENABLED=false \
+  EXPECTED_SMS_REGISTRATION_ENABLED="$EXPECTED_SMS_REGISTRATION_ENABLED" \
+  EXPECTED_SMS_LOGIN_ENABLED="$EXPECTED_SMS_LOGIN_ENABLED" \
+  EXPECTED_SMS_PASSWORD_RESET_ENABLED="$EXPECTED_SMS_PASSWORD_RESET_ENABLED" \
   BASE_URL=https://aerogp.cn ./deploy/verify-release.sh
 ADMIN_TEST_PASSWORD="${ADMIN_TEST_PASSWORD:?set securely for this shell}" \
   BASE_URL=https://aerogp.cn ./deploy/remote-smoke-test.sh

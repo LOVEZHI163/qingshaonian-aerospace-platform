@@ -116,6 +116,8 @@ BASE_URL=https://aerogp.cn sh deploy/remote-smoke-test.sh
 
 `verify-release.sh` 的三个 `EXPECTED_SMS_*` 值均为必填且只能是 `true` 或 `false`。它们只描述期望，不触发发送。`remote-smoke-test.sh` 对启用的用途只核对 feature flag，绝不调用验证码 request；对关闭的用途才调用 request 并断言 `503`。
 
+`REMOTE_SMOKE_AUTH_ONLY=true` 只供仓库内 fake `curl`/`docker` 的脚本合同测试使用；它会明确输出 `PARTIAL` 并以非零状态退出，绝不能作为发布或回滚的完整 smoke 成功证据。生产运维不得设置该变量。
+
 9. 只有用户再次确认掩码手机号、角色、purpose、条数和费用后，才执行真实短信闭环。超出确认范围必须再次确认。
 
 可选阿里云验证码独立启用。`ALIYUN_CAPTCHA_ENABLED=false` 时不得阻塞短信；启用前必须补齐 prefix 和每个服务端 scene，配置不完整时失败关闭。

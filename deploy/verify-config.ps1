@@ -111,6 +111,8 @@ foreach ($name in @(
 )) {
   Require-Match $verifyRelease "\`$\{$name`:``?" "Release verification must require $name"
 }
+Require-Match $verifyRelease 'command\s+-v\s+node' "Release verification must require Node JSON parsing"
+Require-Match $verifyRelease 'seenKeys\.has' "Release verification must reject duplicate top-level feature keys"
 foreach ($feature in @('smsRegistrationEnabled', 'smsLoginEnabled', 'smsPasswordResetEnabled')) {
   Require-Match $verifyRelease $feature "Release verification must check $feature"
   Require-Match $remoteSmoke $feature "Remote smoke tests must inspect $feature"
@@ -125,6 +127,10 @@ foreach ($path in @(
 Require-Match $smokeCredentials 'createPhoneRegistrationToken' "Organization smoke tokens must use the production token helper"
 Require-Match $smokeCredentials 'process\.env\.SESSION_SECRET' "Organization smoke tokens must use the API container session secret"
 Require-Match $smokeCredentials 'chmod\s+600\s+"\$smoke_registration_token_tmp"' "Organization smoke token files must be private"
+Require-Match $smokeCredentials 'writeFileSync' "Organization smoke tokens must use a container file channel"
+Require-Match $smokeCredentials 'docker\s+compose\s+cp' "Organization smoke tokens must copy without stdout"
+Require-Match $smokeCredentials 'smoke_cleanup_phone_registration_token' "Organization smoke tokens must clean container and host files"
+Require-NoMatch $smokeCredentials 'process\.stdout\.write\(issued\.phoneVerificationToken\)' "Organization smoke tokens must never write the token to stdout"
 Require-Match $remoteSmoke 'phoneVerificationToken=<\$smoke_organization_token_file' "Organization smoke registration must submit a signed phone token"
 foreach ($path in @('/healthz', '/api/public/home', '/api/public/content', '/api/public/sitemap.xml', '/brand/mark.svg', '/brand/wordmark.svg', '/api/admin/site-settings')) {
   if (-not $remoteSmoke.Contains($path)) { $failures.Add("Remote smoke tests must check $path") }

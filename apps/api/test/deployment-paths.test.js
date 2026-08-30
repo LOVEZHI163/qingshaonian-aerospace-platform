@@ -41,7 +41,7 @@ function shellSearchPath(extraPath) {
   return `${shellPath(extraPath)}:${current}`;
 }
 
-function runShell(scriptPath, { args = [], env = {}, prependPath = "" } = {}) {
+function runShell(scriptPath, { args = [], env = {}, prependPath = "", cwd = root } = {}) {
   return new Promise((resolve, reject) => {
     const command = prependPath
       ? 'PATH="$1:$PATH"; export PATH; shift; exec "$@"'
@@ -50,7 +50,7 @@ function runShell(scriptPath, { args = [], env = {}, prependPath = "" } = {}) {
     if (prependPath) shellArgs.push(shellPath(prependPath));
     shellArgs.push(shellPath(scriptPath), ...args);
     const child = spawn(shell, shellArgs, {
-      cwd: root,
+      cwd,
       env: { ...process.env, ...env },
       stdio: ["ignore", "pipe", "pipe"]
     });
@@ -68,9 +68,12 @@ async function createDeploymentScriptHarness(features) {
   const binDirectory = path.join(directory, "bin");
   const featureFile = path.join(directory, "features.json");
   const curlLog = path.join(directory, "curl.log");
+  const dockerLog = path.join(directory, "docker.log");
+  const containerTokenFile = path.join(directory, "container-registration.token");
   await fs.mkdir(binDirectory);
   await fs.writeFile(featureFile, `${JSON.stringify({ ...features, captcha: { enabled: false } })}\n`);
   await fs.writeFile(curlLog, "");
+  await fs.writeFile(dockerLog, "");
   await fs.writeFile(path.join(binDirectory, "curl"), `#!/bin/sh
 set -eu
 output=/dev/null
@@ -137,6 +140,12 @@ esac
 `, "utf8");
   await fs.writeFile(path.join(binDirectory, "docker"), `#!/bin/sh
 set -eu
+printf '%s\n' "$*" >> "$FAKE_DOCKER_LOG"
+if test "$1" = compose && test "$2" = cp; then
+  if test "\${FAKE_DOCKER_CP_FAIL:-false}" = true; then exit 42; fi
+  cp -- "$FAKE_CONTAINER_TOKEN_FILE" "$4"
+  exit 0
+fi
 case " $* " in
   *" exec -T postgres "*)
     printf '%s\\n' 1
@@ -145,6 +154,13 @@ case " $* " in
 esac
 while test "$#" -gt 0 && test "$1" != node; do shift; done
 test "$#" -gt 0
+case " $* " in
+  *createPhoneRegistrationToken*)
+    if test "\${FAKE_DOCKER_NODE_FAIL:-false}" = true; then exit 41; fi
+    ;;
+esac
+SMOKE_REGISTRATION_TOKEN_PATH="$FAKE_CONTAINER_TOKEN_FILE"
+export SMOKE_REGISTRATION_TOKEN_PATH
 exec "$@"
 `, "utf8");
   await Promise.all([
@@ -155,10 +171,14 @@ exec "$@"
     directory,
     binDirectory,
     curlLog,
+    dockerLog,
+    containerTokenFile,
     environment: {
       PATH: shellSearchPath(binDirectory),
       FAKE_FEATURES_FILE: shellPath(featureFile),
-      FAKE_CURL_LOG: shellPath(curlLog)
+      FAKE_CURL_LOG: shellPath(curlLog),
+      FAKE_DOCKER_LOG: shellPath(dockerLog),
+      FAKE_CONTAINER_TOKEN_FILE: shellPath(containerTokenFile)
     },
     cleanup: () => fs.rm(directory, { recursive: true, force: true })
   };
@@ -214,6 +234,97 @@ function assertExplicitReleaseInput(shellBlock, releaseVariable) {
   );
   assert.match(shellBlock, new RegExp(`^if \\[ "\\$\\{#${releaseVariable}\\}" -ne 40 \\]; then$`, "m"));
   assert.doesNotMatch(shellBlock, /git rev-parse|git describe|git log/);
+}
+
+function assertExplicitSmsExpectations(shellBlock) {
+  for (const name of [
+    "EXPECTED_SMS_REGISTRATION_ENABLED",
+    "EXPECTED_SMS_LOGIN_ENABLED",
+    "EXPECTED_SMS_PASSWORD_RESET_ENABLED"
+  ]) {
+    assert.match(shellBlock, new RegExp(`^: "\\$\\{${name}:\\?[^}]+\\}"$`, "m"));
+    assert.match(
+      shellBlock,
+      new RegExp(`^case "\\$${name}" in\\r?\\n\\s+true\\|false\\)`, "m")
+    );
+    assert.match(shellBlock, new RegExp(`${name}="\\$${name}"`));
+    assert.doesNotMatch(shellBlock, new RegExp(`${name}=false`));
+  }
+}
+
+async function runDocumentedReleaseGate(shellBlock, {
+  releaseVariable,
+  expectedValue,
+  remoteFails = false
+}) {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "aerogp-release-doc-test-"));
+  const binDirectory = path.join(directory, "bin");
+  const deployDirectory = path.join(directory, "deploy");
+  const verifyLog = path.join(directory, "verify.log");
+  const dockerLog = path.join(directory, "docker.log");
+  const marker = path.join(directory, ".release");
+  const runner = path.join(directory, "documented-release.sh");
+  await fs.mkdir(binDirectory);
+  await fs.mkdir(deployDirectory);
+  await fs.writeFile(verifyLog, "");
+  await fs.writeFile(dockerLog, "");
+  await fs.writeFile(marker, "old-release\n");
+  await fs.writeFile(runner, `#!/bin/sh\nset -eu\n${shellBlock}`, "utf8");
+  await fs.writeFile(path.join(binDirectory, "docker"), `#!/bin/sh
+set -eu
+printf '%s\n' "$*" >> "$DOC_DOCKER_LOG"
+`, "utf8");
+  await fs.writeFile(path.join(binDirectory, "curl"), "#!/bin/sh\nexit 0\n", "utf8");
+  await fs.writeFile(path.join(deployDirectory, "verify-release.sh"), `#!/bin/sh
+set -eu
+for value in \
+  "\${EXPECTED_SMS_REGISTRATION_ENABLED:?}" \
+  "\${EXPECTED_SMS_LOGIN_ENABLED:?}" \
+  "\${EXPECTED_SMS_PASSWORD_RESET_ENABLED:?}"
+do
+  case "$value" in true|false) ;; *) exit 2 ;; esac
+done
+printf '%s|%s|%s|%s\n' \
+  "$EXPECTED_RELEASE" \
+  "$EXPECTED_SMS_REGISTRATION_ENABLED" \
+  "$EXPECTED_SMS_LOGIN_ENABLED" \
+  "$EXPECTED_SMS_PASSWORD_RESET_ENABLED" >> "$DOC_VERIFY_LOG"
+`, "utf8");
+  await fs.writeFile(path.join(deployDirectory, "remote-smoke-test.sh"), `#!/bin/sh
+set -eu
+if test "\${DOC_REMOTE_FAILS:-false}" = true; then exit 9; fi
+`, "utf8");
+  await Promise.all([
+    fs.chmod(runner, 0o755),
+    fs.chmod(path.join(binDirectory, "docker"), 0o755),
+    fs.chmod(path.join(binDirectory, "curl"), 0o755),
+    fs.chmod(path.join(deployDirectory, "verify-release.sh"), 0o755),
+    fs.chmod(path.join(deployDirectory, "remote-smoke-test.sh"), 0o755)
+  ]);
+  const release = "7".repeat(40);
+  const result = await runShell(runner, {
+    cwd: directory,
+    prependPath: binDirectory,
+    env: {
+      [releaseVariable]: release,
+      ADMIN_TEST_PASSWORD: "local-doc-password",
+      EXPECTED_SMS_REGISTRATION_ENABLED: expectedValue,
+      EXPECTED_SMS_LOGIN_ENABLED: expectedValue,
+      EXPECTED_SMS_PASSWORD_RESET_ENABLED: expectedValue,
+      DOC_VERIFY_LOG: shellPath(verifyLog),
+      DOC_DOCKER_LOG: shellPath(dockerLog),
+      DOC_REMOTE_FAILS: String(remoteFails)
+    }
+  });
+  return {
+    directory,
+    dockerLog,
+    expectedLog: `${release}|${expectedValue}|${expectedValue}|${expectedValue}\n`,
+    marker,
+    result,
+    verifyLog,
+    cleanup: () => fs.rm(directory, { recursive: true, force: true })
+  };
 }
 
 test("deployment paths use same-origin API and the /admin/ base", async () => {
@@ -382,6 +493,12 @@ test("deployment configuration verifier covers the three-purpose release and smo
     "/api/auth/sms-login/request",
     "/api/auth/password-reset/sms/request"
   ]) assert.match(verifier, new RegExp(endpoint.replaceAll("/", "\\/")));
+  assert.match(verifier, /Release verification must require Node JSON parsing/);
+  assert.match(verifier, /Release verification must reject duplicate top-level feature keys/);
+  assert.match(verifier, /Organization smoke tokens must use a container file channel/);
+  assert.match(verifier, /Organization smoke tokens must copy without stdout/);
+  assert.match(verifier, /Organization smoke tokens must clean container and host files/);
+  assert.match(verifier, /Organization smoke tokens must never write the token to stdout/);
 });
 
 test("current deployment scripts reject retired targets and destructive or secret-bearing SMS patterns", async () => {
@@ -519,7 +636,8 @@ test("deployment verifier is host-runnable and bounds every HTTP request", async
   assert.match(executable, /smsPasswordResetEnabled/);
   assert.match(executable, /EXPECTED_RELEASE/);
   assert.match(executable, /admin\/index\.html/);
-  assert.doesNotMatch(executable, /\bnode\b/);
+  assert.match(executable, /command -v node/);
+  assert.match(executable, /JSON\.parse/);
   assert.match(executable, /--connect-timeout\s+["']?\$?curl_connect_timeout/);
   assert.match(executable, /--max-time\s+["']?\$?curl_max_time/);
   assert.match(executable, /api\/admin\/registrations\?pageSize=100/);
@@ -628,7 +746,9 @@ test("remote authentication smoke never requests enabled SMS purposes and checks
           REMOTE_SMOKE_AUTH_ONLY: "true"
         }
       });
-      assert.equal(result.code, 0, result.stderr);
+      assert.notEqual(result.code, 0);
+      assert.match(result.stderr, /PARTIAL/);
+      assert.doesNotMatch(result.stdout, /remote-smoke-auth-only=ok/);
       const requests = (await fs.readFile(harness.curlLog, "utf8"))
         .trim()
         .split(/\r?\n/)
@@ -643,18 +763,18 @@ test("remote authentication smoke never requests enabled SMS purposes and checks
   }
 });
 
-test("organization smoke token helper writes a private production-format token without printing it", async () => {
-  const harness = await createDeploymentScriptHarness({});
-  const runner = path.join(harness.directory, "issue-token.sh");
-  const tokenFile = path.join(harness.directory, "registration.token");
+test("organization smoke token helper uses a private file channel and cleans every failure path", async (t) => {
   const secret = "local-registration-secret-32-characters";
-  await fs.writeFile(runner, `#!/bin/sh
+  const runScenario = async (failureEnvironment = {}) => {
+    const harness = await createDeploymentScriptHarness({});
+    const runner = path.join(harness.directory, "issue-token.sh");
+    const tokenFile = path.join(harness.directory, "registration.token");
+    await fs.writeFile(runner, `#!/bin/sh
 set -eu
 . "$PROJECT_ROOT/deploy/smoke-credentials.sh"
 smoke_issue_phone_registration_token "$SMOKE_PHONE" "$TOKEN_FILE"
 `, "utf8");
-  await fs.chmod(runner, 0o755);
-  try {
+    await fs.chmod(runner, 0o755);
     const result = await runShell(runner, {
       prependPath: harness.binDirectory,
       env: {
@@ -662,26 +782,73 @@ smoke_issue_phone_registration_token "$SMOKE_PHONE" "$TOKEN_FILE"
         PROJECT_ROOT: shellPath(root),
         SESSION_SECRET: secret,
         SMOKE_PHONE: "13800000001",
-        TOKEN_FILE: shellPath(tokenFile)
+        TOKEN_FILE: shellPath(tokenFile),
+        ...failureEnvironment
       }
     });
-    assert.equal(result.code, 0, result.stderr);
-    assert.equal(result.stdout, "");
-    const stat = await fs.stat(tokenFile);
-    if (process.platform !== "win32") assert.equal(stat.mode & 0o777, 0o600);
-    const helperSource = await fs.readFile(path.join(root, "deploy/smoke-credentials.sh"), "utf8");
-    assert.match(helperSource, /chmod 600 "\$smoke_registration_token_tmp"/);
-    const token = await fs.readFile(tokenFile, "utf8");
-    const { verifyPhoneRegistrationToken } = await import("../src/auth/sms-registration.js");
-    assert.equal(verifyPhoneRegistrationToken({
-      phone: "13800000001",
-      phoneVerificationToken: token,
-      secret,
-      now: Date.now()
-    }), true);
-  } finally {
-    await harness.cleanup();
-  }
+    return { harness, tokenFile, result };
+  };
+
+  await t.test("copies a production token without process output and removes the container file", async () => {
+    const { harness, tokenFile, result } = await runScenario();
+    try {
+      assert.equal(result.code, 0, result.stderr);
+      assert.equal(result.stdout, "");
+      assert.equal(result.stderr, "");
+      const stat = await fs.stat(tokenFile);
+      if (process.platform !== "win32") assert.equal(stat.mode & 0o777, 0o600);
+      const token = await fs.readFile(tokenFile, "utf8");
+      const { verifyPhoneRegistrationToken } = await import("../src/auth/sms-registration.js");
+      assert.equal(verifyPhoneRegistrationToken({
+        phone: "13800000001",
+        phoneVerificationToken: token,
+        secret,
+        now: Date.now()
+      }), true);
+      await assert.rejects(fs.stat(harness.containerTokenFile), { code: "ENOENT" });
+      const dockerLog = await fs.readFile(harness.dockerLog, "utf8");
+      assert.match(dockerLog, /compose cp /);
+      assert.match(dockerLog, /rmSync/);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  await t.test("cleans both locations when container token generation fails", async () => {
+    const { harness, tokenFile, result } = await runScenario({ FAKE_DOCKER_NODE_FAIL: "true" });
+    try {
+      assert.notEqual(result.code, 0);
+      assert.equal(result.stdout, "");
+      assert.equal(result.stderr, "");
+      await assert.rejects(fs.stat(tokenFile), { code: "ENOENT" });
+      await assert.rejects(fs.stat(harness.containerTokenFile), { code: "ENOENT" });
+      const dockerLog = await fs.readFile(harness.dockerLog, "utf8");
+      assert.doesNotMatch(dockerLog, /compose cp /);
+      assert.match(dockerLog, /rmSync/);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  await t.test("cleans both locations when copying the container token fails", async () => {
+    const { harness, tokenFile, result } = await runScenario({ FAKE_DOCKER_CP_FAIL: "true" });
+    try {
+      assert.notEqual(result.code, 0);
+      assert.equal(result.stdout, "");
+      assert.equal(result.stderr, "");
+      await assert.rejects(fs.stat(tokenFile), { code: "ENOENT" });
+      await assert.rejects(fs.stat(harness.containerTokenFile), { code: "ENOENT" });
+      const dockerLog = await fs.readFile(harness.dockerLog, "utf8");
+      assert.match(dockerLog, /compose cp /);
+      assert.match(dockerLog, /rmSync/);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  const helperSource = await fs.readFile(path.join(root, "deploy/smoke-credentials.sh"), "utf8");
+  assert.match(helperSource, /writeFileSync/);
+  assert.doesNotMatch(helperSource, /process\.stdout\.write\(issued\.phoneVerificationToken\)/);
 });
 
 test("remote organization registration submits private token files from the container helper", async () => {
@@ -694,8 +861,14 @@ test("remote organization registration submits private token files from the cont
   assert.equal((smoke.match(/-F "phoneVerificationToken=<\$smoke_[^"]+_token_file"/g) || []).length, 2);
   assert.match(helper, /createPhoneRegistrationToken/);
   assert.match(helper, /process\.env\.SESSION_SECRET/);
-  assert.match(helper, /docker compose exec -T -e SMOKE_REGISTRATION_PHONE api/);
+  assert.match(helper, /docker compose exec -T/);
+  assert.match(helper, /docker compose cp/);
   assert.doesNotMatch(helper, /console\.log|SESSION_SECRET="\$/);
+  assert.doesNotMatch(helper, /process\.stdout\.write\(issued\.phoneVerificationToken\)/);
+  assert.match(
+    smoke,
+    /cleanup\(\) \{[\s\S]*?smoke_remove_container_registration_token "\$smoke_registration_container_file"/
+  );
 });
 
 test("remote organization registration fixtures always use distinct valid mainland phones", async () => {
@@ -724,6 +897,7 @@ test("recommended deployment atomically advances the marker only after both veri
   const releaseBlock = shellBlockAfter(guide, "推荐发布命令");
 
   assertExplicitReleaseInput(releaseBlock, "RELEASE_SHA");
+  assertExplicitSmsExpectations(releaseBlock);
   assert.match(releaseBlock, /^: "\$\{ADMIN_TEST_PASSWORD:\?[^}]+\}"$/m);
   assert.doesNotMatch(releaseBlock, /ADMIN_TEST_PASSWORD=['"]/);
   assertAtomicMarkerGate(releaseBlock, "RELEASE_SHA");
@@ -733,6 +907,7 @@ test("rollback atomically advances the marker only after both previous-release v
   const guide = await fs.readFile(path.join(root, "docs/deployment/aliyun-test.md"), "utf8");
   const rollbackBlock = shellBlockAfter(guide, "应用回滚只切换到已经验证过的 Git commit");
 
+  assertExplicitSmsExpectations(rollbackBlock);
   assertAtomicMarkerGate(rollbackBlock, "PREVIOUS_RELEASE");
 });
 
@@ -748,6 +923,88 @@ test("rollback validates and maps the previous release into Compose before rebui
     "rollback must map RELEASE_SHA before invoking Compose"
   );
   assert.match(rollbackBlock, /EXPECTED_RELEASE="\$PREVIOUS_RELEASE"/);
+});
+
+test("documented release and rollback gates preserve explicit enabled and disabled SMS expectations", async (t) => {
+  const guide = await fs.readFile(path.join(root, "docs/deployment/aliyun-test.md"), "utf8");
+  const gates = [
+    {
+      label: "release",
+      releaseVariable: "RELEASE_SHA",
+      shellBlock: shellBlockAfter(guide, "推荐发布命令")
+    },
+    {
+      label: "rollback",
+      releaseVariable: "PREVIOUS_RELEASE",
+      shellBlock: shellBlockAfter(guide, "应用回滚只切换到已经验证过的 Git commit")
+    }
+  ];
+
+  for (const gate of gates) {
+    for (const expectedValue of ["true", "false"]) {
+      await t.test(`${gate.label} passes through ${expectedValue} expectations before updating marker`, async () => {
+        const execution = await runDocumentedReleaseGate(gate.shellBlock, {
+          releaseVariable: gate.releaseVariable,
+          expectedValue
+        });
+        try {
+          assert.equal(execution.result.code, 0, execution.result.stderr);
+          assert.equal(await fs.readFile(execution.verifyLog, "utf8"), execution.expectedLog);
+          assert.equal(await fs.readFile(execution.marker, "utf8"), `${"7".repeat(40)}\n`);
+        } finally {
+          await execution.cleanup();
+        }
+      });
+    }
+  }
+
+  await t.test("rejects an invalid expectation before deployment commands or marker changes", async () => {
+    const execution = await runDocumentedReleaseGate(gates[0].shellBlock, {
+      releaseVariable: gates[0].releaseVariable,
+      expectedValue: "1"
+    });
+    try {
+      assert.notEqual(execution.result.code, 0);
+      assert.equal(await fs.readFile(execution.verifyLog, "utf8"), "");
+      assert.equal(await fs.readFile(execution.dockerLog, "utf8"), "");
+      assert.equal(await fs.readFile(execution.marker, "utf8"), "old-release\n");
+    } finally {
+      await execution.cleanup();
+    }
+  });
+
+  await t.test("preserves the marker when remote smoke fails after release verification", async () => {
+    const execution = await runDocumentedReleaseGate(gates[0].shellBlock, {
+      releaseVariable: gates[0].releaseVariable,
+      expectedValue: "true",
+      remoteFails: true
+    });
+    try {
+      assert.notEqual(execution.result.code, 0);
+      assert.equal(await fs.readFile(execution.verifyLog, "utf8"), execution.expectedLog);
+      assert.equal(await fs.readFile(execution.marker, "utf8"), "old-release\n");
+      await assert.rejects(fs.stat(path.join(execution.directory, ".release.next")), { code: "ENOENT" });
+    } finally {
+      await execution.cleanup();
+    }
+  });
+});
+
+test("organization lifecycle release checks require explicit strict SMS expectations", async () => {
+  const guide = await fs.readFile(
+    path.join(root, "docs/operations/organization-account-lifecycle.md"),
+    "utf8"
+  );
+  const releaseBlock = shellBlockAfter(guide, "生产发布必须依次执行");
+
+  assertExplicitSmsExpectations(releaseBlock);
+});
+
+test("deployment guide consistently describes three SMS verification templates", async () => {
+  const guide = await fs.readFile(path.join(root, "docs/deployment/aliyun-test.md"), "utf8");
+
+  assert.doesNotMatch(guide, /两个验证码模板/);
+  assert.match(guide, /三个验证码模板/);
 });
 
 test("authenticated smoke covers organization management and rejects raw HTML management errors", async () => {
