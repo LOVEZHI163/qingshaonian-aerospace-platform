@@ -6,7 +6,8 @@ import test from "node:test";
 
 const root = path.resolve(import.meta.dirname, "../../..");
 
-function runConfigVerification() {
+function runConfigVerification({ platform = process.platform } = {}) {
+  if (platform !== "win32") return Promise.resolve({ skipped: true });
   return new Promise((resolve, reject) => {
     const child = spawn("powershell", ["-ExecutionPolicy", "Bypass", "-File", "deploy/verify-config.ps1"], {
       cwd: root,
@@ -19,6 +20,12 @@ function runConfigVerification() {
     child.on("close", (code) => resolve({ code, output }));
   });
 }
+
+test("deployment configuration verifier has an explicit non-Windows skip policy", async () => {
+  const result = await runConfigVerification({ platform: "linux" });
+
+  assert.deepEqual(result, { skipped: true });
+});
 
 function shellBlockAfter(document, marker) {
   const markerIndex = document.indexOf(marker);
@@ -208,7 +215,9 @@ test("deployment passes optional Aliyun SMS configuration without generating cre
   assert.match(smsSource, /dysmsapi\.aliyuncs\.com/);
 });
 
-test("deployment configuration verifier accepts the checked-in optional SMS settings", async () => {
+test("deployment configuration verifier accepts the checked-in optional SMS settings", {
+  skip: process.platform !== "win32"
+}, async () => {
   const result = await runConfigVerification();
 
   assert.equal(result.code, 0, result.output);
