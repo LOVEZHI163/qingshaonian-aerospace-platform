@@ -38,11 +38,6 @@ function ContentCover({ item }) {
   );
 }
 
-function publishYear(value) {
-  const date = new Date(value);
-  return Number.isFinite(date.getTime()) ? String(date.getFullYear()) : "往届";
-}
-
 export default function ContentSection({
   id,
   title,
@@ -103,7 +98,6 @@ export default function ContentSection({
             const href = contentHref(item);
             return (
               <li key={item.id || item.slug}>
-                <span className="history-year">{publishYear(item.publishAt)}</span>
                 <div>
                   <h3>{href ? <a href={href}>{item.title}</a> : item.title}</h3>
                   {item.summary ? <p>{item.summary}</p> : null}

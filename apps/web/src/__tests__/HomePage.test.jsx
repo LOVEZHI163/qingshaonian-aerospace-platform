@@ -156,6 +156,11 @@ describe("adaptive public home", () => {
     expect(screen.queryByRole("link", { name: "了解赛事" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "同期赛事" })).not.toBeInTheDocument();
 
+    const historyList = document.querySelector(".history-list");
+    expect(historyList).not.toBeNull();
+    expect(within(historyList).queryByText("2025", { exact: true })).not.toBeInTheDocument();
+    expect(historyList.querySelector(".history-year")).toBeNull();
+
     const picture = screen.getByRole("img", { name: "E1 动态赛事名称赛事封面" }).closest("picture");
     expect(picture).not.toBeNull();
     expect(picture.querySelector('source[media="(max-width: 767px)"]')).toHaveAttribute(
