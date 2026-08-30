@@ -798,13 +798,24 @@ describe("App session integration", () => {
   it("returns to login after registration instead of creating a fake session", async () => {
     apiMock.mockImplementation(async (path) => {
       if (path === "/api/public/event") return publicData();
-      if (path === "/api/public/features") return { smsPasswordResetEnabled: false };
+      if (path === "/api/public/features") return { smsRegistrationEnabled: true, smsPasswordResetEnabled: false };
+      if (path === "/api/auth/register/sms/request") return { message: "accepted" };
+      if (path === "/api/auth/register/sms/confirm") return {
+        phoneVerificationToken: "signed-registration-token",
+        expiresAt: new Date(Date.now() + 15 * 60 * 1_000).toISOString()
+      };
       if (path === "/api/auth/register/ordinary") return { user: { id: "U2" } };
       return { rows: [], memberships: [] };
     });
     const wrapper = mount(App);
     await flushPromises();
     await wrapper.get('[data-auth-tab="register"]').trigger("click");
+    await wrapper.get('[data-testid="ordinary-phone"]').setValue("13800000001");
+    await wrapper.get('[data-testid="registration-sms-request"]').trigger("click");
+    await flushPromises();
+    await wrapper.get('[data-testid="registration-sms-code"]').setValue("123456");
+    await wrapper.get('[data-testid="registration-sms-confirm"]').trigger("click");
+    await flushPromises();
     await wrapper.get('[data-register="ordinary"]').trigger("submit");
     await flushPromises();
 

@@ -10,7 +10,7 @@ describe("AuthPage", () => {
   beforeEach(() => {
     window.history.replaceState({}, "", "/admin/");
     apiMock.mockReset();
-    apiMock.mockResolvedValue({ smsPasswordResetEnabled: false });
+    apiMock.mockResolvedValue({ smsRegistrationEnabled: false, smsPasswordResetEnabled: false });
   });
 
   it("requests an email password-reset link without revealing account existence", async () => {
@@ -64,6 +64,50 @@ describe("AuthPage", () => {
     const wrapper = mount(AuthPage);
     await flushPromises();
     expect(wrapper.find('[data-login-method="sms"]').exists()).toBe(false);
+  });
+
+  it("keeps registration, SMS login, and SMS reset switches independent while preserving password and email paths", async () => {
+    apiMock.mockResolvedValue({
+      smsRegistrationEnabled: false,
+      smsLoginEnabled: true,
+      smsPasswordResetEnabled: true,
+      emailPasswordResetEnabled: true,
+      captcha: { enabled: false, region: "cn", prefix: "", scenes: { smsRegistration: "registration-scene" } }
+    });
+    const wrapper = mount(AuthPage);
+    await flushPromises();
+
+    expect(wrapper.find('[data-auth-form="login"]').exists()).toBe(true);
+    expect(wrapper.find('[data-login-method="sms"]').exists()).toBe(true);
+    await wrapper.get('[data-auth-tab="register"]').trigger("click");
+    expect(wrapper.text()).toContain("注册暂不可用");
+    expect(wrapper.find('[data-testid="registration-sms-request"]').exists()).toBe(false);
+    expect(wrapper.get('[data-testid="ordinary-submit"]').attributes("disabled")).toBeDefined();
+    expect(wrapper.find('[data-register-type="admin"]').exists()).toBe(false);
+
+    await wrapper.get('[data-auth-tab="login"]').trigger("click");
+    await wrapper.get('[data-auth-view="forgot"]').trigger("click");
+    expect(wrapper.find('[data-reset-method="email"]').exists()).toBe(true);
+    expect(wrapper.find('[data-reset-method="sms"]').exists()).toBe(true);
+    wrapper.unmount();
+
+    apiMock.mockResolvedValue({
+      smsRegistrationEnabled: true,
+      smsLoginEnabled: false,
+      smsPasswordResetEnabled: false,
+      emailPasswordResetEnabled: true,
+      captcha: { enabled: false, region: "cn", prefix: "", scenes: { smsRegistration: "registration-scene" } }
+    });
+    const registrationOnly = mount(AuthPage);
+    await flushPromises();
+    expect(registrationOnly.find('[data-login-method="sms"]').exists()).toBe(false);
+    await registrationOnly.get('[data-auth-tab="register"]').trigger("click");
+    expect(registrationOnly.find('[data-testid="registration-sms-request"]').exists()).toBe(true);
+    await registrationOnly.get('[data-auth-tab="login"]').trigger("click");
+    await registrationOnly.get('[data-auth-view="forgot"]').trigger("click");
+    expect(registrationOnly.find('[data-reset-method="email"]').exists()).toBe(true);
+    expect(registrationOnly.find('[data-reset-method="sms"]').exists()).toBe(false);
+    registrationOnly.unmount();
   });
 
   it("opens a valid email reset link and submits the new password", async () => {
@@ -154,18 +198,45 @@ describe("AuthPage", () => {
   });
 
   it("returns to login after ordinary registration without creating a session", async () => {
-    apiMock.mockResolvedValueOnce({ user: { id: "U2" } });
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/public/features") return {
+        smsRegistrationEnabled: true,
+        smsLoginEnabled: false,
+        smsPasswordResetEnabled: false,
+        emailPasswordResetEnabled: true,
+        captcha: { enabled: false, region: "cn", prefix: "", scenes: {} }
+      };
+      if (path === "/api/auth/register/sms/request") return { message: "accepted" };
+      if (path === "/api/auth/register/sms/confirm") return {
+        phoneVerificationToken: "signed-registration-token",
+        expiresAt: new Date(Date.now() + 15 * 60 * 1_000).toISOString()
+      };
+      if (path === "/api/auth/register/ordinary") return { user: { id: "U2", phone: "13800000001" } };
+      return {};
+    });
     const wrapper = mount(AuthPage);
+    await flushPromises();
     await wrapper.get('[data-auth-tab="register"]').trigger("click");
     await wrapper.get('[data-testid="ordinary-name"]').setValue("张三家长");
     await wrapper.get('[data-testid="ordinary-phone"]').setValue("13800000001");
     await wrapper.get('[data-testid="ordinary-password"]').setValue("Secret123");
+    await wrapper.get('[data-testid="registration-sms-request"]').trigger("click");
+    await flushPromises();
+    await wrapper.get('[data-testid="registration-sms-code"]').setValue("123456");
+    await wrapper.get('[data-testid="registration-sms-confirm"]').trigger("click");
+    await flushPromises();
     await wrapper.get('[data-register="ordinary"]').trigger("submit");
     await flushPromises();
 
-    expect(apiMock).toHaveBeenCalledWith("/api/auth/register/ordinary", expect.objectContaining({ method: "POST" }));
+    expect(apiMock).toHaveBeenCalledWith("/api/auth/register/ordinary", expect.objectContaining({
+      method: "POST",
+      body: expect.stringContaining('"phoneVerificationToken":"signed-registration-token"')
+    }));
     expect(wrapper.get('[data-auth-form="login"]').exists()).toBe(true);
     expect(wrapper.text()).toContain("注册成功，请登录");
+    expect(wrapper.emitted("login")).toBeUndefined();
+    expect(wrapper.emitted("sms-login")).toBeUndefined();
+    wrapper.unmount();
   });
 
   it("normalizes the organization credit code to uppercase", async () => {

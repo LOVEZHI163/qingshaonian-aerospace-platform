@@ -14,6 +14,7 @@ const emit = defineEmits(["login", "sms-login", "clear-message", "account-email-
 const currentView = ref("login");
 const registrationType = ref("ordinary");
 const message = ref("");
+const smsRegistrationEnabled = ref(false);
 const smsPasswordResetEnabled = ref(false);
 const smsLoginEnabled = ref(false);
 const emailPasswordResetEnabled = ref(false);
@@ -178,7 +179,8 @@ function finishEmailAction() {
 }
 
 onMounted(async () => {
-  const features = await api("/api/public/features").catch(() => ({ smsPasswordResetEnabled: false, emailPasswordResetEnabled: false }));
+  const features = await api("/api/public/features").catch(() => ({ smsRegistrationEnabled: false, smsPasswordResetEnabled: false, emailPasswordResetEnabled: false }));
+  smsRegistrationEnabled.value = Boolean(features.smsRegistrationEnabled);
   smsPasswordResetEnabled.value = Boolean(features.smsPasswordResetEnabled);
   smsLoginEnabled.value = Boolean(features.smsLoginEnabled);
   emailPasswordResetEnabled.value = Boolean(features.emailPasswordResetEnabled);
@@ -223,8 +225,20 @@ onBeforeUnmount(() => {
           <button type="button" data-register-type="organization" :class="{ active: registrationType === 'organization' }" :aria-pressed="registrationType === 'organization'" @click="registrationType = 'organization'"><strong>组织负责人账号</strong><span>适合学校、青少年宫、科技馆和活动中心</span></button>
         </div>
       </section>
-      <OrdinaryRegistrationForm v-if="registrationType === 'ordinary'" @registered="registered" @error="showError" />
-      <OrganizationRegistrationForm v-else @registered="registered" @error="showError" />
+      <OrdinaryRegistrationForm
+        v-if="registrationType === 'ordinary'"
+        :sms-registration-enabled="smsRegistrationEnabled"
+        :captcha="{ enabled: captcha.enabled, region: captcha.region, prefix: captcha.prefix, sceneId: captcha.scenes.smsRegistration || '' }"
+        @registered="registered"
+        @error="showError"
+      />
+      <OrganizationRegistrationForm
+        v-else
+        :sms-registration-enabled="smsRegistrationEnabled"
+        :captcha="{ enabled: captcha.enabled, region: captcha.region, prefix: captcha.prefix, sceneId: captcha.scenes.smsRegistration || '' }"
+        @registered="registered"
+        @error="showError"
+      />
     </section>
     <section v-else-if="currentView === 'forgot'" class="auth-grid single">
       <section class="panel auth-panel">

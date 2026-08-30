@@ -26,6 +26,14 @@
 .auth-inline-input button { white-space: nowrap; }
 .aliyun-captcha-gate > button { display: none; }
 .aliyun-captcha-gate:empty { display: none; }
+.registration-phone-verification { display: grid; gap: .75rem; padding: 1rem; border: 1px solid #c8dcef; border-radius: .65rem; background: #f7fbff; }
+.registration-phone-verification h4 { margin: 0; color: #0f4f82; }
+.registration-sms-action { min-width: 7.5rem; margin: 0; background: #1769aa; }
+.registration-phone-verified { display: flex; align-items: center; justify-content: space-between; gap: .75rem; padding: .7rem .8rem; border: 1px solid #86c7a5; border-radius: .5rem; color: #166534; background: #effcf4; font-weight: 800; }
+.registration-phone-status { margin: 0; }
+.registration-unavailable { margin: 0; padding: .8rem; border: 1px solid #fdba74; border-radius: .5rem; color: #9a3412; background: #fff7ed; font-weight: 700; }
+.auth-panel button:disabled { cursor: not-allowed; opacity: .58; }
+.auth-panel button[aria-busy="true"] { cursor: progress; }
 
 @media (max-width: 640px) {
   .event-center-heading { align-items: start; flex-direction: column; }
@@ -33,4 +41,5 @@
   .event-context-switcher select { width: 100%; }
   .auth-inline-input { grid-template-columns: 1fr; }
   .auth-inline-input button { width: 100%; }
+  .registration-phone-verified { align-items: flex-start; flex-direction: column; }
 }
