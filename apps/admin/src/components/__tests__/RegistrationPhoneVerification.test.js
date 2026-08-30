@@ -313,6 +313,185 @@ describe("RegistrationPhoneVerification", () => {
     wrapper.unmount();
   });
 
+  it("locks the code input while a confirmation is pending", async () => {
+    const confirmation = deferred();
+    apiMock.mockReturnValue(confirmation.promise);
+    const wrapper = await mountVerification();
+    await wrapper.get('[data-testid="registration-phone"]').setValue("13800000001");
+    await wrapper.get('[data-testid="registration-sms-code"]').setValue("111111");
+    await wrapper.get('[data-testid="registration-sms-confirm"]').trigger("click");
+
+    expect(wrapper.get('[data-testid="registration-sms-code"]').attributes("disabled")).toBeDefined();
+    confirmation.reject(new Error("confirmation finished"));
+    await flushPromises();
+    wrapper.unmount();
+  });
+
+  it("invalidates a pending confirmation when its captured code changes", async () => {
+    const oldConfirmation = deferred();
+    const newConfirmation = deferred();
+    apiMock
+      .mockImplementationOnce(() => oldConfirmation.promise)
+      .mockImplementationOnce(() => newConfirmation.promise);
+    const wrapper = await mountVerification();
+    await wrapper.get('[data-testid="registration-phone"]').setValue("13800000001");
+    const codeInput = wrapper.get('[data-testid="registration-sms-code"]');
+    await codeInput.setValue("111111");
+    await wrapper.get('[data-testid="registration-sms-confirm"]').trigger("click");
+
+    expect(wrapper.get('[data-testid="registration-sms-confirm"]').attributes("aria-busy")).toBe("true");
+    codeInput.element.disabled = false;
+    codeInput.element.value = "222222";
+    await codeInput.trigger("input");
+    oldConfirmation.resolve({
+      phoneVerificationToken: "stale-code-token",
+      expiresAt: new Date(Date.now() + 15 * 60 * 1_000).toISOString()
+    });
+    await flushPromises();
+
+    expect(wrapper.emitted("update:phoneVerificationToken")).toBeUndefined();
+    expect(wrapper.emitted("verified")).toBeUndefined();
+    expect(wrapper.text()).not.toContain("手机号已验证");
+    expect(wrapper.text()).not.toContain("stale-code-token");
+    expect(wrapper.get('[data-testid="registration-sms-confirm"]').attributes("disabled")).toBeUndefined();
+
+    await wrapper.get('[data-testid="registration-sms-confirm"]').trigger("click");
+    expect(apiMock).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(apiMock.mock.calls[1][1].body)).toEqual({ phone: "13800000001", code: "222222" });
+    newConfirmation.resolve({
+      phoneVerificationToken: "new-code-token",
+      expiresAt: new Date(Date.now() + 15 * 60 * 1_000).toISOString()
+    });
+    await flushPromises();
+    expect(wrapper.emitted("update:phoneVerificationToken")?.at(-1)).toEqual(["new-code-token"]);
+    wrapper.unmount();
+  });
+
+  it("blocks confirmation while a request is pending", async () => {
+    const request = deferred();
+    apiMock.mockReturnValue(request.promise);
+    const wrapper = await mountVerification();
+    await wrapper.get('[data-testid="registration-phone"]').setValue("13800000001");
+    await wrapper.get('[data-testid="registration-sms-code"]').setValue("123456");
+    await wrapper.get('[data-testid="registration-sms-request"]').trigger("click");
+
+    const confirmButton = wrapper.get('[data-testid="registration-sms-confirm"]');
+    expect(confirmButton.attributes("disabled")).toBeDefined();
+    await confirmButton.trigger("click");
+    expect(apiMock).toHaveBeenCalledTimes(1);
+    expect(apiMock.mock.calls[0][0]).toBe("/api/auth/register/sms/request");
+    expect(wrapper.get('[data-testid="registration-sms-request"]').attributes("aria-busy")).toBe("true");
+
+    request.resolve({ message: "request-complete" });
+    await flushPromises();
+    expect(confirmButton.attributes("disabled")).toBeUndefined();
+    expect(wrapper.text()).toContain("request-complete");
+    wrapper.unmount();
+  });
+
+  it("blocks requests while a confirmation is pending", async () => {
+    const confirmation = deferred();
+    apiMock.mockReturnValue(confirmation.promise);
+    const wrapper = await mountVerification();
+    await wrapper.get('[data-testid="registration-phone"]').setValue("13800000001");
+    await wrapper.get('[data-testid="registration-sms-code"]').setValue("123456");
+    await wrapper.get('[data-testid="registration-sms-confirm"]').trigger("click");
+
+    const requestButton = wrapper.get('[data-testid="registration-sms-request"]');
+    expect(requestButton.attributes("disabled")).toBeDefined();
+    await requestButton.trigger("click");
+    expect(apiMock).toHaveBeenCalledTimes(1);
+    expect(apiMock.mock.calls[0][0]).toBe("/api/auth/register/sms/confirm");
+
+    confirmation.reject(new Error("current confirmation failed"));
+    await flushPromises();
+    expect(wrapper.text()).toContain("current confirmation failed");
+    expect(requestButton.attributes("disabled")).toBeUndefined();
+    wrapper.unmount();
+  });
+
+  it("keeps a newer request busy when an older request rejects", async () => {
+    const phoneARequest = deferred();
+    const phoneBRequest = deferred();
+    apiMock
+      .mockImplementationOnce(() => phoneARequest.promise)
+      .mockImplementationOnce(() => phoneBRequest.promise);
+    const wrapper = await mountVerification();
+    await wrapper.get('[data-testid="registration-phone"]').setValue("13800000001");
+    await wrapper.get('[data-testid="registration-sms-request"]').trigger("click");
+    await wrapper.get('[data-testid="registration-phone"]').setValue("13900000002");
+    await wrapper.get('[data-testid="registration-sms-request"]').trigger("click");
+
+    phoneARequest.reject(new Error("stale phone A request error"));
+    await flushPromises();
+    const requestButton = wrapper.get('[data-testid="registration-sms-request"]');
+    expect(apiMock).toHaveBeenCalledTimes(2);
+    expect(requestButton.attributes("aria-busy")).toBe("true");
+    expect(requestButton.text()).toBe("发送中…");
+    expect(wrapper.text()).not.toContain("stale phone A request error");
+    expect(wrapper.text()).not.toContain("重新发送");
+
+    phoneBRequest.resolve({ message: "phone B request accepted" });
+    await flushPromises();
+    expect(requestButton.attributes("aria-busy")).toBe("false");
+    expect(requestButton.text()).toContain("60");
+    expect(wrapper.text()).toContain("phone B request accepted");
+    wrapper.unmount();
+  });
+
+  it("ignores late success and rejection across an A to B to A confirmation sequence", async () => {
+    const firstPhoneAConfirmation = deferred();
+    const phoneBConfirmation = deferred();
+    const newestPhoneAConfirmation = deferred();
+    apiMock
+      .mockImplementationOnce(() => firstPhoneAConfirmation.promise)
+      .mockImplementationOnce(() => phoneBConfirmation.promise)
+      .mockImplementationOnce(() => newestPhoneAConfirmation.promise);
+    const wrapper = await mountVerification();
+
+    await wrapper.get('[data-testid="registration-phone"]').setValue("13800000001");
+    await wrapper.get('[data-testid="registration-sms-code"]').setValue("111111");
+    await wrapper.get('[data-testid="registration-sms-confirm"]').trigger("click");
+    await wrapper.setProps({ phone: "13900000002" });
+    await wrapper.get('[data-testid="registration-sms-code"]').setValue("222222");
+    await wrapper.get('[data-testid="registration-sms-confirm"]').trigger("click");
+    await wrapper.setProps({ phone: "13800000001" });
+    await wrapper.get('[data-testid="registration-sms-code"]').setValue("111111");
+    await wrapper.get('[data-testid="registration-sms-confirm"]').trigger("click");
+
+    expect(apiMock).toHaveBeenCalledTimes(3);
+    expect(JSON.parse(apiMock.mock.calls[0][1].body)).toEqual({ phone: "13800000001", code: "111111" });
+    expect(JSON.parse(apiMock.mock.calls[1][1].body)).toEqual({ phone: "13900000002", code: "222222" });
+    expect(JSON.parse(apiMock.mock.calls[2][1].body)).toEqual({ phone: "13800000001", code: "111111" });
+
+    firstPhoneAConfirmation.resolve({
+      phoneVerificationToken: "first-phone-a-stale-token",
+      expiresAt: new Date(Date.now() + 15 * 60 * 1_000).toISOString()
+    });
+    phoneBConfirmation.reject(new Error("stale phone B confirmation error"));
+    await flushPromises();
+
+    const confirmButton = wrapper.get('[data-testid="registration-sms-confirm"]');
+    expect(confirmButton.attributes("aria-busy")).toBe("true");
+    expect(confirmButton.text()).toBe("验证中…");
+    expect(wrapper.get('[data-testid="registration-sms-code"]').attributes("disabled")).toBeDefined();
+    expect(wrapper.emitted("update:phoneVerificationToken")).toBeUndefined();
+    expect(wrapper.emitted("verified")).toBeUndefined();
+    expect(wrapper.emitted("error")).toBeUndefined();
+    expect(wrapper.text()).not.toContain("手机号已验证");
+    expect(wrapper.text()).not.toContain("stale phone B confirmation error");
+
+    newestPhoneAConfirmation.resolve({
+      phoneVerificationToken: "newest-phone-a-token",
+      expiresAt: new Date(Date.now() + 15 * 60 * 1_000).toISOString()
+    });
+    await flushPromises();
+    expect(wrapper.find('[data-testid="registration-sms-confirm"]').exists()).toBe(false);
+    expect(wrapper.emitted("update:phoneVerificationToken")?.at(-1)).toEqual(["newest-phone-a-token"]);
+    expect(wrapper.emitted("verified")?.at(-1)).toEqual([{ phone: "13800000001" }]);
+    wrapper.unmount();
+  });
+
   it("invalidates the in-memory credential when it expires", async () => {
     const wrapper = await mountVerification();
     await verifyPhone(wrapper, "short-lived-token", 1_000);

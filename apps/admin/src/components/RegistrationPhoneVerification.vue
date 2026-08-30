@@ -48,10 +48,10 @@ const visibleSecondsRemaining = computed(() => (
   requestedPhone.value === normalizedPhone.value ? secondsRemaining.value : 0
 ));
 const requestDisabled = computed(() => (
-  !props.enabled || requesting.value || Boolean(visibleSecondsRemaining.value) || !validPhone.value || isVerified.value
+  !props.enabled || requesting.value || confirming.value || Boolean(visibleSecondsRemaining.value) || !validPhone.value || isVerified.value
 ));
 const confirmDisabled = computed(() => (
-  !props.enabled || confirming.value || isVerified.value || !/^\d{6}$/.test(code.value)
+  !props.enabled || requesting.value || confirming.value || isVerified.value || !/^\d{6}$/.test(code.value)
 ));
 
 function clearExpirationTimer() {
@@ -75,11 +75,15 @@ function resetCredentialState() {
   statusMessage.value = "";
 }
 
-function invalidate(reason, { notify = true } = {}) {
-  const hadCredential = Boolean(phoneVerificationToken.value || props.phoneVerificationToken);
+function invalidateOperations() {
   generation += 1;
   requesting.value = false;
   confirming.value = false;
+}
+
+function invalidate(reason, { notify = true } = {}) {
+  const hadCredential = Boolean(phoneVerificationToken.value || props.phoneVerificationToken);
+  invalidateOperations();
   clearCountdownTimer();
   resetCredentialState();
   errorMessage.value = "";
@@ -96,7 +100,9 @@ function updatePhone(event) {
 }
 
 function updateCode(event) {
-  code.value = String(event.target.value || "").replace(/\D/g, "").slice(0, 6);
+  const nextCode = String(event.target.value || "").replace(/\D/g, "").slice(0, 6);
+  if (confirming.value && nextCode !== code.value) invalidateOperations();
+  code.value = nextCode;
   errorMessage.value = "";
 }
 
@@ -126,20 +132,26 @@ function reportError(error, fallback) {
   emit("error", message);
 }
 
-function operation(phone) {
-  return { generation, phone };
+function beginOperation(phone, submittedCode) {
+  generation += 1;
+  return { generation, phone, submittedCode };
 }
 
-function operationIsCurrent(current) {
+function operationOwnsState(current) {
   return mounted
     && props.enabled
     && current.generation === generation
     && current.phone === normalizedPhone.value;
 }
 
+function operationIsCurrent(current) {
+  return operationOwnsState(current)
+    && (current.submittedCode === undefined || current.submittedCode === code.value);
+}
+
 async function requestCode() {
   if (requestDisabled.value) return;
-  const current = operation(normalizedPhone.value);
+  const current = beginOperation(normalizedPhone.value);
   requesting.value = true;
   errorMessage.value = "";
   statusMessage.value = "";
@@ -157,14 +169,14 @@ async function requestCode() {
     if (!operationIsCurrent(current)) return;
     reportError(error, "验证码发送失败，请重试");
   } finally {
-    if (operationIsCurrent(current)) requesting.value = false;
+    if (operationOwnsState(current)) requesting.value = false;
   }
 }
 
 async function confirmCode() {
   if (confirmDisabled.value) return;
-  const current = operation(normalizedPhone.value);
   const submittedCode = code.value;
+  const current = beginOperation(normalizedPhone.value, submittedCode);
   confirming.value = true;
   errorMessage.value = "";
   try {
@@ -190,7 +202,7 @@ async function confirmCode() {
     emit("update:phoneVerificationToken", "");
     reportError(error, "验证码无效或已过期");
   } finally {
-    if (operationIsCurrent(current)) confirming.value = false;
+    if (operationOwnsState(current)) confirming.value = false;
   }
 }
 
@@ -273,6 +285,7 @@ defineExpose({ invalidate });
             pattern="[0-9]{6}"
             placeholder="6 位验证码"
             required
+            :disabled="confirming"
             :aria-invalid="Boolean(errorMessage)"
             :aria-describedby="errorMessage ? errorId : undefined"
             @input="updateCode"
