@@ -455,15 +455,18 @@ test("manual certificate upload rechecks approval inside the mutation lock befor
 });
 
 test("manual certificate management applies the same file authorization to preview and download", async () => {
-  await withTestServer(async ({ baseUrl, dbPath }) => {
+  await withTestServer(async ({ baseUrl, dbPath, phoneVerificationToken }) => {
     const admin = await loginAs(baseUrl, "13900000000", "admin123");
     await approveRegistration(dbPath);
     const athleteOwner = await loginAs(baseUrl, "13800000001", "123456");
     const organizationOwner = await loginAs(baseUrl, "13800000011", "123456");
-    const outsiderRegistration = await fetch(`${baseUrl}/api/auth/register`, {
+    const outsiderRegistration = await fetch(`${baseUrl}/api/auth/register/ordinary`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: "无关用户", phone: "13600007777", password: "Strong123" })
+      body: JSON.stringify({
+        name: "无关用户", phone: "13600007777", password: "Strong123",
+        phoneVerificationToken: phoneVerificationToken("13600007777")
+      })
     });
     assert.equal(outsiderRegistration.status, 201);
     const outsider = await loginAs(baseUrl, "13600007777", "Strong123");

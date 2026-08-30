@@ -280,6 +280,7 @@ test("a mutating API completes with a PostgreSQL pool of one connection", async 
     asyncRoute: mutationLock.createMutationAsyncRoute(store),
     hashPassword: async () => "hash",
     validatePassword: () => "",
+    verifyPhoneRegistration: async () => true,
     makeId: (prefix) => `${prefix}-POOL-ONE`,
     now: () => "2026-07-17T00:00:00.000Z",
     publicUser: ({ password, ...user }) => user

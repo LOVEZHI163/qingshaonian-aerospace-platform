@@ -12,7 +12,7 @@ const CERTIFICATE_PNG = Buffer.from(
 );
 
 async function withServer(fn) {
-  await withTestServer(({ baseUrl }) => fn(baseUrl), { prefix: "aerogp-authorization-" });
+  await withTestServer(({ baseUrl, phoneVerificationToken }) => fn(baseUrl, phoneVerificationToken), { prefix: "aerogp-authorization-" });
 }
 
 function jsonOptions(method, body, cookie) {
@@ -231,11 +231,12 @@ test("session identity cannot be replaced through body, query, or path values", 
 });
 
 test("only the unique organization owner can review ordinary membership requests", async () => {
-  await withServer(async (baseUrl) => {
+  await withServer(async (baseUrl, phoneVerificationToken) => {
     const owner = await loginAs(baseUrl, "13800000011", "123456");
     const admin = await loginAs(baseUrl, "13900000000", "admin123");
     const ordinaryRegistration = await fetch(`${baseUrl}/api/auth/register/ordinary`, jsonOptions("POST", {
-      name: "申请成员", phone: "13700000010", password: "Member10"
+      name: "申请成员", phone: "13700000010", password: "Member10",
+      phoneVerificationToken: phoneVerificationToken("13700000010")
     }));
     assert.equal(ordinaryRegistration.status, 201);
     const ordinary = await loginAs(baseUrl, "13700000010", "Member10");

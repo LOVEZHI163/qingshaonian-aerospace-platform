@@ -7,6 +7,7 @@ import { asyncRoute, createSessionMiddleware, requireAdmin, requirePasswordReady
 import { createAliyunSmsProvider } from "./auth/sms.js";
 import { createSmsChallengeService, SMS_PURPOSES } from "./auth/sms-challenges.js";
 import { createSmsLoginService, isSmsLoginEligible } from "./auth/sms-login.js";
+import { verifyPhoneRegistrationToken } from "./auth/sms-registration.js";
 import { createHumanVerification } from "./auth/human-verification.js";
 import { createEmailProvider } from "./auth/email-provider.js";
 import { createAccountEmailService } from "./auth/account-email.js";
@@ -112,6 +113,12 @@ const smsLoginChallenge = createSmsChallengeService({
   verifyHuman: (input) => humanVerification.verify(input)
 });
 const smsLogin = createSmsLoginService({ challengeService: smsLoginChallenge, readDb });
+const verifyPhoneRegistration = ({ phone, phoneVerificationToken }) => verifyPhoneRegistrationToken({
+  phone,
+  phoneVerificationToken,
+  secret: process.env.SESSION_SECRET || "test-session-secret-32-characters",
+  now: Date.now()
+});
 
 function id(prefix) {
   return `${prefix}${Date.now()}${Math.floor(Math.random() * 1000)}`;
@@ -264,6 +271,7 @@ app.use("/api", createOrganizationsRouter({
   asyncRoute: mutationAsyncRoute,
   hashPassword,
   validatePassword,
+  verifyPhoneRegistration,
   makeId: id,
   now,
   publicUser
@@ -437,27 +445,6 @@ async function establishLoginSession(req, res, db, user) {
   await new Promise((resolve, reject) => req.session.save((error) => error ? reject(error) : resolve()));
   return res.json({ user: publicUser(user), organizations: userOrganizations(db, user.id) });
 }
-
-app.post("/api/auth/register", mutationAsyncRoute(async (req, res) => {
-  const db = await readDb();
-  const { name, phone, password, type = "ordinary" } = req.body;
-  if (!name || !phone || !password) return res.status(422).json({ error: "姓名、手机号和密码不能为空" });
-  if (type === "organization") return res.status(422).json({ error: "组织注册请使用资质上传接口" });
-  if (type !== "ordinary") return res.status(422).json({ error: "账号类型不合法" });
-  const passwordError = validatePassword(password);
-  if (passwordError) return res.status(422).json({ error: passwordError });
-  const normalizedPhone = normalizePhone(phone);
-  if (db.users.some((user) => normalizePhone(user.phone) === normalizedPhone)) return res.status(409).json({ error: "该手机号已注册" });
-
-  const user = {
-    id: id("U"), name, phone: normalizedPhone, password: await hashPassword(password), type, status: "active",
-    sessionVersion: 0, mustChangePassword: false, createdAt: now()
-  };
-  db.users.push(user);
-
-  await writeDb(db);
-  res.status(201).json({ user: publicUser(user), organization: null });
-}));
 
 app.post("/api/auth/login", asyncRoute(async (req, res) => {
   const phone = normalizePhone(req.body.phone);

@@ -121,13 +121,16 @@ test("ordinary users create sessions only for published writable image-video pro
 });
 
 test("upload session authorization happens before disk upload and rejects expired or committed sessions", async () => {
-  await withTestServer(async ({ baseUrl, dbPath }) => {
+  await withTestServer(async ({ baseUrl, dbPath, phoneVerificationToken }) => {
     await configureImageVideoProject(dbPath);
     const owner = await loginAs(baseUrl, "13800000001", "123456");
     const second = await fetch(`${baseUrl}/api/auth/register/ordinary`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: "Second ordinary", phone: "13800008888", password: "Strong123" })
+      body: JSON.stringify({
+        name: "Second ordinary", phone: "13800008888", password: "Strong123",
+        phoneVerificationToken: phoneVerificationToken("13800008888")
+      })
     });
     assert.equal(second.status, 201);
     const other = await loginAs(baseUrl, "13800008888", "Strong123");

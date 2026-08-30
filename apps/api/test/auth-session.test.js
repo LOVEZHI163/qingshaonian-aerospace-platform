@@ -42,11 +42,14 @@ test("login upgrades a legacy password and restores the user from a session", as
 });
 
 test("registration and admin creation persist hashes", async () => {
-  await withServer(async ({ baseUrl, dbPath }) => {
-    const register = await fetch(`${baseUrl}/api/auth/register`, {
+  await withServer(async ({ baseUrl, dbPath, phoneVerificationToken }) => {
+    const register = await fetch(`${baseUrl}/api/auth/register/ordinary`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: "新用户", phone: "13700000001", password: "Secret123" })
+      body: JSON.stringify({
+        name: "新用户", phone: "13700000001", password: "Secret123",
+        phoneVerificationToken: phoneVerificationToken("13700000001")
+      })
     });
     assert.equal(register.status, 201);
     assert.equal("password" in (await register.json()).user, false);
@@ -78,25 +81,33 @@ test("registration and admin creation persist hashes", async () => {
   });
 });
 
-test("public registration rejects administrator and unknown account types", async () => {
-  await withServer(async ({ baseUrl }) => {
+test("public ordinary registration never honors requested elevated or unknown account types", async () => {
+  await withServer(async ({ baseUrl, phoneVerificationToken }) => {
     for (const type of ["admin", "unknown"]) {
-      const response = await fetch(`${baseUrl}/api/auth/register`, {
+      const phone = type === "admin" ? "13700000003" : "13700000004";
+      const response = await fetch(`${baseUrl}/api/auth/register/ordinary`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: "越权用户", phone: type === "admin" ? "13700000003" : "13700000004", password: "secret5", type })
+        body: JSON.stringify({
+          name: "越权用户", phone, password: "Strong123", type,
+          phoneVerificationToken: phoneVerificationToken(phone)
+        })
       });
-      assert.equal(response.status, 422);
+      assert.equal(response.status, 201);
+      assert.equal((await response.json()).user.type, "ordinary");
     }
   });
 });
 
 test("login regenerates the session identifier", async () => {
-  await withServer(async ({ baseUrl }) => {
-    const register = await fetch(`${baseUrl}/api/auth/register`, {
+  await withServer(async ({ baseUrl, phoneVerificationToken }) => {
+    const register = await fetch(`${baseUrl}/api/auth/register/ordinary`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: "切换用户", phone: "13700000005", password: "Secret678" })
+      body: JSON.stringify({
+        name: "切换用户", phone: "13700000005", password: "Secret678",
+        phoneVerificationToken: phoneVerificationToken("13700000005")
+      })
     });
     assert.equal(register.status, 201);
 

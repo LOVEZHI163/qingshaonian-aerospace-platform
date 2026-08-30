@@ -349,6 +349,7 @@ test("delete organization account leaves persisted data unchanged when its atomi
     asyncRoute: createMutationAsyncRoute(store),
     hashPassword: async (value) => value,
     validatePassword: () => {},
+    verifyPhoneRegistration: async () => true,
     makeId: (prefix) => `${prefix}-WRITE-FAILURE`,
     now: () => deletedAt,
     publicUser: (user) => user
