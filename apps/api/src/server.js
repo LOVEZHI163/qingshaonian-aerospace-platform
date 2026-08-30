@@ -7,7 +7,7 @@ import { asyncRoute, createSessionMiddleware, requireAdmin, requirePasswordReady
 import { createAliyunSmsProvider } from "./auth/sms.js";
 import { createSmsChallengeService, SMS_PURPOSES } from "./auth/sms-challenges.js";
 import { createSmsLoginService, isSmsLoginEligible } from "./auth/sms-login.js";
-import { verifyPhoneRegistrationToken } from "./auth/sms-registration.js";
+import { createSmsRegistrationService } from "./auth/sms-registration.js";
 import { createHumanVerification } from "./auth/human-verification.js";
 import { createEmailProvider } from "./auth/email-provider.js";
 import { createAccountEmailService } from "./auth/account-email.js";
@@ -33,6 +33,7 @@ import { createSystemRouter } from "./routes/system.js";
 import { createSubmissionAssetsRouter } from "./routes/submission-assets.js";
 import { createMembershipsRouter } from "./routes/memberships.js";
 import { createAccountSecurityRouter } from "./routes/account-security.js";
+import { createSmsRegistrationRouter } from "./routes/sms-registration.js";
 import { startSubmissionSessionExpiryCleanup } from "./services/submission-assets.js";
 import { registrationContext } from "./services/events.js";
 import { replayFileCleanupJournal } from "./services/organizations.js";
@@ -85,6 +86,22 @@ function requireTemporaryPasswordVault() {
   if (!temporaryPasswordVault) throw temporaryPasswordKeyUnavailable();
   return temporaryPasswordVault;
 }
+const smsRegistrationChallenge = createSmsChallengeService({
+  purpose: SMS_PURPOSES.registration,
+  secret: sessionSecret,
+  readDb,
+  smsProvider,
+  authState: dataStore.authState,
+  resolveEligibleTarget: (db, phone) => (
+    db.users.some((item) => normalizePhone(item.phone) === phone) ? null : { phone }
+  ),
+  verifyHuman: (input) => humanVerification.verify(input)
+});
+const smsRegistration = createSmsRegistrationService({
+  challengeService: smsRegistrationChallenge,
+  readDb,
+  secret: sessionSecret
+});
 const smsPasswordResetChallenge = createSmsChallengeService({
   purpose: SMS_PURPOSES.passwordReset,
   secret: sessionSecret,
@@ -114,12 +131,6 @@ const smsLoginChallenge = createSmsChallengeService({
   verifyHuman: (input) => humanVerification.verify(input)
 });
 const smsLogin = createSmsLoginService({ challengeService: smsLoginChallenge, readDb });
-const verifyPhoneRegistration = ({ phone, phoneVerificationToken }) => verifyPhoneRegistrationToken({
-  phone,
-  phoneVerificationToken,
-  secret: sessionSecret,
-  now: Date.now()
-});
 
 function id(prefix) {
   return `${prefix}${Date.now()}${Math.floor(Math.random() * 1000)}`;
@@ -264,6 +275,7 @@ app.use(asyncRoute(async (req, _res, next) => {
   next();
 }));
 app.use("/api", createAccountSecurityRouter({ service: accountEmailService, requireUser, asyncRoute }));
+app.use("/api", createSmsRegistrationRouter({ smsRegistration }));
 app.use("/api", createOrganizationsRouter({
   store: dataStore,
   requireUser,
@@ -272,7 +284,7 @@ app.use("/api", createOrganizationsRouter({
   asyncRoute: mutationAsyncRoute,
   hashPassword,
   validatePassword,
-  verifyPhoneRegistration,
+  verifyPhoneRegistration: smsRegistration.verify,
   makeId: id,
   now,
   publicUser
@@ -423,6 +435,7 @@ app.use("/api", createPublicSiteRouter({
 app.get("/api/public/features", (_req, res) => {
   const captchaConfig = humanVerification.publicConfig;
   res.json({
+    smsRegistrationEnabled: smsRegistration.enabled,
     smsLoginEnabled: smsLogin.enabled,
     smsPasswordResetEnabled: smsPasswordReset.enabled,
     emailPasswordResetEnabled: Boolean(emailProvider),
@@ -431,6 +444,7 @@ app.get("/api/public/features", (_req, res) => {
       region: captchaConfig.region,
       prefix: captchaConfig.prefix,
       scenes: {
+        smsRegistration: captchaConfig.scenes[SMS_PURPOSES.registration] || "",
         smsLogin: captchaConfig.scenes[SMS_PURPOSES.login] || "",
         smsPasswordReset: captchaConfig.scenes[SMS_PURPOSES.passwordReset] || "",
         emailPasswordReset: captchaConfig.scenes["email-password-reset"] || ""
