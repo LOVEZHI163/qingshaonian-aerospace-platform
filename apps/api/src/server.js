@@ -89,7 +89,7 @@ const smsPasswordResetChallenge = createSmsChallengeService({
   readDb,
   smsProvider,
   authState: dataStore.authState,
-  resolveEligibleUser: (db, phone) => db.users.find((item) => normalizePhone(item.phone) === phone && item.status === "active"),
+  resolveEligibleTarget: (db, phone) => db.users.find((item) => normalizePhone(item.phone) === phone && item.status === "active"),
   verifyHuman: (input) => humanVerification.verify(input)
 });
 const smsPasswordReset = createSmsPasswordResetService({
@@ -105,7 +105,7 @@ const smsLoginChallenge = createSmsChallengeService({
   readDb,
   smsProvider,
   authState: dataStore.authState,
-  resolveEligibleUser: (db, phone) => {
+  resolveEligibleTarget: (db, phone) => {
     const user = db.users.find((item) => normalizePhone(item.phone) === phone);
     return isSmsLoginEligible(db, user) ? user : null;
   },

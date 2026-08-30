@@ -9,6 +9,7 @@ const COMPLETE_ENV = {
   ALIYUN_CAPTCHA_ENABLED: "true",
   ALIYUN_CAPTCHA_REGION: "cn",
   ALIYUN_CAPTCHA_PREFIX: "abc123",
+  ALIYUN_CAPTCHA_SMS_REGISTRATION_SCENE_ID: "sms-registration-scene",
   ALIYUN_CAPTCHA_LOGIN_SCENE_ID: "login-scene",
   ALIYUN_CAPTCHA_SMS_RESET_SCENE_ID: "sms-reset-scene",
   ALIYUN_CAPTCHA_EMAIL_RESET_SCENE_ID: "email-reset-scene"
@@ -56,6 +57,21 @@ test("human verification uses the server-owned scene and forwards the signed par
   assert.equal(requests[0].captchaVerifyParam, "signed-client-payload");
   assert.equal(enabled.publicConfig.prefix, "abc123");
   assert.equal(enabled.publicConfig.region, "cn");
+});
+
+test("human verification uses the server-owned registration SMS scene", async () => {
+  const requests = [];
+  const enabled = createHumanVerification(COMPLETE_ENV, {
+    client: {
+      async verifyIntelligentCaptcha(request) {
+        requests.push(request);
+        return { body: { result: { verifyResult: true } } };
+      }
+    }
+  });
+
+  assert.equal(await enabled.verify({ scene: "sms-registration", captchaVerifyParam: "signed-registration" }), true);
+  assert.equal(requests[0].sceneId, "sms-registration-scene");
 });
 
 test("human verification maps empty, rejected, and provider failures to a stable safe error", async () => {

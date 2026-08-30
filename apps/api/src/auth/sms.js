@@ -6,6 +6,7 @@ const endpoint = "dysmsapi.aliyuncs.com";
 
 export function createAliyunSmsProvider(env, { client: injectedClient } = {}) {
   const smsConfigured = [
+    env.ALIYUN_SMS_REGISTRATION_TEMPLATE_CODE,
     env.ALIYUN_SMS_LOGIN_TEMPLATE_CODE,
     env.ALIYUN_SMS_RESET_TEMPLATE_CODE
   ].some(Boolean);
@@ -17,6 +18,7 @@ export function createAliyunSmsProvider(env, { client: injectedClient } = {}) {
   const baseConfigured = smsConfigured && base.every(Boolean);
   if (smsConfigured && !baseConfigured) throw new Error("Aliyun SMS configuration is incomplete");
   const templateByPurpose = {
+    "sms-registration": env.ALIYUN_SMS_REGISTRATION_TEMPLATE_CODE,
     "sms-login": env.ALIYUN_SMS_LOGIN_TEMPLATE_CODE,
     "sms-password-reset": env.ALIYUN_SMS_RESET_TEMPLATE_CODE
   };

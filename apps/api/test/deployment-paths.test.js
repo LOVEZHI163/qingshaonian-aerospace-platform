@@ -1,9 +1,24 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 
 const root = path.resolve(import.meta.dirname, "../../..");
+
+function runConfigVerification() {
+  return new Promise((resolve, reject) => {
+    const child = spawn("powershell", ["-ExecutionPolicy", "Bypass", "-File", "deploy/verify-config.ps1"], {
+      cwd: root,
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+    let output = "";
+    child.stdout.on("data", (chunk) => { output += chunk; });
+    child.stderr.on("data", (chunk) => { output += chunk; });
+    child.on("error", reject);
+    child.on("close", (code) => resolve({ code, output }));
+  });
+}
 
 function shellBlockAfter(document, marker) {
   const markerIndex = document.indexOf(marker);
@@ -171,11 +186,13 @@ test("deployment passes optional Aliyun SMS configuration without generating cre
     "ALIBABA_CLOUD_ACCESS_KEY_ID",
     "ALIBABA_CLOUD_ACCESS_KEY_SECRET",
     "ALIYUN_SMS_SIGN_NAME",
+    "ALIYUN_SMS_REGISTRATION_TEMPLATE_CODE",
     "ALIYUN_SMS_LOGIN_TEMPLATE_CODE",
     "ALIYUN_SMS_RESET_TEMPLATE_CODE",
     "ALIYUN_CAPTCHA_ENABLED",
     "ALIYUN_CAPTCHA_REGION",
     "ALIYUN_CAPTCHA_PREFIX",
+    "ALIYUN_CAPTCHA_SMS_REGISTRATION_SCENE_ID",
     "ALIYUN_CAPTCHA_LOGIN_SCENE_ID",
     "ALIYUN_CAPTCHA_SMS_RESET_SCENE_ID",
     "ALIYUN_CAPTCHA_EMAIL_RESET_SCENE_ID"
@@ -189,6 +206,13 @@ test("deployment passes optional Aliyun SMS configuration without generating cre
   assert.doesNotMatch(compose, /ALIYUN_SMS_TEMPLATE_CODE:/);
   assert.match(example, /^ALIYUN_CAPTCHA_ENABLED=false$/m);
   assert.match(smsSource, /dysmsapi\.aliyuncs\.com/);
+});
+
+test("deployment configuration verifier accepts the checked-in optional SMS settings", async () => {
+  const result = await runConfigVerification();
+
+  assert.equal(result.code, 0, result.output);
+  assert.match(result.output, /Deployment configuration checks passed\./);
 });
 
 test("deployment passes optional Aliyun DirectMail SMTP configuration", async () => {

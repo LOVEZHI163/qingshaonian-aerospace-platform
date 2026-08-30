@@ -193,7 +193,7 @@ function serviceHarness({ sendCode, logger } = {}) {
     readDb: async () => structuredClone(db),
     smsProvider,
     authState,
-    resolveEligibleUser: (database, phone) => database.users.find((user) => user.phone === phone && user.status === "active"),
+    resolveEligibleTarget: (database, phone) => database.users.find((user) => user.phone === phone && user.status === "active"),
     clock: () => currentTime,
     generateCode: () => "123456",
     logger: logger || { warn() {}, error() {} }

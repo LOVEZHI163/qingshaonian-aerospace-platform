@@ -1,12 +1,14 @@
 import { createHmac, randomBytes, randomInt } from "node:crypto";
 
 const HOUR_MS = 60 * 60 * 1000;
-const UNIFORM_RESPONSE = Object.freeze({
-  ok: true,
-  message: "如果该手机号已注册，验证码将发送到该号码"
+const MESSAGE_BY_PURPOSE = Object.freeze({
+  "sms-registration": "如果该手机号可用于注册，验证码将发送到该号码",
+  "sms-login": "如果该手机号已注册，验证码将发送到该号码",
+  "sms-password-reset": "如果该手机号已注册，验证码将发送到该号码"
 });
 
 export const SMS_PURPOSES = Object.freeze({
+  registration: "sms-registration",
   login: "sms-login",
   passwordReset: "sms-password-reset"
 });
@@ -32,7 +34,7 @@ export function createSmsChallengeService({
   readDb,
   smsProvider,
   authState,
-  resolveEligibleUser,
+  resolveEligibleTarget,
   verifyHuman = async () => true,
   clock = Date.now,
   generateCode = () => String(randomInt(0, 1_000_000)).padStart(6, "0"),
@@ -54,8 +56,8 @@ export function createSmsChallengeService({
     let digest;
     try {
       const db = await readDb();
-      const user = await resolveEligibleUser(db, phone);
-      if (!user) {
+      const eligibleTarget = await resolveEligibleTarget(db, phone);
+      if (!eligibleTarget) {
         await authState.deleteChallenge({ purpose, phone, digest: requestDigest });
         return;
       }
@@ -86,6 +88,9 @@ export function createSmsChallengeService({
     async request({ phone: incomingPhone, ip = "unknown", captchaVerifyParam = "" }) {
       if (!enabled) throw new SmsChallengeError(503, "短信验证暂未启用");
       const phone = normalizePhone(incomingPhone);
+      if (!/^1[3-9]\d{9}$/.test(phone)) {
+        throw new SmsChallengeError(422, "手机号格式无效");
+      }
       const currentTime = clock();
       const allowed = await authState.consumeRateLimits([
         { key: `sms:phone:${phone}`, limit: 5, windowMs: HOUR_MS, cooldownMs: 60_000 },
@@ -104,7 +109,7 @@ export function createSmsChallengeService({
         attempts: 0
       });
       schedule(() => runBackground(phone, currentTime, requestDigest));
-      return { ...UNIFORM_RESPONSE };
+      return { ok: true, message: MESSAGE_BY_PURPOSE[purpose] };
     },
     async consume({ phone: incomingPhone, code: incomingCode }) {
       const phone = normalizePhone(incomingPhone);
