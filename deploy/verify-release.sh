@@ -3,6 +3,25 @@ set -eu
 
 base_url="${BASE_URL:-http://127.0.0.1}"
 expected_release="${EXPECTED_RELEASE:?EXPECTED_RELEASE is required}"
+expected_sms_registration_enabled="${EXPECTED_SMS_REGISTRATION_ENABLED:?EXPECTED_SMS_REGISTRATION_ENABLED is required}"
+expected_sms_login_enabled="${EXPECTED_SMS_LOGIN_ENABLED:?EXPECTED_SMS_LOGIN_ENABLED is required}"
+expected_sms_password_reset_enabled="${EXPECTED_SMS_PASSWORD_RESET_ENABLED:?EXPECTED_SMS_PASSWORD_RESET_ENABLED is required}"
+
+validate_boolean_expectation() {
+  expectation_name="$1"
+  expectation_value="$2"
+  case "$expectation_value" in
+    true|false) ;;
+    *)
+      echo "$expectation_name must be true or false" >&2
+      exit 1
+      ;;
+  esac
+}
+
+validate_boolean_expectation EXPECTED_SMS_REGISTRATION_ENABLED "$expected_sms_registration_enabled"
+validate_boolean_expectation EXPECTED_SMS_LOGIN_ENABLED "$expected_sms_login_enabled"
+validate_boolean_expectation EXPECTED_SMS_PASSWORD_RESET_ENABLED "$expected_sms_password_reset_enabled"
 case "$expected_release" in
   (*[!0-9a-fA-F]*|'')
     echo "EXPECTED_RELEASE must be exactly 40 hexadecimal characters" >&2
@@ -96,9 +115,16 @@ if [ "$actual_release" != "$expected_release" ]; then
 fi
 
 fetch "public features" "$features_json" "$base_url/api/public/features"
-for expected_feature in '"smsLoginEnabled":false' '"smsPasswordResetEnabled":false' '"enabled":false'; do
-  if ! grep -F -- "$expected_feature" "$features_json" >/dev/null; then
-    echo "public features do not match the first-stage disabled SMS configuration" >&2
+for feature_expectation in \
+  "smsRegistrationEnabled:$expected_sms_registration_enabled" \
+  "smsLoginEnabled:$expected_sms_login_enabled" \
+  "smsPasswordResetEnabled:$expected_sms_password_reset_enabled"
+do
+  feature_name="${feature_expectation%%:*}"
+  expected_value="${feature_expectation#*:}"
+  actual_value="$(LC_ALL=C sed -n "s/.*\"$feature_name\":\(true\|false\).*/\1/p" "$features_json")"
+  if [ "$actual_value" != "$expected_value" ]; then
+    echo "public feature $feature_name does not match its expected value" >&2
     exit 1
   fi
 done

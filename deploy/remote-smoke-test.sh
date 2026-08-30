@@ -6,6 +6,11 @@ script_dir="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 
 base_url="${BASE_URL:-http://127.0.0.1}"
 admin_phone="${ADMIN_TEST_PHONE:-13900000000}"
+remote_smoke_auth_only="${REMOTE_SMOKE_AUTH_ONLY:-false}"
+case "$remote_smoke_auth_only" in
+  true|false) ;;
+  *) echo "REMOTE_SMOKE_AUTH_ONLY must be true or false" >&2; exit 1 ;;
+esac
 umask 077
 work_dir=
 
@@ -165,22 +170,43 @@ assert_status "public-home" 200 "$base_url/api/public/home"
 
 assert_status "public-features" 200 "$base_url/api/public/features"
 assert_json_response "public-features"
-if ! json_path 'let input="";process.stdin.on("data",chunk=>input+=chunk).on("end",()=>{const data=JSON.parse(input);if(data.smsLoginEnabled!==false||data.smsPasswordResetEnabled!==false||data.captcha?.enabled!==false)process.exit(2);});' >/dev/null; then
-  echo "public-features did not keep first-stage SMS and captcha disabled" >&2
+sms_feature_state="$work_dir/sms-feature-state"
+if ! json_path 'let input="";process.stdin.on("data",chunk=>input+=chunk).on("end",()=>{const data=JSON.parse(input);for(const name of ["smsRegistrationEnabled","smsLoginEnabled","smsPasswordResetEnabled"]){if(typeof data[name]!=="boolean")process.exit(2);process.stdout.write(String(data[name])+"\n");}});' > "$sms_feature_state"; then
+  echo "public-features did not return three boolean SMS feature flags" >&2
   exit 1
 fi
+sms_registration_enabled="$(sed -n '1p' "$sms_feature_state")"
+sms_login_enabled="$(sed -n '2p' "$sms_feature_state")"
+sms_password_reset_enabled="$(sed -n '3p' "$sms_feature_state")"
 
-printf '%s' '{"phone":"13800000001","captchaVerifyParam":""}' | \
-assert_status "sms-login-disabled" 503 \
-  -H 'Content-Type: application/json' --data-binary @- \
-  "$base_url/api/auth/sms-login/request"
-assert_json_error "sms-login-disabled"
+check_sms_request_when_disabled() {
+  label="$1"
+  feature_enabled="$2"
+  endpoint="$3"
+  case "$feature_enabled" in
+    true)
+      echo "$label=enabled-no-send"
+      ;;
+    false)
+      printf '%s' '{"phone":"13800000001","captchaVerifyParam":""}' | \
+      assert_status "$label-disabled" 503 \
+        -H 'Content-Type: application/json' --data-binary @- \
+        "$base_url$endpoint"
+      assert_json_error "$label-disabled"
+      ;;
+    *)
+      echo "$label feature flag was not boolean" >&2
+      exit 1
+      ;;
+  esac
+}
 
-printf '%s' '{"phone":"13800000001","captchaVerifyParam":""}' | \
-assert_status "sms-reset-disabled" 503 \
-  -H 'Content-Type: application/json' --data-binary @- \
-  "$base_url/api/auth/password-reset/sms/request"
-assert_json_error "sms-reset-disabled"
+check_sms_request_when_disabled \
+  "sms-registration" "$sms_registration_enabled" "/api/auth/register/sms/request"
+check_sms_request_when_disabled \
+  "sms-login" "$sms_login_enabled" "/api/auth/sms-login/request"
+check_sms_request_when_disabled \
+  "sms-reset" "$sms_password_reset_enabled" "/api/auth/password-reset/sms/request"
 
 printf '%s' '{"email":"nobody-smoke@example.invalid","captchaVerifyParam":""}' | \
 assert_status "email-reset-request" 200 \
@@ -328,6 +354,15 @@ assert_status "authenticated-site-content" 200 \
   "$base_url/api/admin/content"
 assert_status "unauthenticated-site-settings" 401 \
   "$base_url/api/admin/site-settings"
+
+if test "$remote_smoke_auth_only" = true; then
+  echo "remote-smoke-auth-only=ok"
+  exit 0
+fi
+if test "$sms_registration_enabled" = false; then
+  echo "registration-dependent-smoke=skipped-feature-disabled"
+  exit 0
+fi
 
 refresh_submission_cleanup_events() {
   cleanup_events_response="$work_dir/cleanup-events.json"
@@ -576,17 +611,21 @@ assert_status "submission-event-registration-open" 200 \
 smoke_organization_token="$(date +%s)-$$"
 smoke_organization_name="组织冒烟-$smoke_organization_token"
 smoke_foreign_organization_name="外部组织冒烟-$smoke_organization_token"
-smoke_organization_phone="1$(printf '%s' "owner-$smoke_organization_token" | cksum | awk '{printf "%010d", $1}')"
-smoke_foreign_organization_phone="1$(printf '%s' "foreign-$smoke_organization_token" | cksum | awk '{printf "%010d", $1}')"
+smoke_organization_phone="138$(printf '%s' "owner-$smoke_organization_token" | cksum | awk '{printf "%08d", $1 % 100000000}')"
+smoke_foreign_organization_phone="139$(printf '%s' "foreign-$smoke_organization_token" | cksum | awk '{printf "%08d", $1 % 100000000}')"
 smoke_organization_credit_code="91330300$(printf '%s' "owner-$smoke_organization_token" | cksum | awk '{printf "%010d", $1}')"
 smoke_foreign_organization_credit_code="91330300$(printf '%s' "foreign-$smoke_organization_token" | cksum | awk '{printf "%010d", $1}')"
 smoke_organization_password="Smoke-${smoke_organization_token}!o"
 smoke_foreign_organization_password="Smoke-${smoke_organization_token}!f"
 smoke_organization_password_file="$work_dir/organization-owner.password"
 smoke_foreign_organization_password_file="$work_dir/organization-foreign.password"
+smoke_organization_token_file="$work_dir/organization-owner.registration-token"
+smoke_foreign_organization_token_file="$work_dir/organization-foreign.registration-token"
 printf '%s' "$smoke_organization_password" > "$smoke_organization_password_file"
 printf '%s' "$smoke_foreign_organization_password" > "$smoke_foreign_organization_password_file"
 unset smoke_organization_password smoke_foreign_organization_password
+smoke_issue_phone_registration_token "$smoke_organization_phone" "$smoke_organization_token_file"
+smoke_issue_phone_registration_token "$smoke_foreign_organization_phone" "$smoke_foreign_organization_token_file"
 organization_expected_grades='["一年级","二年级","三年级","四年级","五年级","六年级","初一","初二","初三","高一","高二","高三","职高一年级","职高二年级","职高三年级"]'
 organization_credential_file="$work_dir/organization-credential.pdf"
 printf '%s' '%PDF-1.7
@@ -601,6 +640,7 @@ assert_status "organization-owner-register" 201 \
   -F "name=组织冒烟负责人" \
   -F "phone=$smoke_organization_phone" \
   -F "password=<$smoke_organization_password_file" \
+  -F "phoneVerificationToken=<$smoke_organization_token_file" \
   -F "organizationName=$smoke_organization_name" \
   -F "creditCode=$smoke_organization_credit_code" \
   -F 'documentType=business_license' \
@@ -674,6 +714,7 @@ assert_status "organization-foreign-register" 201 \
   -F "name=外部组织负责人" \
   -F "phone=$smoke_foreign_organization_phone" \
   -F "password=<$smoke_foreign_organization_password_file" \
+  -F "phoneVerificationToken=<$smoke_foreign_organization_token_file" \
   -F "organizationName=$smoke_foreign_organization_name" \
   -F "creditCode=$smoke_foreign_organization_credit_code" \
   -F 'documentType=business_license' \

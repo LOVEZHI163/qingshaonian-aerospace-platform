@@ -31,7 +31,9 @@ $verifyUploadsBackup = Read-RequiredFile "deploy/verify-uploads-backup.sh"
 $preflightUpgrade = Read-RequiredFile "deploy/preflight-admin-upgrade.sh"
 $restore = Read-RequiredFile "deploy/restore-postgres.sh"
 $bootstrapSecrets = Read-RequiredFile "deploy/bootstrap-secrets.sh"
+$verifyRelease = Read-RequiredFile "deploy/verify-release.sh"
 $remoteSmoke = Read-RequiredFile "deploy/remote-smoke-test.sh"
+$smokeCredentials = Read-RequiredFile "deploy/smoke-credentials.sh"
 $envExample = Read-RequiredFile ".env.example"
 
 Require-Match $apiDockerfile '(?m)^USER\s+node\s*$' "API image must run as the node user"
@@ -102,6 +104,28 @@ Require-Match $remoteSmoke 'ADMIN_TEST_PASSWORD' "Remote smoke tests must receiv
 Require-Match $remoteSmoke 'cookie' "Remote smoke tests must preserve the authenticated session with a cookie jar"
 Require-Match $remoteSmoke '--data-binary\s+@-' "Remote smoke tests must send login credentials through curl stdin"
 Require-NoMatch $remoteSmoke '(?m)^\s*-d\s+"\$login_payload"' "Remote smoke tests must not put login credentials in curl argv"
+foreach ($name in @(
+  'EXPECTED_SMS_REGISTRATION_ENABLED',
+  'EXPECTED_SMS_LOGIN_ENABLED',
+  'EXPECTED_SMS_PASSWORD_RESET_ENABLED'
+)) {
+  Require-Match $verifyRelease "\`$\{$name`:``?" "Release verification must require $name"
+}
+foreach ($feature in @('smsRegistrationEnabled', 'smsLoginEnabled', 'smsPasswordResetEnabled')) {
+  Require-Match $verifyRelease $feature "Release verification must check $feature"
+  Require-Match $remoteSmoke $feature "Remote smoke tests must inspect $feature"
+}
+foreach ($path in @(
+  '/api/auth/register/sms/request',
+  '/api/auth/sms-login/request',
+  '/api/auth/password-reset/sms/request'
+)) {
+  if (-not $remoteSmoke.Contains($path)) { $failures.Add("Remote smoke tests must safely gate $path") }
+}
+Require-Match $smokeCredentials 'createPhoneRegistrationToken' "Organization smoke tokens must use the production token helper"
+Require-Match $smokeCredentials 'process\.env\.SESSION_SECRET' "Organization smoke tokens must use the API container session secret"
+Require-Match $smokeCredentials 'chmod\s+600\s+"\$smoke_registration_token_tmp"' "Organization smoke token files must be private"
+Require-Match $remoteSmoke 'phoneVerificationToken=<\$smoke_organization_token_file' "Organization smoke registration must submit a signed phone token"
 foreach ($path in @('/healthz', '/api/public/home', '/api/public/content', '/api/public/sitemap.xml', '/brand/mark.svg', '/brand/wordmark.svg', '/api/admin/site-settings')) {
   if (-not $remoteSmoke.Contains($path)) { $failures.Add("Remote smoke tests must check $path") }
 }
@@ -142,13 +166,23 @@ foreach ($entry in @(
   @{ Name = "uploads backup"; Content = $backupUploads },
   @{ Name = "uploads backup verifier"; Content = $verifyUploadsBackup },
   @{ Name = "upgrade preflight"; Content = $preflightUpgrade },
+  @{ Name = "release verifier"; Content = $verifyRelease },
   @{ Name = "remote smoke test"; Content = $remoteSmoke }
 )) {
   Require-Match $entry.Content '(?m)^set -eu\s*$' "$($entry.Name) script must fail fast"
   Require-NoMatch $entry.Content '(?m)^\s*set\s+-[^\r\n]*x' "$($entry.Name) script must not enable shell tracing"
   Require-NoMatch $entry.Content '(?i)(?:cat|sed|awk|grep|head|tail|less|more)\s+[^\r\n]*\.env' "$($entry.Name) script must not print the environment file"
   Require-NoMatch $entry.Content '(?im)^(?![^\r\n]*(?:\||>))[^\r\n]*(?:echo|printf)\s+[^\r\n]*(?:PASSWORD|PGPASSWORD|SESSION_SECRET)' "$($entry.Name) script must not print passwords or session secrets"
+  Require-NoMatch $entry.Content '47\.99\.181\.222|(?im)\b(?:ssh|scp)\s+aerogp(?:\s|:)' "$($entry.Name) must not target the retired server"
+  Require-NoMatch $entry.Content '(?im)docker\s+compose\s+down\s+-v\b' "$($entry.Name) must not delete named volumes"
+  Require-NoMatch $entry.Content 'LTAI[A-Za-z0-9]+|ALIBABA_CLOUD_ACCESS_KEY_(?:ID|SECRET)=[^\s"'']+' "$($entry.Name) must not contain Alibaba Cloud credentials"
+  Require-NoMatch $entry.Content '\$\{ALIYUN_SMS_TEMPLATE_CODE' "$($entry.Name) must not use the legacy shared SMS template as fallback"
 }
+Require-NoMatch $smokeCredentials '(?m)^\s*set\s+-[^\r\n]*x' "Smoke credential helpers must not enable shell tracing"
+Require-NoMatch $smokeCredentials '(?im)^(?![^\r\n]*(?:\||>))[^\r\n]*(?:echo|printf)\s+[^\r\n]*(?:PASSWORD|SESSION_SECRET)' "Smoke credential helpers must not print passwords or session secrets"
+Require-NoMatch $smokeCredentials '47\.99\.181\.222|(?im)\b(?:ssh|scp)\s+aerogp(?:\s|:)' "Smoke credential helpers must not target the retired server"
+Require-NoMatch $smokeCredentials '(?im)docker\s+compose\s+down\s+-v\b' "Smoke credential helpers must not delete named volumes"
+Require-NoMatch $smokeCredentials 'LTAI[A-Za-z0-9]+|ALIBABA_CLOUD_ACCESS_KEY_(?:ID|SECRET)=[^\s"'']+' "Smoke credential helpers must not contain Alibaba Cloud credentials"
 
 if ($failures.Count -gt 0) {
   $failures | ForEach-Object { Write-Error $_ }

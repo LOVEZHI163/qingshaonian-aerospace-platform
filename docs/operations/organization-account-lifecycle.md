@@ -137,6 +137,9 @@ docker compose exec -T postgres sh -c 'pg_restore --clean --if-exists -U "$POSTG
 ```bash
 cd /opt/aerogp
 EXPECTED_RELEASE="$(sed -n 's/^RELEASE_SHA=//p' .env)" \
+  EXPECTED_SMS_REGISTRATION_ENABLED=false \
+  EXPECTED_SMS_LOGIN_ENABLED=false \
+  EXPECTED_SMS_PASSWORD_RESET_ENABLED=false \
   BASE_URL=https://aerogp.cn ./deploy/verify-release.sh
 ADMIN_TEST_PASSWORD="${ADMIN_TEST_PASSWORD:?set securely for this shell}" \
   BASE_URL=https://aerogp.cn ./deploy/remote-smoke-test.sh

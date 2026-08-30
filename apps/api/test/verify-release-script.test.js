@@ -187,7 +187,13 @@ function shellCommand() {
 
 function runVerifier({ baseUrl, includeRelease = true, release = expectedRelease }) {
   return new Promise((resolve, reject) => {
-    const env = { ...process.env, BASE_URL: baseUrl };
+    const env = {
+      ...process.env,
+      BASE_URL: baseUrl,
+      EXPECTED_SMS_REGISTRATION_ENABLED: "false",
+      EXPECTED_SMS_LOGIN_ENABLED: "false",
+      EXPECTED_SMS_PASSWORD_RESET_ENABLED: "false"
+    };
     if (includeRelease) env.EXPECTED_RELEASE = release;
     else delete env.EXPECTED_RELEASE;
     const child = spawn(shellCommand(), ["deploy/verify-release.sh"], {
@@ -258,6 +264,7 @@ test("verify-release enforces the runtime API and hashed admin asset contract", 
     if (route === "/api/public/features") {
       response.setHeader("Content-Type", "application/json");
       response.end(JSON.stringify({
+        smsRegistrationEnabled: false,
         smsLoginEnabled: false,
         smsPasswordResetEnabled: false,
         emailPasswordResetEnabled: true,

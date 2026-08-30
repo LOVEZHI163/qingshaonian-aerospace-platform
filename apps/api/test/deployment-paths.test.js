@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
@@ -19,6 +20,148 @@ function runConfigVerification({ platform = process.platform } = {}) {
     child.on("error", reject);
     child.on("close", (code) => resolve({ code, output }));
   });
+}
+
+const shell = process.platform === "win32"
+  ? "C:\\Program Files\\Git\\bin\\bash.exe"
+  : "/bin/sh";
+
+function shellPath(filePath) {
+  const normalized = filePath.replaceAll("\\", "/");
+  if (process.platform !== "win32") return normalized;
+  return normalized.replace(/^([A-Za-z]):/, (_match, drive) => `/${drive.toLowerCase()}`);
+}
+
+function shellSearchPath(extraPath) {
+  const current = String(process.env.PATH || "")
+    .split(path.delimiter)
+    .filter(Boolean)
+    .map(shellPath)
+    .join(":");
+  return `${shellPath(extraPath)}:${current}`;
+}
+
+function runShell(scriptPath, { args = [], env = {}, prependPath = "" } = {}) {
+  return new Promise((resolve, reject) => {
+    const command = prependPath
+      ? 'PATH="$1:$PATH"; export PATH; shift; exec "$@"'
+      : 'exec "$@"';
+    const shellArgs = ["-c", command, "deployment-test"];
+    if (prependPath) shellArgs.push(shellPath(prependPath));
+    shellArgs.push(shellPath(scriptPath), ...args);
+    const child = spawn(shell, shellArgs, {
+      cwd: root,
+      env: { ...process.env, ...env },
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => { stdout += chunk; });
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    child.on("error", reject);
+    child.on("close", (code) => resolve({ code, stdout, stderr }));
+  });
+}
+
+async function createDeploymentScriptHarness(features) {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "aerogp-deploy-test-"));
+  const binDirectory = path.join(directory, "bin");
+  const featureFile = path.join(directory, "features.json");
+  const curlLog = path.join(directory, "curl.log");
+  await fs.mkdir(binDirectory);
+  await fs.writeFile(featureFile, `${JSON.stringify({ ...features, captcha: { enabled: false } })}\n`);
+  await fs.writeFile(curlLog, "");
+  await fs.writeFile(path.join(binDirectory, "curl"), `#!/bin/sh
+set -eu
+output=/dev/null
+format=
+url=
+authenticated=0
+while test "$#" -gt 0; do
+  case "$1" in
+    -o) output="$2"; shift 2 ;;
+    -w) format="$2"; shift 2 ;;
+    -b) authenticated=1; shift 2 ;;
+    --connect-timeout|--max-time|-H|-c|-F|-X|--data-binary) shift 2 ;;
+    -s|-S|-sS|-f|-fsS) shift ;;
+    *) url="$1"; shift ;;
+  esac
+done
+printf '%s\\n' "$url" >> "$FAKE_CURL_LOG"
+status=200
+content_type=application/json
+case "$url" in
+  */api/system/version)
+    printf '%s' '{"releaseSha":"0000000000000000000000000000000000000000","apiVersion":1}' > "$output" ;;
+  */api/public/features)
+    cat "$FAKE_FEATURES_FILE" > "$output" ;;
+  */admin/index.html*)
+    content_type=text/html
+    printf '%s' '<script type="module" src="/admin/assets/index-test.js"></script>' > "$output" ;;
+  */admin/assets/index-test.js)
+    content_type=application/javascript
+    printf '%s' '0000000000000000000000000000000000000000 ORGANIZATION_REVIEW_PENDING ACTIVE_ORGANIZATION_REQUIRED temporary-password' > "$output" ;;
+  */api/public/home)
+    printf '%s' '{"featuredEvent":{"slug":"smoke-event"}}' > "$output" ;;
+  */api/public/content*)
+    printf '%s' '{"rows":[]}' > "$output" ;;
+  */api/admin/events)
+    printf '%s' '{"rows":[{"id":"event-1","status":"published","archivedAt":null}]}' > "$output" ;;
+  */api/admin/organizations|*/api/users)
+    printf '%s' '{"rows":[]}' > "$output" ;;
+  */api/auth/register/sms/request|*/api/auth/sms-login/request|*/api/auth/password-reset/sms/request)
+    status=503
+    printf '%s' '{"error":"disabled"}' > "$output" ;;
+  */api/me/organization-relations)
+    status=401
+    printf '%s' '{"error":"unauthorized"}' > "$output" ;;
+  */api/organization/memberships)
+    status=403
+    printf '%s' '{"error":"forbidden"}' > "$output" ;;
+  */api/admin/registrations|*__smoke_missing_*)
+    status=404
+    printf '%s' '{"error":"not found"}' > "$output" ;;
+  */api/admin/site-settings)
+    if test "$authenticated" -eq 0; then status=401; fi
+    printf '%s' '{"error":"unauthorized"}' > "$output" ;;
+  *)
+    printf '%s' '{}' > "$output" ;;
+esac
+case "$format" in
+  *content_type*) printf '%s\\n%s' "$status" "$content_type" ;;
+  *) printf '%s' "$status" ;;
+esac
+case "$status" in
+  4??|5??) exit 22 ;;
+esac
+`, "utf8");
+  await fs.writeFile(path.join(binDirectory, "docker"), `#!/bin/sh
+set -eu
+case " $* " in
+  *" exec -T postgres "*)
+    printf '%s\\n' 1
+    exit 0
+    ;;
+esac
+while test "$#" -gt 0 && test "$1" != node; do shift; done
+test "$#" -gt 0
+exec "$@"
+`, "utf8");
+  await Promise.all([
+    fs.chmod(path.join(binDirectory, "curl"), 0o755),
+    fs.chmod(path.join(binDirectory, "docker"), 0o755)
+  ]);
+  return {
+    directory,
+    binDirectory,
+    curlLog,
+    environment: {
+      PATH: shellSearchPath(binDirectory),
+      FAKE_FEATURES_FILE: shellPath(featureFile),
+      FAKE_CURL_LOG: shellPath(curlLog)
+    },
+    cleanup: () => fs.rm(directory, { recursive: true, force: true })
+  };
 }
 
 test("deployment configuration verifier has an explicit non-Windows skip policy", async () => {
@@ -224,6 +367,43 @@ test("deployment configuration verifier accepts the checked-in optional SMS sett
   assert.match(result.output, /Deployment configuration checks passed\./);
 });
 
+test("deployment configuration verifier covers the three-purpose release and smoke contract", async () => {
+  const verifier = await fs.readFile(path.join(root, "deploy/verify-config.ps1"), "utf8");
+
+  assert.match(verifier, /deploy\/verify-release\.sh/);
+  assert.match(verifier, /deploy\/smoke-credentials\.sh/);
+  for (const name of [
+    "EXPECTED_SMS_REGISTRATION_ENABLED",
+    "EXPECTED_SMS_LOGIN_ENABLED",
+    "EXPECTED_SMS_PASSWORD_RESET_ENABLED"
+  ]) assert.match(verifier, new RegExp(name));
+  for (const endpoint of [
+    "/api/auth/register/sms/request",
+    "/api/auth/sms-login/request",
+    "/api/auth/password-reset/sms/request"
+  ]) assert.match(verifier, new RegExp(endpoint.replaceAll("/", "\\/")));
+});
+
+test("current deployment scripts reject retired targets and destructive or secret-bearing SMS patterns", async () => {
+  const deployDirectory = path.join(root, "deploy");
+  const scriptNames = (await fs.readdir(deployDirectory))
+    .filter((name) => name.endsWith(".sh") || name.endsWith(".ps1"));
+  const scripts = (await Promise.all(scriptNames.map(async (name) => ({
+    name,
+    source: await fs.readFile(path.join(deployDirectory, name), "utf8")
+  }))));
+
+  for (const { name, source } of scripts) {
+    assert.doesNotMatch(source, /47\.99\.181\.222/, `${name} must not target the retired server IP`);
+    assert.doesNotMatch(source, /\b(?:ssh|scp)\s+aerogp(?:\s|:)/, `${name} must not use the retired SSH alias`);
+    assert.doesNotMatch(source, /docker\s+compose\s+down\s+-v\b/, `${name} must not delete named volumes`);
+    assert.doesNotMatch(source, /LTAI[A-Za-z0-9]+|ALIBABA_CLOUD_ACCESS_KEY_(?:ID|SECRET)=[^\s"']+/,
+      `${name} must not contain Alibaba Cloud credentials`);
+    assert.doesNotMatch(source, /\$\{ALIYUN_SMS_TEMPLATE_CODE/,
+      `${name} must not fall back to the retired shared SMS template`);
+  }
+});
+
 test("deployment passes optional Aliyun DirectMail SMTP configuration", async () => {
   const [example, compose, bootstrap] = await Promise.all([
     fs.readFile(path.join(root, ".env.example"), "utf8"),
@@ -355,13 +535,186 @@ test("deployment verifier is host-runnable and bounds every HTTP request", async
   assert.doesNotMatch(executable, /set -[^\r\n]*x/);
 });
 
+test("release verifier requires strict SMS expectations and compares all three feature flags", async () => {
+  const harness = await createDeploymentScriptHarness({
+    smsRegistrationEnabled: true,
+    smsLoginEnabled: true,
+    smsPasswordResetEnabled: true
+  });
+  const script = path.join(root, "deploy/verify-release.sh");
+  const required = {
+    ...harness.environment,
+    BASE_URL: "http://release.test",
+    EXPECTED_RELEASE: "0".repeat(40),
+    EXPECTED_SMS_REGISTRATION_ENABLED: "true",
+    EXPECTED_SMS_LOGIN_ENABLED: "true",
+    EXPECTED_SMS_PASSWORD_RESET_ENABLED: "true"
+  };
+  try {
+    const matching = await runShell(script, { env: required, prependPath: harness.binDirectory });
+    assert.equal(matching.code, 0, matching.stderr);
+
+    const mismatched = await runShell(script, {
+      prependPath: harness.binDirectory,
+      env: {
+        ...required,
+        EXPECTED_SMS_REGISTRATION_ENABLED: "false",
+        EXPECTED_SMS_LOGIN_ENABLED: "false",
+        EXPECTED_SMS_PASSWORD_RESET_ENABLED: "false"
+      }
+    });
+    assert.notEqual(mismatched.code, 0);
+
+    const invalid = await runShell(script, {
+      prependPath: harness.binDirectory,
+      env: { ...required, EXPECTED_SMS_LOGIN_ENABLED: "1" }
+    });
+    assert.notEqual(invalid.code, 0);
+    assert.match(invalid.stderr, /EXPECTED_SMS_LOGIN_ENABLED.*true.*false/i);
+
+    const missingEnvironment = { ...required };
+    delete missingEnvironment.EXPECTED_SMS_PASSWORD_RESET_ENABLED;
+    const missing = await runShell(script, { env: missingEnvironment, prependPath: harness.binDirectory });
+    assert.notEqual(missing.code, 0);
+    assert.match(missing.stderr, /EXPECTED_SMS_PASSWORD_RESET_ENABLED.*required/i);
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("remote authentication smoke never requests enabled SMS purposes and checks each disabled purpose", async () => {
+  const cases = [
+    {
+      features: {
+        smsRegistrationEnabled: true,
+        smsLoginEnabled: true,
+        smsPasswordResetEnabled: true
+      },
+      requested: []
+    },
+    {
+      features: {
+        smsRegistrationEnabled: false,
+        smsLoginEnabled: true,
+        smsPasswordResetEnabled: false
+      },
+      requested: [
+        "/api/auth/register/sms/request",
+        "/api/auth/password-reset/sms/request"
+      ]
+    },
+    {
+      features: {
+        smsRegistrationEnabled: false,
+        smsLoginEnabled: false,
+        smsPasswordResetEnabled: false
+      },
+      requested: [
+        "/api/auth/register/sms/request",
+        "/api/auth/sms-login/request",
+        "/api/auth/password-reset/sms/request"
+      ]
+    }
+  ];
+  for (const scenario of cases) {
+    const harness = await createDeploymentScriptHarness(scenario.features);
+    try {
+      const result = await runShell(path.join(root, "deploy/remote-smoke-test.sh"), {
+        prependPath: harness.binDirectory,
+        env: {
+          ...harness.environment,
+          BASE_URL: "http://smoke.test",
+          ADMIN_TEST_PASSWORD: "local-smoke-password",
+          REMOTE_SMOKE_AUTH_ONLY: "true"
+        }
+      });
+      assert.equal(result.code, 0, result.stderr);
+      const requests = (await fs.readFile(harness.curlLog, "utf8"))
+        .trim()
+        .split(/\r?\n/)
+        .filter((url) => url.includes("/sms/request") || url.includes("/sms-login/request"));
+      assert.deepEqual(
+        requests.map((url) => new URL(url).pathname),
+        scenario.requested
+      );
+    } finally {
+      await harness.cleanup();
+    }
+  }
+});
+
+test("organization smoke token helper writes a private production-format token without printing it", async () => {
+  const harness = await createDeploymentScriptHarness({});
+  const runner = path.join(harness.directory, "issue-token.sh");
+  const tokenFile = path.join(harness.directory, "registration.token");
+  const secret = "local-registration-secret-32-characters";
+  await fs.writeFile(runner, `#!/bin/sh
+set -eu
+. "$PROJECT_ROOT/deploy/smoke-credentials.sh"
+smoke_issue_phone_registration_token "$SMOKE_PHONE" "$TOKEN_FILE"
+`, "utf8");
+  await fs.chmod(runner, 0o755);
+  try {
+    const result = await runShell(runner, {
+      prependPath: harness.binDirectory,
+      env: {
+        ...harness.environment,
+        PROJECT_ROOT: shellPath(root),
+        SESSION_SECRET: secret,
+        SMOKE_PHONE: "13800000001",
+        TOKEN_FILE: shellPath(tokenFile)
+      }
+    });
+    assert.equal(result.code, 0, result.stderr);
+    assert.equal(result.stdout, "");
+    const stat = await fs.stat(tokenFile);
+    if (process.platform !== "win32") assert.equal(stat.mode & 0o777, 0o600);
+    const helperSource = await fs.readFile(path.join(root, "deploy/smoke-credentials.sh"), "utf8");
+    assert.match(helperSource, /chmod 600 "\$smoke_registration_token_tmp"/);
+    const token = await fs.readFile(tokenFile, "utf8");
+    const { verifyPhoneRegistrationToken } = await import("../src/auth/sms-registration.js");
+    assert.equal(verifyPhoneRegistrationToken({
+      phone: "13800000001",
+      phoneVerificationToken: token,
+      secret,
+      now: Date.now()
+    }), true);
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("remote organization registration submits private token files from the container helper", async () => {
+  const [smoke, helper] = await Promise.all([
+    fs.readFile(path.join(root, "deploy/remote-smoke-test.sh"), "utf8"),
+    fs.readFile(path.join(root, "deploy/smoke-credentials.sh"), "utf8")
+  ]);
+
+  assert.equal((smoke.match(/smoke_issue_phone_registration_token/g) || []).length, 2);
+  assert.equal((smoke.match(/-F "phoneVerificationToken=<\$smoke_[^"]+_token_file"/g) || []).length, 2);
+  assert.match(helper, /createPhoneRegistrationToken/);
+  assert.match(helper, /process\.env\.SESSION_SECRET/);
+  assert.match(helper, /docker compose exec -T -e SMOKE_REGISTRATION_PHONE api/);
+  assert.doesNotMatch(helper, /console\.log|SESSION_SECRET="\$/);
+});
+
+test("remote organization registration fixtures always use distinct valid mainland phones", async () => {
+  const smoke = await fs.readFile(path.join(root, "deploy/remote-smoke-test.sh"), "utf8");
+
+  assert.match(smoke, /smoke_organization_phone="138\$\([^\r\n]*%08d/);
+  assert.match(smoke, /smoke_foreign_organization_phone="139\$\([^\r\n]*%08d/);
+});
+
 test("remote smoke keeps disabled SMS endpoints closed without sending messages", async () => {
   const smoke = await fs.readFile(path.join(root, "deploy/remote-smoke-test.sh"), "utf8");
 
   assert.match(smoke, /assert_status "public-features" 200/);
-  assert.match(smoke, /assert_status "sms-login-disabled" 503/);
-  assert.match(smoke, /assert_status "sms-reset-disabled" 503/);
+  assert.match(smoke, /check_sms_request_when_disabled/);
+  assert.match(smoke, /\/api\/auth\/register\/sms\/request/);
+  assert.match(smoke, /\/api\/auth\/sms-login\/request/);
+  assert.match(smoke, /\/api\/auth\/password-reset\/sms\/request/);
   assert.match(smoke, /assert_status "email-reset-request" 200/);
+  assert.match(smoke, /smsRegistrationEnabled/);
   assert.match(smoke, /smsLoginEnabled/);
   assert.match(smoke, /smsPasswordResetEnabled/);
 });
