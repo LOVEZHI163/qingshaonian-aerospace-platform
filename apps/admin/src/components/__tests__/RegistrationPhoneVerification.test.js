@@ -11,6 +11,16 @@ vi.mock("../../lib/api.js", () => ({ api: apiMock }));
 
 import RegistrationPhoneVerification from "../RegistrationPhoneVerification.vue";
 
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
 const CaptchaGateStub = defineComponent({
   name: "AliyunCaptchaGate",
   inheritAttrs: false,
@@ -126,6 +136,183 @@ describe("RegistrationPhoneVerification", () => {
     wrapper.unmount();
   });
 
+  it("does not start a request when the phone changes while captcha is pending", async () => {
+    const captchaPending = deferred();
+    captchaExecute.mockReturnValue(captchaPending.promise);
+    apiMock.mockResolvedValue({ message: "accepted" });
+    const wrapper = await mountVerification();
+    await wrapper.get('[data-testid="registration-phone"]').setValue("13800000001");
+    await wrapper.get('[data-testid="registration-sms-request"]').trigger("click");
+    await wrapper.get('[data-testid="registration-phone"]').setValue("13900000002");
+
+    captchaPending.resolve("captcha-for-phone-a");
+    await flushPromises();
+
+    expect(apiMock).not.toHaveBeenCalled();
+    expect(wrapper.get('[data-testid="registration-sms-request"]').attributes("disabled")).toBeUndefined();
+    expect(wrapper.text()).not.toContain("accepted");
+    wrapper.unmount();
+  });
+
+  it("keeps a late request response from overwriting a newer phone request", async () => {
+    const phoneARequest = deferred();
+    const phoneBRequest = deferred();
+    apiMock
+      .mockImplementationOnce(() => phoneARequest.promise)
+      .mockImplementationOnce(() => phoneBRequest.promise);
+    const wrapper = await mountVerification();
+    await wrapper.get('[data-testid="registration-phone"]').setValue("13800000001");
+    await wrapper.get('[data-testid="registration-sms-request"]').trigger("click");
+    await wrapper.get('[data-testid="registration-phone"]').setValue("13900000002");
+    await wrapper.get('[data-testid="registration-sms-request"]').trigger("click");
+
+    expect(apiMock).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(apiMock.mock.calls[0][1].body).phone).toBe("13800000001");
+    expect(JSON.parse(apiMock.mock.calls[1][1].body).phone).toBe("13900000002");
+
+    phoneBRequest.resolve({ message: "phone-b-accepted" });
+    await flushPromises();
+    expect(wrapper.text()).toContain("phone-b-accepted");
+    expect(wrapper.get('[data-testid="registration-sms-request"]').text()).toContain("60");
+
+    phoneARequest.resolve({ message: "phone-a-stale" });
+    await flushPromises();
+    expect(wrapper.text()).toContain("phone-b-accepted");
+    expect(wrapper.text()).not.toContain("phone-a-stale");
+    wrapper.unmount();
+  });
+
+  it("clears a completed request countdown when the phone changes", async () => {
+    apiMock.mockResolvedValue({ message: "accepted" });
+    const wrapper = await mountVerification();
+    await wrapper.get('[data-testid="registration-phone"]').setValue("13800000001");
+    await wrapper.get('[data-testid="registration-sms-request"]').trigger("click");
+    await flushPromises();
+    expect(wrapper.get('[data-testid="registration-sms-request"]').text()).toContain("60");
+
+    await wrapper.get('[data-testid="registration-phone"]').setValue("13900000002");
+    const requestButton = wrapper.get('[data-testid="registration-sms-request"]');
+    expect(requestButton.attributes("disabled")).toBeUndefined();
+    expect(requestButton.text()).toBe("获取验证码");
+    wrapper.unmount();
+  });
+
+  it("does not bind a pending confirmation for phone A to a later phone B", async () => {
+    const confirmation = deferred();
+    apiMock.mockReturnValue(confirmation.promise);
+    const wrapper = await mountVerification();
+    await wrapper.get('[data-testid="registration-phone"]').setValue("13800000001");
+    await wrapper.get('[data-testid="registration-sms-code"]').setValue("123456");
+    await wrapper.get('[data-testid="registration-sms-confirm"]').trigger("click");
+
+    expect(wrapper.get('[data-testid="registration-phone"]').attributes("disabled")).toBeDefined();
+    expect(JSON.parse(apiMock.mock.calls[0][1].body)).toEqual({ phone: "13800000001", code: "123456" });
+    await wrapper.setProps({ phone: "13900000002" });
+    confirmation.resolve({
+      phoneVerificationToken: "token-for-phone-a",
+      expiresAt: new Date(Date.now() + 15 * 60 * 1_000).toISOString()
+    });
+    await flushPromises();
+
+    expect(wrapper.emitted("verified")).toBeUndefined();
+    expect(wrapper.emitted("update:phoneVerificationToken")).toBeUndefined();
+    expect(wrapper.text()).not.toContain("手机号已验证");
+    expect(wrapper.get('[data-testid="registration-phone"]').element.value).toBe("13900000002");
+    wrapper.unmount();
+  });
+
+  it("allows only the newest confirmation response to write a credential", async () => {
+    const phoneAConfirmation = deferred();
+    const phoneBConfirmation = deferred();
+    apiMock
+      .mockImplementationOnce(() => phoneAConfirmation.promise)
+      .mockImplementationOnce(() => phoneBConfirmation.promise);
+    const wrapper = await mountVerification();
+    await wrapper.get('[data-testid="registration-phone"]').setValue("13800000001");
+    await wrapper.get('[data-testid="registration-sms-code"]').setValue("111111");
+    await wrapper.get('[data-testid="registration-sms-confirm"]').trigger("click");
+    await wrapper.setProps({ phone: "13900000002" });
+    await wrapper.get('[data-testid="registration-sms-code"]').setValue("222222");
+    await wrapper.get('[data-testid="registration-sms-confirm"]').trigger("click");
+
+    expect(apiMock).toHaveBeenCalledTimes(2);
+    phoneBConfirmation.resolve({
+      phoneVerificationToken: "token-for-phone-b",
+      expiresAt: new Date(Date.now() + 15 * 60 * 1_000).toISOString()
+    });
+    await flushPromises();
+    phoneAConfirmation.resolve({
+      phoneVerificationToken: "token-for-phone-a",
+      expiresAt: new Date(Date.now() + 15 * 60 * 1_000).toISOString()
+    });
+    await flushPromises();
+
+    expect(wrapper.emitted("update:phoneVerificationToken")).toEqual([["token-for-phone-b"]]);
+    expect(wrapper.emitted("verified")).toEqual([[{ phone: "13900000002" }]]);
+    expect(wrapper.text()).toContain("手机号已验证");
+    expect(wrapper.text()).not.toContain("token-for-phone-a");
+    wrapper.unmount();
+  });
+
+  it("does not revive a pending confirmation after the feature is disabled", async () => {
+    const confirmation = deferred();
+    apiMock.mockReturnValue(confirmation.promise);
+    const wrapper = await mountVerification();
+    await wrapper.get('[data-testid="registration-phone"]').setValue("13800000001");
+    await wrapper.get('[data-testid="registration-sms-code"]').setValue("123456");
+    await wrapper.get('[data-testid="registration-sms-confirm"]').trigger("click");
+    await wrapper.setProps({ enabled: false });
+
+    confirmation.resolve({
+      phoneVerificationToken: "disabled-feature-token",
+      expiresAt: new Date(Date.now() + 15 * 60 * 1_000).toISOString()
+    });
+    await flushPromises();
+
+    expect(wrapper.emitted("verified")).toBeUndefined();
+    expect(wrapper.emitted("update:phoneVerificationToken")).toBeUndefined();
+    expect(wrapper.text()).toContain("注册暂不可用");
+    wrapper.unmount();
+  });
+
+  it("does not emit from a pending confirmation after unmount", async () => {
+    const confirmation = deferred();
+    apiMock.mockReturnValue(confirmation.promise);
+    const wrapper = await mountVerification();
+    await wrapper.get('[data-testid="registration-phone"]').setValue("13800000001");
+    await wrapper.get('[data-testid="registration-sms-code"]').setValue("123456");
+    await wrapper.get('[data-testid="registration-sms-confirm"]').trigger("click");
+    wrapper.unmount();
+
+    confirmation.resolve({
+      phoneVerificationToken: "post-unmount-token",
+      expiresAt: new Date(Date.now() + 15 * 60 * 1_000).toISOString()
+    });
+    await flushPromises();
+
+    expect(wrapper.emitted("verified")).toBeUndefined();
+    expect(wrapper.emitted("update:phoneVerificationToken")).toBeUndefined();
+    expect(wrapper.emitted("error")).toBeUndefined();
+  });
+
+  it("does not start duplicate confirmations while one is pending", async () => {
+    const confirmation = deferred();
+    apiMock.mockReturnValue(confirmation.promise);
+    const wrapper = await mountVerification();
+    await wrapper.get('[data-testid="registration-phone"]').setValue("13800000001");
+    await wrapper.get('[data-testid="registration-sms-code"]').setValue("123456");
+    await wrapper.get('[data-testid="registration-sms-confirm"]').trigger("click");
+    await wrapper.get('[data-testid="registration-sms-confirm"]').trigger("click");
+
+    expect(apiMock).toHaveBeenCalledTimes(1);
+    confirmation.resolve({
+      phoneVerificationToken: "single-token",
+      expiresAt: new Date(Date.now() + 15 * 60 * 1_000).toISOString()
+    });
+    await flushPromises();
+    wrapper.unmount();
+  });
+
   it("invalidates the in-memory credential when it expires", async () => {
     const wrapper = await mountVerification();
     await verifyPhone(wrapper, "short-lived-token", 1_000);
@@ -143,6 +330,8 @@ describe("RegistrationPhoneVerification", () => {
     await editing.get('[data-testid="registration-change-phone"]').trigger("click");
     expect(editing.emitted("invalidated")?.at(-1)).toEqual([{ reason: "edit" }]);
     expect(editing.get('[data-testid="registration-phone"]').attributes("disabled")).toBeUndefined();
+    expect(editing.get('[data-testid="registration-sms-request"]').attributes("disabled")).toBeUndefined();
+    expect(editing.get('[data-testid="registration-sms-request"]').text()).toBe("获取验证码");
     editing.unmount();
 
     const parentChange = await mountVerification();
@@ -191,5 +380,25 @@ describe("RegistrationPhoneVerification", () => {
     expect(wrapper.find('[data-testid="registration-sms-code"]').exists()).toBe(false);
     expect(wrapper.text()).toContain("注册暂不可用");
     wrapper.unmount();
+  });
+
+  it("does not expose dangling ARIA references and gives each instance unique ids", async () => {
+    const disabled = await mountVerification({ enabled: false });
+    expect(disabled.get(".registration-phone-verification").attributes("aria-labelledby")).toBeUndefined();
+    disabled.unmount();
+
+    const first = await mountVerification();
+    const second = await mountVerification();
+    const firstSection = first.get(".registration-phone-verification");
+    const secondSection = second.get(".registration-phone-verification");
+    const firstTitleId = firstSection.attributes("aria-labelledby");
+    const secondTitleId = secondSection.attributes("aria-labelledby");
+    expect(firstTitleId).toBeTruthy();
+    expect(first.get(`#${firstTitleId}`).exists()).toBe(true);
+    expect(second.get(`#${secondTitleId}`).exists()).toBe(true);
+    expect(firstTitleId).not.toBe(secondTitleId);
+    expect(first.get('[data-testid="registration-phone"]').attributes("aria-describedby")).toBeUndefined();
+    first.unmount();
+    second.unmount();
   });
 });

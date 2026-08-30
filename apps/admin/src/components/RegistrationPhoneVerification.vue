@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onBeforeUnmount, ref, watch } from "vue";
+import { computed, getCurrentInstance, onBeforeUnmount, ref, watch } from "vue";
 
 import { api } from "../lib/api.js";
 import AliyunCaptchaGate from "./AliyunCaptchaGate.vue";
@@ -31,14 +31,24 @@ const confirming = ref(false);
 const statusMessage = ref("");
 const errorMessage = ref("");
 const captchaGate = ref(null);
+const requestedPhone = ref("");
+const uid = getCurrentInstance()?.uid ?? Math.random().toString(36).slice(2);
+const titleId = `registration-phone-title-${uid}`;
+const statusId = `registration-phone-status-${uid}`;
+const errorId = `registration-phone-error-${uid}`;
 let countdownTimer = null;
 let expirationTimer = null;
+let generation = 0;
+let mounted = true;
 
 const normalizedPhone = computed(() => String(props.phone || "").replace(/\D/g, ""));
 const validPhone = computed(() => /^1[3-9]\d{9}$/.test(normalizedPhone.value));
 const isVerified = computed(() => Boolean(phoneVerificationToken.value && verifiedPhone.value));
+const visibleSecondsRemaining = computed(() => (
+  requestedPhone.value === normalizedPhone.value ? secondsRemaining.value : 0
+));
 const requestDisabled = computed(() => (
-  !props.enabled || requesting.value || Boolean(secondsRemaining.value) || !validPhone.value || isVerified.value
+  !props.enabled || requesting.value || Boolean(visibleSecondsRemaining.value) || !validPhone.value || isVerified.value
 ));
 const confirmDisabled = computed(() => (
   !props.enabled || confirming.value || isVerified.value || !/^\d{6}$/.test(code.value)
@@ -51,9 +61,10 @@ function clearExpirationTimer() {
 }
 
 function clearCountdownTimer() {
-  if (!countdownTimer) return;
-  window.clearInterval(countdownTimer);
+  if (countdownTimer) window.clearInterval(countdownTimer);
   countdownTimer = null;
+  secondsRemaining.value = 0;
+  requestedPhone.value = "";
 }
 
 function resetCredentialState() {
@@ -66,14 +77,19 @@ function resetCredentialState() {
 
 function invalidate(reason, { notify = true } = {}) {
   const hadCredential = Boolean(phoneVerificationToken.value || props.phoneVerificationToken);
+  generation += 1;
+  requesting.value = false;
+  confirming.value = false;
+  clearCountdownTimer();
   resetCredentialState();
+  errorMessage.value = "";
   if (hadCredential) emit("update:phoneVerificationToken", "");
   if (notify && hadCredential) emit("invalidated", { reason });
 }
 
 function updatePhone(event) {
   const nextPhone = event.target.value;
-  if (isVerified.value && nextPhone !== props.phone) invalidate("phone-changed");
+  if (nextPhone !== props.phone) invalidate("phone-changed");
   emit("update:phone", nextPhone);
   errorMessage.value = "";
   statusMessage.value = "";
@@ -84,8 +100,9 @@ function updateCode(event) {
   errorMessage.value = "";
 }
 
-function startCountdown() {
+function startCountdown(phone) {
   clearCountdownTimer();
+  requestedPhone.value = phone;
   secondsRemaining.value = 60;
   countdownTimer = window.setInterval(() => {
     secondsRemaining.value = Math.max(0, secondsRemaining.value - 1);
@@ -109,53 +126,71 @@ function reportError(error, fallback) {
   emit("error", message);
 }
 
+function operation(phone) {
+  return { generation, phone };
+}
+
+function operationIsCurrent(current) {
+  return mounted
+    && props.enabled
+    && current.generation === generation
+    && current.phone === normalizedPhone.value;
+}
+
 async function requestCode() {
   if (requestDisabled.value) return;
+  const current = operation(normalizedPhone.value);
   requesting.value = true;
   errorMessage.value = "";
   statusMessage.value = "";
   try {
     const captchaVerifyParam = await captchaGate.value?.execute?.() || "";
+    if (!operationIsCurrent(current)) return;
     const payload = await api("/api/auth/register/sms/request", {
       method: "POST",
-      body: JSON.stringify({ phone: normalizedPhone.value, captchaVerifyParam })
+      body: JSON.stringify({ phone: current.phone, captchaVerifyParam })
     });
-    startCountdown();
+    if (!operationIsCurrent(current)) return;
+    startCountdown(current.phone);
     statusMessage.value = String(payload?.message || "验证码请求已受理");
   } catch (error) {
+    if (!operationIsCurrent(current)) return;
     reportError(error, "验证码发送失败，请重试");
   } finally {
-    requesting.value = false;
+    if (operationIsCurrent(current)) requesting.value = false;
   }
 }
 
 async function confirmCode() {
   if (confirmDisabled.value) return;
+  const current = operation(normalizedPhone.value);
+  const submittedCode = code.value;
   confirming.value = true;
   errorMessage.value = "";
   try {
     const payload = await api("/api/auth/register/sms/confirm", {
       method: "POST",
-      body: JSON.stringify({ phone: normalizedPhone.value, code: code.value })
+      body: JSON.stringify({ phone: current.phone, code: submittedCode })
     });
+    if (!operationIsCurrent(current)) return;
     const token = String(payload?.phoneVerificationToken || "");
     const expiresAt = String(payload?.expiresAt || "");
     if (!token || !Number.isFinite(Date.parse(expiresAt)) || Date.parse(expiresAt) <= Date.now()) {
       throw new Error("手机号验证已过期，请重新验证");
     }
     phoneVerificationToken.value = token;
-    verifiedPhone.value = normalizedPhone.value;
+    verifiedPhone.value = current.phone;
     statusMessage.value = "手机号已验证";
-    emit("update:phone", normalizedPhone.value);
     emit("update:phoneVerificationToken", token);
-    emit("verified", { phone: normalizedPhone.value });
+    emit("verified", { phone: current.phone });
     startExpiration(expiresAt);
   } catch (error) {
+    if (!operationIsCurrent(current)) return;
     resetCredentialState();
     emit("update:phoneVerificationToken", "");
     reportError(error, "验证码无效或已过期");
   } finally {
-    confirming.value = false;
+    if (operationIsCurrent(current)) confirming.value = false;
   }
 }
 
@@ -166,13 +201,11 @@ function editPhone() {
 }
 
 watch(() => props.phone, (phone, previousPhone) => {
-  if (phone !== previousPhone && isVerified.value && String(phone || "") !== verifiedPhone.value) {
-    invalidate("phone-changed");
-  }
+  if (phone !== previousPhone) invalidate("phone-changed");
 });
 
 watch(() => props.phoneVerificationToken, (token) => {
-  if (!token && phoneVerificationToken.value) resetCredentialState();
+  if (!token && phoneVerificationToken.value) invalidate("external", { notify: false });
 });
 
 watch(() => props.enabled, (enabled) => {
@@ -180,8 +213,7 @@ watch(() => props.enabled, (enabled) => {
 });
 
 onBeforeUnmount(() => {
-  clearCountdownTimer();
-  clearExpirationTimer();
+  mounted = false;
   invalidate("unmounted");
 });
 
@@ -189,9 +221,9 @@ defineExpose({ invalidate });
 </script>
 
 <template>
-  <section class="registration-phone-verification" aria-labelledby="registration-phone-title">
+  <section class="registration-phone-verification" :aria-labelledby="enabled ? titleId : undefined">
     <template v-if="enabled">
-      <h4 id="registration-phone-title">验证注册手机号</h4>
+      <h4 :id="titleId">验证注册手机号</h4>
       <label>
         手机号
         <span class="auth-inline-input">
@@ -202,8 +234,8 @@ defineExpose({ invalidate });
             inputmode="tel"
             placeholder="用于登录和查重"
             required
-            :disabled="isVerified"
-            :aria-describedby="errorMessage ? 'registration-phone-error' : 'registration-phone-status'"
+            :disabled="isVerified || confirming"
+            :aria-describedby="errorMessage ? errorId : (statusMessage ? statusId : undefined)"
             :aria-invalid="Boolean(errorMessage)"
             @input="updatePhone"
           />
@@ -214,7 +246,7 @@ defineExpose({ invalidate });
             :disabled="requestDisabled"
             :aria-busy="requesting"
             @click="requestCode"
-          >{{ requesting ? "发送中…" : (secondsRemaining ? `重新发送（${secondsRemaining}s）` : "获取验证码") }}</button>
+          >{{ requesting ? "发送中…" : (visibleSecondsRemaining ? `重新发送（${visibleSecondsRemaining}s）` : "获取验证码") }}</button>
         </span>
       </label>
       <AliyunCaptchaGate
@@ -242,7 +274,7 @@ defineExpose({ invalidate });
             placeholder="6 位验证码"
             required
             :aria-invalid="Boolean(errorMessage)"
-            :aria-describedby="errorMessage ? 'registration-phone-error' : undefined"
+            :aria-describedby="errorMessage ? errorId : undefined"
             @input="updateCode"
           />
           <button
@@ -255,8 +287,8 @@ defineExpose({ invalidate });
           >{{ confirming ? "验证中…" : "验证手机号" }}</button>
         </span>
       </label>
-      <p v-if="errorMessage" id="registration-phone-error" class="auth-field-error" role="alert">{{ errorMessage }}</p>
-      <p v-else-if="statusMessage" id="registration-phone-status" class="hint registration-phone-status" aria-live="polite">{{ statusMessage }}</p>
+      <p v-if="errorMessage" :id="errorId" class="auth-field-error" role="alert">{{ errorMessage }}</p>
+      <p v-else-if="statusMessage" :id="statusId" class="hint registration-phone-status" aria-live="polite">{{ statusMessage }}</p>
     </template>
     <p v-else class="registration-unavailable" role="status">注册暂不可用，请稍后再试或联系赛事管理员。</p>
   </section>
