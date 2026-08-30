@@ -3,7 +3,7 @@ import cors from "cors";
 import { hashPassword, isLegacyPassword, validatePassword, verifyLoginPassword } from "./auth/passwords.js";
 import { createSmsPasswordResetService, sendPasswordResetError } from "./auth/password-reset.js";
 import { createTemporaryPasswordVault } from "./auth/temporary-passwords.js";
-import { asyncRoute, createSessionMiddleware, requireAdmin, requirePasswordReady, requireUser } from "./auth/session.js";
+import { asyncRoute, createSessionMiddleware, requireAdmin, requirePasswordReady, requireSessionSecret, requireUser } from "./auth/session.js";
 import { createAliyunSmsProvider } from "./auth/sms.js";
 import { createSmsChallengeService, SMS_PURPOSES } from "./auth/sms-challenges.js";
 import { createSmsLoginService, isSmsLoginEligible } from "./auth/sms-login.js";
@@ -49,6 +49,7 @@ import { expireContentImportBatches } from "./services/site-content-imports.js";
 import { requireRegistrationIdentityEncryptionKey } from "./security/registration-identities.js";
 
 requireRegistrationIdentityEncryptionKey(process.env);
+const sessionSecret = requireSessionSecret(process.env);
 const PORT = Number(process.env.PORT || 4300);
 const dataStore = createDataStore();
 const mutationAsyncRoute = createMutationAsyncRoute(dataStore);
@@ -70,7 +71,7 @@ const accountEmailService = createAccountEmailService({
   tokenStore: accountEmailTokenStore,
   authState: dataStore.authState,
   emailProvider,
-  secret: process.env.SESSION_SECRET || "test-session-secret-32-characters",
+  secret: sessionSecret,
   publicAppUrl: process.env.PUBLIC_APP_URL || process.env.VITE_PUBLIC_SITE_URL || "https://aerogp.cn",
   verifyHuman: (input) => humanVerification.verify(input)
 });
@@ -86,7 +87,7 @@ function requireTemporaryPasswordVault() {
 }
 const smsPasswordResetChallenge = createSmsChallengeService({
   purpose: SMS_PURPOSES.passwordReset,
-  secret: process.env.SESSION_SECRET || "test-session-secret-32-characters",
+  secret: sessionSecret,
   readDb,
   smsProvider,
   authState: dataStore.authState,
@@ -102,7 +103,7 @@ const smsPasswordReset = createSmsPasswordResetService({
 });
 const smsLoginChallenge = createSmsChallengeService({
   purpose: SMS_PURPOSES.login,
-  secret: process.env.SESSION_SECRET || "test-session-secret-32-characters",
+  secret: sessionSecret,
   readDb,
   smsProvider,
   authState: dataStore.authState,
@@ -116,7 +117,7 @@ const smsLogin = createSmsLoginService({ challengeService: smsLoginChallenge, re
 const verifyPhoneRegistration = ({ phone, phoneVerificationToken }) => verifyPhoneRegistrationToken({
   phone,
   phoneVerificationToken,
-  secret: process.env.SESSION_SECRET || "test-session-secret-32-characters",
+  secret: sessionSecret,
   now: Date.now()
 });
 
@@ -250,7 +251,7 @@ app.use((req, res, next) => {
   next();
 });
 app.use("/api", createSystemRouter({ releaseSha: process.env.RELEASE_SHA }));
-app.use(createSessionMiddleware({ env: process.env, dataStore }));
+app.use(createSessionMiddleware({ secret: sessionSecret, dataStore }));
 app.use(asyncRoute(async (req, _res, next) => {
   if (req.session.userId) {
     const db = await readDb();
