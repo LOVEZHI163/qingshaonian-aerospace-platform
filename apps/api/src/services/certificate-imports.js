@@ -60,6 +60,14 @@ function hasValidCertificateSlots(candidate) {
     && slots.every((slot) => slot === 1 || slot === 2);
 }
 
+function candidateResultKey(candidate) {
+  return JSON.stringify([
+    String(candidate.result?.awardName ?? ""),
+    String(candidate.result?.rank ?? ""),
+    String(candidate.result?.score ?? "")
+  ]);
+}
+
 function candidateValidation(parsedCandidates) {
   const counts = parsedCandidates.reduce((byTarget, candidate) => {
     const key = `${candidate.registrationId}:${candidate.participantId || "legacy"}`;
@@ -67,11 +75,7 @@ function candidateValidation(parsedCandidates) {
     return byTarget;
   }, new Map());
   const resultsByRegistration = parsedCandidates.reduce((byRegistration, candidate) => {
-    const resultKey = JSON.stringify([
-      String(candidate.result?.awardName ?? ""),
-      String(candidate.result?.rank ?? ""),
-      String(candidate.result?.score ?? "")
-    ]);
+    const resultKey = candidateResultKey(candidate);
     if (!byRegistration.has(candidate.registrationId)) byRegistration.set(candidate.registrationId, new Set());
     byRegistration.get(candidate.registrationId).add(resultKey);
     return byRegistration;
@@ -417,6 +421,15 @@ function batchOrError(db, batchId) {
 }
 
 function assertCommitCandidates(db, batch) {
+  const resultsByRegistration = new Map();
+  for (const candidate of batch.previewJson) {
+    const resultKey = candidateResultKey(candidate);
+    const existing = resultsByRegistration.get(candidate.registrationId);
+    if (existing !== undefined && existing !== resultKey) {
+      throw importError(409, "证书导入批次中同一报名的成绩必须一致");
+    }
+    resultsByRegistration.set(candidate.registrationId, resultKey);
+  }
   const seen = new Set();
   for (const candidate of batch.previewJson) {
     const targetKey = `${candidate.registrationId}:${candidate.participantId || "legacy"}`;

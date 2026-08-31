@@ -85,3 +85,36 @@
 ### Concerns
 
 - None blocking. Participant removal is intentionally refused while that participant owns any certificate; operators must explicitly handle the certificate before changing the roster, keeping file and database behavior consistent across file and PostgreSQL stores.
+
+## Fix Round 2
+
+### RED
+
+- Constructed a pre-Fix-Round-1 persisted preview directly with two valid team participant targets whose award, rank, and score disagreed.
+- The regression called the real commit service and tracked every storage and database boundary. Before the fix it failed with `Missing expected rejection`, confirming that the conflicting preview completed instead of being rejected and retained the last-row-wins path.
+- The existing directly persisted `B-TEAM` preview already provides the positive control: two participant rows with identical result triples commit successfully.
+
+### GREEN
+
+- Added one canonical result-key projection shared by preview-time and commit-time validation.
+- `assertCommitCandidates` now scans every persisted candidate before target, snapshot, staging, or mutation work. Conflicting result triples for one registration return a clear 409 error.
+- The regression verifies zero staging reads, formal writes, deletions, path resolutions, staging removal, and database writes, plus byte-for-byte-equivalent application state for registrations, certificates, batches, and audits.
+- Preview-time conflict validation remains unchanged in behavior, and identical persisted previews continue to commit normally.
+
+### Tests
+
+- RED: `npm test --prefix apps/api -- --test-name-pattern="persisted team preview with conflicting registration results"` — 1 intended failure (`Missing expected rejection`).
+- GREEN conflict/control: `npm test --prefix apps/api -- --test-name-pattern="persisted team preview with conflicting registration results|commits same-slot team participant certificates"` — 91 passed, 0 failed.
+- Certificate imports: `npm test --prefix apps/api -- test/certificate-imports.test.js` — 40 passed, 0 failed.
+- Certificate suite: `npm test --prefix apps/api -- --test-name-pattern="certificate"` — 173 passed, 0 failed.
+- Full API: `npm test --prefix apps/api` — 774 passed, 0 failed.
+- Build: `npm run build` — passed for web and admin with only the previously documented Vite import/chunk warnings.
+
+### Commit
+
+- Subject: `fix: revalidate certificate import results`
+- Hash: reported in the task handoff because a commit cannot contain its own final hash.
+
+### Concerns
+
+- None. The guard intentionally validates old persisted preview data again instead of assuming it passed the current preview validator.

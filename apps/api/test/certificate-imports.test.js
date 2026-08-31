@@ -397,6 +397,82 @@ test("team certificate import accepts participant rows with identical registrati
   assert.deepEqual(staged, ["2-1", "3-1"]);
 });
 
+test("certificate import commit atomically rejects a persisted team preview with conflicting registration results", async () => {
+  let persisted = teamPreviewDb();
+  Object.assign(persisted.registrations[0], { awardName: "原奖项", rank: "9", score: "60" });
+  persisted.auditLogs = [{ id: "A-EXISTING", action: "existing" }];
+  persisted.certificates.push({
+    id: "C-UNCHANGED",
+    registrationId: approvedRegistration.id,
+    participantId: "RP-1",
+    slot: 2,
+    title: "原证书",
+    fileName: "old.png",
+    storedName: "old.png",
+    filePath: "C:/uploads/certificates/old.png",
+    awardName: "原奖项",
+    rank: "9",
+    score: "60",
+    status: "published",
+    source: "manual",
+    importBatchId: null,
+    uploadedAt: "2026-08-30T00:00:00.000Z",
+    publishedAt: "2026-08-30T00:00:00.000Z",
+    cleanedAt: ""
+  });
+  const candidate = (rowNumber, participantId, result) => ({
+    rowNumber,
+    registrationId: approvedRegistration.id,
+    participantId,
+    result,
+    expectedCertificateStates: { "1": { state: "missing" } },
+    certificates: [{ ...stagedCertificate(1), relativePath: `${rowNumber}-1.png`, replacing: false }]
+  });
+  persisted.certificateImportBatches.push({
+    id: "B-LEGACY-CONFLICT",
+    eventId: "E1",
+    createdBy: "U9001",
+    originalName: "legacy-conflict.xlsx",
+    status: "preview",
+    previewJson: [
+      candidate(2, "RP-1", { awardName: "一等奖", rank: "1", score: "99" }),
+      candidate(3, "RP-2", { awardName: "二等奖", rank: "2", score: "95" })
+    ],
+    validCount: 2,
+    errorCount: 0,
+    replaceCount: 0,
+    createdAt: "2026-08-30T00:00:00.000Z",
+    committedAt: null
+  });
+  const before = structuredClone(persisted);
+  const calls = { read: 0, save: 0, delete: 0, resolve: 0, remove: 0, write: 0 };
+  const storage = {
+    async readStagingFile() { calls.read += 1; return ONE_PIXEL_PNG; },
+    async saveCertificateFile() {
+      calls.save += 1;
+      return { filePath: "C:/uploads/certificates/new.png", storedName: "new.png", fileName: "new.png" };
+    },
+    async deleteFile() { calls.delete += 1; },
+    resolveStagingPath() { calls.resolve += 1; return "C:/uploads/import-staging/B-LEGACY-CONFLICT/file.png"; },
+    async removeStagingBatch() { calls.remove += 1; }
+  };
+
+  await assert.rejects(commitCertificateImport({
+    batchId: "B-LEGACY-CONFLICT",
+    store: {
+      readDb: async () => structuredClone(persisted),
+      writeDb: async (next) => { calls.write += 1; persisted = structuredClone(next); }
+    },
+    makeId: sequentialIds(),
+    now: () => "2026-08-31T01:00:00.000Z",
+    actor: { id: "ADMIN", type: "admin" },
+    storage
+  }), (error) => error.status === 409 && /同一报名的成绩必须一致/.test(error.message));
+
+  assert.deepEqual(calls, { read: 0, save: 0, delete: 0, resolve: 0, remove: 0, write: 0 });
+  assert.deepEqual(persisted, before);
+});
+
 test("certificate import commits same-slot team participant certificates and propagates the registration result", async () => {
   let persisted = serviceDb();
   persisted.registrations[0].projectType = "team";
