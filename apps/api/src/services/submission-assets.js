@@ -326,7 +326,10 @@ export function uploadSessionSummary(db, session) {
 }
 
 export function createUploadSession({ db, eventId, projectId, actor, channel, now, makeId }) {
-  eventProject(db, eventId, projectId);
+  const { project } = eventProject(db, eventId, projectId);
+  if (project.type === "team" && channel === "personal") {
+    throw businessError(422, "团队赛只允许组织代报名", "TEAM_ORGANIZATION_PROXY_REQUIRED");
+  }
   let organizationId = null;
   if (channel === "personal") {
     requireOrdinaryUser(actor);
