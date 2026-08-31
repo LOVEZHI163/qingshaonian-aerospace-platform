@@ -86,10 +86,10 @@ watch(() => form.projectId, () => {
   clearUploadSession();
   if (requiresSubmission.value) void createUploadSession();
 });
-watch(() => [form.athlete.name, form.athlete.school, form.athlete.grade, form.athlete.phone, form.projectId], async () => {
+watch(() => [form.studentIdNumber, form.athlete.name, form.athlete.school, form.athlete.grade, form.athlete.phone, form.projectId], async () => {
   if (ordinaryUser.value) return;
-  if (!form.athlete.name || !form.athlete.school || !form.athlete.grade || !form.athlete.phone || !form.projectId) return;
-  try { await api("/api/registrations/check", { method: "POST", body: JSON.stringify({ eventId: form.eventId, athlete: form.athlete, projectId: form.projectId, group: selectedGroup.value }) }); } catch { /* Submission remains the authoritative validation. */ }
+  if (!studentIdPattern.test(form.studentIdNumber.trim()) || !form.athlete.name || !form.athlete.school || !form.athlete.grade || !form.athlete.phone || !form.projectId) return;
+  try { await api("/api/registrations/check", { method: "POST", body: JSON.stringify({ eventId: form.eventId, studentIdNumber: form.studentIdNumber.trim(), athlete: form.athlete, projectId: form.projectId, group: selectedGroup.value }) }); } catch { /* Submission remains the authoritative validation. */ }
 });
 
 async function submit() {

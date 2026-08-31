@@ -18,6 +18,7 @@ test.after(() => {
 const eventId = "E1";
 const projectId = "P1";
 const validStudentId = "11010519491231002X";
+const otherValidStudentId = "110105194912310038";
 const fixedNow = "2026-08-07T08:00:00.000Z";
 const actor = { id: "U1", type: "ordinary" };
 const owner = { id: "UO1", type: "organization", mustChangePassword: false };
@@ -137,6 +138,7 @@ test("leader loss blocks later creates but not an existing retry, read, or ordin
   assert.throws(
     () => create(db, "personal", registrationInput({
       projectId,
+      studentIdNumber: otherValidStudentId,
       athlete: { ...registrationInput().athlete, name: "李同学", phone: "13800000002" }
     })),
     (error) => error.status === 403 && error.code === "ORGANIZATION_LEADER_REQUIRED"

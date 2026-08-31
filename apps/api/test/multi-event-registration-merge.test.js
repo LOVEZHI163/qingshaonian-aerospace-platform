@@ -322,21 +322,26 @@ test("concurrent personal submissions persist one identity and return create plu
   });
 });
 
-test("duplicate checks use the exact event, project, and athlete identity", async () => {
+test("duplicate checks use the exact event, project, and identity fingerprint", async () => {
   await withTestServer(async ({ baseUrl }) => {
     const ordinary = await loginAs(baseUrl, "13800000001", "123456");
     const admin = await loginAs(baseUrl, "13900000000", "admin123");
     await fetch(`${baseUrl}/api/admin/events/wz-aerospace-2026`, withSession(admin.cookie, {
       method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ registrationMode: "force_open" })
     }));
+    const created = await fetch(`${baseUrl}/api/me/events/wz-aerospace-2026/registrations`, withSession(ordinary.cookie, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input({ eventId: "wz-aerospace-2026", projectId: "rocket-duration" }))
+    }));
+    assert.equal(created.status, 201);
     const exact = await fetch(`${baseUrl}/api/registrations/check`, withSession(ordinary.cookie, {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ eventId: "wz-aerospace-2026", projectId: "paper-plane-gate", athlete: { name: "陈宇航", school: "温州市实验小学", grade: "五年级", phone: "13800000001" } })
+      body: JSON.stringify({ eventId: "wz-aerospace-2026", projectId: "rocket-duration", studentIdNumber: validStudentIdNumber, athlete: { name: "更正姓名", school: "更正学校", grade: "五年级", phone: "13900000009" } })
     }));
     assert.equal((await exact.json()).duplicate, true);
     const differentProject = await fetch(`${baseUrl}/api/registrations/check`, withSession(ordinary.cookie, {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ eventId: "wz-aerospace-2026", projectId: "rocket-duration", athlete: { name: "陈宇航", school: "温州市实验小学", grade: "五年级", phone: "13800000001" } })
+      body: JSON.stringify({ eventId: "wz-aerospace-2026", projectId: "rotor-race", studentIdNumber: validStudentIdNumber, athlete: { name: "张三", school: "实验小学", grade: "五年级", phone: "13800000001" } })
     }));
     assert.equal((await differentProject.json()).duplicate, false);
   });

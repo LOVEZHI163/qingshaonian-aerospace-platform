@@ -155,13 +155,14 @@ test("session identity cannot be replaced through body, query, or path values", 
 
     const duplicateCheck = await fetch(`${baseUrl}/api/registrations/check`, jsonOptions("POST", {
       eventId: "wz-aerospace-2026",
+      studentIdNumber: validStudentIdNumber,
       athlete: { name: "陈宇航", school: "温州市实验小学", grade: "五年级", phone: "13800000001" },
       group: "小学高段",
       projectId: "paper-plane-gate"
     }, ordinary.cookie));
     const duplicatePayload = await duplicateCheck.json();
-    assert.equal(duplicatePayload.duplicate, true);
-    assert.equal(duplicatePayload.duplicateCount, 1);
+    assert.equal(duplicatePayload.duplicate, false);
+    assert.equal(duplicatePayload.duplicateCount, 0);
     assert.equal("matches" in duplicatePayload, false);
     assert.equal("athleteKey" in duplicatePayload, false);
 

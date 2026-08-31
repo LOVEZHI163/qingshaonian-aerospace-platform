@@ -7,7 +7,14 @@ import {
   prepareTeamRoster
 } from "../src/services/registration-participants.js";
 import { encryptStudentId, fingerprintStudentId } from "../src/security/registration-identities.js";
-import { createOrMergeRegistration, updateRegistrationStatus } from "../src/services/registrations.js";
+import {
+  createOrMergeRegistration,
+  prepareAdminRegistrationUpdate,
+  prepareOrdinaryRegistrationUpdate,
+  registrationDuplicateCheck,
+  updateExistingRegistrationIdentity,
+  updateRegistrationStatus
+} from "../src/services/registrations.js";
 
 const firstId = "11010519491231002X";
 const secondId = "110105194912310038";
@@ -269,4 +276,138 @@ test("每届最多 is rechecked before a released registration is reactivated", 
     /最多报名一个个人赛/
   );
   assert.equal(first.status, "cancelled");
+});
+
+test("exact-project retries resolve identity fingerprints instead of athlete metadata", () => {
+  process.env.REGISTRATION_ID_ENCRYPTION_KEY = testKey;
+  const db = individualRegistrationDb();
+  const actor = { id: "U1", type: "ordinary" };
+  let sequence = 0;
+  const context = {
+    makeId: () => `R-FINGERPRINT-${++sequence}`,
+    now: () => "2026-08-31T01:00:00.000Z",
+    clock: () => new Date("2026-08-31T01:00:00.000Z")
+  };
+  const input = (studentIdNumber, athlete) => ({ eventId: "E1", projectId: "P1", studentIdNumber, athlete });
+  const originalAthlete = { name: "同名队员", school: "同一学校", grade: "五年级", phone: "13800000001" };
+
+  const first = createOrMergeRegistration(db, input(firstId, originalAthlete), actor, "personal", context);
+  const sameMetadataDifferentIdentity = createOrMergeRegistration(db, input(secondId, originalAthlete), actor, "personal", context);
+  const sameIdentityChangedMetadata = createOrMergeRegistration(db, input(firstId, {
+    name: "更正后姓名", school: "更正后学校", grade: "五年级", phone: "13900000009"
+  }), actor, "personal", context);
+
+  assert.equal(first.created, true);
+  assert.equal(sameMetadataDifferentIdentity.created, true);
+  assert.notEqual(sameMetadataDifferentIdentity.row.id, first.row.id);
+  assert.equal(sameIdentityChangedMetadata.created, false);
+  assert.equal(sameIdentityChangedMetadata.row.id, first.row.id);
+  assert.equal(db.registrations.length, 2);
+});
+
+test("duplicate checks use identity fingerprints instead of athlete metadata", () => {
+  process.env.REGISTRATION_ID_ENCRYPTION_KEY = testKey;
+  const db = individualRegistrationDb();
+  const actor = { id: "U1", type: "ordinary" };
+  const context = {
+    makeId: () => "R-DUPLICATE-FINGERPRINT",
+    now: () => "2026-08-31T02:00:00.000Z",
+    clock: () => new Date("2026-08-31T02:00:00.000Z")
+  };
+  const originalAthlete = { name: "重复检查队员", school: "航空学校", grade: "五年级", phone: "13800000001" };
+  createOrMergeRegistration(db, {
+    eventId: "E1", projectId: "P1", studentIdNumber: firstId, athlete: originalAthlete
+  }, actor, "personal", context);
+
+  const sameMetadataDifferentIdentity = registrationDuplicateCheck(db, {
+    eventId: "E1", projectId: "P1", studentIdNumber: secondId, athlete: originalAthlete
+  }, context.clock);
+  const sameIdentityChangedMetadata = registrationDuplicateCheck(db, {
+    eventId: "E1", projectId: "P1", studentIdNumber: firstId,
+    athlete: { name: "更正姓名", school: "新学校", grade: "五年级", phone: "13900000008" }
+  }, context.clock);
+
+  assert.equal(sameMetadataDifferentIdentity.duplicate, false);
+  assert.equal(sameMetadataDifferentIdentity.duplicateCount, 0);
+  assert.equal(sameIdentityChangedMetadata.duplicate, true);
+  assert.equal(sameIdentityChangedMetadata.duplicateCount, 1);
+});
+
+function releasedIndividualEditDb(status) {
+  const db = individualRegistrationDb();
+  const released = {
+    id: "R-RELEASED",
+    eventId: "E1",
+    source: "member_registration",
+    personalUserId: "U1",
+    organizationId: "O1",
+    athlete: { name: "队员甲", school: "航空学校", grade: "五年级", phone: "13800000001" },
+    athleteKey: "legacy-summary-only",
+    group: "小学高段",
+    projectId: "P1",
+    projectName: "个人赛一",
+    projectType: "individual",
+    instructor: "",
+    status
+  };
+  const active = {
+    ...released,
+    id: "R-ACTIVE",
+    personalUserId: "U2",
+    athlete: { name: "其他队员", school: "其他学校", grade: "五年级", phone: "13900000002" },
+    projectId: "P2",
+    projectName: "个人赛二",
+    status: "approved"
+  };
+  db.registrations.push(released, active);
+  db.registrationIdentities.push(
+    { registrationId: released.id, ...encryptStudentId(firstId) },
+    { registrationId: active.id, ...encryptStudentId(secondId) }
+  );
+  return { db, released };
+}
+
+test("released individual rows allow conflicting identity edits but reject later restoration", () => {
+  process.env.REGISTRATION_ID_ENCRYPTION_KEY = testKey;
+
+  const cancelled = releasedIndividualEditDb("cancelled");
+  assert.doesNotThrow(() => prepareOrdinaryRegistrationUpdate(
+    cancelled.db,
+    cancelled.released,
+    { studentIdNumber: secondId },
+    "U1"
+  ));
+  updateExistingRegistrationIdentity(cancelled.db, cancelled.released.id, { studentIdNumber: secondId });
+  assert.throws(
+    () => updateRegistrationStatus(cancelled.db, cancelled.released, { status: "pending" }, { id: "ADMIN", type: "admin" }),
+    /最多报名一个个人赛/
+  );
+  assert.equal(cancelled.released.status, "cancelled");
+
+  const rejected = releasedIndividualEditDb("rejected");
+  assert.doesNotThrow(() => prepareAdminRegistrationUpdate(
+    rejected.db,
+    rejected.released,
+    { studentIdNumber: secondId }
+  ));
+});
+
+test("released team roster edits skip occupancy only with explicit status context", () => {
+  process.env.REGISTRATION_ID_ENCRYPTION_KEY = testKey;
+  const db = identityDb({ type: "team", status: "approved" });
+  const context = preparedContext({
+    ignoreRegistrationId: "R-RELEASED-TEAM",
+    registrationStatus: "cancelled"
+  });
+
+  assert.doesNotThrow(() => prepareTeamRoster(db, { participants: [participant()] }, context));
+  assert.throws(() => assertAthleteTypeAvailability(db, {
+    eventId: "E1",
+    projectType: "team",
+    fingerprints: [fingerprintStudentId(firstId)],
+    ignoreRegistrationId: "R-RELEASED-TEAM"
+  }), /最多报名一个团队赛/);
+  assert.throws(() => prepareTeamRoster(db, {
+    participants: [participant(), participant()]
+  }, context), /同一队伍中不能重复添加同一名队员/);
 });

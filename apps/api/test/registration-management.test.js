@@ -308,6 +308,7 @@ test("registration derives the group from actual grade and rejects a project out
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         eventId: "wz-aerospace-2026",
+        studentIdNumber: validStudentIdNumber,
         athlete: { name: "派生组别学生", school: "温州市实验小学", grade: "五年级", phone: "13800000031" },
         group: "伪造组别", projectId: "paper-plane-gate"
       })

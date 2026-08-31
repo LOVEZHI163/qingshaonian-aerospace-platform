@@ -176,8 +176,7 @@ CREATE TABLE IF NOT EXISTS registrations (
   reject_reason TEXT NOT NULL DEFAULT '',
   created_at TIMESTAMPTZ NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL,
-  CHECK (personal_user_id IS NOT NULL OR organization_id IS NOT NULL OR organization_name <> ''),
-  UNIQUE (event_id, project_id, athlete_key)
+  CHECK (personal_user_id IS NOT NULL OR organization_id IS NOT NULL OR organization_name <> '')
 );
 
 CREATE TABLE IF NOT EXISTS registration_identities (

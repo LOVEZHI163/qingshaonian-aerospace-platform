@@ -12,6 +12,7 @@ import {
 } from "./registration-participants.js";
 
 const ATHLETE_FIELDS = ["name", "school", "grade", "phone"];
+const RELEASED_REGISTRATION_STATUSES = new Set(["rejected", "cancelled"]);
 const IDENTITY_FIELD_KEYS = new Set([
   "studentidnumber",
   "identitynumber",
@@ -241,6 +242,7 @@ function submittedOrStoredFingerprint(db, registration, input) {
 
 function assertIndividualTypeAvailability(db, registration, input, project, eventId, ignoreRegistrationId = null) {
   if ((project?.type || "individual") !== "individual") return;
+  if (RELEASED_REGISTRATION_STATUSES.has(registration?.status)) return;
   const fingerprint = submittedOrStoredFingerprint(db, registration, input);
   if (!fingerprint) return;
   assertAthleteTypeAvailability(db, {
@@ -275,9 +277,11 @@ export function registrationDuplicateCheck(db, input, clock = () => new Date()) 
   if (!group) throw businessError(422, "实际年级不合法");
   const projectId = requireText(input?.projectId, "赛项");
   const { event } = registrationContext(db, { ...input, projectId, group }, clock);
-  const key = athleteKey(athlete);
+  const fingerprint = fingerprintStudentId(requireStudentIdForNewRegistration(input));
   const matches = db.registrations.filter((row) => (
-    row.eventId === event.id && row.projectId === projectId && row.athleteKey === key
+    row.eventId === event.id
+    && row.projectId === projectId
+    && registrationIdentityFingerprints(db, row).includes(fingerprint)
   ));
   return {
     duplicate: matches.length > 0,
@@ -432,12 +436,34 @@ export function listOrganizationRegistrations(db, organizationId, query = {}, cl
   return { rows, total: filtered.length, page, pageSize, refreshedAt: clock().toISOString(), filterOptions: { events, projects } };
 }
 
-export function findRegistrationIdentity(db, eventId, projectId, key) {
-  return db.registrations.find((row) => (
-    row.eventId === eventId
-    && row.projectId === projectId
-    && row.athleteKey === key
-  )) || null;
+export function findRegistrationIdentity(db, eventId, projectId, fingerprint) {
+  const exactProjectRows = db.registrations.filter((row) => (
+    row.eventId === eventId && row.projectId === projectId
+  ));
+  for (const row of exactProjectRows) {
+    const fingerprints = registrationIdentityFingerprints(db, row);
+    const participantIds = new Set((db.registrationParticipants || [])
+      .filter((participant) => participant.registrationId === row.id)
+      .map((participant) => participant.id));
+    const identityRows = (db.registrationParticipantIdentities || [])
+      .filter((identity) => participantIds.has(identity.participantId));
+    if (identityRows.length === 0 && (row.projectType || "individual") === "individual") {
+      const legacyIdentity = (db.registrationIdentities || [])
+        .find((identity) => identity.registrationId === row.id);
+      if (legacyIdentity) identityRows.push(legacyIdentity);
+    }
+    try {
+      if (identityRows.some((identity) => (
+        fingerprintStudentId(decryptStudentId(identity)) !== identity.idFingerprint
+      ))) {
+        throw new Error("identity fingerprint mismatch");
+      }
+    } catch {
+      throw businessError(409, "报名身份证信息校验失败", "REGISTRATION_IDENTITY_CONFLICT");
+    }
+    if (fingerprints.includes(fingerprint)) return row;
+  }
+  return null;
 }
 
 export function requireEventId(db, value) {
@@ -540,7 +566,9 @@ export function createOrMergeRegistration(db, input, actor, channel, {
 } = {}) {
   const event = requireOpenRegistrationEvent(db, requireEventId(db, input?.eventId).id, clock);
   const prepared = validateCreateForEvent(db, input, event, actor, channel);
-  const existing = findRegistrationIdentity(db, event.id, prepared.project.id, prepared.key);
+  const studentIdNumber = requireStudentIdForNewRegistration(input);
+  const fingerprint = fingerprintStudentId(studentIdNumber);
+  const existing = findRegistrationIdentity(db, event.id, prepared.project.id, fingerprint);
   const personalUserId = prepared.personalUserId;
   const organizationId = prepared.organization?.id || null;
 
@@ -548,11 +576,10 @@ export function createOrMergeRegistration(db, input, actor, channel, {
     // POST routes execute under the store mutation lock; this check therefore
     // revalidates the current leader state immediately before the new row is made.
     requireOrganizationApprovedLeader(db, organizationId);
-    const studentIdNumber = requireStudentIdForNewRegistration(input);
     assertAthleteTypeAvailability(db, {
       eventId: event.id,
       projectType: prepared.project.type,
-      fingerprints: [fingerprintStudentId(studentIdNumber)],
+      fingerprints: [fingerprint],
       ignoreRegistrationId: null
     });
     const timestamp = now();
@@ -580,12 +607,11 @@ export function createOrMergeRegistration(db, input, actor, channel, {
   ) {
     throw businessError(409, "相同赛事、赛项和参赛者的报名已存在且归属不同", "REGISTRATION_IDENTITY_CONFLICT");
   }
-  const studentIdNumber = requireStudentIdForNewRegistration(input);
   assertExistingIdentityMatches(db, existing.id, studentIdNumber);
   assertAthleteTypeAvailability(db, {
     eventId: event.id,
     projectType: prepared.project.type,
-    fingerprints: [fingerprintStudentId(studentIdNumber)],
+    fingerprints: [fingerprint],
     ignoreRegistrationId: existing.id
   });
   return { row: existing, created: false, merged: false };

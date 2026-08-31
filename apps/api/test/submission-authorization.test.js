@@ -5,12 +5,19 @@ import test from "node:test";
 import express from "express";
 
 import { createRegistrationsRouter } from "../src/routes/registrations.js";
+import { encryptStudentId } from "../src/security/registration-identities.js";
 import { withTestServer } from "../test-support/server.js";
 import { loginAs, withSession } from "./helpers/api-client.js";
 
 const EVENT_ID = "wz-aerospace-2026";
 const PROJECT_ID = "aviation-painting";
 const validStudentIdNumber = "11010519491231002X";
+const previousEncryptionKey = process.env.REGISTRATION_ID_ENCRYPTION_KEY;
+process.env.REGISTRATION_ID_ENCRYPTION_KEY = Buffer.alloc(32, 8).toString("base64");
+test.after(() => {
+  if (previousEncryptionKey === undefined) delete process.env.REGISTRATION_ID_ENCRYPTION_KEY;
+  else process.env.REGISTRATION_ID_ENCRYPTION_KEY = previousEncryptionKey;
+});
 
 async function mutateDb(dbPath, mutate) {
   const db = JSON.parse(await fs.readFile(dbPath, "utf8"));
@@ -202,6 +209,12 @@ test("an image-video session cannot be committed into an existing registration t
         asset("SA-new-video", "US-new", "creation_video")
       );
       db.registrationUploadSessions.push(session("US-new", { projectId: registration.projectId }));
+      db.registrationIdentities.push({
+        registrationId: registration.id,
+        ...encryptStudentId(validStudentIdNumber),
+        createdAt: registration.createdAt,
+        updatedAt: registration.updatedAt
+      });
     });
     const existing = JSON.parse(await fs.readFile(dbPath, "utf8")).registrations.find((row) => row.id === "R20260627001");
     const response = await fetch(`${baseUrl}/api/me/events/${EVENT_ID}/registrations`, withSession(ordinary.cookie, {

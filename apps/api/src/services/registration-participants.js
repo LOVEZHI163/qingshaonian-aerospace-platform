@@ -8,6 +8,7 @@ import {
 import { businessError } from "./events.js";
 
 const ACTIVE_REGISTRATION_STATUSES = new Set(["pending", "approved"]);
+const RELEASED_REGISTRATION_STATUSES = new Set(["rejected", "cancelled"]);
 
 function normalizePhone(value) {
   return String(value || "").replace(/[^\d]/g, "");
@@ -144,12 +145,17 @@ export function prepareTeamRoster(db, input, context = {}) {
   if (new Set(groups).size !== 1) throw businessError(422, "团队队员必须属于同一组别");
 
   const fingerprints = normalized.map((row) => fingerprintStudentId(row.studentIdNumber));
-  assertAthleteTypeAvailability(db, {
-    eventId: context.eventId || project.eventId,
-    projectType: project.type,
-    fingerprints,
-    ignoreRegistrationId: context.ignoreRegistrationId || null
-  });
+  if (new Set(fingerprints).size !== fingerprints.length) {
+    throw businessError(422, "同一队伍中不能重复添加同一名队员", "DUPLICATE_TEAM_PARTICIPANT");
+  }
+  if (!RELEASED_REGISTRATION_STATUSES.has(context.registrationStatus)) {
+    assertAthleteTypeAvailability(db, {
+      eventId: context.eventId || project.eventId,
+      projectType: project.type,
+      fingerprints,
+      ignoreRegistrationId: context.ignoreRegistrationId || null
+    });
+  }
 
   const timestamp = preparedTimestamp(context);
   const participants = normalized.map((row, index) => {

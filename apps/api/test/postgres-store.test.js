@@ -95,6 +95,33 @@ test("PostgreSQL store round-trips team roster participants and certificate targ
   });
 });
 
+test("PostgreSQL store persists distinct identity fingerprints with identical athlete metadata", async () => {
+  await withStore(async (store) => {
+    const db = await store.readDb();
+    const source = db.registrations[0];
+    const first = {
+      ...source,
+      id: "R-same-metadata-1",
+      athlete: { name: "同名队员", school: "同一学校", grade: "五年级", phone: "13800000001" },
+      athleteKey: "同名队员|同一学校|五年级|13800000001"
+    };
+    const second = { ...first, id: "R-same-metadata-2" };
+    db.registrations.push(first, second);
+    db.registrationIdentities.push(
+      { registrationId: first.id, ciphertext: "cipher-1", iv: "iv-1", authTag: "tag-1", keyVersion: 1, idFingerprint: "fingerprint-1", createdAt: first.createdAt, updatedAt: first.updatedAt },
+      { registrationId: second.id, ciphertext: "cipher-2", iv: "iv-2", authTag: "tag-2", keyVersion: 1, idFingerprint: "fingerprint-2", createdAt: second.createdAt, updatedAt: second.updatedAt }
+    );
+
+    await store.writeDb(db);
+
+    const reloaded = await store.readDb();
+    assert.deepEqual(
+      reloaded.registrations.filter((row) => row.athleteKey === first.athleteKey).map((row) => row.id).sort(),
+      [first.id, second.id]
+    );
+  });
+});
+
 test("PostgreSQL store rejects duplicate participant display orders before writing", async () => {
   await withStore(async (store) => {
     const db = await store.readDb();

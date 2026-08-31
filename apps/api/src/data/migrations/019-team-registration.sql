@@ -8,6 +8,8 @@ ALTER TABLE projects ADD CONSTRAINT projects_team_member_bounds_check
     AND team_min_members <= team_max_members);
 
 ALTER TABLE registrations ADD COLUMN IF NOT EXISTS team_code TEXT NOT NULL DEFAULT '';
+ALTER TABLE registrations DROP CONSTRAINT IF EXISTS registrations_event_project_athlete_key;
+ALTER TABLE registrations DROP CONSTRAINT IF EXISTS registrations_event_id_project_id_athlete_key_key;
 
 CREATE TABLE IF NOT EXISTS registration_participants (
   id TEXT PRIMARY KEY,
