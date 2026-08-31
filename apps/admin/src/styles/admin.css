@@ -1462,11 +1462,6 @@ h3 {
   line-height: 1.5;
 }
 
-.auth-test-accounts {
-  padding-top: 12px;
-  border-top: 1px solid #e2e8f0;
-}
-
 .content-grid {
   display: grid;
   grid-template-columns: minmax(420px, 0.9fr) minmax(480px, 1.1fr);

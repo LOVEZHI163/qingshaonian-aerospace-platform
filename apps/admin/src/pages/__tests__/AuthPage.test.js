@@ -13,6 +13,17 @@ describe("AuthPage", () => {
     apiMock.mockResolvedValue({ smsRegistrationEnabled: false, smsPasswordResetEnabled: false });
   });
 
+  it("does not expose seeded test account credentials on the public login page", () => {
+    const wrapper = mount(AuthPage);
+
+    expect(wrapper.find(".auth-test-accounts").exists()).toBe(false);
+    expect(wrapper.text()).not.toContain("测试账号");
+    expect(wrapper.text()).not.toContain("13800000001");
+    expect(wrapper.text()).not.toContain("13800000011");
+    expect(wrapper.text()).not.toContain("13900000000");
+    expect(wrapper.text()).not.toContain("admin123");
+  });
+
   it("requests an email password-reset link without revealing account existence", async () => {
     apiMock.mockImplementation(async (path) => {
       if (path === "/api/public/features") return { emailPasswordResetEnabled: true, smsPasswordResetEnabled: true };
