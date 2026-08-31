@@ -220,7 +220,7 @@ onBeforeUnmount(() => downloads.dispose());
 
       <div class="import-preview-list">
         <article v-for="candidate in preview.candidates" :key="candidate.rowNumber" class="import-preview-row valid">
-          <header><strong>Excel 第 {{ candidate.rowNumber }} 行 · 有效</strong><span>{{ candidate.registrationId }} · {{ candidate.athleteName }}</span></header>
+          <header><strong>Excel 第 {{ candidate.rowNumber }} 行 · 有效</strong><span>{{ candidate.registrationId }}<template v-if="candidate.teamCode"> · {{ candidate.teamCode }}</template> · {{ candidate.participantName || candidate.athleteName }}</span></header>
           <p>{{ candidate.projectName }} · 奖项/等级：{{ candidate.result.awardName || '-' }} · 名次：{{ candidate.result.rank || '-' }} · 成绩：{{ candidate.result.score || '-' }}</p>
           <div class="import-certificate-previews">
             <figure v-for="certificate in candidate.certificates" :key="certificate.slot">

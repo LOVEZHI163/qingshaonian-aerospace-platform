@@ -2,7 +2,7 @@ import express from "express";
 import { deleteSubmissionFile } from "../files/submission-storage.js";
 
 import { MAX_CERTIFICATE_ROWS } from "../certificates/workbook-parser.js";
-import { buildCertificateTemplate } from "../certificates/template.js";
+import { buildCertificateTemplate, certificateTargets } from "../certificates/template.js";
 import { buildBoundRegistrationWorkbook, contentDisposition } from "../exports/registration-workbook.js";
 import { sendPrivateJson, setPrivateNoStore } from "../http/private-response.js";
 
@@ -385,7 +385,8 @@ export function createRegistrationsRouter({
   router.get("/admin/events/:eventId/certificate-template.xlsx", ...admin, asyncRoute(async (req, res) => {
     const db = await store.readDb();
     const event = requireEventId(db, req.params.eventId);
-    const rows = filterAdminRegistrations(db, { eventId: event.id, status: "approved" });
+    const rows = certificateTargets(filterAdminRegistrations(db, { eventId: event.id, status: "approved" })
+      .map((row) => attachAuthorizedIdentity(db, row, req.user)));
     if (rows.length > MAX_CERTIFICATE_ROWS) {
       const error = new Error(`证书模板最多支持 ${MAX_CERTIFICATE_ROWS.toLocaleString("en-US")} 条已审核报名`);
       error.status = 413;

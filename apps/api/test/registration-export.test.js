@@ -218,10 +218,10 @@ test("registration workbook certificate template includes only approved registra
     const sheet = workbook.getWorksheet("证书导入");
     assert.equal(sheet.rowCount, 2);
     assert.deepEqual(sheet.getRow(1).values.slice(-4), ["证书1名称", "证书1图片", "证书2名称", "证书2图片"]);
-    assert.equal(sheet.getColumn(13).width, 24);
-    assert.equal(sheet.getColumn(15).width, 24);
+    assert.equal(sheet.getColumn(14).width, 24);
+    assert.equal(sheet.getColumn(16).width, 24);
     assert.equal(sheet.getRow(2).height, 90);
-    assert.equal(sheet.getCell("I2").fill.fgColor.argb, "FFFFF2CC");
+    assert.equal(sheet.getCell("J2").fill.fgColor.argb, "FFFFF2CC");
   });
 });
 

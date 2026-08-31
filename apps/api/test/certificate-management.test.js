@@ -26,11 +26,15 @@ function uploadCertificate(baseUrl, cookie, registrationId, slot, {
   buffer = ONE_PIXEL_PNG,
   fileName = `slot-${slot}.png`,
   mimeType = "image/png",
-  title = `证书 ${slot}`
+  title = `证书 ${slot}`,
+  participantId
 } = {}) {
   return fetch(`${baseUrl}/api/admin/events/wz-aerospace-2026/registrations/${registrationId}/certificates/${slot}`, withSession(cookie, {
     method: "POST",
-    body: certificateForm(buffer, fileName, mimeType, { title })
+    body: certificateForm(buffer, fileName, mimeType, {
+      title,
+      ...(participantId !== undefined ? { participantId } : {})
+    })
   }));
 }
 
@@ -297,6 +301,47 @@ test("manual certificate management uploads both slots, edits, replaces, deletes
     persistedDb = JSON.parse(await fs.readFile(dbPath, "utf8"));
     assert.equal(persistedDb.certificates.some((row) => row.id === second.id), false);
   }, { prefix: "manual-certificate-management-crud-" });
+});
+
+test("manual team certificate upload requires an owned participant and keeps same slots in participant-safe paths", async () => {
+  await withTestServer(async ({ baseUrl, dbPath, tempDir }) => {
+    const db = JSON.parse(await fs.readFile(dbPath, "utf8"));
+    db.registrations.push({
+      ...db.registrations[0],
+      id: "R-TEAM-MANUAL",
+      projectType: "team",
+      teamCode: "O1001-PTEAM-01",
+      status: "approved",
+      personalUserId: null
+    });
+    db.registrationParticipants.push(
+      { id: "RP-MANUAL-1", registrationId: "R-TEAM-MANUAL", displayOrder: 1, name: "队员甲", school: "甲学校", grade: "五年级", phone: "13800000001" },
+      { id: "RP-MANUAL-2", registrationId: "R-TEAM-MANUAL", displayOrder: 2, name: "队员乙", school: "乙学校", grade: "六年级", phone: "13800000002" }
+    );
+    db.registrations[0].status = "approved";
+    await fs.writeFile(dbPath, JSON.stringify(db));
+    const admin = await loginAs(baseUrl, "13900000000", "admin123");
+
+    assert.equal((await uploadCertificate(baseUrl, admin.cookie, "R-TEAM-MANUAL", 1)).status, 422);
+    assert.equal((await uploadCertificate(baseUrl, admin.cookie, "R-TEAM-MANUAL", 1, { participantId: "RP-FOREIGN" })).status, 422);
+    assert.equal((await uploadCertificate(baseUrl, admin.cookie, db.registrations[0].id, 1, { participantId: "RP-MANUAL-1" })).status, 422);
+
+    const first = await uploadCertificate(baseUrl, admin.cookie, "R-TEAM-MANUAL", 1, { participantId: "RP-MANUAL-1", title: "甲证书" });
+    const second = await uploadCertificate(baseUrl, admin.cookie, "R-TEAM-MANUAL", 1, { participantId: "RP-MANUAL-2", title: "乙证书" });
+    assert.equal(first.status, 201);
+    assert.equal(second.status, 201);
+    assert.deepEqual([(await responseJson(first)).row.participantId, (await responseJson(second)).row.participantId], ["RP-MANUAL-1", "RP-MANUAL-2"]);
+
+    const persisted = JSON.parse(await fs.readFile(dbPath, "utf8"));
+    const teamCertificates = persisted.certificates.filter((row) => row.registrationId === "R-TEAM-MANUAL");
+    assert.equal(teamCertificates.length, 2);
+    const participantList = await fetch(`${baseUrl}/api/admin/events/wz-aerospace-2026/certificates?registrationId=R-TEAM-MANUAL&participantId=RP-MANUAL-2`, withSession(admin.cookie));
+    assert.deepEqual((await responseJson(participantList)).rows.map((row) => row.participantId), ["RP-MANUAL-2"]);
+    for (const certificate of teamCertificates) {
+      const expectedRoot = path.join(tempDir, "uploads", "certificates", "R-TEAM-MANUAL", certificate.participantId, "1");
+      assert.equal(path.dirname(certificate.filePath), expectedRoot);
+    }
+  }, { prefix: "manual-team-certificate-participant-" });
 });
 
 test("certificate bulk audit preserves long normal target IDs and redacts only identity-shaped IDs", async () => {

@@ -116,6 +116,41 @@ test("certificate service upserts the two slots and resets replacements to draft
   assert.equal(second.slot, 2);
 });
 
+test("team certificate participants may independently use the same certificate slot", () => {
+  const db = fixture();
+  const registration = { ...db.registrations[0], projectType: "team" };
+  db.registrations[0] = registration;
+  db.registrationParticipants = [
+    { id: "RP-1", registrationId: registration.id },
+    { id: "RP-2", registrationId: registration.id }
+  ];
+
+  const first = upsertCertificate(db, {
+    registration,
+    participantId: "RP-1",
+    slot: 1,
+    title: "队员甲证书",
+    storedFile: storedFile("participant-one"),
+    source: "manual",
+    now: "2026-08-31T00:00:00.000Z"
+  });
+  const second = upsertCertificate(db, {
+    registration,
+    participantId: "RP-2",
+    slot: 1,
+    title: "队员乙证书",
+    storedFile: storedFile("participant-two"),
+    source: "manual",
+    now: "2026-08-31T00:01:00.000Z"
+  });
+
+  assert.notEqual(first.id, second.id);
+  assert.deepEqual(db.certificates.map(({ participantId, slot }) => ({ participantId, slot })), [
+    { participantId: "RP-2", slot: 1 },
+    { participantId: "RP-1", slot: 1 }
+  ]);
+});
+
 test("certificate service validates metadata, bulk status, and removal atomically", () => {
   const db = fixture();
   const certificate = upsertCertificate(db, {

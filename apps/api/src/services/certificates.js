@@ -33,6 +33,7 @@ function optionalText(value, fallback) {
 
 export function upsertCertificate(db, {
   registration,
+  participantId: inputParticipantId = null,
   slot: inputSlot,
   title: inputTitle,
   storedFile,
@@ -44,10 +45,24 @@ export function upsertCertificate(db, {
   const title = requiredTitle(inputTitle);
   if (!registration) throw new CertificateError(404, "报名记录不存在");
   if (!storedFile?.filePath || !storedFile?.storedName) throw invalid("证书文件不能为空");
+  const participantId = String(inputParticipantId || "").trim() || null;
+  if (registration.projectType === "team") {
+    if (!participantId) throw invalid("团队证书必须选择队员");
+    const belongs = (db.registrationParticipants || []).some((row) => (
+      row.id === participantId && row.registrationId === registration.id
+    ));
+    if (!belongs) throw invalid("证书对象不属于该报名");
+  } else if (participantId) {
+    throw invalid("个人报名不能指定证书对象");
+  }
 
-  let certificate = db.certificates.find((row) => row.registrationId === registration.id && Number(row.slot) === slot);
+  let certificate = db.certificates.find((row) => (
+    row.registrationId === registration.id
+    && (row.participantId || null) === participantId
+    && Number(row.slot) === slot
+  ));
   if (!certificate) {
-    certificate = { id: `C${crypto.randomUUID()}`, registrationId: registration.id, slot };
+    certificate = { id: `C${crypto.randomUUID()}`, registrationId: registration.id, participantId, slot };
     db.certificates.unshift(certificate);
   }
 

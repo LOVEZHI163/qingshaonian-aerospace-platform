@@ -8,6 +8,7 @@ import FilePreviewDialog from "./FilePreviewDialog.vue";
 const props = defineProps({
   registration: { type: Object, required: true },
   certificates: { type: Array, default: () => [] },
+  participantId: { type: String, default: "" },
   allowStatusChange: { type: Boolean, default: true }
 });
 
@@ -87,6 +88,7 @@ async function saveSlot(slot) {
     if (forms[slot].file) {
       const body = new FormData();
       body.append("title", forms[slot].title.trim());
+      if (props.participantId) body.append("participantId", props.participantId);
       body.append("certificate", forms[slot].file);
       await api(`/api/admin/events/${encodeURIComponent(props.registration.eventId)}/registrations/${props.registration.id}/certificates/${slot}`, { method: "POST", body });
       forms[slot].file = null;

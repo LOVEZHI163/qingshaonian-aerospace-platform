@@ -68,16 +68,16 @@ async function buildMixedWorkbook() {
   ]);
   const sheet = workbook.worksheets[0];
 
-  sheet.getCell("I2").value = "一等奖";
-  sheet.getCell("J2").value = "1";
-  sheet.getCell("K2").value = "98.5";
-  sheet.getCell("L2").value = "一等奖证书";
-  sheet.getCell("N2").value = "优秀选手证书";
-  await addImage(workbook, sheet, 2, 13);
-  await addImage(workbook, sheet, 2, 15);
+  sheet.getCell("J2").value = "一等奖";
+  sheet.getCell("K2").value = "1";
+  sheet.getCell("L2").value = "98.5";
+  sheet.getCell("M2").value = "一等奖证书";
+  sheet.getCell("O2").value = "优秀选手证书";
+  await addImage(workbook, sheet, 2, 14);
+  await addImage(workbook, sheet, 2, 16);
 
-  sheet.getCell("L3").value = "未知报名证书";
-  await addImage(workbook, sheet, 3, 13);
+  sheet.getCell("M3").value = "未知报名证书";
+  await addImage(workbook, sheet, 3, 14);
   return Buffer.from(await workbook.xlsx.writeBuffer());
 }
 
@@ -110,7 +110,7 @@ test("certificate import preview keeps formal data unchanged, reports mixed rows
     assert.equal(preview.replaceCount, 0);
     assert.equal(preview.candidates.length, 1);
     assert.deepEqual(Object.keys(preview.candidates[0]).sort(), [
-      "athleteName", "certificates", "projectName", "registrationId", "result", "rowNumber"
+      "athleteName", "certificates", "participantId", "participantName", "projectName", "registrationId", "result", "rowNumber", "teamCode"
     ]);
     assert.deepEqual(preview.candidates[0].certificates.map((certificate) => ({
       slot: certificate.slot,
@@ -295,6 +295,7 @@ function certificateSnapshot(certificate) {
     id: String(certificate.id || ""),
     version: [
       certificate.id,
+      certificate.participantId,
       certificate.slot,
       certificate.title,
       certificate.fileName,
@@ -321,6 +322,88 @@ function previewCandidateForDb(db, certificates) {
     ]))
   };
 }
+
+test("certificate import commits same-slot team participant certificates and propagates the registration result", async () => {
+  let persisted = serviceDb();
+  persisted.registrations[0].projectType = "team";
+  persisted.registrations[0].teamCode = "O1002-PTEAM-01";
+  persisted.registrationParticipants = [
+    { id: "RP-1", registrationId: approvedRegistration.id, displayOrder: 1, name: "队员甲" },
+    { id: "RP-2", registrationId: approvedRegistration.id, displayOrder: 2, name: "队员乙" }
+  ];
+  persisted.certificates.push({
+    id: "C-EXISTING",
+    registrationId: approvedRegistration.id,
+    participantId: "RP-1",
+    slot: 2,
+    title: "既有证书",
+    fileName: "existing.png",
+    storedName: "existing.png",
+    filePath: "C:/uploads/certificates/existing.png",
+    awardName: "旧奖项",
+    rank: "9",
+    score: "60",
+    status: "draft",
+    source: "manual",
+    importBatchId: null,
+    uploadedAt: "2026-08-30T00:00:00.000Z",
+    publishedAt: "",
+    cleanedAt: ""
+  });
+  const candidate = (rowNumber, participantId) => ({
+    rowNumber,
+    registrationId: approvedRegistration.id,
+    participantId,
+    participantName: participantId === "RP-1" ? "队员甲" : "队员乙",
+    result: { awardName: "团队一等奖", rank: "1", score: "99" },
+    expectedCertificateStates: { "1": { state: "missing" } },
+    certificates: [{ ...stagedCertificate(1), relativePath: `${rowNumber}-1.png`, replacing: false }]
+  });
+  persisted.certificateImportBatches.push({
+    id: "B-TEAM", eventId: "E1", createdBy: "U9001", originalName: "team.xlsx", status: "preview",
+    previewJson: [candidate(2, "RP-1"), candidate(3, "RP-2")],
+    validCount: 2, errorCount: 0, replaceCount: 0, createdAt: "2026-08-31T00:00:00.000Z", committedAt: null
+  });
+  const savedTargets = [];
+  const storage = {
+    readStagingFile: async () => ONE_PIXEL_PNG,
+    async saveCertificateFile({ registrationId, participantId, slot }) {
+      savedTargets.push({ registrationId, participantId, slot });
+      return {
+        filePath: `C:/uploads/certificates/${registrationId}/${participantId}/${slot}/new.png`,
+        storedName: "new.png",
+        fileName: `${participantId}-${slot}.png`
+      };
+    },
+    deleteFile: async () => {},
+    resolveStagingPath: (_batchId, relativePath) => `C:/uploads/import-staging/B-TEAM/${relativePath}`,
+    removeStagingBatch: async () => {}
+  };
+
+  const result = await commitCertificateImport({
+    batchId: "B-TEAM",
+    store: {
+      readDb: async () => structuredClone(persisted),
+      writeDb: async (next) => { persisted = structuredClone(next); }
+    },
+    makeId: sequentialIds(),
+    now: () => "2026-08-31T01:00:00.000Z",
+    actor: { id: "ADMIN", type: "admin" },
+    storage
+  });
+
+  assert.deepEqual(result, { id: "B-TEAM", status: "committed", createdCount: 2, replacedCount: 0 });
+  assert.deepEqual(savedTargets, [
+    { registrationId: approvedRegistration.id, participantId: "RP-1", slot: 1 },
+    { registrationId: approvedRegistration.id, participantId: "RP-2", slot: 1 }
+  ]);
+  assert.deepEqual(persisted.certificates.filter((row) => row.slot === 1)
+    .map(({ participantId, slot }) => ({ participantId, slot })).sort((a, b) => a.participantId.localeCompare(b.participantId)), [
+    { participantId: "RP-1", slot: 1 },
+    { participantId: "RP-2", slot: 1 }
+  ]);
+  assert.equal(persisted.certificates.every((row) => row.awardName === "团队一等奖" && row.rank === "1" && row.score === "99"), true);
+});
 
 test("certificate import preview removes staging when saving a later image fails", async () => {
   const db = serviceDb();
@@ -1145,7 +1228,12 @@ test("certificate import accepts one supplied certificate slot and keeps an unsp
   });
 
   assert.equal(saved, 1);
-  assert.deepEqual(persisted.certificates.find((row) => row.slot === 2), originalSecondSlot);
+  assert.deepEqual(persisted.certificates.find((row) => row.slot === 2), {
+    ...originalSecondSlot,
+    awardName: "一等奖",
+    rank: "1",
+    score: "99"
+  });
   assert.equal(persisted.certificates.some((row) => row.slot === 1), true);
 });
 

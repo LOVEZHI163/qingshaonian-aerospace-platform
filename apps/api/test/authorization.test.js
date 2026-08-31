@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import fs from "node:fs/promises";
 import test from "node:test";
 
 import { withTestServer } from "../test-support/server.js";
@@ -12,7 +13,7 @@ const CERTIFICATE_PNG = Buffer.from(
 );
 
 async function withServer(fn) {
-  await withTestServer(({ baseUrl, phoneVerificationToken }) => fn(baseUrl, phoneVerificationToken), { prefix: "aerogp-authorization-" });
+  await withTestServer(({ baseUrl, phoneVerificationToken, dbPath }) => fn(baseUrl, phoneVerificationToken, dbPath), { prefix: "aerogp-authorization-" });
 }
 
 function jsonOptions(method, body, cookie) {
@@ -23,10 +24,11 @@ function jsonOptions(method, body, cookie) {
   });
 }
 
-function uploadCertificate(baseUrl, registrationId, slot, cookie, title = "获奖证书") {
+function uploadCertificate(baseUrl, registrationId, slot, cookie, title = "获奖证书", participantId = null) {
   const form = new FormData();
   form.append("certificate", new Blob([CERTIFICATE_PNG], { type: "image/png" }), `slot-${slot}.png`);
   form.append("title", title);
+  if (participantId) form.append("participantId", participantId);
   return fetch(`${baseUrl}/api/admin/events/wz-aerospace-2026/registrations/${registrationId}/certificates/${slot}`, withSession(cookie, {
     method: "POST",
     body: form
@@ -267,7 +269,7 @@ test("only the unique organization owner can review ordinary membership requests
 });
 
 test("certificate downloads enforce ownership, publication, and organization management", async () => {
-  await withServer(async (baseUrl) => {
+  await withServer(async (baseUrl, _phoneVerificationToken, dbPath) => {
     const ordinary = await loginAs(baseUrl, "13800000001", "123456");
     const owner = await loginAs(baseUrl, "13800000011", "123456");
     const admin = await loginAs(baseUrl, "13900000000", "admin123");
@@ -291,7 +293,13 @@ test("certificate downloads enforce ownership, publication, and organization man
     assert.equal((await fetch(`${baseUrl}/api/certificates/${certificate.id}/file?download=1`, withSession(ordinary.cookie))).status, 200);
     assert.equal((await fetch(`${baseUrl}/api/certificates/${certificate.id}/file?download=1`, withSession(owner.cookie))).status, 200);
 
-    const foreign = await uploadCertificate(baseUrl, "R20260627002", 1, admin.cookie, "外部证书");
+    const db = JSON.parse(await fs.readFile(dbPath, "utf8"));
+    db.registrationParticipants.push({
+      id: "RP-AUTH-FOREIGN", registrationId: "R20260627002", displayOrder: 1,
+      name: "周星言", school: "温州市第二实验中学", grade: "初二", phone: "13900000002"
+    });
+    await fs.writeFile(dbPath, JSON.stringify(db));
+    const foreign = await uploadCertificate(baseUrl, "R20260627002", 1, admin.cookie, "外部证书", "RP-AUTH-FOREIGN");
     const foreignCertificate = (await foreign.json()).row;
     await fetch(`${baseUrl}/api/admin/events/wz-aerospace-2026/certificates/bulk-status`, jsonOptions("POST", { ids: [foreignCertificate.id], status: "published" }, admin.cookie));
     assert.equal((await fetch(`${baseUrl}/api/certificates/${foreignCertificate.id}/file`, withSession(ordinary.cookie))).status, 403);

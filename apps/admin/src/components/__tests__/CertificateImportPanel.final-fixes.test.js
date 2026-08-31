@@ -76,4 +76,29 @@ describe("CertificateImportPanel final fixes", () => {
     expect(previewCall?.[1].body).toBeInstanceOf(FormData);
     expect(previewCall?.[1].body.get("eventId")).toBe("E1");
   });
+
+  it("团队证书预检查显示队伍编号和具体队员", async () => {
+    apiMock.mockResolvedValueOnce({ rows: [{
+      ...recoverablePreview,
+      candidates: [{
+        rowNumber: 2,
+        registrationId: "R-TEAM",
+        participantId: "RP-2",
+        participantName: "队员乙",
+        athleteName: "兼容姓名",
+        teamCode: "O1-P1-01",
+        projectName: "团队飞行",
+        result: {},
+        certificates: []
+      }]
+    }] });
+    const wrapper = mount(CertificateImportPanel, { props: { eventId: "E1" } });
+    await flushPromises();
+    await wrapper.get('[data-action="resume-import-B-recoverable"]').trigger("click");
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("O1-P1-01");
+    expect(wrapper.text()).toContain("队员乙");
+    expect(wrapper.text()).not.toContain("兼容姓名");
+  });
 });

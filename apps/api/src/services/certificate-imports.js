@@ -61,15 +61,17 @@ function hasValidCertificateSlots(candidate) {
 }
 
 function candidateValidation(parsedCandidates) {
-  const counts = parsedCandidates.reduce((byRegistration, candidate) => {
-    byRegistration.set(candidate.registrationId, (byRegistration.get(candidate.registrationId) || 0) + 1);
-    return byRegistration;
+  const counts = parsedCandidates.reduce((byTarget, candidate) => {
+    const key = `${candidate.registrationId}:${candidate.participantId || "legacy"}`;
+    byTarget.set(key, (byTarget.get(key) || 0) + 1);
+    return byTarget;
   }, new Map());
   const candidates = [];
   const errors = [];
   for (const candidate of parsedCandidates) {
-    if (counts.get(candidate.registrationId) > 1) {
-      errors.push({ rowNumber: candidate.rowNumber, registrationId: candidate.registrationId, message: "同一报名编号只能出现一行" });
+    const key = `${candidate.registrationId}:${candidate.participantId || "legacy"}`;
+    if (counts.get(key) > 1) {
+      errors.push({ rowNumber: candidate.rowNumber, registrationId: candidate.registrationId, message: "同一证书对象只能出现一行" });
     } else if (!hasValidCertificateSlots(candidate)) {
       errors.push({ rowNumber: candidate.rowNumber, registrationId: candidate.registrationId, message: "每行必须提供不重复的证书位置 1 或 2" });
     } else {
@@ -112,6 +114,7 @@ function certificateState(certificate) {
     id: String(certificate.id || ""),
     version: [
       certificate.id,
+      certificate.participantId,
       certificate.slot,
       certificate.title,
       certificate.fileName,
@@ -131,7 +134,11 @@ function certificateState(certificate) {
 function expectedCertificateStates(db, candidate) {
   return Object.fromEntries((candidate.certificates || []).map((certificate) => [
     String(certificate.slot),
-    certificateState(db.certificates.find((row) => row.registrationId === candidate.registrationId && Number(row.slot) === Number(certificate.slot)))
+    certificateState(db.certificates.find((row) => (
+      row.registrationId === candidate.registrationId
+      && (row.participantId || null) === (candidate.participantId || null)
+      && Number(row.slot) === Number(certificate.slot)
+    )))
   ]));
 }
 
@@ -145,6 +152,9 @@ function publicCandidate(batch, candidate) {
   return {
     rowNumber: candidate.rowNumber,
     registrationId: candidate.registrationId,
+    participantId: candidate.participantId || null,
+    participantName: candidate.participantName || candidate.athleteName,
+    teamCode: candidate.teamCode || "",
     athleteName: candidate.athleteName,
     projectName: candidate.projectName,
     result: { ...candidate.result },
@@ -209,9 +219,12 @@ async function bestEffortDeleteFiles(storage, files) {
 function registrationsForParser(db) {
   return db.registrations.map((registration) => ({
     ...registration,
+    participants: (db.registrationParticipants || [])
+      .filter((participant) => participant.registrationId === registration.id)
+      .sort((left, right) => left.displayOrder - right.displayOrder || left.id.localeCompare(right.id)),
     certificates: db.certificates
       .filter((certificate) => certificate.registrationId === registration.id)
-      .map((certificate) => ({ slot: certificate.slot }))
+      .map((certificate) => ({ participantId: certificate.participantId || null, slot: certificate.slot }))
   }));
 }
 
@@ -306,7 +319,12 @@ export async function previewCertificateImport({
       stagedCandidates.push({
         rowNumber: candidate.rowNumber,
         registrationId: candidate.registrationId,
-        athleteName: registration?.athlete?.name || "",
+        participantId: candidate.participantId || null,
+        participantName: (db.registrationParticipants || []).find((row) => row.id === candidate.participantId)?.name
+          || registration?.athlete?.name || "",
+        teamCode: registration?.teamCode || "",
+        athleteName: (db.registrationParticipants || []).find((row) => row.id === candidate.participantId)?.name
+          || registration?.athlete?.name || "",
         projectName: registration?.projectName || "",
         result: { ...candidate.result },
         expectedCertificateStates: expectedCertificateStates(db, candidate),
@@ -389,10 +407,11 @@ function batchOrError(db, batchId) {
 function assertCommitCandidates(db, batch) {
   const seen = new Set();
   for (const candidate of batch.previewJson) {
-    if (seen.has(candidate.registrationId) || !hasValidCertificateSlots(candidate)) {
+    const targetKey = `${candidate.registrationId}:${candidate.participantId || "legacy"}`;
+    if (seen.has(targetKey) || !hasValidCertificateSlots(candidate)) {
       throw importError(409, "证书导入批次预览数据无效");
     }
-    seen.add(candidate.registrationId);
+    seen.add(targetKey);
     const expected = candidate.expectedCertificateStates;
     if (!expected || typeof expected !== "object") {
       throw importError(409, "Certificate import preview is stale; run preview again");
@@ -403,7 +422,9 @@ function assertCommitCandidates(db, batch) {
         throw importError(409, "Certificate import preview is stale; run preview again");
       }
       const current = certificateState(db.certificates.find((row) =>
-        row.registrationId === candidate.registrationId && Number(row.slot) === Number(certificate.slot)
+        row.registrationId === candidate.registrationId
+        && (row.participantId || null) === (candidate.participantId || null)
+        && Number(row.slot) === Number(certificate.slot)
       ));
       if (!sameCertificateState(expected[slot], current)) {
         throw importError(409, "Certificate import preview is stale; run preview again");
@@ -413,6 +434,14 @@ function assertCommitCandidates(db, batch) {
     if (!registration || registration.status !== "approved" || registration.eventId !== batch.eventId) {
       throw importError(409, `报名记录 ${candidate.registrationId} 已不再满足导入条件`);
     }
+    const participantId = String(candidate.participantId || "").trim() || null;
+    const registrationParticipants = (db.registrationParticipants || []).filter((row) => row.registrationId === registration.id);
+    const validTarget = registration.projectType === "team"
+      ? (participantId
+          ? registrationParticipants.some((row) => row.id === participantId)
+          : registrationParticipants.length === 0)
+      : participantId === null;
+    if (!validTarget) throw importError(409, `报名记录 ${candidate.registrationId} 的证书对象已失效`);
   }
 }
 
@@ -548,6 +577,7 @@ export async function commitCertificateImport({
   const markers = [];
   let createdCount = 0;
   let replacedCount = 0;
+  const resultRegistrationIds = new Set();
 
   try {
     for (const candidate of batch.previewJson) {
@@ -561,6 +591,7 @@ export async function commitCertificateImport({
         const buffer = await storage.readStagingFile({ batchId, relativePath: certificate.relativePath });
         const stored = await storage.saveCertificateFile({
           registrationId: registration.id,
+          participantId: candidate.participantId || null,
           slot: certificate.slot,
           extension: certificate.extension,
           buffer
@@ -575,16 +606,21 @@ export async function commitCertificateImport({
       registration.score = candidate.result.score || "";
       registration.resultRecordedAt = recordedAt;
       registration.updatedAt = recordedAt;
+      resultRegistrationIds.add(registration.id);
 
       for (const { certificate, stored } of prepared) {
-        let row = db.certificates.find((item) => item.registrationId === registration.id && Number(item.slot) === certificate.slot);
+        let row = db.certificates.find((item) => (
+          item.registrationId === registration.id
+          && (item.participantId || null) === (candidate.participantId || null)
+          && Number(item.slot) === certificate.slot
+        ));
         if (row) {
           const marker = cleanupMarker({ makeId, filePath: row.filePath, category: "certificate-import-replaced", now });
           markers.push(marker);
           oldFiles.push({ marker, file: { filePath: row.filePath } });
           replacedCount += 1;
         } else {
-          row = { id: makeId("C"), registrationId: registration.id, slot: certificate.slot };
+          row = { id: makeId("C"), registrationId: registration.id, participantId: candidate.participantId || null, slot: certificate.slot };
           db.certificates.unshift(row);
           createdCount += 1;
         }
@@ -603,6 +639,15 @@ export async function commitCertificateImport({
           publishedAt: "",
           cleanedAt: ""
         });
+      }
+    }
+
+    for (const registrationId of resultRegistrationIds) {
+      const registration = db.registrations.find((row) => row.id === registrationId);
+      for (const certificate of db.certificates.filter((row) => row.registrationId === registrationId)) {
+        certificate.awardName = registration.awardName;
+        certificate.rank = registration.rank;
+        certificate.score = registration.score;
       }
     }
 
