@@ -7,6 +7,8 @@ import { loginAs, withSession } from "./helpers/api-client.js";
 
 const validStudentIdNumber = "11010519491231002X";
 const otherValidStudentIdNumber = "110105194912310038";
+const thirdValidStudentIdNumber = "110105201401011231";
+const fourthValidStudentIdNumber = "11010520140101124X";
 
 async function json(response) {
   return response.json();
@@ -86,11 +88,11 @@ test("ACTIVE_ORGANIZATION_REQUIRED blocks personal registration without an appro
   }
 });
 
-test("ordinary registration eligibility derives the approved member organization for individual and team projects", async () => {
+test("ordinary registration eligibility derives the approved member organization for individual projects", async () => {
   await withServer(async (baseUrl, dbPath) => {
     const ordinary = await loginAs(baseUrl, "13800000001", "123456");
     await mutateDb(dbPath, (db) => { db.events[0].registrationMode = "force_open"; });
-    for (const [projectId, suffix] of [["paper-plane-gate", "individual"], ["drone-relay", "team"]]) {
+    for (const [projectId, suffix] of [["paper-plane-gate", "individual"]]) {
       const response = await fetch(`${baseUrl}/api/me/events/wz-aerospace-2026/registrations`, withSession(ordinary.cookie, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -108,6 +110,121 @@ test("ordinary registration eligibility derives the approved member organization
       assert.equal(payload.row.source, "member_registration");
       assert.equal(payload.row.projectType, suffix);
     }
+  });
+});
+
+test("team organization proxy is required and one POST persists one complete team", async () => {
+  await withServer(async (baseUrl, dbPath) => {
+    const ordinary = await loginAs(baseUrl, "13800000001", "123456");
+    const organization = await loginAs(baseUrl, "13800000011", "123456");
+    const admin = await loginAs(baseUrl, "13900000000", "admin123");
+    await openRegistration(baseUrl, admin.cookie);
+    assert.equal((await fetch(`${baseUrl}/api/organization/events/wz-aerospace-2026/join`, withSession(organization.cookie, { method: "POST" }))).status, 201);
+    const teamPayload = {
+      projectId: "drone-relay",
+      participants: [
+        { name: "接力队员甲", school: "温州市实验小学", grade: "五年级", phone: "13800001001", studentIdNumber: validStudentIdNumber },
+        { name: "接力队员乙", school: "温州市实验小学", grade: "五年级", phone: "13800001002", studentIdNumber: otherValidStudentIdNumber }
+      ],
+      instructor: "林老师"
+    };
+    const post = (path, cookie, body) => fetch(`${baseUrl}${path}`, withSession(cookie, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body)
+    }));
+
+    const personal = await post("/api/me/events/wz-aerospace-2026/registrations", ordinary.cookie, teamPayload);
+    assert.equal(personal.status, 422);
+    assert.deepEqual(await json(personal), {
+      error: "团队赛只允许组织代报名",
+      code: "TEAM_ORGANIZATION_PROXY_REQUIRED"
+    });
+
+    const member = await post("/api/organization/events/wz-aerospace-2026/registrations", organization.cookie, {
+      ...teamPayload, registrationSource: "member_registration", memberUserId: "U1001"
+    });
+    assert.equal(member.status, 422);
+    assert.equal((await json(member)).code, "TEAM_ORGANIZATION_PROXY_REQUIRED");
+
+    const createdResponse = await post("/api/organization/events/wz-aerospace-2026/registrations", organization.cookie, {
+      ...teamPayload, registrationSource: "organization_proxy"
+    });
+    assert.equal(createdResponse.status, 201);
+    const created = (await json(createdResponse)).row;
+    assert.equal(created.teamCode, "O1001-drone-relay-01");
+    assert.equal(created.participantCount, 2);
+    assert.deepEqual(created.participants.map(({ name, studentIdNumber }) => ({ name, studentIdNumber })), [
+      { name: "接力队员甲", studentIdNumber: validStudentIdNumber },
+      { name: "接力队员乙", studentIdNumber: otherValidStudentIdNumber }
+    ]);
+    assert.equal(created.personalUserId, null);
+
+    const persisted = JSON.parse(await fs.readFile(dbPath, "utf8"));
+    assert.equal(persisted.registrations.filter((row) => row.teamCode === created.teamCode).length, 1);
+    assert.deepEqual(persisted.registrationParticipants.filter((row) => row.registrationId === created.id).map((row) => row.name), ["接力队员甲", "接力队员乙"]);
+    assert.equal(persisted.registrationParticipantIdentities.filter((identity) => (
+      persisted.registrationParticipants.some((participant) => participant.registrationId === created.id && participant.id === identity.participantId)
+    )).length, 2);
+  });
+});
+
+test("team organization and admin PATCH replace the complete roster while personal PATCH rejects it", async () => {
+  await withServer(async (baseUrl, dbPath) => {
+    const ordinary = await loginAs(baseUrl, "13800000001", "123456");
+    const organization = await loginAs(baseUrl, "13800000011", "123456");
+    const admin = await loginAs(baseUrl, "13900000000", "admin123");
+    await openRegistration(baseUrl, admin.cookie);
+    assert.equal((await fetch(`${baseUrl}/api/organization/events/wz-aerospace-2026/join`, withSession(organization.cookie, { method: "POST" }))).status, 201);
+    const request = (method, path, cookie, body) => fetch(`${baseUrl}${path}`, withSession(cookie, {
+      method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body)
+    }));
+    const initialParticipants = [
+      { name: "原队员甲", school: "温州市实验小学", grade: "五年级", phone: "13800002001", studentIdNumber: validStudentIdNumber },
+      { name: "原队员乙", school: "温州市实验小学", grade: "五年级", phone: "13800002002", studentIdNumber: otherValidStudentIdNumber }
+    ];
+    const createdResponse = await request("POST", "/api/organization/events/wz-aerospace-2026/registrations", organization.cookie, {
+      projectId: "drone-relay", registrationSource: "organization_proxy", participants: initialParticipants, instructor: "原指导老师"
+    });
+    assert.equal(createdResponse.status, 201);
+    const created = (await json(createdResponse)).row;
+    const teamPath = `/events/wz-aerospace-2026/registrations/${created.id}`;
+
+    const personalPatch = await request("PATCH", `/api/me${teamPath}`, ordinary.cookie, { participants: initialParticipants });
+    assert.equal(personalPatch.status, 403);
+    assert.equal((await json(personalPatch)).error, "无权修改该报名");
+
+    const organizationRoster = [
+      { name: "新队员丙", school: "温州市实验小学", grade: "五年级", phone: "13800002003", studentIdNumber: thirdValidStudentIdNumber }
+    ];
+    const organizationPatch = await request("PATCH", `/api/organization${teamPath}`, organization.cookie, {
+      projectId: created.projectId, participants: organizationRoster, instructor: "新指导老师"
+    });
+    assert.equal(organizationPatch.status, 200);
+    const organizationUpdated = (await json(organizationPatch)).row;
+    assert.equal(organizationUpdated.projectId, created.projectId);
+    assert.equal(organizationUpdated.teamCode, created.teamCode);
+    assert.equal(organizationUpdated.participantCount, 1);
+    assert.equal(organizationUpdated.participants[0].studentIdNumber, thirdValidStudentIdNumber);
+
+    const adminRoster = [
+      { name: "管理员队员丁", school: "温州市实验小学", grade: "五年级", phone: "13800002004", studentIdNumber: fourthValidStudentIdNumber },
+      { name: "管理员队员丙", school: "温州市实验小学", grade: "五年级", phone: "13800002003", studentIdNumber: thirdValidStudentIdNumber }
+    ];
+    const adminPatch = await request("PATCH", `/api/admin${teamPath}`, admin.cookie, {
+      participants: adminRoster, instructor: "管理员指导老师"
+    });
+    assert.equal(adminPatch.status, 200);
+    const adminUpdated = (await json(adminPatch)).row;
+    assert.equal(adminUpdated.projectId, created.projectId);
+    assert.equal(adminUpdated.teamCode, created.teamCode);
+    assert.deepEqual(adminUpdated.participants.map((participant) => participant.name), ["管理员队员丁", "管理员队员丙"]);
+
+    const invalidPatch = await request("PATCH", `/api/organization${teamPath}`, organization.cookie, {
+      participants: Array.from({ length: 9 }, (_, index) => ({ ...adminRoster[index % 2], name: `超员${index}` }))
+    });
+    assert.equal(invalidPatch.status, 422);
+    const persisted = JSON.parse(await fs.readFile(dbPath, "utf8"));
+    assert.equal(persisted.registrations.find((row) => row.id === created.id).teamCode, created.teamCode);
+    assert.deepEqual(persisted.registrationParticipants.filter((row) => row.registrationId === created.id).map((row) => row.name), ["管理员队员丁", "管理员队员丙"]);
   });
 });
 
@@ -456,7 +573,14 @@ test("member registration updates keep the selected active membership while prox
 
     const proxyResponse = await patch("/api/admin/events/wz-aerospace-2026/registrations/R20260627002", {
       organizationId: "O1001",
-      instructor: "Updated proxy"
+      instructor: "Updated proxy",
+      participants: [{
+        name: "周星言",
+        school: "温州市第二实验中学",
+        grade: "初二",
+        phone: "13900000002",
+        studentIdNumber: otherValidStudentIdNumber
+      }]
     }, admin.cookie);
     assert.equal(proxyResponse.status, 200);
     const proxyRow = (await json(proxyResponse)).row;

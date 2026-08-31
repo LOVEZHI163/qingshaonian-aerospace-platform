@@ -3,6 +3,7 @@ import { computed, onMounted, reactive, ref, watch } from "vue";
 
 import SchoolCombobox from "./SchoolCombobox.vue";
 import SubmissionAssetUploader from "./SubmissionAssetUploader.vue";
+import TeamRegistrationFields from "./TeamRegistrationFields.vue";
 import { api } from "../lib/api.js";
 
 const props = defineProps({
@@ -21,6 +22,7 @@ const form = reactive({
   memberUserId: "",
   studentIdNumber: "",
   athlete: { name: "", school: "", grade: "", phone: "" },
+  participants: [],
   projectId: "",
   instructor: ""
 });
@@ -40,6 +42,7 @@ const editing = computed(() => Boolean(props.registration?.id));
 const newRegistrationAllowed = computed(() => editing.value || (!leaderEligibilityLoading.value && hasApprovedLeader.value));
 const gradeOptions = computed(() => props.grades.flatMap((group) => group.grades || []));
 const selectedProject = computed(() => props.projects.find((project) => project.id === form.projectId) || null);
+const isTeam = computed(() => selectedProject.value?.type === "team");
 const selectedMember = computed(() => props.members.find((member) => member.id === form.memberUserId) || null);
 const memberMode = computed(() => form.registrationSource === "member_registration");
 const filteredMembers = computed(() => {
@@ -51,14 +54,35 @@ const filteredMembers = computed(() => {
   ));
 });
 const requiresSubmission = computed(() => !editing.value && selectedProject.value?.submissionMode === "image_video");
+const teamParticipantsValid = computed(() => !isTeam.value || (
+  form.participants.length >= (selectedProject.value?.teamMinMembers ?? 1)
+  && form.participants.length <= (selectedProject.value?.teamMaxMembers ?? 8)
+  && form.participants.every((participant) => (
+    participant.name?.trim()
+    && participant.school?.trim()
+    && participant.grade?.trim()
+    && participant.phone?.trim()
+    && studentIdPattern.test(participant.studentIdNumber?.trim() || "")
+  ))
+));
 const submitDisabled = computed(() => submitting.value
   || !newRegistrationAllowed.value
   || !form.projectId
-  || (!editing.value && (!form.registrationSource || (memberMode.value && !form.memberUserId)))
+  || (!editing.value && !isTeam.value && (!form.registrationSource || (memberMode.value && !form.memberUserId)))
+  || !teamParticipantsValid.value
   || (requiresSubmission.value && (!uploadSession.value?.id || uploadSessionLoading.value || !assetsComplete.value)));
 
 function blankAthlete() {
   return { name: "", school: props.defaultSchool || "", grade: "", phone: "" };
+}
+
+function blankParticipant() {
+  return { name: "", school: props.defaultSchool || "", grade: "", phone: "", studentIdNumber: "" };
+}
+
+function resetTeamParticipants(project = selectedProject.value) {
+  const minimum = Math.max(1, Number(project?.teamMinMembers) || 1);
+  form.participants = Array.from({ length: minimum }, blankParticipant);
 }
 
 watch(() => props.projects, (projects) => {
@@ -74,6 +98,11 @@ watch(() => props.registration, (registration) => {
   form.memberUserId = registration?.personalUserId || "";
   form.studentIdNumber = "";
   form.projectId = registration?.projectId || props.projects[0]?.id || "";
+  const project = props.projects.find((item) => item.id === form.projectId);
+  form.participants = project?.type === "team" && Array.isArray(registration?.participants) && registration.participants.length > 0
+    ? registration.participants.map((participant) => ({ ...participant, studentIdNumber: participant.studentIdNumber || "" }))
+    : [];
+  if (project?.type === "team" && form.participants.length === 0) resetTeamParticipants(project);
   form.instructor = registration?.instructor || "";
   message.value = "";
 }, { immediate: true });
@@ -91,7 +120,7 @@ watch(filteredMembers, (members) => {
 });
 
 watch(() => form.registrationSource, (source, previous) => {
-  if (editing.value) return;
+  if (editing.value || isTeam.value) return;
   if (source === previous) return;
   memberSearch.value = "";
   form.memberUserId = "";
@@ -102,6 +131,22 @@ watch(() => form.registrationSource, (source, previous) => {
 
 watch(() => props.defaultSchool, (defaultSchool) => {
   if (!editing.value && !form.athlete.school) form.athlete.school = defaultSchool || "";
+  if (!editing.value) {
+    form.participants = form.participants.map((participant) => (
+      participant.school ? participant : { ...participant, school: defaultSchool || "" }
+    ));
+  }
+}, { immediate: true });
+
+watch(selectedProject, (project, previous) => {
+  if (project?.type === "team") {
+    form.registrationSource = "organization_proxy";
+    form.memberUserId = "";
+    if (form.participants.length === 0 || (!editing.value && previous?.id !== project.id)) resetTeamParticipants(project);
+  } else if (!editing.value && previous?.type === "team") {
+    form.registrationSource = "";
+    form.participants = [];
+  }
 }, { immediate: true });
 
 function clearUploadSession() {
@@ -147,7 +192,7 @@ watch(() => [form.projectId, editing.value], () => {
 async function submit() {
   if (!hasEventContext.value || props.disabled || submitDisabled.value) return;
   const studentIdNumber = form.studentIdNumber.trim();
-  if (!editing.value && !studentIdPattern.test(studentIdNumber)) {
+  if (!isTeam.value && !editing.value && !studentIdPattern.test(studentIdNumber)) {
     emit("error", new Error("请输入 18 位居民身份证号，末位可为 X"));
     return;
   }
@@ -157,9 +202,26 @@ async function submit() {
     const path = editing.value
       ? `/api/organization/events/${encodeURIComponent(props.eventId)}/registrations/${encodeURIComponent(props.registration.id)}`
       : `/api/organization/events/${encodeURIComponent(props.eventId)}/registrations`;
+    const participants = form.participants.map(({ name, school, grade, phone, studentIdNumber: identity }) => ({
+      name: String(name || "").trim(),
+      school: String(school || "").trim(),
+      grade: String(grade || "").trim(),
+      phone: String(phone || "").trim(),
+      studentIdNumber: String(identity || "").trim()
+    }));
     const body = editing.value
-      ? { athlete: form.athlete, projectId: form.projectId, instructor: form.instructor }
-      : {
+      ? (isTeam.value
+          ? { participants, projectId: form.projectId, instructor: form.instructor }
+          : { athlete: form.athlete, projectId: form.projectId, instructor: form.instructor })
+      : (isTeam.value
+        ? {
+            registrationSource: "organization_proxy",
+            participants,
+            projectId: form.projectId,
+            instructor: form.instructor,
+            ...(requiresSubmission.value ? { uploadSessionId: uploadSession.value.id } : {})
+          }
+        : {
           registrationSource: form.registrationSource,
           ...(memberMode.value ? { memberUserId: form.memberUserId } : {}),
           studentIdNumber,
@@ -167,7 +229,7 @@ async function submit() {
           projectId: form.projectId,
           instructor: form.instructor,
           ...(requiresSubmission.value ? { uploadSessionId: uploadSession.value.id } : {})
-        };
+        });
     const payload = await api(path, {
       method: editing.value ? "PATCH" : "POST",
       body: JSON.stringify(body)
@@ -180,6 +242,7 @@ async function submit() {
       form.registrationSource = "";
       form.memberUserId = "";
       form.studentIdNumber = "";
+      form.participants = [];
       clearUploadSession();
     }
     emit("registered", payload);
@@ -213,7 +276,7 @@ onMounted(async () => {
 
 <template>
   <form v-if="hasEventContext && !disabled" class="panel form-panel organization-athlete-registration-form" :data-testid="editing ? 'organization-registration-editor' : 'organization-registration-form'" @submit.prevent="submit">
-    <fieldset v-if="!editing" class="organization-registration-source" aria-label="报名方式">
+    <fieldset v-if="!editing && !isTeam" class="organization-registration-source" aria-label="报名方式">
       <legend>报名方式</legend>
       <label><input v-model="form.registrationSource" type="radio" value="member_registration" data-registration-source="member_registration" required />成员报名</label>
       <label><input v-model="form.registrationSource" type="radio" value="organization_proxy" data-registration-source="organization_proxy" required />组织代报名</label>
@@ -238,9 +301,12 @@ onMounted(async () => {
       <p class="hint">{{ leaderEligibilityError || "请先在领队管理提交至少一名领队并等待平台审核通过" }}</p>
       <a class="primary" data-action="open-leader-management" href="?view=leaders">前往领队管理</a>
     </div>
-    <div class="two"><label>姓名<input v-model="form.athlete.name" data-field="athlete-name" :readonly="memberMode" required /></label><label>学校<SchoolCombobox v-model="form.athlete.school" /></label></div>
-    <div class="two"><label>年级<select v-model="form.athlete.grade" data-field="athlete-grade" required><option value="" disabled>请选择年级</option><option v-for="grade in gradeOptions" :key="grade" :value="grade">{{ grade }}</option></select></label><label>手机/监护人手机<input v-model="form.athlete.phone" data-field="athlete-phone" :readonly="memberMode" required /></label></div>
-    <label v-if="!editing">学生身份证号<input v-model="form.studentIdNumber" data-field="student-id-number" inputmode="text" autocomplete="off" minlength="18" maxlength="18" pattern="[0-9]{17}[0-9Xx]" placeholder="18 位居民身份证号，末位可为 X" required /></label>
+    <template v-if="!isTeam">
+      <div class="two"><label>姓名<input v-model="form.athlete.name" data-field="athlete-name" :readonly="memberMode" required /></label><label>学校<SchoolCombobox v-model="form.athlete.school" /></label></div>
+      <div class="two"><label>年级<select v-model="form.athlete.grade" data-field="athlete-grade" required><option value="" disabled>请选择年级</option><option v-for="grade in gradeOptions" :key="grade" :value="grade">{{ grade }}</option></select></label><label>手机/监护人手机<input v-model="form.athlete.phone" data-field="athlete-phone" :readonly="memberMode" required /></label></div>
+      <label v-if="!editing">学生身份证号<input v-model="form.studentIdNumber" data-field="student-id-number" inputmode="text" autocomplete="off" minlength="18" maxlength="18" pattern="[0-9]{17}[0-9Xx]" placeholder="18 位居民身份证号，末位可为 X" required /></label>
+    </template>
+    <TeamRegistrationFields v-else v-model="form.participants" :min-members="selectedProject.teamMinMembers ?? 1" :max-members="selectedProject.teamMaxMembers ?? 8" :default-school="defaultSchool" />
     <div class="two"><label>赛项<select v-model="form.projectId" :disabled="editing" required><option v-for="project in projects" :key="project.id" :value="project.id">{{ project.name }}</option></select></label><label>指导老师<input v-model="form.instructor" data-field="instructor" /></label></div>
     <p v-if="editing" class="hint">赛项在报名创建后不可修改；如需更换赛项，请取消后重新报名。</p>
     <section v-if="requiresSubmission" class="registration-submission" aria-label="作品材料">

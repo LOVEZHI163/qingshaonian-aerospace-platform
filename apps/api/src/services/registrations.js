@@ -8,6 +8,7 @@ import { decryptStudentId, encryptStudentId, fingerprintStudentId, normalizeStud
 import {
   assertAthleteTypeAvailability,
   participantsForRegistration,
+  prepareTeamRoster,
   registrationIdentityFingerprints
 } from "./registration-participants.js";
 
@@ -204,6 +205,13 @@ function validateProjectForRegistration(db, eventId, projectId, group) {
   return project;
 }
 
+function requireEnabledProjectForEvent(db, eventId, projectId) {
+  const project = db.projects.find((row) => row.id === projectId);
+  if (!project || project.eventId !== eventId) throw businessError(422, "赛项不属于报名赛事");
+  if (!project.enabled) throw businessError(422, "赛项已停用");
+  return project;
+}
+
 function assertRegistrationProjectImmutable(row, input) {
   if (Object.hasOwn(input || {}, "projectId") && input.projectId && input.projectId !== row.projectId) {
     throw businessError(409, "报名创建后不能修改赛项；如需更换赛项，请取消后重新报名", "REGISTRATION_PROJECT_IMMUTABLE");
@@ -304,12 +312,60 @@ export function registrationDuplicateCheck(db, input, actor, clock = () => new D
   };
 }
 
-export function prepareAdminRegistrationUpdate(db, row, input) {
+export function prepareAdminRegistrationUpdate(db, row, input, context = {}) {
   if (Object.hasOwn(input, "eventId") && input.eventId !== row.eventId) {
     throw businessError(422, "不能把历史报名移动到其他赛事");
   }
   assertRegistrationProjectImmutable(row, input);
   if (!db.events.some((event) => event.id === row.eventId)) throw businessError(422, "赛事不存在");
+  const projectId = input.projectId || row.projectId;
+  const historicalProject = db.projects.find((project) => project.id === projectId && project.eventId === row.eventId);
+  const isTeam = (historicalProject?.type || row.projectType) === "team";
+  if (isTeam) {
+    if (!Array.isArray(input?.participants)) {
+      throw businessError(422, "团队赛编辑必须提交完整队员名单", "TEAM_PARTICIPANTS_REQUIRED");
+    }
+    const project = projectForHistoricalRegistration(db, row, projectId, row.group);
+    const organizationId = Object.hasOwn(input, "organizationId") ? input.organizationId || null : row.organizationId;
+    let organization = null;
+    if (organizationId) {
+      organization = operationalOrganization(db, organizationId);
+      if (!organization) throw businessError(422, "组织不存在、未审核或已停用");
+    }
+    const existingParticipants = (db.registrationParticipants || [])
+      .filter((participant) => participant.registrationId === row.id)
+      .sort((left, right) => left.displayOrder - right.displayOrder || left.id.localeCompare(right.id));
+    const rosterInput = {
+      ...input,
+      participants: input.participants.map((participant, index) => ({
+        ...participant,
+        id: existingParticipants[index]?.id || undefined
+      }))
+    };
+    const teamRoster = prepareTeamRoster(db, rosterInput, {
+      eventId: row.eventId,
+      project,
+      makeId: context.makeId,
+      now: context.now,
+      ignoreRegistrationId: row.id,
+      registrationStatus: row.status
+    });
+    const athlete = { ...teamRoster.participants[0] };
+    delete athlete.id;
+    delete athlete.displayOrder;
+    delete athlete.createdAt;
+    delete athlete.updatedAt;
+    return {
+      athlete,
+      group: teamRoster.group,
+      project,
+      organizationId,
+      organization,
+      instructor: String(input.instructor ?? row.instructor ?? "").trim(),
+      validation: { athleteKey: athleteKey(athlete), projectType: "team" },
+      teamRoster
+    };
+  }
   const athlete = safeRegistrationAthlete(input, row.athlete);
   requireText(athlete.name, "姓名");
   requireText(athlete.school, "学校");
@@ -317,7 +373,6 @@ export function prepareAdminRegistrationUpdate(db, row, input) {
   requireText(athlete.phone, "手机号/家长手机号");
   const group = groupForGrade(athlete.grade);
   if (!group) throw businessError(422, "实际年级不合法");
-  const projectId = input.projectId || row.projectId;
   const project = projectForHistoricalRegistration(db, row, projectId, group);
   const organizationId = Object.hasOwn(input, "organizationId") ? input.organizationId || null : row.organizationId;
   let organization = null;
@@ -337,6 +392,9 @@ export function prepareAdminRegistrationUpdate(db, row, input) {
 
 export function prepareOrdinaryRegistrationUpdate(db, row, input, userId) {
   if (row.personalUserId !== userId) throw businessError(403, "无权修改该报名");
+  if ((row.projectType || "individual") === "team") {
+    throw businessError(422, "团队赛只允许组织代报名", "TEAM_ORGANIZATION_PROXY_REQUIRED");
+  }
   assertRegistrationProjectImmutable(row, input);
   assertRegistrationWindowOpen(db, row.eventId);
   const athlete = safeRegistrationAthlete(input, row.athlete);
@@ -536,7 +594,46 @@ function requireMemberIdentity(db, organizationId, memberUserId, athlete) {
   return member;
 }
 
-function validateCreateForEvent(db, input, event, actor, channel) {
+function validateCreateForEvent(db, input, event, actor, channel, context) {
+  const projectId = requireText(input?.projectId, "赛项");
+  const trustedProject = requireEnabledProjectForEvent(db, event.id, projectId);
+  if (trustedProject.type === "team") {
+    if (channel !== "organization") {
+      requireOrdinaryUser(actor);
+      throw businessError(422, "团队赛只允许组织代报名", "TEAM_ORGANIZATION_PROXY_REQUIRED");
+    }
+    const scope = requireOrganizationEventParticipation(db, actor, event.id, { writable: true });
+    const organization = requireOperationalOrganization(db, scope.organization.id);
+    if (String(input?.registrationSource || "") !== "organization_proxy") {
+      throw businessError(422, "团队赛只允许组织代报名", "TEAM_ORGANIZATION_PROXY_REQUIRED");
+    }
+    const teamRoster = prepareTeamRoster(db, input, {
+      eventId: event.id,
+      project: trustedProject,
+      makeId: context.makeId,
+      now: context.now,
+      ignoreRegistrationId: null,
+      registrationStatus: "pending"
+    });
+    const athlete = { ...teamRoster.participants[0] };
+    delete athlete.id;
+    delete athlete.displayOrder;
+    delete athlete.createdAt;
+    delete athlete.updatedAt;
+    return {
+      athlete,
+      group: teamRoster.group,
+      project: trustedProject,
+      organization,
+      registrationSource: "organization_proxy",
+      personalUserId: null,
+      key: athleteKey(athlete),
+      teamRoster
+    };
+  }
+  if (Array.isArray(input?.participants)) {
+    throw businessError(422, "个人赛不能提交团队名单", "INDIVIDUAL_PARTICIPANTS_NOT_ALLOWED");
+  }
   const athlete = safeRegistrationAthlete(input);
   requireText(athlete.name, "姓名");
   requireText(athlete.school, "学校");
@@ -544,7 +641,6 @@ function validateCreateForEvent(db, input, event, actor, channel) {
   requireText(athlete.phone, "手机号/家长手机号");
   const group = groupForGrade(athlete.grade);
   if (!group) throw businessError(422, "实际年级不合法");
-  const projectId = requireText(input?.projectId, "赛项");
   const project = validateProjectForRegistration(db, event.id, projectId, group);
   let organization = null;
   let registrationSource = "member_registration";
@@ -571,13 +667,48 @@ function validateCreateForEvent(db, input, event, actor, channel) {
   return { athlete, group, project, organization, registrationSource, personalUserId, key: athleteKey(athlete) };
 }
 
+function nextTeamCode(db, eventId, organizationId, projectId) {
+  const sequence = db.registrations.filter((row) => (
+    row.eventId === eventId
+    && row.organizationId === organizationId
+    && row.projectId === projectId
+    && row.projectType === "team"
+  )).length + 1;
+  return `${organizationId}-${projectId}-${String(sequence).padStart(2, "0")}`;
+}
+
 export function createOrMergeRegistration(db, input, actor, channel, {
   makeId,
   now = () => new Date().toISOString(),
   clock = () => new Date()
 } = {}) {
   const event = requireOpenRegistrationEvent(db, requireEventId(db, input?.eventId).id, clock);
-  const prepared = validateCreateForEvent(db, input, event, actor, channel);
+  const prepared = validateCreateForEvent(db, input, event, actor, channel, { makeId, now });
+  if (prepared.teamRoster) {
+    const organizationId = prepared.organization.id;
+    // POST routes execute under the store mutation lock, so code generation and
+    // persistence observe the same serialized registration snapshot.
+    requireOrganizationApprovedLeader(db, organizationId);
+    const timestamp = now();
+    const row = {
+      id: makeId("R"), eventId: event.id, source: prepared.registrationSource, createdByUserId: actor.id,
+      personalUserId: null, organizationId, createdVia: channel, organization: prepared.organization.name,
+      athlete: prepared.athlete, athleteKey: prepared.key, group: prepared.group,
+      projectId: prepared.project.id, projectName: prepared.project.name, projectType: "team",
+      teamCode: nextTeamCode(db, event.id, organizationId, prepared.project.id),
+      instructor: String(input?.instructor || "").trim(), status: "pending", rejectReason: "",
+      createdAt: timestamp, updatedAt: timestamp
+    };
+    db.registrations.unshift(row);
+    db.registrationParticipants ||= [];
+    db.registrationParticipantIdentities ||= [];
+    db.registrationParticipants.push(...prepared.teamRoster.participants.map((participant) => ({
+      ...participant,
+      registrationId: row.id
+    })));
+    db.registrationParticipantIdentities.push(...prepared.teamRoster.identities);
+    return { row, created: true, merged: false };
+  }
   const studentIdNumber = requireStudentIdForNewRegistration(input);
   const fingerprint = fingerprintStudentId(studentIdNumber);
   const existing = findRegistrationIdentity(db, event.id, prepared.project.id, fingerprint);

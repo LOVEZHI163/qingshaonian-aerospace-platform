@@ -180,30 +180,30 @@ test("session identity cannot be replaced through body, query, or path values", 
     assert.equal((await forgedRegistration.json()).row.personalUserId, "U1001");
 
     const unrelatedOrganization = await fetch(`${baseUrl}/api/me/events/wz-aerospace-2026/registrations`, jsonOptions("POST", {
-      studentIdNumber: validStudentIdNumber,
+      studentIdNumber: "110105201401011215",
       organizationId: "O1002",
       athlete: { name: "测试学生乙", school: "其他学校", grade: "初二", phone: "13600001002" },
       group: "中学组",
-      projectId: "drone-relay"
+      projectId: "ai-short-film"
     }, ordinary.cookie));
     assert.equal(unrelatedOrganization.status, 201);
     assert.equal((await unrelatedOrganization.json()).row.organizationId, "O1001");
 
     const unknownOrganization = await fetch(`${baseUrl}/api/me/events/wz-aerospace-2026/registrations`, jsonOptions("POST", {
-      studentIdNumber: validStudentIdNumber,
+      studentIdNumber: "110105201401011223",
       organizationId: "O-NOT-FOUND",
       athlete: { name: "测试学生丙", school: "其他学校", grade: "初二", phone: "13600001003" },
       group: "中学组",
-      projectId: "drone-relay"
+      projectId: "ai-short-film"
     }, ordinary.cookie));
     assert.equal(unknownOrganization.status, 201);
     assert.equal((await unknownOrganization.json()).row.organizationId, "O1001");
 
     const privateRegistration = await fetch(`${baseUrl}/api/me/events/wz-aerospace-2026/registrations`, jsonOptions("POST", {
-      studentIdNumber: validStudentIdNumber,
+      studentIdNumber: "110105201401011231",
       athlete: { name: "私人参赛者", school: "个人学校", grade: "初二", phone: "13600001004" },
       group: "中学组",
-      projectId: "drone-relay"
+      projectId: "ai-short-film"
     }, ordinary.cookie));
     assert.equal(privateRegistration.status, 201);
     const privateRegistrationId = (await privateRegistration.json()).row.id;
@@ -300,7 +300,7 @@ test("certificate downloads enforce ownership, publication, and organization man
       studentIdNumber: validStudentIdNumber,
       athlete: { name: "私人报名", school: "个人学校", grade: "初二", phone: "13600002001" },
       group: "中学组",
-      projectId: "drone-relay"
+      projectId: "ai-short-film"
     }, ordinary.cookie));
     assert.equal(privateRegistration.status, 201);
     const privateRow = (await privateRegistration.json()).row;

@@ -40,7 +40,7 @@ const GRADE_GROUPS = [
   { id: "high_vocational", name: "职高/高中组", grades: ["高一", "高二", "高三", "职高一年级", "职高二年级", "职高三年级"] }
 ];
 const selectedGroup = computed(() => (context.value.grades || []).find((item) => item.grades?.includes(form.athlete.grade))?.name || "");
-const eligibleProjects = computed(() => (context.value.projects || []).filter((project) => selectedGroup.value && (!project.allowedGroups || project.allowedGroups.includes(selectedGroup.value))));
+const eligibleProjects = computed(() => (context.value.projects || []).filter((project) => project.type === "individual" && selectedGroup.value && (!project.allowedGroups || project.allowedGroups.includes(selectedGroup.value))));
 const selectedProject = computed(() => (context.value.projects || []).find((project) => project.id === form.projectId) || null);
 const requiresSubmission = computed(() => selectedProject.value?.submissionMode === "image_video");
 const submitDisabled = computed(() => !registrationEligible.value || submitting.value || (requiresSubmission.value && (!uploadSession.value?.id || uploadSessionLoading.value || !assetsComplete.value)));

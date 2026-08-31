@@ -232,6 +232,22 @@ export function createRegistrationsRouter({
     });
   }
 
+  function replaceTeamRoster(db, row, prepared) {
+    if (!prepared.teamRoster) return;
+    const previousIds = new Set((db.registrationParticipants || [])
+      .filter((participant) => participant.registrationId === row.id)
+      .map((participant) => participant.id));
+    db.registrationParticipants = (db.registrationParticipants || [])
+      .filter((participant) => participant.registrationId !== row.id);
+    db.registrationParticipantIdentities = (db.registrationParticipantIdentities || [])
+      .filter((identity) => !previousIds.has(identity.participantId));
+    db.registrationParticipants.push(...prepared.teamRoster.participants.map((participant) => ({
+      ...participant,
+      registrationId: row.id
+    })));
+    db.registrationParticipantIdentities.push(...prepared.teamRoster.identities);
+  }
+
   router.patch("/me/events/:eventId/registrations/:registrationId", ...user, asyncRoute(async (req, res) => {
     requireOrdinaryUser(req.user);
     const db = await store.readDb();
@@ -254,9 +270,10 @@ export function createRegistrationsRouter({
     if (req.body?.organizationId && req.body.organizationId !== organization.id) {
       throw Object.assign(new Error("Organization id does not match owner"), { status: 403 });
     }
-    const prepared = prepareAdminRegistrationUpdate(db, row, { ...eventScopedInput(req), organizationId: organization.id });
+    const prepared = prepareAdminRegistrationUpdate(db, row, { ...eventScopedInput(req), organizationId: organization.id }, { makeId, now });
     const timestamp = now();
     applyRegistrationUpdate(row, prepared, timestamp);
+    replaceTeamRoster(db, row, prepared);
     updateExistingRegistrationIdentity(db, row.id, req.body, timestamp);
     await store.writeDb(db);
     sendPrivateJson(res, { row: registrationResponse(db, row, req.user) });
@@ -305,9 +322,10 @@ export function createRegistrationsRouter({
     requireWritableEvent(db, req.params.eventId, clock);
     const row = db.registrations.find((item) => item.id === req.params.registrationId && item.eventId === req.params.eventId);
     if (!row) return res.status(404).json({ error: "Registration not found" });
-    const prepared = prepareAdminRegistrationUpdate(db, row, { ...eventScopedInput(req), eventId: req.params.eventId });
+    const prepared = prepareAdminRegistrationUpdate(db, row, { ...eventScopedInput(req), eventId: req.params.eventId }, { makeId, now });
     const timestamp = now();
     applyRegistrationUpdate(row, prepared, timestamp);
+    replaceTeamRoster(db, row, prepared);
     updateExistingRegistrationIdentity(db, row.id, req.body, timestamp);
     await store.writeDb(db);
     sendPrivateJson(res, { row: registrationResponse(db, row, req.user) });

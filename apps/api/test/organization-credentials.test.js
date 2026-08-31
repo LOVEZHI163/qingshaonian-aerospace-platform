@@ -456,7 +456,7 @@ test("organization registrations reject pending, rejected, and disabled organiza
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         athlete: { name: "个人报名学生", school: "个人学校", grade: "初二", phone: "13600009924" },
-        group: "中学组", projectId: "drone-relay"
+        group: "中学组", projectId: "ai-short-film"
       })
     }));
     assert.equal(personalRegistration.status, 403);
