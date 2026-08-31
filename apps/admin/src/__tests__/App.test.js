@@ -677,6 +677,55 @@ describe("App session integration", () => {
     expect(appSource).not.toContain("['events', 'projects']");
   });
 
+  it("submits team roster bounds only when the project form is team", async () => {
+    const event = {
+      id: "E1", name: "测试赛事", theme: "飞向未来", status: "draft", isCurrent: false,
+      dateLabel: "2027年10月", venue: "温州", registrationStartAt: "2027-08-01T00:00:00.000Z",
+      registrationEndAt: "2027-09-01T00:00:00.000Z", registrationMode: "automatic"
+    };
+    sessionUser.value = { id: "A1", type: "admin", name: "管理员", mustChangePassword: false };
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/public/event") return publicData();
+      if (path === "/api/public/features") return { smsPasswordResetEnabled: false };
+      if (path === "/api/admin/events") return { rows: [event], projects: [] };
+      if (path.startsWith("/api/admin/events/E1/registrations?")) return { rows: [] };
+      if (path === "/api/admin/events/E1/projects") return { row: { id: "P1", eventId: "E1" } };
+      return { rows: [] };
+    });
+
+    const wrapper = mount(App);
+    await flushPromises();
+    await wrapper.get('[data-nav="events"]').trigger("click");
+    await flushPromises();
+    await wrapper.get('[data-event-card="E1"] [data-action="open-event"]').trigger("click");
+    await flushPromises();
+    await wrapper.get('[data-section="projects"]').trigger("click");
+    await flushPromises();
+
+    const form = wrapper.get("form.project-form");
+    const fields = form.findAll("input");
+    await fields[0].setValue("团队飞行");
+    await fields[1].setValue("航空创新");
+    const type = form.get("select");
+    await type.setValue("team");
+    await flushPromises();
+    const bounds = form.get("[data-team-member-bounds]");
+    const boundInputs = bounds.findAll("input");
+    await boundInputs[0].setValue("2");
+    await boundInputs[1].setValue("6");
+
+    await type.setValue("individual");
+    await flushPromises();
+    expect(form.find("[data-team-member-bounds]").exists()).toBe(false);
+
+    await type.setValue("team");
+    await form.trigger("submit");
+    await flushPromises();
+
+    const call = apiMock.mock.calls.find(([path]) => path === "/api/admin/events/E1/projects");
+    expect(JSON.parse(call[1].body)).toMatchObject({ type: "team", teamMinMembers: 2, teamMaxMembers: 6 });
+  });
+
   it("opens the complete certificate management page from administrator navigation", async () => {
     sessionUser.value = { id: "A1", type: "admin", name: "管理员", mustChangePassword: false };
     const wrapper = mount(App);

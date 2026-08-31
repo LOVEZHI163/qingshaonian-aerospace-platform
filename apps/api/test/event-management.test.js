@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { withTestServer } from "../test-support/server.js";
+import { createProject, updateProject } from "../src/services/events.js";
 import { loginAs, withSession } from "./helpers/api-client.js";
 
 async function withServer(fn) {
@@ -30,6 +31,39 @@ const eventInput = {
   registrationEndAt: "2027-09-20T15:59:59.000Z",
   registrationMode: "automatic"
 };
+
+test("team member bounds default, validate, and reset individual projects", () => {
+  const db = {
+    events: [{ id: "E1", status: "published", archivedAt: null }],
+    projects: [],
+    projectGroups: [],
+    registrations: []
+  };
+  const validProject = {
+    name: "团队飞行",
+    type: "team",
+    category: "航空创新",
+    enabled: true,
+    instructorRequired: false,
+    displayOrder: 0,
+    allowedGroups: ["小学低段"]
+  };
+  const deps = { makeId: () => "P1" };
+
+  const defaults = createProject(db, "E1", validProject, deps);
+  assert.equal(defaults.teamMinMembers, 1);
+  assert.equal(defaults.teamMaxMembers, 8);
+
+  const team = updateProject(db, defaults.id, { teamMinMembers: 2, teamMaxMembers: 6 });
+  assert.equal(team.teamMinMembers, 2);
+  assert.equal(team.teamMaxMembers, 6);
+  assert.throws(() => updateProject(db, team.id, { teamMinMembers: 0 }), /1 至 8/);
+  assert.throws(() => updateProject(db, team.id, { teamMinMembers: 7, teamMaxMembers: 6 }), /最少人数不能大于最多人数/);
+
+  const individual = updateProject(db, team.id, { type: "individual" });
+  assert.equal(individual.teamMinMembers, 1);
+  assert.equal(individual.teamMaxMembers, 1);
+});
 
 test("event management routes enforce admin sessions and temporary-password readiness", async () => {
   await withServer(async (baseUrl) => {

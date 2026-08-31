@@ -20,7 +20,9 @@ const PROJECT_EDITABLE_FIELDS = [
   "instructorRequired",
   "displayOrder",
   "allowedGroups",
-  "submissionMode"
+  "submissionMode",
+  "teamMinMembers",
+  "teamMaxMembers"
 ];
 const SUBMISSION_MODES = new Set(["none", "image_video"]);
 const STRICT_ISO_8601 = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d+))?)?(Z|([+-])(\d{2}):(\d{2}))$/;
@@ -107,6 +109,17 @@ function submissionMode(value = "none") {
   return value;
 }
 
+function normalizeTeamMemberBounds(next) {
+  if (next.type !== "team") return { teamMinMembers: 1, teamMaxMembers: 1 };
+  const min = Number(next.teamMinMembers ?? 1);
+  const max = Number(next.teamMaxMembers ?? 8);
+  if (!Number.isInteger(min) || !Number.isInteger(max) || min < 1 || max > 8) {
+    throw businessError(422, "团队人数必须是 1 至 8 的整数");
+  }
+  if (min > max) throw businessError(422, "团队最少人数不能大于最多人数");
+  return { teamMinMembers: min, teamMaxMembers: max };
+}
+
 function normalizeProjectFields(input, current = {}) {
   assertObjectInput(input);
   const next = { ...current };
@@ -123,6 +136,7 @@ function normalizeProjectFields(input, current = {}) {
   }
   next.allowedGroups = normalizeAllowedGroups(next.allowedGroups);
   next.submissionMode = submissionMode(next.submissionMode);
+  Object.assign(next, normalizeTeamMemberBounds(next));
   return next;
 }
 
