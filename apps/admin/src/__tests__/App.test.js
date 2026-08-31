@@ -33,6 +33,8 @@ vi.mock("../state/session.js", async () => {
 
 import App from "../App.vue";
 import appSource from "../App.vue?raw";
+import OrganizationRegistrationRecordsPage from "../pages/OrganizationRegistrationRecordsPage.vue";
+import RegistrationManagementPage from "../pages/RegistrationManagementPage.vue";
 import { testSession as session } from "../state/session.js";
 
 const sessionUser = session.user;
@@ -42,6 +44,19 @@ enableAutoUnmount(afterEach);
 
 function publicData() {
   return { event: { name: "测试赛事" }, projects: [], grades: [] };
+}
+
+function teamRegistration() {
+  return {
+    id: "R-TEAM", eventId: "E1", eventName: "团队赛", organizationId: "O1", organization: "实验学校",
+    source: "organization_proxy", projectId: "P-TEAM", projectName: "协同飞行", projectType: "team",
+    teamCode: "O1-P-TEAM-01", participantCount: 2, group: "小学高段", instructor: "林老师", status: "pending",
+    athlete: { name: "张同学", school: "实验学校", grade: "五年级", phone: "13800000001" },
+    participants: [
+      { id: "RP1", displayOrder: 1, name: "张同学", school: "实验学校", grade: "五年级", phone: "13800000001", studentIdNumber: "11010520140101123X" },
+      { id: "RP2", displayOrder: 2, name: "李同学", school: "实验学校", grade: "五年级", phone: "13800000002", studentIdNumber: "110105201401021234" }
+    ]
+  };
 }
 
 describe("App session integration", () => {
@@ -724,6 +739,98 @@ describe("App session integration", () => {
 
     const call = apiMock.mock.calls.find(([path]) => path === "/api/admin/events/E1/projects");
     expect(JSON.parse(call[1].body)).toMatchObject({ type: "team", teamMinMembers: 2, teamMaxMembers: 6 });
+  });
+
+  it("shows one expandable complete team roster in the owning organization records", async () => {
+    const team = teamRegistration();
+    apiMock.mockImplementation(async (path) => {
+      if (path.startsWith("/api/organization/registrations?")) {
+        return { rows: [team], total: 1, page: 1, pageSize: 25, filterOptions: { events: [], projects: [] } };
+      }
+      return { rows: [] };
+    });
+
+    const wrapper = mount(OrganizationRegistrationRecordsPage);
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("O1-P-TEAM-01");
+    expect(wrapper.text()).toContain("2 名队员");
+    expect(wrapper.findAll('[data-action^="edit-organization-registration-"]')).toHaveLength(1);
+    expect(wrapper.text().match(/林老师/g)).toHaveLength(1);
+    expect(wrapper.text()).not.toContain("110105201401021234");
+
+    await wrapper.get('[data-action="toggle-roster-R-TEAM"]').trigger("click");
+
+    const roster = wrapper.get('[data-roster="R-TEAM"]');
+    expect(roster.text()).toContain("张同学");
+    expect(roster.text()).toContain("李同学");
+    expect(roster.text()).toContain("13800000002");
+    expect(roster.text()).toContain("110105201401021234");
+  });
+
+  it("shows one expandable complete team roster in administrator registration management", async () => {
+    const team = teamRegistration();
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/admin/events") return {
+        rows: [{ id: "E1", name: "团队赛" }],
+        projects: [{ id: "P-TEAM", eventId: "E1", name: "协同飞行", type: "team", teamMinMembers: 1, teamMaxMembers: 8, allowedGroups: ["小学高段"] }]
+      };
+      if (path === "/api/admin/organizations") return { rows: [{ id: "O1", name: "实验学校" }] };
+      if (path.startsWith("/api/admin/events/E1/registrations?")) return { rows: [team], total: 1, page: 1, pageSize: 25 };
+      return { row: team };
+    });
+
+    const wrapper = mount(RegistrationManagementPage, { props: { eventId: "E1" } });
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("O1-P-TEAM-01");
+    expect(wrapper.text()).toContain("2 名队员");
+    expect(wrapper.findAll('[data-action^="edit-registration-"]')).toHaveLength(1);
+    expect(wrapper.text().match(/林老师/g)).toHaveLength(1);
+
+    await wrapper.get('[data-action="toggle-roster-R-TEAM"]').trigger("click");
+
+    const roster = wrapper.get('[data-roster="R-TEAM"]');
+    expect(roster.text()).toContain("张同学");
+    expect(roster.text()).toContain("李同学");
+    expect(roster.text()).toContain("13800000002");
+    expect(roster.text()).toContain("110105201401021234");
+  });
+
+  it("submits the complete roster from the administrator team edit dialog", async () => {
+    const team = teamRegistration();
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/admin/events") return {
+        rows: [{ id: "E1", name: "团队赛" }],
+        projects: [{ id: "P-TEAM", eventId: "E1", name: "协同飞行", type: "team", teamMinMembers: 1, teamMaxMembers: 8, allowedGroups: ["小学高段"] }]
+      };
+      if (path === "/api/admin/organizations") return { rows: [{ id: "O1", name: "实验学校" }] };
+      if (path.startsWith("/api/admin/events/E1/registrations?")) return { rows: [team], total: 1, page: 1, pageSize: 25 };
+      return { row: team };
+    });
+    const wrapper = mount(RegistrationManagementPage, { props: { eventId: "E1" } });
+    await flushPromises();
+
+    await wrapper.get('[data-action="edit-registration-R-TEAM"]').trigger("click");
+
+    expect(wrapper.get('[data-field="registration-project"]').attributes("disabled")).toBeDefined();
+    expect(wrapper.get('[data-field="registration-team-code"]').text()).toBe("O1-P-TEAM-01");
+    expect(wrapper.findAll('[data-field="participant-name"]')).toHaveLength(2);
+    expect(wrapper.findAll('[data-field="registration-instructor"]')).toHaveLength(1);
+    await wrapper.findAll('[data-field="participant-name"]')[1].setValue("李同学（更新）");
+    await wrapper.get("form.organization-dialog").trigger("submit");
+    await flushPromises();
+
+    const call = apiMock.mock.calls.find(([path, options]) => (
+      path === "/api/admin/events/E1/registrations/R-TEAM" && options?.method === "PATCH"
+    ));
+    const body = JSON.parse(call[1].body);
+    expect(body.projectId).toBe("P-TEAM");
+    expect(body.instructor).toBe("林老师");
+    expect(body.participants).toHaveLength(2);
+    expect(body.participants[1]).toMatchObject({ id: "RP2", name: "李同学（更新）", studentIdNumber: "110105201401021234" });
+    expect(body).not.toHaveProperty("teamCode");
+    expect(body).not.toHaveProperty("athlete");
   });
 
   it("opens the complete certificate management page from administrator navigation", async () => {

@@ -12,3 +12,33 @@
   color: var(--red);
   font-size: 13px;
 }
+
+.team-roster-cell {
+  min-width: 230px;
+}
+
+.team-roster-cell > strong,
+.team-roster-cell > .link-button {
+  display: block;
+}
+
+.team-roster-list {
+  display: grid;
+  gap: 8px;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.team-roster-list li {
+  display: grid;
+  gap: 2px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+
+.team-roster-list span {
+  color: var(--muted);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
