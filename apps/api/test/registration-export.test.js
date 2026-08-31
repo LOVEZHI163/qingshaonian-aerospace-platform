@@ -9,6 +9,7 @@ import { withTestServer } from "../test-support/server.js";
 import { loginAs, withSession } from "./helpers/api-client.js";
 
 const validId = "11010519491231002X";
+const otherValidId = "110105194912310038";
 const eventId = "wz-aerospace-2026";
 
 async function withServer(fn) {
@@ -30,6 +31,74 @@ function rowNumberForRegistration(sheet, registrationId) {
   return null;
 }
 
+function rowNumbersForRegistration(sheet, registrationId) {
+  const rows = [];
+  for (let rowNumber = 2; rowNumber <= sheet.rowCount; rowNumber += 1) {
+    if (sheet.getCell(`A${rowNumber}`).value === registrationId) rows.push(rowNumber);
+  }
+  return rows;
+}
+
+test("registration export expands a two-member team into participant rows", () => {
+  const workbook = buildBoundRegistrationWorkbook([{
+    id: "R-TEAM-1",
+    teamCode: "TEAM-01",
+    source: "organization_proxy",
+    organization: "第一航校",
+    group: "小学组",
+    projectName: "团体飞行赛",
+    projectType: "team",
+    instructor: "王老师",
+    status: "approved",
+    participants: [
+      {
+        name: "队员甲",
+        school: "第一学校",
+        grade: "五年级",
+        phone: "13800001001",
+        studentIdNumber: "11010519491231002X"
+      },
+      {
+        name: "队员乙",
+        school: "第二学校",
+        grade: "六年级",
+        phone: "13800001002",
+        studentIdNumber: "11010519491231002Y"
+      }
+    ]
+  }]);
+  const sheet = workbook.getWorksheet("报名名单");
+  const columns = new Map(sheet.getRow(1).values.slice(1).map((header, index) => [header, index + 1]));
+
+  assert.equal(sheet.rowCount, 3);
+  assert.deepEqual([2, 3].map((row) => sheet.getRow(row).getCell(columns.get("报名编号")).text), ["R-TEAM-1", "R-TEAM-1"]);
+  assert.deepEqual([2, 3].map((row) => sheet.getRow(row).getCell(columns.get("队伍编号")).text), ["TEAM-01", "TEAM-01"]);
+  assert.deepEqual([2, 3].map((row) => sheet.getRow(row).getCell(columns.get("队员序号")).value), [1, 2]);
+  assert.deepEqual([2, 3].map((row) => sheet.getRow(row).getCell(columns.get("姓名")).text), ["队员甲", "队员乙"]);
+  assert.deepEqual([2, 3].map((row) => sheet.getRow(row).getCell(columns.get("学生身份证号")).text), ["11010519491231002X", "11010519491231002Y"]);
+  assert.deepEqual([2, 3].map((row) => sheet.getRow(row).getCell(columns.get("手机号")).text), ["13800001001", "13800001002"]);
+  assert.deepEqual([2, 3].map((row) => sheet.getRow(row).getCell(columns.get("学校")).text), ["第一学校", "第二学校"]);
+  assert.deepEqual([2, 3].map((row) => sheet.getRow(row).getCell(columns.get("实际年级")).text), ["五年级", "六年级"]);
+  assert.equal(sheet.getColumn(columns.get("手机号")).numFmt, "@");
+  assert.equal(sheet.getColumn(columns.get("学生身份证号")).numFmt, "@");
+});
+
+test("registration export keeps a personal registration as one row", () => {
+  const workbook = buildBoundRegistrationWorkbook([{
+    id: "R-PERSONAL-1",
+    source: "personal",
+    athlete: { name: "个人选手", school: "个人学校", grade: "五年级", phone: "13800002001" },
+    studentIdNumber: validId,
+    projectType: "individual"
+  }]);
+  const sheet = workbook.getWorksheet("报名名单");
+
+  assert.equal(sheet.rowCount, 2);
+  assert.equal(sheet.getCell("A2").value, "R-PERSONAL-1");
+  assert.equal(sheet.getCell("D2").value, "个人选手");
+  assert.equal(sheet.getCell("I2").text, validId);
+});
+
 test("registration workbook exports filtered rows with the required headers and instructor", async () => {
   await withServer(async (baseUrl) => {
     const admin = await loginAs(baseUrl, "13900000000", "admin123");
@@ -38,10 +107,10 @@ test("registration workbook exports filtered rows with the required headers and 
     const sheet = workbook.getWorksheet("报名名单");
     assert.ok(sheet);
     assert.deepEqual(sheet.getRow(1).values.slice(1), [
-      "报名编号", "报名来源", "组织", "姓名", "学校", "实际年级", "组别", "手机号", "学生身份证号", "赛项", "项目类型", "指导老师", "审核状态", "奖项/等级", "名次", "成绩/分数"
+      "报名编号", "报名来源", "组织", "姓名", "学校", "实际年级", "组别", "手机号", "学生身份证号", "赛项", "项目类型", "指导老师", "审核状态", "奖项/等级", "名次", "成绩/分数", "队伍编号", "队员序号"
     ]);
     assert.equal(sheet.getRow(2).getCell(12).value, "王老师");
-    assert.equal(sheet.autoFilter, "A1:P2");
+    assert.equal(sheet.autoFilter, "A1:R2");
     assert.equal(sheet.views[0].state, "frozen");
   });
 });
@@ -60,6 +129,23 @@ test("administrator and organization exports include authorized identity text wi
     assert.equal(opened.status, 200);
     assert.equal((await fetch(`${baseUrl}/api/organization/events/${eventId}/join`, withSession(organization.cookie, { method: "POST" }))).status, 201);
     assert.equal((await fetch(`${baseUrl}/api/organization/events/${eventId}/join`, withSession(otherOrganization.cookie, { method: "POST" }))).status, 201);
+
+    const teamResponse = await fetch(`${baseUrl}/api/organization/events/${eventId}/registrations`, withSession(organization.cookie, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        projectId: "drone-relay",
+        registrationSource: "organization_proxy",
+        instructor: "团队指导老师",
+        participants: [
+          { name: "团队队员甲", school: "第一团队学校", grade: "五年级", phone: "13800003001", studentIdNumber: validId },
+          { name: "团队队员乙", school: "第二团队学校", grade: "五年级", phone: "13800003002", studentIdNumber: otherValidId }
+        ]
+      })
+    }));
+    assert.equal(teamResponse.status, 201);
+    const createdTeam = (await teamResponse.json()).row;
+    const teamRegistrationId = createdTeam.id;
 
     const createdResponse = await fetch(`${baseUrl}/api/me/events/${eventId}/registrations`, withSession(personal.cookie, {
       method: "POST",
@@ -95,6 +181,19 @@ test("administrator and organization exports include authorized identity text wi
     assert.equal(adminSheet.getCell(`I${adminCreatedRow}`).text, validId);
     assert.equal(adminSheet.getCell(`I${adminLegacyRow}`).text, "");
     assert.equal(adminSheet.getColumn(9).numFmt, "@");
+    const adminTeamRows = rowNumbersForRegistration(adminSheet, teamRegistrationId);
+    assert.deepEqual(adminTeamRows.map((row) => [
+      adminSheet.getCell(`D${row}`).text,
+      adminSheet.getCell(`E${row}`).text,
+      adminSheet.getCell(`F${row}`).text,
+      adminSheet.getCell(`H${row}`).text,
+      adminSheet.getCell(`I${row}`).text,
+      adminSheet.getCell(`Q${row}`).text,
+      adminSheet.getCell(`R${row}`).value
+    ]), [
+      ["团队队员甲", "第一团队学校", "五年级", "13800003001", validId, createdTeam.teamCode, 1],
+      ["团队队员乙", "第二团队学校", "五年级", "13800003002", otherValidId, createdTeam.teamCode, 2]
+    ]);
     const organizationWorkbook = await loadWorkbook(organizationResponse);
     const organizationSheet = organizationWorkbook.getWorksheet("报名名单");
     const organizationCreatedRow = rowNumberForRegistration(organizationSheet, createdRegistrationId);
@@ -105,6 +204,8 @@ test("administrator and organization exports include authorized identity text wi
     assert.equal(organizationSheet.getCell(`I${organizationCreatedRow}`).text, validId);
     assert.equal(organizationSheet.getCell(`I${organizationLegacyRow}`).text, "");
     assert.equal(rowNumberForRegistration(organizationSheet, "R20260627002"), null);
+    const organizationTeamRows = rowNumbersForRegistration(organizationSheet, teamRegistrationId);
+    assert.deepEqual(organizationTeamRows.map((row) => organizationSheet.getCell(`I${row}`).text), [validId, otherValidId]);
   });
 });
 
@@ -133,9 +234,13 @@ test("event-scoped exports reject an unavailable URL event", async () => {
   });
 });
 
-test("export row limit rejects 10001 rows before creating a workbook", () => {
+test("export row limit applies after participant expansion", () => {
   let created = false;
-  assert.throws(() => buildBoundRegistrationWorkbook(Array.from({ length: MAX_REGISTRATION_EXPORT_ROWS + 1 }), {}, () => {
+  const twoMemberTeams = Array.from({ length: (MAX_REGISTRATION_EXPORT_ROWS / 2) + 1 }, (_, index) => ({
+    id: `R-TEAM-${index + 1}`,
+    participants: [{ name: "甲" }, { name: "乙" }]
+  }));
+  assert.throws(() => buildBoundRegistrationWorkbook(twoMemberTeams, {}, () => {
     created = true;
     return new ExcelJS.Workbook();
   }), { status: 413 });

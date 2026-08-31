@@ -12,24 +12,39 @@ export class RegistrationExportLimitError extends Error {
 
 const BASE_COLUMNS = [
   ["报名编号", (row) => row.id],
-  ["报名来源", (row) => row.source],
+  ["报名来源", (row) => registrationSourceLabel(row.source)],
   ["组织", (row) => row.organization],
-  ["姓名", (row) => row.athlete?.name],
-  ["学校", (row) => row.athlete?.school],
-  ["实际年级", (row) => row.athlete?.grade],
+  ["姓名", (row) => row.exportParticipant?.name],
+  ["学校", (row) => row.exportParticipant?.school],
+  ["实际年级", (row) => row.exportParticipant?.grade],
   ["组别", (row) => row.group],
-  ["手机号", (row) => row.athlete?.phone],
-  ["学生身份证号", (row) => row.studentIdNumber],
+  ["手机号", (row) => row.exportParticipant?.phone],
+  ["学生身份证号", (row) => row.exportParticipant?.studentIdNumber],
   ["赛项", (row) => row.projectName],
   ["项目类型", (row) => row.projectType === "team" ? "团体赛" : "个人赛"],
   ["指导老师", (row) => row.instructor],
   ["审核状态", (row) => row.status],
   ["奖项/等级", (row) => row.awardName],
   ["名次", (row) => row.rank],
-  ["成绩/分数", (row) => row.score]
+  ["成绩/分数", (row) => row.score],
+  ["队伍编号", (row) => row.teamCode],
+  ["队员序号", (row) => row.participantOrder]
 ];
 
-const TEXT_COLUMNS = new Set([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
+const TEXT_COLUMNS = new Set(BASE_COLUMNS.map((_, index) => index + 1));
+
+export function expandRegistrationRows(rows) {
+  return rows.flatMap((registration) => {
+    const participants = registration.participants?.length
+      ? registration.participants
+      : [{ ...registration.athlete, studentIdNumber: registration.studentIdNumber }];
+    return participants.map((participant, index) => ({
+      ...registration,
+      exportParticipant: participant,
+      participantOrder: index + 1
+    }));
+  });
+}
 
 export function workbookColumnWidth(header) {
   if (header.includes("图片")) return 24;
@@ -58,8 +73,9 @@ export function registrationSourceLabel(source) {
   }[source] || source;
 }
 
-export function buildRegistrationWorkbook(rows) {
+export function buildRegistrationWorkbook(rows, { expanded = false } = {}) {
   const workbook = createExportWorkbook();
+  const exportRows = expanded ? rows : expandRegistrationRows(rows);
 
   const sheet = workbook.addWorksheet("报名名单", {
     views: [{ state: "frozen", ySplit: 1 }]
@@ -69,9 +85,8 @@ export function buildRegistrationWorkbook(rows) {
   headerRow.height = 24;
   headerRow.eachCell((cell) => styleWorkbookHeaderCell(cell));
 
-  for (const row of rows) {
+  for (const row of exportRows) {
     const data = BASE_COLUMNS.map(([, value]) => value(row) ?? "");
-    data[1] = registrationSourceLabel(row.source) || "";
     const excelRow = sheet.addRow(data);
     excelRow.alignment = { vertical: "middle", wrapText: true };
   }
@@ -86,8 +101,9 @@ export function buildRegistrationWorkbook(rows) {
 }
 
 export function buildBoundRegistrationWorkbook(rows, options = {}, build = buildRegistrationWorkbook) {
-  if (rows.length > MAX_REGISTRATION_EXPORT_ROWS) throw new RegistrationExportLimitError();
-  return build(rows, options);
+  const expandedRows = expandRegistrationRows(rows);
+  if (expandedRows.length > MAX_REGISTRATION_EXPORT_ROWS) throw new RegistrationExportLimitError();
+  return build(expandedRows, { ...options, expanded: true });
 }
 
 function rfc5987Encode(value) {
