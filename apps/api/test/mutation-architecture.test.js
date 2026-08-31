@@ -229,8 +229,8 @@ for (const [label, changeUser, expectedStatus, expectedCode] of [
 test("PostgreSQL mutations with pool size one bind all snapshot reads and writes to the advisory-lock client", async () => {
   const memory = newDb({ autoCreateForeignKeyIndices: true });
   const { Pool } = memory.adapters.createPg();
-  const first = createPostgresStore(new SingleConnectionPool(new Pool()));
-  const second = createPostgresStore(new SingleConnectionPool(new Pool()));
+  const first = createPostgresStore(new SingleConnectionPool(new Pool()), { testOnlyPgMemCompatibility: true });
+  const second = createPostgresStore(new SingleConnectionPool(new Pool()), { testOnlyPgMemCompatibility: true });
 
   try {
     await first.initialize();
@@ -269,7 +269,7 @@ test("PostgreSQL mutations with pool size one bind all snapshot reads and writes
 test("a mutating API completes with a PostgreSQL pool of one connection", async () => {
   const memory = newDb({ autoCreateForeignKeyIndices: true });
   const { Pool } = memory.adapters.createPg();
-  const store = createPostgresStore(new SingleConnectionPool(new Pool()));
+  const store = createPostgresStore(new SingleConnectionPool(new Pool()), { testOnlyPgMemCompatibility: true });
   const app = express();
   app.use(express.json());
   app.use("/api", createOrganizationsRouter({
@@ -322,7 +322,7 @@ test("PostgreSQL advisory-lock errors outside the explicit pg-mem unsupported ca
     },
     async end() {}
   };
-  const store = createPostgresStore(pool);
+  const store = createPostgresStore(pool, { testOnlyPgMemCompatibility: true });
 
   await assert.rejects(() => store.withMutationLock(async () => {
     assert.fail("handler must not run without the advisory lock");

@@ -10,7 +10,7 @@ async function withStore(fn) {
   const memory = newDb({ autoCreateForeignKeyIndices: true });
   const { Pool } = memory.adapters.createPg();
   const pool = new Pool();
-  const store = createPostgresStore(pool);
+  const store = createPostgresStore(pool, { testOnlyPgMemCompatibility: true });
 
   try {
     await store.initialize();
@@ -93,6 +93,67 @@ test("PostgreSQL store round-trips team roster participants and certificate targ
     assert.equal(reloaded.registrationParticipantIdentities.length, 2);
     assert.equal(reloaded.certificates.find((row) => row.id === "C-team-1").participantId, reloaded.registrationParticipants[0].id);
   });
+});
+
+test("PostgreSQL store rejects duplicate participant display orders before writing", async () => {
+  await withStore(async (store) => {
+    const db = await store.readDb();
+    const registration = db.registrations[0];
+    const now = "2026-08-31T00:00:00.000Z";
+    db.registrationParticipants.push(
+      { id: "RP-duplicate-1", registrationId: registration.id, displayOrder: 1, name: "队员甲", school: "温州市实验小学", grade: "五年级", phone: "13800000001", createdAt: now, updatedAt: now },
+      { id: "RP-duplicate-2", registrationId: registration.id, displayOrder: 1, name: "队员乙", school: "温州市实验小学", grade: "五年级", phone: "13800000002", createdAt: now, updatedAt: now }
+    );
+
+    await assert.rejects(store.writeDb(db), /Duplicate registration participant display order/);
+    assert.equal((await store.readDb()).registrationParticipants.length, 0);
+  });
+});
+
+test("PostgreSQL store rejects a certificate participant from another registration before writing", async () => {
+  await withStore(async (store) => {
+    const db = await store.readDb();
+    const [registration, otherRegistration] = db.registrations;
+    const now = "2026-08-31T00:00:00.000Z";
+    db.registrationParticipants.push({
+      id: "RP-wrong-registration", registrationId: registration.id, displayOrder: 1,
+      name: "队员甲", school: "温州市实验小学", grade: "五年级", phone: "13800000001", createdAt: now, updatedAt: now
+    });
+    db.certificates.push({
+      id: "C-wrong-registration", registrationId: otherRegistration.id, participantId: "RP-wrong-registration", slot: 1,
+      title: "获奖证书", fileName: "team.pdf", storedName: "team.pdf", filePath: "/data/certificates/team.pdf",
+      awardName: "一等奖", rank: "1", score: "99", status: "published", source: "manual",
+      importBatchId: null, uploadedAt: now, publishedAt: now, cleanedAt: null
+    });
+
+    await assert.rejects(store.writeDb(db), /Certificate participant must belong to its registration/);
+    const reloaded = await store.readDb();
+    assert.equal(reloaded.registrationParticipants.length, 0);
+    assert.equal(reloaded.certificates.length, 0);
+  });
+});
+
+test("PostgreSQL store does not probe PL/pgSQL without the explicit test-only capability", async () => {
+  const memory = newDb({ autoCreateForeignKeyIndices: true });
+  const { Pool } = memory.adapters.createPg();
+  const pool = new Pool();
+  const query = pool.query.bind(pool);
+  let plpgsqlProbeCount = 0;
+  pool.query = async (...args) => {
+    if (String(args[0]).includes("DO $$ BEGIN END $$;")) {
+      plpgsqlProbeCount += 1;
+      throw new Error("unexpected PL/pgSQL probe");
+    }
+    return query(...args);
+  };
+  const store = createPostgresStore(pool, { seedOnEmpty: false });
+
+  try {
+    await assert.rejects(store.initialize(), /Unkonwn language "plpgsql"/);
+    assert.equal(plpgsqlProbeCount, 0);
+  } finally {
+    await store.close();
+  }
 });
 
 test("PostgreSQL store round-trips temporary-password fields", async () => {
@@ -370,7 +431,7 @@ test("multi-event account schema constrains ownership and registration identity"
 test("PostgreSQL store leaves production empty databases unseeded", async () => {
   const memory = newDb({ autoCreateForeignKeyIndices: true });
   const { Pool } = memory.adapters.createPg();
-  const store = createPostgresStore(new Pool(), { seedOnEmpty: false });
+  const store = createPostgresStore(new Pool(), { seedOnEmpty: false, testOnlyPgMemCompatibility: true });
 
   try {
     await store.initialize();
@@ -653,7 +714,7 @@ test("PostgreSQL content posts reject stale versioned snapshots", async () => {
 
 test("PostgreSQL site settings reject an interleaved same-version write after its stale read", async () => {
   await withStore(async (store, pool) => {
-    const peer = createPostgresStore(pool);
+    const peer = createPostgresStore(pool, { testOnlyPgMemCompatibility: true });
     const stale = await store.readDb();
     const first = structuredClone(stale);
     const second = structuredClone(stale);
@@ -851,7 +912,7 @@ test("PostgreSQL store removes events omitted by a committed snapshot", async ()
 test("PostgreSQL restart preserves an administrator-selected project group subset", async () => {
   const memory = newDb({ autoCreateForeignKeyIndices: true });
   const { Pool } = memory.adapters.createPg();
-  const first = createPostgresStore(new Pool());
+  const first = createPostgresStore(new Pool(), { testOnlyPgMemCompatibility: true });
   let second;
 
   try {
@@ -864,7 +925,7 @@ test("PostgreSQL restart preserves an administrator-selected project group subse
     await first.writeDb(data);
     await first.close();
 
-    second = createPostgresStore(new Pool());
+    second = createPostgresStore(new Pool(), { testOnlyPgMemCompatibility: true });
     await second.initialize();
     await second.initialize();
     const restarted = await second.readDb();
@@ -1081,7 +1142,7 @@ test("PostgreSQL store upgrades a legacy schema without losing existing records"
   const memory = newDb({ autoCreateForeignKeyIndices: true });
   const { Pool } = memory.adapters.createPg();
   const pool = new Pool();
-  const store = createPostgresStore(pool);
+  const store = createPostgresStore(pool, { testOnlyPgMemCompatibility: true });
 
   assert.equal(store.pool, pool);
   assert.equal(Object.getOwnPropertyDescriptor(store, "pool").writable, false);

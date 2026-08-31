@@ -564,7 +564,7 @@ test("concurrent same-credit registrations return one conflict without an orphan
 test("PostgreSQL store mutation lock preserves concurrent registrations across store instances", async () => {
   const memory = newDb({ autoCreateForeignKeyIndices: true });
   const { Pool } = memory.adapters.createPg();
-  const store = createPostgresStore(new Pool());
+  const store = createPostgresStore(new Pool(), { testOnlyPgMemCompatibility: true });
   let sequence = 0;
   const makeId = (prefix) => `${prefix}${++sequence}`;
   const register = (storeInstance, creditCode, phone) => storeInstance.withMutationLock(() =>
@@ -586,7 +586,7 @@ test("PostgreSQL store mutation lock preserves concurrent registrations across s
 
   try {
     await store.initialize();
-    const secondStore = createPostgresStore(new Pool());
+    const secondStore = createPostgresStore(new Pool(), { testOnlyPgMemCompatibility: true });
     await secondStore.initialize();
     const [first, second] = await Promise.all([
       register(store, "91330300TEST000032", "13600009932"),
@@ -961,7 +961,7 @@ test("PostgreSQL credential migration upgrades a legacy organization only during
       ('DOC-B', 'OLEGACY', 'business_license', 'b.pdf', 'b.pdf', '/data/uploads/b.pdf', 'application/pdf', 10, '2026-07-17T00:00:00.000Z', NULL),
       ('DOC-C', 'OLEGACY', 'business_license', 'c.pdf', 'c.pdf', '/data/uploads/c.pdf', 'application/pdf', 10, '2026-07-17T00:00:00.000Z', NULL);
   `);
-  let store = createPostgresStore(pool);
+  let store = createPostgresStore(pool, { testOnlyPgMemCompatibility: true });
 
   try {
     await store.initialize();
@@ -973,7 +973,7 @@ test("PostgreSQL credential migration upgrades a legacy organization only during
     assert.equal((await store.pool.query("SELECT name FROM schema_migrations WHERE name = $1", ["005-organization-current-document.sql"])).rowCount, 1);
 
     await store.close();
-    store = createPostgresStore(new Pool());
+    store = createPostgresStore(new Pool(), { testOnlyPgMemCompatibility: true });
     await store.initialize();
     assert.equal((await store.pool.query("SELECT name FROM schema_migrations WHERE name = $1", ["002-organization-credentials.sql"])).rowCount, 1);
   } finally {
@@ -984,7 +984,7 @@ test("PostgreSQL credential migration upgrades a legacy organization only during
 test("PostgreSQL store creates organization_documents, migrates legacy organizations, and persists credential rows", async () => {
   const memory = newDb({ autoCreateForeignKeyIndices: true });
   const { Pool } = memory.adapters.createPg();
-  let store = createPostgresStore(new Pool());
+  let store = createPostgresStore(new Pool(), { testOnlyPgMemCompatibility: true });
 
   try {
     await store.initialize();
@@ -1030,7 +1030,7 @@ test("PostgreSQL store creates organization_documents, migrates legacy organizat
     assert.equal(migrationRows.rowCount, 1);
 
     await store.close();
-    store = createPostgresStore(new Pool());
+    store = createPostgresStore(new Pool(), { testOnlyPgMemCompatibility: true });
     await store.initialize();
     const restarted = await store.readDb();
     const pending = restarted.organizations.find((organization) => organization.id === "OPENDING");

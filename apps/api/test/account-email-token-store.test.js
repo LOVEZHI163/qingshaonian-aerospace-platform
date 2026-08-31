@@ -66,7 +66,7 @@ test("PostgreSQL account email token store consumes atomically", async () => {
   const memory = newDb({ autoCreateForeignKeyIndices: true });
   const { Pool } = memory.adapters.createPg();
   const pool = new Pool();
-  const dataStore = createPostgresStore(pool);
+  const dataStore = createPostgresStore(pool, { testOnlyPgMemCompatibility: true });
   await dataStore.initialize();
   try {
     await verifySemantics(createAccountEmailTokenStore({ pool }), "U1001");

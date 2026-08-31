@@ -51,7 +51,7 @@ async function deleteMissing(client, table, key, ids) {
   }
 }
 
-async function runMigrations(pool) {
+async function runMigrations(pool, { testOnlyPgMemCompatibility = false } = {}) {
   const client = await pool.connect();
   try {
     await client.query(`
@@ -63,12 +63,6 @@ async function runMigrations(pool) {
     const names = (await fs.readdir(migrationsUrl))
       .filter((name) => name.endsWith(".sql"))
       .sort();
-    let supportsPlpgsql = true;
-    try {
-      await client.query("DO $$ BEGIN END $$;");
-    } catch {
-      supportsPlpgsql = false;
-    }
     for (const name of names) {
       const applied = await client.query("SELECT 1 FROM schema_migrations WHERE name = $1", [name]);
       if (applied.rowCount > 0) continue;
@@ -224,7 +218,7 @@ async function runMigrations(pool) {
           .replace(/CREATE TABLE IF NOT EXISTS account_email_tokens \([\s\S]*?\);\s*/, "")
           .replace(/CREATE INDEX IF NOT EXISTS account_email_tokens_user_purpose_idx[\s\S]*?;\s*/, "");
       }
-      if (!supportsPlpgsql) {
+      if (testOnlyPgMemCompatibility) {
         migration = migration.replace(/DO \$\$[\s\S]*?END \$\$;/g, "");
         if (name === "007-multi-event-accounts.sql") {
           migration = migration.replace(
@@ -273,15 +267,9 @@ async function runMigrations(pool) {
   }
 }
 
-async function runSchema(pool, { deferMigrationDependentIndexes = false } = {}) {
+async function runSchema(pool, { deferMigrationDependentIndexes = false, testOnlyPgMemCompatibility = false } = {}) {
   let schema = await fs.readFile(schemaUrl, "utf8");
-  let supportsPlpgsql = true;
-  try {
-    await pool.query("DO $$ BEGIN END $$;");
-  } catch {
-    supportsPlpgsql = false;
-  }
-  if (!supportsPlpgsql) {
+  if (testOnlyPgMemCompatibility) {
     schema = schema
       .replace(/,\s*UNIQUE \(registration_id, display_order\)/g, "")
       .replace(/,\s*UNIQUE \(id, registration_id\)/g, "")
@@ -321,6 +309,25 @@ async function runSchema(pool, { deferMigrationDependentIndexes = false } = {}) 
     }
   }
   await pool.query(schema);
+}
+
+function validateTeamRegistrationIntegrity(db) {
+  const participantRegistrationIds = new Map();
+  const displayOrders = new Set();
+  for (const participant of db.registrationParticipants) {
+    const displayOrderKey = `${participant.registrationId}:${participant.displayOrder}`;
+    if (displayOrders.has(displayOrderKey)) {
+      throw new Error(`Duplicate registration participant display order: ${displayOrderKey}`);
+    }
+    displayOrders.add(displayOrderKey);
+    participantRegistrationIds.set(participant.id, participant.registrationId);
+  }
+  for (const certificate of db.certificates) {
+    if (!certificate.participantId) continue;
+    if (participantRegistrationIds.get(certificate.participantId) !== certificate.registrationId) {
+      throw new Error(`Certificate participant must belong to its registration: ${certificate.id}`);
+    }
+  }
 }
 
 async function addApprovedGroups(pool) {
@@ -363,7 +370,7 @@ async function backfillCurrentDocumentIds(pool) {
   }
 }
 
-export function createPostgresStore(pool, { seedOnEmpty = true } = {}) {
+export function createPostgresStore(pool, { seedOnEmpty = true, testOnlyPgMemCompatibility = false } = {}) {
   const mutationContext = new AsyncLocalStorage();
   let mutationTail = Promise.resolve();
 
@@ -439,9 +446,9 @@ export function createPostgresStore(pool, { seedOnEmpty = true } = {}) {
       }
     },
     async initialize() {
-      await runSchema(pool, { deferMigrationDependentIndexes: true });
-      await runMigrations(pool);
-      await runSchema(pool);
+      await runSchema(pool, { deferMigrationDependentIndexes: true, testOnlyPgMemCompatibility });
+      await runMigrations(pool, { testOnlyPgMemCompatibility });
+      await runSchema(pool, { testOnlyPgMemCompatibility });
       await backfillCurrentDocumentIds(pool);
       await addApprovedGroups(pool);
 
@@ -933,6 +940,7 @@ export function createPostgresStore(pool, { seedOnEmpty = true } = {}) {
     },
     async writeDb(input) {
       const db = ensureDbShape(structuredClone(input));
+      validateTeamRegistrationIntegrity(db);
       const context = activeContext();
       const client = context?.client || await pool.connect();
       const ownsClient = !context?.client;

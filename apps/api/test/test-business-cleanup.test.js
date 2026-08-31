@@ -16,7 +16,7 @@ async function withFixture(fn) {
   const memory = newDb({ autoCreateForeignKeyIndices: true });
   const { Pool } = memory.adapters.createPg();
   const pool = new Pool();
-  const store = createPostgresStore(pool, { seedOnEmpty: false });
+  const store = createPostgresStore(pool, { seedOnEmpty: false, testOnlyPgMemCompatibility: true });
   const uploadRoot = await fs.mkdtemp(path.join(os.tmpdir(), "aerogp-test-business-cleanup-"));
 
   try {

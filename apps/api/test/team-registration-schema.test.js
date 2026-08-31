@@ -9,5 +9,9 @@ test("019 adds bounded team rosters and participant certificate targets", async 
   assert.match(sql, /CREATE TABLE IF NOT EXISTS registration_participants/);
   assert.match(sql, /CREATE TABLE IF NOT EXISTS registration_participant_identities/);
   assert.match(sql, /participant_id TEXT/);
+  assert.match(sql, /UNIQUE \(registration_id, display_order\)/);
+  assert.match(sql, /UNIQUE \(id, registration_id\)/);
+  assert.match(sql, /FOREIGN KEY \(participant_id, registration_id\)\s+REFERENCES registration_participants\(id, registration_id\) ON DELETE CASCADE/);
+  assert.match(sql, /certificates_registration_slot_legacy_key/);
   assert.match(sql, /certificates_participant_slot_key/);
 });
