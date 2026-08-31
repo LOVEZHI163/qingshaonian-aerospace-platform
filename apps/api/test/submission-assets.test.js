@@ -7,7 +7,7 @@ import express from "express";
 
 import { createMutationAsyncRoute } from "../src/data/mutation-lock.js";
 import { createSubmissionAssetsRouter } from "../src/routes/submission-assets.js";
-import { cleanupExpiredSubmissionSessions, createUploadSession, startSubmissionSessionExpiryCleanup } from "../src/services/submission-assets.js";
+import { cleanupExpiredSubmissionSessions, commitUploadSession, createUploadSession, startSubmissionSessionExpiryCleanup } from "../src/services/submission-assets.js";
 import { replayFileCleanupJournal } from "../src/services/organizations.js";
 import { withTestServer } from "../test-support/server.js";
 import { loginAs, withSession } from "./helpers/api-client.js";
@@ -177,6 +177,108 @@ test("personal team upload-session endpoint rejects without session asset audit 
     assert.equal(payload.row.projectId, TEAM_PROJECT);
     assert.equal(payload.row.organizationId, "O1001");
   }, { prefix: "submission-assets-team-channel-" });
+});
+
+test("pre-existing personal team session cannot upload an asset", async () => {
+  await withTestServer(async ({ baseUrl, dbPath, tempDir }) => {
+    await configureImageVideoProject(dbPath, TEAM_PROJECT);
+    const ordinary = await loginAs(baseUrl, "13800000001", "123456");
+    const db = JSON.parse(await fs.readFile(dbPath, "utf8"));
+    db.registrationUploadSessions.push({
+      id: "US-legacy-personal-team-upload", eventId: EVENT_ID, projectId: TEAM_PROJECT,
+      ownerUserId: "U1001", organizationId: null, channel: "personal", state: "active",
+      createdAt: "2026-08-30T00:00:00.000Z", expiresAt: "2030-01-01T00:00:00.000Z", committedAt: null
+    });
+    await fs.writeFile(dbPath, JSON.stringify(db));
+    const uploadRoot = path.join(tempDir, "uploads", "submission-assets");
+    const beforeFiles = await filesBelow(uploadRoot);
+
+    const rejected = await fetch(`${baseUrl}/api/upload-sessions/US-legacy-personal-team-upload/artwork-image`, withSession(ordinary.cookie, {
+      method: "PUT", body: imageForm()
+    }));
+    assert.equal(rejected.status, 422);
+    assert.deepEqual(await json(rejected), {
+      error: "团队赛只允许组织代报名",
+      code: "TEAM_ORGANIZATION_PROXY_REQUIRED"
+    });
+    const after = JSON.parse(await fs.readFile(dbPath, "utf8"));
+    assert.deepEqual(after.registrationUploadSessions, db.registrationUploadSessions);
+    assert.deepEqual(after.registrationSubmissionAssets, db.registrationSubmissionAssets);
+    assert.deepEqual(after.auditLogs, db.auditLogs);
+    assert.deepEqual(await filesBelow(uploadRoot), beforeFiles);
+  }, { prefix: "submission-assets-legacy-team-upload-" });
+});
+
+test("pre-existing personal team session cannot delete an asset", async () => {
+  await withTestServer(async ({ baseUrl, dbPath, tempDir }) => {
+    await configureImageVideoProject(dbPath, TEAM_PROJECT);
+    const ordinary = await loginAs(baseUrl, "13800000001", "123456");
+    const db = JSON.parse(await fs.readFile(dbPath, "utf8"));
+    const assetId = "SA-legacy-personal-team-delete";
+    const storedName = "legacy.png";
+    const filePath = path.join(tempDir, "uploads", "submission-assets", assetId, storedName);
+    await fs.mkdir(path.dirname(filePath), { recursive: true });
+    await fs.writeFile(filePath, PNG);
+    db.registrationUploadSessions.push({
+      id: "US-legacy-personal-team-delete", eventId: EVENT_ID, projectId: TEAM_PROJECT,
+      ownerUserId: "U1001", organizationId: null, channel: "personal", state: "active",
+      createdAt: "2026-08-30T00:00:00.000Z", expiresAt: "2030-01-01T00:00:00.000Z", committedAt: null
+    });
+    db.registrationSubmissionAssets.push({
+      id: assetId, registrationId: null, uploadSessionId: "US-legacy-personal-team-delete", kind: "artwork_image",
+      originalName: "legacy.png", storedName, filePath, mimeType: "image/png", sizeBytes: PNG.length,
+      width: 1, height: 1, durationMs: null, warnings: [], uploadedByUserId: "U1001",
+      uploadedAt: "2026-08-30T00:00:00.000Z", cleanedAt: null, cleanupReason: ""
+    });
+    await fs.writeFile(dbPath, JSON.stringify(db));
+
+    const rejected = await fetch(`${baseUrl}/api/upload-sessions/US-legacy-personal-team-delete/assets/artwork_image`, withSession(ordinary.cookie, { method: "DELETE" }));
+    assert.equal(rejected.status, 422);
+    assert.deepEqual(await json(rejected), {
+      error: "团队赛只允许组织代报名",
+      code: "TEAM_ORGANIZATION_PROXY_REQUIRED"
+    });
+    const after = JSON.parse(await fs.readFile(dbPath, "utf8"));
+    assert.deepEqual(after.registrationUploadSessions, db.registrationUploadSessions);
+    assert.deepEqual(after.registrationSubmissionAssets, db.registrationSubmissionAssets);
+    assert.deepEqual(after.auditLogs, db.auditLogs);
+    assert.deepEqual(await fs.readFile(filePath), PNG);
+  }, { prefix: "submission-assets-legacy-team-delete-" });
+});
+
+test("direct commit cannot bind a pre-existing personal team session", () => {
+  const registration = {
+    id: "R-team-direct", eventId: "E-team", projectId: "P-team", personalUserId: "U-personal",
+    organizationId: "O-team", status: "pending"
+  };
+  const db = {
+    users: [{ id: "U-personal", type: "ordinary", status: "active" }],
+    organizations: [{ id: "O-team", reviewStatus: "approved", status: "active" }],
+    memberships: [{ id: "M-team", organizationId: "O-team", userId: "U-personal", role: "member", status: "active" }],
+    events: [{ id: "E-team", status: "published", registrationMode: "force_open", archivedAt: null }],
+    projects: [{ id: "P-team", eventId: "E-team", enabled: true, type: "team", submissionMode: "image_video" }],
+    registrationUploadSessions: [{
+      id: "US-team-direct", eventId: "E-team", projectId: "P-team", ownerUserId: "U-personal",
+      organizationId: null, channel: "personal", state: "active", createdAt: "2026-08-30T00:00:00.000Z",
+      expiresAt: "2030-01-01T00:00:00.000Z", committedAt: null
+    }],
+    registrationSubmissionAssets: [
+      { id: "SA-team-image", uploadSessionId: "US-team-direct", registrationId: null, kind: "artwork_image", cleanedAt: null },
+      { id: "SA-team-video", uploadSessionId: "US-team-direct", registrationId: null, kind: "creation_video", cleanedAt: null }
+    ]
+  };
+  const before = structuredClone(db);
+
+  assert.throws(
+    () => commitUploadSession({
+      db, sessionId: "US-team-direct", registration,
+      actor: db.users[0], channel: "personal", now: () => "2026-08-31T00:00:00.000Z"
+    }),
+    (error) => error?.status === 422
+      && error?.code === "TEAM_ORGANIZATION_PROXY_REQUIRED"
+      && error?.message === "团队赛只允许组织代报名"
+  );
+  assert.deepEqual(db, before);
 });
 
 test("ordinary users create sessions only for published writable image-video projects", async () => {
