@@ -55,6 +55,43 @@ test("PostgreSQL store creates normalized tables and seeds an empty database", a
     assert.equal(data.events.filter((event) => event.isCurrent).length, 1);
     assert.equal(data.registrations.every((row) => row.eventId), true);
     assert.equal(data.projects.every((project) => project.allowedGroups.length === 4), true);
+
+    await store.initialize();
+    assert.equal((await pool.query("SELECT 1 FROM schema_migrations WHERE name = '019-team-registration.sql' ")).rowCount, 1);
+  });
+});
+
+test("PostgreSQL store round-trips team roster participants and certificate targets", async () => {
+  await withStore(async (store) => {
+    const db = await store.readDb();
+    const registration = db.registrations.find((row) => row.createdVia === "organization");
+    const now = "2026-08-31T00:00:00.000Z";
+
+    registration.teamCode = "ORG-PROJECT-01";
+    db.registrationParticipants.push(
+      { id: "RP-team-1", registrationId: registration.id, displayOrder: 1, name: "队员甲", school: "温州市实验小学", grade: "五年级", phone: "13800000001", createdAt: now, updatedAt: now },
+      { id: "RP-team-2", registrationId: registration.id, displayOrder: 2, name: "队员乙", school: "温州市实验小学", grade: "五年级", phone: "13800000002", createdAt: now, updatedAt: now }
+    );
+    db.registrationParticipantIdentities.push(
+      { participantId: "RP-team-1", ciphertext: "ciphertext-1", iv: "iv-1", authTag: "tag-1", keyVersion: 1, idFingerprint: "fingerprint-1", createdAt: now, updatedAt: now },
+      { participantId: "RP-team-2", ciphertext: "ciphertext-2", iv: "iv-2", authTag: "tag-2", keyVersion: 1, idFingerprint: "fingerprint-2", createdAt: now, updatedAt: now }
+    );
+    db.certificates.push({
+      id: "C-team-1", registrationId: registration.id, participantId: "RP-team-1", slot: 1,
+      title: "获奖证书", fileName: "team.pdf", storedName: "team.pdf", filePath: "/data/certificates/team.pdf",
+      awardName: "一等奖", rank: "1", score: "99", status: "published", source: "manual",
+      importBatchId: null, uploadedAt: now, publishedAt: now, cleanedAt: null
+    });
+
+    await store.writeDb(db);
+    const reloaded = await store.readDb();
+
+    assert.deepEqual(reloaded.projects[0].teamMinMembers, 1);
+    assert.deepEqual(reloaded.projects[0].teamMaxMembers, 8);
+    assert.equal(reloaded.registrations.find((row) => row.id === registration.id).teamCode, "ORG-PROJECT-01");
+    assert.equal(reloaded.registrationParticipants.length, 2);
+    assert.equal(reloaded.registrationParticipantIdentities.length, 2);
+    assert.equal(reloaded.certificates.find((row) => row.id === "C-team-1").participantId, reloaded.registrationParticipants[0].id);
   });
 });
 

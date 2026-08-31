@@ -95,7 +95,9 @@ for (const [displayOrder, project] of PROJECTS.entries()) {
     enabled: true,
     instructorRequired: false,
     displayOrder,
-    allowedGroups: [...APPROVED_GROUP_NAMES]
+    allowedGroups: [...APPROVED_GROUP_NAMES],
+    teamMinMembers: 1,
+    teamMaxMembers: 8
   });
 }
 
@@ -192,6 +194,8 @@ Object.assign(seedDb, {
   registrationUploadSessions: [],
   registrationSubmissionAssets: [],
   registrationIdentities: [],
+  registrationParticipants: [],
+  registrationParticipantIdentities: [],
   organizationLeaders: [],
   organizationLeaderDocuments: [],
   organizationLeaderReviews: []
@@ -211,6 +215,7 @@ for (const project of seedDb.projects) project.submissionMode ||= "none";
 for (const row of seedDb.registrations) {
   row.eventId = EVENT.id;
   row.organizationDeleted = false;
+  row.teamCode = "";
 }
 
 export function ensureDbShape(db) {
@@ -244,6 +249,8 @@ export function ensureDbShape(db) {
   db.registrationSubmissionAssets ||= [];
   for (const asset of db.registrationSubmissionAssets) asset.warnings = normalizeSubmissionWarnings(asset.warnings);
   db.registrationIdentities ||= [];
+  db.registrationParticipants ||= [];
+  db.registrationParticipantIdentities ||= [];
   db.organizationLeaders ||= [];
   db.organizationLeaderDocuments ||= [];
   db.organizationLeaderReviews ||= [];
@@ -307,12 +314,19 @@ export function ensureDbShape(db) {
   }
   db.events ||= structuredClone([EVENT]);
   db.projects ||= structuredClone(PROJECTS);
-  for (const project of db.projects) project.submissionMode ||= "none";
+  for (const project of db.projects) {
+    project.submissionMode ||= "none";
+    project.teamMinMembers = Number(project.teamMinMembers || 1);
+    project.teamMaxMembers = Number(project.teamMaxMembers || 8);
+  }
   db.projectGroups ||= db.projects.flatMap((project) =>
     (project.allowedGroups || APPROVED_GROUP_NAMES).map((groupName) => ({ projectId: project.id, groupName }))
   );
   db.registrations ||= [];
-  for (const registration of db.registrations) registration.organizationDeleted ??= false;
+  for (const registration of db.registrations) {
+    registration.organizationDeleted ??= false;
+    registration.teamCode ||= "";
+  }
   db.organizationEventParticipations ||= [];
   db.certificates ||= [];
   db.certificateImportBatches ||= [];
@@ -365,6 +379,7 @@ export function ensureDbShape(db) {
     row.resultRecordedAt ||= "";
   }
   for (const certificate of db.certificates) {
+    certificate.participantId ||= null;
     const legacyNumberKey = ["certificate", "No"].join("");
     certificate.slot = certificate.slot === 2 ? 2 : 1;
     certificate.title ||= certificate.awardName || "获奖证书";

@@ -238,6 +238,24 @@ async function runMigrations(pool) {
              END;\n`
           );
         }
+        if (name === "019-team-registration.sql") {
+          const participantTables = await Promise.all([
+            "registration_participants",
+            "registration_participant_identities"
+          ].map((tableName) => client.query(`
+            SELECT 1 FROM information_schema.tables
+            WHERE table_schema = 'public' AND table_name = $1
+          `, [tableName])));
+          migration = migration
+            .replace(/,\s*UNIQUE \(registration_id, display_order\)/g, "")
+            .replace(/,\s*UNIQUE \(id, registration_id\)/g, "")
+            .replace(/ALTER TABLE certificates ADD CONSTRAINT certificates_participant_registration_fkey[\s\S]*?ON DELETE CASCADE;\s*/, "");
+          if (participantTables.every((table) => table.rowCount > 0)) {
+            migration = migration
+              .replace(/CREATE TABLE IF NOT EXISTS registration_participants \([\s\S]*?\);\s*/, "")
+              .replace(/CREATE TABLE IF NOT EXISTS registration_participant_identities \([\s\S]*?\);\s*/, "");
+          }
+        }
       }
 
       await client.query("BEGIN");
@@ -257,6 +275,18 @@ async function runMigrations(pool) {
 
 async function runSchema(pool, { deferMigrationDependentIndexes = false } = {}) {
   let schema = await fs.readFile(schemaUrl, "utf8");
+  let supportsPlpgsql = true;
+  try {
+    await pool.query("DO $$ BEGIN END $$;");
+  } catch {
+    supportsPlpgsql = false;
+  }
+  if (!supportsPlpgsql) {
+    schema = schema
+      .replace(/,\s*UNIQUE \(registration_id, display_order\)/g, "")
+      .replace(/,\s*UNIQUE \(id, registration_id\)/g, "")
+      .replace(/,\s*CONSTRAINT certificates_participant_registration_fkey\s+FOREIGN KEY \(participant_id, registration_id\)\s+REFERENCES registration_participants\(id, registration_id\) ON DELETE CASCADE/g, "");
+  }
   if (deferMigrationDependentIndexes) {
     schema = schema.replace(
       /CREATE UNIQUE INDEX IF NOT EXISTS content_posts_source_url_fingerprint_unique[\s\S]*?;\s*/,
@@ -264,6 +294,14 @@ async function runSchema(pool, { deferMigrationDependentIndexes = false } = {}) 
     );
     schema = schema.replace(
       /CREATE UNIQUE INDEX IF NOT EXISTS users_email_unique_idx[\s\S]*?;\s*/,
+      ""
+    );
+    schema = schema.replace(
+      /CREATE UNIQUE INDEX IF NOT EXISTS certificates_registration_slot_legacy_key[\s\S]*?;\s*/,
+      ""
+    );
+    schema = schema.replace(
+      /CREATE UNIQUE INDEX IF NOT EXISTS certificates_participant_slot_key[\s\S]*?;\s*/,
       ""
     );
   }
@@ -431,10 +469,10 @@ export function createPostgresStore(pool, { seedOnEmpty = true } = {}) {
           if (existingProject.rowCount > 0) continue;
           const inserted = await client.query(
             `INSERT INTO projects
-              (id, event_id, name, type, category, enabled, instructor_required, display_order)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+              (id, event_id, name, type, category, enabled, instructor_required, display_order, team_min_members, team_max_members)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
              ON CONFLICT (id) DO NOTHING`,
-            [project.id, project.eventId || EVENT.id, project.name, project.type, project.category, project.enabled, project.instructorRequired, project.displayOrder]
+            [project.id, project.eventId || EVENT.id, project.name, project.type, project.category, project.enabled, project.instructorRequired, project.displayOrder, project.teamMinMembers || 1, project.teamMaxMembers || 8]
           );
           if (inserted.rowCount > 0) insertedProjectIds.add(project.id);
         }
@@ -465,7 +503,7 @@ export function createPostgresStore(pool, { seedOnEmpty = true } = {}) {
     },
     async readDb() {
       const executor = activeContext()?.client || pool;
-      const [events, projects, projectGroups, users, accountEmailTokens, organizations, memberships, organizationEventParticipations, registrations, registrationIdentities, organizationLeaders, organizationLeaderDocuments, organizationLeaderReviews, certificates, certificateImportBatches, certificateImportErrors, organizationDocuments, fileCleanupJournal, auditLogs, siteSettings, eventPublicProfiles, contentPosts, siteContentImportBatches, mediaAssets, contentAttachments, registrationUploadSessions, registrationSubmissionAssets] = await Promise.all([
+      const [events, projects, projectGroups, users, accountEmailTokens, organizations, memberships, organizationEventParticipations, registrations, registrationIdentities, registrationParticipants, registrationParticipantIdentities, organizationLeaders, organizationLeaderDocuments, organizationLeaderReviews, certificates, certificateImportBatches, certificateImportErrors, organizationDocuments, fileCleanupJournal, auditLogs, siteSettings, eventPublicProfiles, contentPosts, siteContentImportBatches, mediaAssets, contentAttachments, registrationUploadSessions, registrationSubmissionAssets] = await Promise.all([
         executor.query("SELECT * FROM events ORDER BY created_at, id"),
         executor.query("SELECT * FROM projects ORDER BY display_order, id"),
         executor.query("SELECT * FROM project_groups ORDER BY project_id, group_name"),
@@ -481,6 +519,8 @@ export function createPostgresStore(pool, { seedOnEmpty = true } = {}) {
           ORDER BY r.created_at, r.id
         `),
         executor.query("SELECT * FROM registration_identities ORDER BY created_at, registration_id"),
+        executor.query("SELECT * FROM registration_participants ORDER BY registration_id, display_order, id"),
+        executor.query("SELECT * FROM registration_participant_identities ORDER BY created_at, participant_id"),
         executor.query("SELECT * FROM organization_leaders ORDER BY created_at, id"),
         executor.query("SELECT * FROM organization_leader_documents ORDER BY uploaded_at, id"),
         executor.query("SELECT * FROM organization_leader_reviews ORDER BY created_at, id"),
@@ -533,6 +573,8 @@ export function createPostgresStore(pool, { seedOnEmpty = true } = {}) {
           instructorRequired: row.instructor_required,
           displayOrder: row.display_order,
           submissionMode: row.submission_mode,
+          teamMinMembers: Number(row.team_min_members),
+          teamMaxMembers: Number(row.team_max_members),
           allowedGroups: (groupsByProject[row.id] || []).map((group) => group.group_name)
         })),
         projectGroups: projectGroups.rows.map((row) => ({
@@ -621,6 +663,7 @@ export function createPostgresStore(pool, { seedOnEmpty = true } = {}) {
           projectName: row.project_name,
           projectType: row.project_type,
           instructor: row.instructor,
+          teamCode: row.team_code,
           status: row.status,
           rejectReason: row.reject_reason,
           awardName: row.award_name || "",
@@ -632,6 +675,27 @@ export function createPostgresStore(pool, { seedOnEmpty = true } = {}) {
         })),
         registrationIdentities: registrationIdentities.rows.map((row) => ({
           registrationId: row.registration_id,
+          ciphertext: row.ciphertext,
+          iv: row.iv,
+          authTag: row.auth_tag,
+          keyVersion: row.key_version,
+          idFingerprint: row.id_fingerprint,
+          createdAt: iso(row.created_at),
+          updatedAt: iso(row.updated_at)
+        })),
+        registrationParticipants: registrationParticipants.rows.map((row) => ({
+          id: row.id,
+          registrationId: row.registration_id,
+          displayOrder: row.display_order,
+          name: row.name,
+          school: row.school,
+          grade: row.grade,
+          phone: row.phone,
+          createdAt: iso(row.created_at),
+          updatedAt: iso(row.updated_at)
+        })),
+        registrationParticipantIdentities: registrationParticipantIdentities.rows.map((row) => ({
+          participantId: row.participant_id,
           ciphertext: row.ciphertext,
           iv: row.iv,
           authTag: row.auth_tag,
@@ -684,6 +748,7 @@ export function createPostgresStore(pool, { seedOnEmpty = true } = {}) {
         certificates: certificates.rows.map((row) => ({
           id: row.id,
           registrationId: row.registration_id,
+          participantId: row.participant_id,
           slot: row.slot,
           title: row.title,
           fileName: row.file_name,
@@ -912,8 +977,8 @@ export function createPostgresStore(pool, { seedOnEmpty = true } = {}) {
         for (const row of db.projects) {
           await client.query(
             `INSERT INTO projects
-              (id, event_id, name, type, category, enabled, instructor_required, display_order, submission_mode)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+              (id, event_id, name, type, category, enabled, instructor_required, display_order, submission_mode, team_min_members, team_max_members)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
              ON CONFLICT (id) DO UPDATE SET
                event_id = EXCLUDED.event_id,
                name = EXCLUDED.name,
@@ -922,8 +987,10 @@ export function createPostgresStore(pool, { seedOnEmpty = true } = {}) {
                enabled = EXCLUDED.enabled,
                instructor_required = EXCLUDED.instructor_required,
                display_order = EXCLUDED.display_order,
-               submission_mode = EXCLUDED.submission_mode`,
-            [row.id, row.eventId, row.name, row.type, row.category, row.enabled, row.instructorRequired, row.displayOrder, row.submissionMode]
+               submission_mode = EXCLUDED.submission_mode,
+               team_min_members = EXCLUDED.team_min_members,
+               team_max_members = EXCLUDED.team_max_members`,
+            [row.id, row.eventId, row.name, row.type, row.category, row.enabled, row.instructorRequired, row.displayOrder, row.submissionMode, row.teamMinMembers, row.teamMaxMembers]
           );
         }
 
@@ -1095,8 +1162,8 @@ export function createPostgresStore(pool, { seedOnEmpty = true } = {}) {
           await client.query(
             `INSERT INTO registrations
               (id, event_id, source, created_by_user_id, personal_user_id, organization_id, created_via, organization_name, organization_deleted, athlete, athlete_key,
-               group_name, project_id, project_name, project_type, instructor, status, reject_reason, created_at, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+               group_name, project_id, project_name, project_type, instructor, team_code, status, reject_reason, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
              ON CONFLICT (id) DO UPDATE SET
                event_id = EXCLUDED.event_id,
                source = EXCLUDED.source,
@@ -1113,11 +1180,12 @@ export function createPostgresStore(pool, { seedOnEmpty = true } = {}) {
                project_name = EXCLUDED.project_name,
                project_type = EXCLUDED.project_type,
                instructor = EXCLUDED.instructor,
+               team_code = EXCLUDED.team_code,
                status = EXCLUDED.status,
                reject_reason = EXCLUDED.reject_reason,
                created_at = EXCLUDED.created_at,
                updated_at = EXCLUDED.updated_at`,
-            [row.id, row.eventId || EVENT.id, row.source, row.createdByUserId || null, row.personalUserId || null, row.organizationId || null, row.createdVia, row.organization || "", Boolean(row.organizationDeleted), JSON.stringify(row.athlete || {}), row.athleteKey, row.group, row.projectId, row.projectName, row.projectType, row.instructor || "", row.status, row.rejectReason || "", row.createdAt, row.updatedAt]
+            [row.id, row.eventId || EVENT.id, row.source, row.createdByUserId || null, row.personalUserId || null, row.organizationId || null, row.createdVia, row.organization || "", Boolean(row.organizationDeleted), JSON.stringify(row.athlete || {}), row.athleteKey, row.group, row.projectId, row.projectName, row.projectType, row.instructor || "", row.teamCode || "", row.status, row.rejectReason || "", row.createdAt, row.updatedAt]
           );
 
           const hasResult = Boolean(row.awardName || row.rank || row.score || row.resultRecordedAt);
@@ -1151,6 +1219,41 @@ export function createPostgresStore(pool, { seedOnEmpty = true } = {}) {
                created_at = EXCLUDED.created_at,
                updated_at = EXCLUDED.updated_at`,
             [row.registrationId, row.ciphertext, row.iv, row.authTag, row.keyVersion, row.idFingerprint, row.createdAt, row.updatedAt]
+          );
+        }
+
+        for (const row of db.registrationParticipants) {
+          await client.query(
+            `INSERT INTO registration_participants
+              (id, registration_id, display_order, name, school, grade, phone, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+             ON CONFLICT (id) DO UPDATE SET
+               registration_id = EXCLUDED.registration_id,
+               display_order = EXCLUDED.display_order,
+               name = EXCLUDED.name,
+               school = EXCLUDED.school,
+               grade = EXCLUDED.grade,
+               phone = EXCLUDED.phone,
+               created_at = EXCLUDED.created_at,
+               updated_at = EXCLUDED.updated_at`,
+            [row.id, row.registrationId, row.displayOrder, row.name, row.school, row.grade, row.phone, row.createdAt, row.updatedAt]
+          );
+        }
+
+        for (const row of db.registrationParticipantIdentities) {
+          await client.query(
+            `INSERT INTO registration_participant_identities
+              (participant_id, ciphertext, iv, auth_tag, key_version, id_fingerprint, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+             ON CONFLICT (participant_id) DO UPDATE SET
+               ciphertext = EXCLUDED.ciphertext,
+               iv = EXCLUDED.iv,
+               auth_tag = EXCLUDED.auth_tag,
+               key_version = EXCLUDED.key_version,
+               id_fingerprint = EXCLUDED.id_fingerprint,
+               created_at = EXCLUDED.created_at,
+               updated_at = EXCLUDED.updated_at`,
+            [row.participantId, row.ciphertext, row.iv, row.authTag, row.keyVersion, row.idFingerprint, row.createdAt, row.updatedAt]
           );
         }
 
@@ -1308,11 +1411,12 @@ export function createPostgresStore(pool, { seedOnEmpty = true } = {}) {
         for (const row of db.certificates) {
           await client.query(
             `INSERT INTO certificates
-              (id, registration_id, slot, title, file_name, stored_name, file_path,
+              (id, registration_id, participant_id, slot, title, file_name, stored_name, file_path,
                award_name, rank, score, status, source, import_batch_id, uploaded_at, published_at, cleaned_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
              ON CONFLICT (id) DO UPDATE SET
                registration_id = EXCLUDED.registration_id,
+               participant_id = EXCLUDED.participant_id,
                slot = EXCLUDED.slot,
                title = EXCLUDED.title,
                file_name = EXCLUDED.file_name,
@@ -1327,7 +1431,7 @@ export function createPostgresStore(pool, { seedOnEmpty = true } = {}) {
                uploaded_at = EXCLUDED.uploaded_at,
                published_at = EXCLUDED.published_at,
                cleaned_at = EXCLUDED.cleaned_at`,
-            [row.id, row.registrationId, row.slot, row.title, row.fileName, row.storedName, row.filePath, row.awardName || "", row.rank || "", row.score || "", row.status, row.source, row.importBatchId || null, row.uploadedAt, row.publishedAt || null, row.cleanedAt || null]
+            [row.id, row.registrationId, row.participantId || null, row.slot, row.title, row.fileName, row.storedName, row.filePath, row.awardName || "", row.rank || "", row.score || "", row.status, row.source, row.importBatchId || null, row.uploadedAt, row.publishedAt || null, row.cleanedAt || null]
           );
         }
 
@@ -1627,6 +1731,8 @@ export function createPostgresStore(pool, { seedOnEmpty = true } = {}) {
         await deleteMissing(client, "organization_leader_reviews", "id", db.organizationLeaderReviews.map((row) => row.id));
         await deleteMissing(client, "organization_leader_documents", "id", db.organizationLeaderDocuments.map((row) => row.id));
         await deleteMissing(client, "organization_leaders", "id", db.organizationLeaders.map((row) => row.id));
+        await deleteMissing(client, "registration_participant_identities", "participant_id", db.registrationParticipantIdentities.map((row) => row.participantId));
+        await deleteMissing(client, "registration_participants", "id", db.registrationParticipants.map((row) => row.id));
         await deleteMissing(client, "registration_identities", "registration_id", db.registrationIdentities.map((row) => row.registrationId));
         await deleteMissing(client, "registrations", "id", db.registrations.map((row) => row.id));
         await deleteMissing(client, "projects", "id", db.projects.map((row) => row.id));
