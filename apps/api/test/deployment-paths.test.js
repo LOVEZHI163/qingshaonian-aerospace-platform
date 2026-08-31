@@ -408,6 +408,12 @@ test("upgrade preflight runs the candidate migration twice against a disposable 
   assert.match(guide, /docker compose build api/);
   assert.match(guide, /临时数据库/);
   assert.match(guide, /015-registration-identities-and-organization-leaders\.sql/);
+  assert.match(guide, /019-team-registration\.sql/);
+  assert.match(guide, /registration_participants/);
+  assert.match(guide, /registration_participant_identities/);
+  assert.match(guide, /team_min_members/);
+  assert.match(guide, /team_max_members/);
+  assert.match(guide, /历史个人报名与加密身份记录[^。]*第二次初始化[^。]*保持不变/);
 });
 
 test("upgrade preflight validates host backups when the candidate lives outside the deploy directory", async () => {

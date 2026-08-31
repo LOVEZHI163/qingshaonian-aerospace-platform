@@ -4,12 +4,91 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 
+import * as migrationRestartSmoke from "../src/cli/postgres-migration-restart-smoke.js";
 import {
   assertEmptySmokeDatabase,
   parseIsolatedSmokeTarget
 } from "../src/cli/postgres-migration-smoke-safety.js";
 
 const root = path.resolve(import.meta.dirname, "../../..");
+
+const LEGACY_PERSONAL_REGISTRATION = {
+  id: "R-legacy-personal",
+  eventId: "E-legacy",
+  source: "普通用户",
+  createdByUserId: "U-legacy",
+  personalUserId: "U-legacy",
+  organizationId: null,
+  createdVia: "personal",
+  organization: "",
+  organizationDeleted: false,
+  athlete: { name: "旧报名选手", school: "旧学校", grade: "五年级", phone: "13800000001" },
+  athleteKey: "旧报名选手|旧学校|五年级|13800000001",
+  group: "小学高段",
+  projectId: "P-individual",
+  projectName: "个人赛",
+  projectType: "individual",
+  instructor: "",
+  teamCode: "",
+  status: "pending",
+  rejectReason: "",
+  awardName: "",
+  rank: "",
+  score: "",
+  resultRecordedAt: "",
+  createdAt: "2026-08-31T00:00:00.000Z",
+  updatedAt: "2026-08-31T00:00:00.000Z"
+};
+
+const LEGACY_PERSONAL_IDENTITY = {
+  registrationId: LEGACY_PERSONAL_REGISTRATION.id,
+  ciphertext: "legacy-ciphertext",
+  iv: "legacy-iv",
+  authTag: "legacy-auth-tag",
+  keyVersion: 1,
+  idFingerprint: "legacy-fingerprint",
+  createdAt: "2026-08-31T00:00:00.000Z",
+  updatedAt: "2026-08-31T00:00:00.000Z"
+};
+
+function migrationRestartState(overrides = {}) {
+  const migrationCount = overrides.migrationCount ?? 1;
+  const tableNames = overrides.tableNames ?? [
+    "registration_participants",
+    "registration_participant_identities"
+  ];
+  const boundColumns = overrides.boundColumns ?? ["team_min_members", "team_max_members"];
+  const afterRestart = overrides.afterRestart ?? {
+    projects: [{ id: "P-individual", teamMinMembers: 1, teamMaxMembers: 8 }],
+    registrations: [structuredClone(LEGACY_PERSONAL_REGISTRATION)],
+    registrationIdentities: [structuredClone(LEGACY_PERSONAL_IDENTITY)]
+  };
+  const pool = {
+    async query(sql, params) {
+      if (sql.includes("schema_migrations")) {
+        assert.deepEqual(params, ["019-team-registration.sql"]);
+        return { rows: [{ count: migrationCount }] };
+      }
+      if (sql.includes("information_schema.tables")) {
+        assert.deepEqual(new Set(params[0]), new Set([
+          "registration_participants",
+          "registration_participant_identities"
+        ]));
+        return { rows: tableNames.map((table_name) => ({ table_name })) };
+      }
+      if (sql.includes("information_schema.columns")) {
+        assert.deepEqual(new Set(params[0]), new Set(["team_min_members", "team_max_members"]));
+        return { rows: boundColumns.map((column_name) => ({ column_name })) };
+      }
+      throw new Error(`unexpected restart-smoke query: ${sql}`);
+    }
+  };
+  return {
+    restarted: { pool, readDb: async () => afterRestart },
+    legacyRegistrationBeforeRestart: structuredClone(LEGACY_PERSONAL_REGISTRATION),
+    legacyIdentityBeforeRestart: structuredClone(LEGACY_PERSONAL_IDENTITY)
+  };
+}
 
 function runNode(args, options = {}) {
   return new Promise((resolve, reject) => {
@@ -105,4 +184,84 @@ test("migration smoke rejects a non-empty target before schema initialization", 
     assertEmptySmokeDatabase({ query: async () => result({ database_name: "aerogp" }) }, databaseName),
     /unexpected database/i
   );
+});
+
+test("migration restart smoke accepts migration 019 team schema after a second initialization", async () => {
+  assert.equal(
+    typeof migrationRestartSmoke.assertTeamMigrationRestartState,
+    "function",
+    "restart smoke must expose the team-migration state assertion"
+  );
+
+  await assert.doesNotReject(
+    migrationRestartSmoke.assertTeamMigrationRestartState(migrationRestartState())
+  );
+});
+
+test("migration restart smoke rejects duplicate 019 history and incomplete team schema", async (t) => {
+  const assertRestartState = migrationRestartSmoke.assertTeamMigrationRestartState;
+  assert.equal(typeof assertRestartState, "function");
+
+  await t.test("migration 019 must be recorded exactly once", async () => {
+    await assert.rejects(
+      assertRestartState(migrationRestartState({ migrationCount: 2 })),
+      /migration 019 was not recorded exactly once/i
+    );
+  });
+  await t.test("both participant tables must survive restart", async () => {
+    await assert.rejects(
+      assertRestartState(migrationRestartState({ tableNames: ["registration_participants"] })),
+      /migration 019 did not create all required participant tables/i
+    );
+  });
+  await t.test("both persisted project bounds must be present", async () => {
+    await assert.rejects(
+      assertRestartState(migrationRestartState({ boundColumns: ["team_min_members"] })),
+      /migration 019 did not add both project bound columns/i
+    );
+    await assert.rejects(
+      assertRestartState(migrationRestartState({
+        afterRestart: {
+          projects: [{ id: "P-individual", teamMinMembers: 1 }],
+          registrations: [structuredClone(LEGACY_PERSONAL_REGISTRATION)],
+          registrationIdentities: [structuredClone(LEGACY_PERSONAL_IDENTITY)]
+        }
+      })),
+      /project bounds did not survive PostgreSQL store restart/i
+    );
+  });
+});
+
+test("migration restart smoke rejects changes to legacy personal registration data", async (t) => {
+  const assertRestartState = migrationRestartSmoke.assertTeamMigrationRestartState;
+  assert.equal(typeof assertRestartState, "function");
+
+  await t.test("registration aggregate is unchanged", async () => {
+    const changed = structuredClone(LEGACY_PERSONAL_REGISTRATION);
+    changed.status = "approved";
+    await assert.rejects(
+      assertRestartState(migrationRestartState({
+        afterRestart: {
+          projects: [{ id: "P-individual", teamMinMembers: 1, teamMaxMembers: 8 }],
+          registrations: [changed],
+          registrationIdentities: [structuredClone(LEGACY_PERSONAL_IDENTITY)]
+        }
+      })),
+      /legacy personal registration changed during PostgreSQL store restart/i
+    );
+  });
+  await t.test("encrypted identity row is unchanged", async () => {
+    const changed = structuredClone(LEGACY_PERSONAL_IDENTITY);
+    changed.keyVersion = 2;
+    await assert.rejects(
+      assertRestartState(migrationRestartState({
+        afterRestart: {
+          projects: [{ id: "P-individual", teamMinMembers: 1, teamMaxMembers: 8 }],
+          registrations: [structuredClone(LEGACY_PERSONAL_REGISTRATION)],
+          registrationIdentities: [changed]
+        }
+      })),
+      /legacy personal registration identity changed during PostgreSQL store restart/i
+    );
+  });
 });
