@@ -321,16 +321,110 @@ test("duplicate checks use identity fingerprints instead of athlete metadata", (
 
   const sameMetadataDifferentIdentity = registrationDuplicateCheck(db, {
     eventId: "E1", projectId: "P1", studentIdNumber: secondId, athlete: originalAthlete
-  }, context.clock);
+  }, actor, context.clock);
   const sameIdentityChangedMetadata = registrationDuplicateCheck(db, {
     eventId: "E1", projectId: "P1", studentIdNumber: firstId,
     athlete: { name: "更正姓名", school: "新学校", grade: "五年级", phone: "13900000008" }
-  }, context.clock);
+  }, actor, context.clock);
 
   assert.equal(sameMetadataDifferentIdentity.duplicate, false);
   assert.equal(sameMetadataDifferentIdentity.duplicateCount, 0);
   assert.equal(sameIdentityChangedMetadata.duplicate, true);
   assert.equal(sameIdentityChangedMetadata.duplicateCount, 1);
+});
+
+test("duplicate checks reveal only registrations owned by the authenticated actor", () => {
+  process.env.REGISTRATION_ID_ENCRYPTION_KEY = testKey;
+  const db = individualRegistrationDb();
+  db.organizations.push({
+    id: "O2", ownerUserId: "OWNER2", name: "其他学校", status: "active", reviewStatus: "approved"
+  });
+  const base = {
+    eventId: "E1",
+    projectId: "P1",
+    projectType: "individual",
+    status: "pending",
+    athlete: { name: "同一身份证", school: "航空学校", grade: "五年级", phone: "13800000001" }
+  };
+  db.registrations.push(
+    { ...base, id: "R-PERSONAL", personalUserId: "U1", organizationId: "O1" },
+    { ...base, id: "R-FOREIGN-PROXY", personalUserId: null, organizationId: "O2" },
+    { ...base, id: "R-UNOWNED-PROXY", personalUserId: null, organizationId: null }
+  );
+  db.registrationIdentities.push(
+    { registrationId: "R-PERSONAL", ...encryptStudentId(firstId) },
+    { registrationId: "R-FOREIGN-PROXY", ...encryptStudentId(secondId) },
+    { registrationId: "R-UNOWNED-PROXY", ...encryptStudentId(secondId) }
+  );
+  const request = (studentIdNumber) => ({
+    eventId: "E1",
+    projectId: "P1",
+    studentIdNumber,
+    athlete: { name: "任意展示名", school: "任意学校", grade: "五年级", phone: "13900000009" }
+  });
+  const clock = () => new Date("2026-08-31T02:00:00.000Z");
+
+  const ordinaryOwn = registrationDuplicateCheck(db, request(firstId), { id: "U1", type: "ordinary" }, clock);
+  const ordinaryForeign = registrationDuplicateCheck(db, request(secondId), { id: "U1", type: "ordinary" }, clock);
+  const firstOwnerOwn = registrationDuplicateCheck(db, request(firstId), { id: "OWNER1", type: "organization" }, clock);
+  const firstOwnerForeign = registrationDuplicateCheck(db, request(secondId), { id: "OWNER1", type: "organization" }, clock);
+  const secondOwnerOwn = registrationDuplicateCheck(db, request(secondId), { id: "OWNER2", type: "organization" }, clock);
+  const adminForeign = registrationDuplicateCheck(db, request(secondId), { id: "ADMIN", type: "admin" }, clock);
+
+  assert.deepEqual(ordinaryOwn, { duplicate: true, duplicateCount: 1, individualUsed: true, teamUsed: false });
+  assert.deepEqual(ordinaryForeign, { duplicate: false, duplicateCount: 0, individualUsed: false, teamUsed: false });
+  assert.deepEqual(firstOwnerOwn, { duplicate: true, duplicateCount: 1, individualUsed: true, teamUsed: false });
+  assert.deepEqual(firstOwnerForeign, { duplicate: false, duplicateCount: 0, individualUsed: false, teamUsed: false });
+  assert.deepEqual(secondOwnerOwn, { duplicate: true, duplicateCount: 1, individualUsed: true, teamUsed: false });
+  assert.deepEqual(adminForeign, { duplicate: true, duplicateCount: 2, individualUsed: true, teamUsed: false });
+  assert.deepEqual(Object.keys(adminForeign).sort(), ["duplicate", "duplicateCount", "individualUsed", "teamUsed"]);
+});
+
+test("unrelated corrupt identities do not block exact-project creation", () => {
+  process.env.REGISTRATION_ID_ENCRYPTION_KEY = testKey;
+  const db = individualRegistrationDb();
+  const corrupt = encryptStudentId(secondId);
+  corrupt.authTag = "corrupt";
+  db.registrations.push({
+    id: "R-CORRUPT-UNRELATED", eventId: "E1", projectId: "P1", projectType: "individual",
+    status: "pending", personalUserId: "U2", organizationId: "O1"
+  });
+  db.registrationIdentities.push({ registrationId: "R-CORRUPT-UNRELATED", ...corrupt });
+
+  const result = createOrMergeRegistration(db, {
+    eventId: "E1", projectId: "P1", studentIdNumber: firstId,
+    athlete: { name: "新队员", school: "航空学校", grade: "五年级", phone: "13800000001" }
+  }, { id: "U1", type: "ordinary" }, "personal", {
+    makeId: () => "R-NEW-AFTER-CORRUPT",
+    now: () => "2026-08-31T03:00:00.000Z",
+    clock: () => new Date("2026-08-31T03:00:00.000Z")
+  });
+
+  assert.equal(result.created, true);
+  assert.equal(result.row.id, "R-NEW-AFTER-CORRUPT");
+});
+
+test("corrupt matching identity candidates still fail closed", () => {
+  process.env.REGISTRATION_ID_ENCRYPTION_KEY = testKey;
+  const db = individualRegistrationDb();
+  const corrupt = encryptStudentId(firstId);
+  corrupt.authTag = "corrupt";
+  db.registrations.push({
+    id: "R-CORRUPT-MATCH", eventId: "E1", projectId: "P1", projectType: "individual",
+    status: "pending", personalUserId: "U1", organizationId: "O1"
+  });
+  db.registrationIdentities.push({ registrationId: "R-CORRUPT-MATCH", ...corrupt });
+  const before = structuredClone(db);
+
+  assert.throws(() => createOrMergeRegistration(db, {
+    eventId: "E1", projectId: "P1", studentIdNumber: firstId,
+    athlete: { name: "同一队员", school: "航空学校", grade: "五年级", phone: "13800000001" }
+  }, { id: "U1", type: "ordinary" }, "personal", {
+    makeId: () => "R-MUST-NOT-CREATE",
+    now: () => "2026-08-31T03:00:00.000Z",
+    clock: () => new Date("2026-08-31T03:00:00.000Z")
+  }), (error) => error.status === 409 && error.code === "REGISTRATION_IDENTITY_CONFLICT");
+  assert.deepEqual(db, before);
 });
 
 function releasedIndividualEditDb(status) {

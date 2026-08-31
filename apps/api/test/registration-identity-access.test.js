@@ -286,7 +286,7 @@ test("registration write boundaries reject top-level and nested identity aliases
   });
 });
 
-test("existing identity retries fail closed when ciphertext, authentication tag, or fingerprint is inconsistent", async () => {
+test("matching identity retries fail closed when ciphertext or authentication tag is inconsistent", async () => {
   await withTestServer(async ({ baseUrl, dbPath }) => {
     const personal = await loginAs(baseUrl, "13800000001", "123456");
     const admin = await loginAs(baseUrl, "13900000000", "admin123");
@@ -302,8 +302,7 @@ test("existing identity retries fail closed when ciphertext, authentication tag,
 
     for (const tamper of [
       (row) => { row.ciphertext = Buffer.from("tampered ciphertext").toString("base64"); },
-      (row) => { row.authTag = Buffer.alloc(16, 4).toString("base64"); },
-      (row) => { row.idFingerprint = "tampered-fingerprint"; }
+      (row) => { row.authTag = Buffer.alloc(16, 4).toString("base64"); }
     ]) {
       await mutateDb(dbPath, (db) => {
         const identity = db.registrationIdentities.find((row) => row.registrationId === registrationId);

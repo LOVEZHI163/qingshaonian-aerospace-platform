@@ -383,7 +383,7 @@ export function createRegistrationsRouter({
 
   router.post("/registrations/check", ...user, asyncRoute(async (req, res) => {
     const db = await store.readDb();
-    res.json(registrationDuplicateCheck(db, req.body, clock));
+    res.json(registrationDuplicateCheck(db, req.body, req.user, clock));
   }));
 
   return router;

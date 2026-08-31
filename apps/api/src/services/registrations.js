@@ -270,7 +270,20 @@ export function prepareRegistrationCreate(db, input, userId, clock = () => new D
   return { event, project, athlete, group, organization, validation };
 }
 
-export function registrationDuplicateCheck(db, input, clock = () => new Date()) {
+function duplicateCheckRowsForActor(db, actor) {
+  if (actor?.type === "admin") return db.registrations;
+  if (actor?.type === "ordinary") {
+    return db.registrations.filter((row) => row.personalUserId === actor.id);
+  }
+  if (actor?.type === "organization") {
+    const organization = db.organizations.find((row) => row.ownerUserId === actor.id);
+    if (!organization) return [];
+    return db.registrations.filter((row) => row.organizationId === organization.id);
+  }
+  return [];
+}
+
+export function registrationDuplicateCheck(db, input, actor, clock = () => new Date()) {
   requireEventId(db, input?.eventId);
   const athlete = input?.athlete || input || {};
   const group = groupForGrade(athlete.grade);
@@ -278,7 +291,7 @@ export function registrationDuplicateCheck(db, input, clock = () => new Date()) 
   const projectId = requireText(input?.projectId, "赛项");
   const { event } = registrationContext(db, { ...input, projectId, group }, clock);
   const fingerprint = fingerprintStudentId(requireStudentIdForNewRegistration(input));
-  const matches = db.registrations.filter((row) => (
+  const matches = duplicateCheckRowsForActor(db, actor).filter((row) => (
     row.eventId === event.id
     && row.projectId === projectId
     && registrationIdentityFingerprints(db, row).includes(fingerprint)
@@ -437,11 +450,11 @@ export function listOrganizationRegistrations(db, organizationId, query = {}, cl
 }
 
 export function findRegistrationIdentity(db, eventId, projectId, fingerprint) {
-  const exactProjectRows = db.registrations.filter((row) => (
+  const matchingRows = db.registrations.filter((row) => (
     row.eventId === eventId && row.projectId === projectId
+    && registrationIdentityFingerprints(db, row).includes(fingerprint)
   ));
-  for (const row of exactProjectRows) {
-    const fingerprints = registrationIdentityFingerprints(db, row);
+  for (const row of matchingRows) {
     const participantIds = new Set((db.registrationParticipants || [])
       .filter((participant) => participant.registrationId === row.id)
       .map((participant) => participant.id));
@@ -461,9 +474,8 @@ export function findRegistrationIdentity(db, eventId, projectId, fingerprint) {
     } catch {
       throw businessError(409, "报名身份证信息校验失败", "REGISTRATION_IDENTITY_CONFLICT");
     }
-    if (fingerprints.includes(fingerprint)) return row;
   }
-  return null;
+  return matchingRows[0] || null;
 }
 
 export function requireEventId(db, value) {

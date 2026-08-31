@@ -1,12 +1,15 @@
 import assert from "node:assert/strict";
+import fs from "node:fs/promises";
 import test from "node:test";
 
+import { encryptStudentId } from "../src/security/registration-identities.js";
 import { createOrMergeRegistration } from "../src/services/registrations.js";
 import { withTestServer } from "../test-support/server.js";
 import { loginAs, withSession } from "./helpers/api-client.js";
 
 process.env.REGISTRATION_ID_ENCRYPTION_KEY ||= Buffer.alloc(32, 8).toString("base64");
 const validStudentIdNumber = "11010519491231002X";
+const otherValidStudentIdNumber = "110105194912310038";
 
 const timestamp = "2026-07-30T08:00:00.000Z";
 const actor = { id: "U1", type: "ordinary", name: "个人用户" };
@@ -344,5 +347,64 @@ test("duplicate checks use the exact event, project, and identity fingerprint", 
       body: JSON.stringify({ eventId: "wz-aerospace-2026", projectId: "rotor-race", studentIdNumber: validStudentIdNumber, athlete: { name: "张三", school: "实验小学", grade: "五年级", phone: "13800000001" } })
     }));
     assert.equal((await differentProject.json()).duplicate, false);
+  });
+});
+
+test("duplicate-check HTTP responses are scoped to the authenticated owner", async () => {
+  await withTestServer(async ({ baseUrl, dbPath }) => {
+    const ordinary = await loginAs(baseUrl, "13800000001", "123456");
+    const firstOwner = await loginAs(baseUrl, "13800000011", "123456");
+    const secondOwner = await loginAs(baseUrl, "13800000012", "123456");
+    const admin = await loginAs(baseUrl, "13900000000", "admin123");
+    const db = JSON.parse(await fs.readFile(dbPath, "utf8"));
+    db.events.find((event) => event.id === "wz-aerospace-2026").registrationMode = "force_open";
+    const base = {
+      eventId: "wz-aerospace-2026",
+      projectId: "rocket-duration",
+      projectName: "带降航天火箭留空比赛",
+      projectType: "individual",
+      status: "pending",
+      athlete: { name: "预检范围队员", school: "测试学校", grade: "五年级", phone: "13800000001" }
+    };
+    db.registrations.push(
+      { ...base, id: "R-CHECK-PERSONAL", personalUserId: "U1001", organizationId: "O1001" },
+      { ...base, id: "R-CHECK-PROXY", personalUserId: null, organizationId: "O1002" },
+      { ...base, id: "R-CHECK-UNOWNED", personalUserId: null, organizationId: null }
+    );
+    db.registrationIdentities.push(
+      { registrationId: "R-CHECK-PERSONAL", ...encryptStudentId(validStudentIdNumber) },
+      { registrationId: "R-CHECK-PROXY", ...encryptStudentId(otherValidStudentIdNumber) },
+      { registrationId: "R-CHECK-UNOWNED", ...encryptStudentId(otherValidStudentIdNumber) }
+    );
+    await fs.writeFile(dbPath, JSON.stringify(db, null, 2), "utf8");
+
+    const check = async (cookie, studentIdNumber) => {
+      const response = await fetch(`${baseUrl}/api/registrations/check`, withSession(cookie, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          eventId: "wz-aerospace-2026", projectId: "rocket-duration", studentIdNumber,
+          athlete: { name: "任意展示名", school: "任意学校", grade: "五年级", phone: "13900000009" }
+        })
+      }));
+      assert.equal(response.status, 200);
+      return response.json();
+    };
+
+    const ordinaryOwn = await check(ordinary.cookie, validStudentIdNumber);
+    const ordinaryForeign = await check(ordinary.cookie, otherValidStudentIdNumber);
+    const firstOwnerOwn = await check(firstOwner.cookie, validStudentIdNumber);
+    const firstOwnerForeign = await check(firstOwner.cookie, otherValidStudentIdNumber);
+    const secondOwnerOwn = await check(secondOwner.cookie, otherValidStudentIdNumber);
+    const adminForeign = await check(admin.cookie, otherValidStudentIdNumber);
+
+    assert.deepEqual(ordinaryOwn, { duplicate: true, duplicateCount: 1, individualUsed: true, teamUsed: false });
+    assert.deepEqual(ordinaryForeign, { duplicate: false, duplicateCount: 0, individualUsed: false, teamUsed: false });
+    assert.deepEqual(firstOwnerOwn, { duplicate: true, duplicateCount: 1, individualUsed: true, teamUsed: false });
+    assert.deepEqual(firstOwnerForeign, { duplicate: false, duplicateCount: 0, individualUsed: false, teamUsed: false });
+    assert.deepEqual(secondOwnerOwn, { duplicate: true, duplicateCount: 1, individualUsed: true, teamUsed: false });
+    assert.deepEqual(adminForeign, { duplicate: true, duplicateCount: 2, individualUsed: true, teamUsed: false });
+    assert.equal(JSON.stringify(adminForeign).includes("R-CHECK"), false);
+    assert.equal(JSON.stringify(adminForeign).includes(otherValidStudentIdNumber), false);
+    assert.equal("fingerprint" in adminForeign, false);
   });
 });
