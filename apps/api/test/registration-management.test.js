@@ -6,6 +6,7 @@ import { withTestServer } from "../test-support/server.js";
 import { loginAs, withSession } from "./helpers/api-client.js";
 
 const validStudentIdNumber = "11010519491231002X";
+const otherValidStudentIdNumber = "110105194912310038";
 
 async function json(response) {
   return response.json();
@@ -541,7 +542,7 @@ test("member registration edits keep the selected account identity while proxy e
 
     const proxyCreated = await create({
       registrationSource: "organization_proxy",
-      studentIdNumber: validStudentIdNumber,
+      studentIdNumber: otherValidStudentIdNumber,
       athlete: { name: "代理选手", school: "代理身份测试学校", grade: "五年级", phone: "13700009999" },
       projectId: "paper-plane-gate"
     });

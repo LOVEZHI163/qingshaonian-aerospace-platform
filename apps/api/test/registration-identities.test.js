@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test, { after } from "node:test";
 
 import {
+  createParticipantIdentity,
   decryptStudentId,
   encryptStudentId,
   fingerprintStudentId,
@@ -90,6 +91,18 @@ test("identity DTO excludes ciphertext, cryptographic material, fingerprints, an
     updatedAt: "2026-08-07T01:00:00.000Z"
   });
   assert.equal(JSON.stringify(identityDto(row)).includes(validId), false);
+});
+
+test("participant identity encryption binds ciphertext metadata to the participant without plaintext", () => {
+  process.env.REGISTRATION_ID_ENCRYPTION_KEY = testKey;
+  const row = createParticipantIdentity("RP-IDENTITY", "11010519491231002x", "2026-08-31T00:00:00.000Z");
+
+  assert.equal(row.participantId, "RP-IDENTITY");
+  assert.equal(decryptStudentId(row), validId);
+  assert.equal(row.idFingerprint, fingerprintStudentId(validId));
+  assert.equal(row.createdAt, "2026-08-31T00:00:00.000Z");
+  assert.equal(row.updatedAt, "2026-08-31T00:00:00.000Z");
+  assert.equal(JSON.stringify(row).includes(validId), false);
 });
 
 test("audit summaries redact identity-number fields before persistence", () => {

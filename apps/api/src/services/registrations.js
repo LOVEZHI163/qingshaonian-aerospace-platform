@@ -5,6 +5,11 @@ import { organizationHistoryFields } from "./organization-account-lifecycle.js";
 import { ordinaryRegistrationEligibility, requireOrdinaryRegistrationEligibility, requireOrdinaryUser, requireOrganizationApprovedLeader, requireOrganizationEventParticipation, requireWritableEvent } from "./access-control.js";
 import { registrationSubmissionSummary, withRegistrationSubmission } from "./submission-assets.js";
 import { decryptStudentId, encryptStudentId, fingerprintStudentId, normalizeStudentId } from "../security/registration-identities.js";
+import {
+  assertAthleteTypeAvailability,
+  participantsForRegistration,
+  registrationIdentityFingerprints
+} from "./registration-participants.js";
 
 const ATHLETE_FIELDS = ["name", "school", "grade", "phone"];
 const IDENTITY_FIELD_KEYS = new Set([
@@ -122,8 +127,11 @@ function canReadRegistrationIdentity(db, registration, actor) {
 
 export function attachAuthorizedIdentity(db, registration, actor) {
   const identity = (db.registrationIdentities || []).find((row) => row.registrationId === registration.id);
+  const participants = participantsForRegistration(db, registration, actor);
   return {
     ...registration,
+    participants,
+    participantCount: participants.length,
     studentIdNumber: canReadRegistrationIdentity(db, registration, actor) && identity
       ? decryptStudentId(identity)
       : null
@@ -217,12 +225,30 @@ export function validateRegistration(input, existingRows, project, eventId, igno
   }
   const key = athleteKey(athlete);
   const projectType = project?.type || "individual";
-  const activeRows = existingRows.filter((row) => row.id !== ignoreId && row.eventId === eventId);
+  const activeRows = existingRows.filter((row) => (
+    row.id !== ignoreId && row.eventId === eventId && new Set(["pending", "approved"]).has(row.status)
+  ));
   const sameAthleteRows = activeRows.filter((row) => row.athleteKey === key);
-  if (sameAthleteRows.some((row) => row.projectId === input.projectId)) {
-    errors.push("该运动员已报名该赛项");
-  }
   return { ok: errors.length === 0, errors, athleteKey: key, projectType, duplicateCount: sameAthleteRows.length };
+}
+
+function submittedOrStoredFingerprint(db, registration, input) {
+  if (Object.hasOwn(input || {}, "studentIdNumber")) {
+    return fingerprintStudentId(requireStudentIdForNewRegistration(input));
+  }
+  return registrationIdentityFingerprints(db, registration)[0] || null;
+}
+
+function assertIndividualTypeAvailability(db, registration, input, project, eventId, ignoreRegistrationId = null) {
+  if ((project?.type || "individual") !== "individual") return;
+  const fingerprint = submittedOrStoredFingerprint(db, registration, input);
+  if (!fingerprint) return;
+  assertAthleteTypeAvailability(db, {
+    eventId,
+    projectType: "individual",
+    fingerprints: [fingerprint],
+    ignoreRegistrationId
+  });
 }
 
 export function prepareRegistrationCreate(db, input, userId, clock = () => new Date()) {
@@ -236,6 +262,7 @@ export function prepareRegistrationCreate(db, input, userId, clock = () => new D
   const projectId = requireText(input?.projectId, "赛项");
   const { event, project } = registrationContext(db, { ...input, projectId, group }, clock);
   const organization = validateOrganizationForUser(db, userId);
+  assertIndividualTypeAvailability(db, { id: null, projectType: project.type }, input, project, event.id);
   const validation = validateRegistration({ ...input, athlete, projectId }, db.registrations, project, event.id);
   if (!validation.ok) throw Object.assign(businessError(422, validation.errors[0]), { validation });
   return { event, project, athlete, group, organization, validation };
@@ -285,6 +312,7 @@ export function prepareAdminRegistrationUpdate(db, row, input) {
     requireMemberIdentity(db, organizationId, row.personalUserId, athlete);
   }
   const next = { ...row, athlete, group, projectId, organizationId, instructor: input.instructor ?? row.instructor };
+  assertIndividualTypeAvailability(db, row, input, project, row.eventId, row.id);
   const validation = validateRegistration(next, db.registrations, project, row.eventId, row.id);
   if (!validation.ok) throw Object.assign(businessError(422, validation.errors[0]), { validation });
   return { athlete, group, project, organizationId, organization, instructor: next.instructor || "", validation };
@@ -309,6 +337,7 @@ export function prepareOrdinaryRegistrationUpdate(db, row, input, userId) {
     requireMemberIdentity(db, organizationId, row.personalUserId, athlete);
   }
   const next = { ...row, athlete, group, projectId, organizationId, instructor: input.instructor ?? row.instructor };
+  assertIndividualTypeAvailability(db, row, input, project, row.eventId, row.id);
   const validation = validateRegistration(next, db.registrations, project, row.eventId, row.id);
   if (!validation.ok) throw Object.assign(businessError(422, validation.errors[0]), { validation });
   return { athlete, group, project, organizationId, organization, source: "member_registration", instructor: next.instructor || "", validation };
@@ -327,6 +356,14 @@ export function updateRegistrationStatus(db, row, input, user) {
     if (row.personalUserId !== user.id) throw businessError(403, "无权修改该报名");
     if (status !== "cancelled") throw businessError(403, "普通用户只能取消自己的报名");
     assertRegistrationWindowOpen(db, row.eventId);
+  }
+  if (new Set(["pending", "approved"]).has(status)) {
+    assertAthleteTypeAvailability(db, {
+      eventId: row.eventId,
+      projectType: row.projectType || "individual",
+      fingerprints: registrationIdentityFingerprints(db, row),
+      ignoreRegistrationId: row.id
+    });
   }
   row.status = status;
   row.rejectReason = status === "rejected" ? String(input?.rejectReason || "信息需补充") : "";
@@ -512,6 +549,12 @@ export function createOrMergeRegistration(db, input, actor, channel, {
     // revalidates the current leader state immediately before the new row is made.
     requireOrganizationApprovedLeader(db, organizationId);
     const studentIdNumber = requireStudentIdForNewRegistration(input);
+    assertAthleteTypeAvailability(db, {
+      eventId: event.id,
+      projectType: prepared.project.type,
+      fingerprints: [fingerprintStudentId(studentIdNumber)],
+      ignoreRegistrationId: null
+    });
     const timestamp = now();
     const row = {
       id: makeId("R"), eventId: event.id, source: prepared.registrationSource, createdByUserId: actor.id,
@@ -539,5 +582,11 @@ export function createOrMergeRegistration(db, input, actor, channel, {
   }
   const studentIdNumber = requireStudentIdForNewRegistration(input);
   assertExistingIdentityMatches(db, existing.id, studentIdNumber);
+  assertAthleteTypeAvailability(db, {
+    eventId: event.id,
+    projectType: prepared.project.type,
+    fingerprints: [fingerprintStudentId(studentIdNumber)],
+    ignoreRegistrationId: existing.id
+  });
   return { row: existing, created: false, merged: false };
 }
