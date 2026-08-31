@@ -77,6 +77,30 @@ describe("AuthPage", () => {
     expect(wrapper.find('[data-login-method="sms"]').exists()).toBe(false);
   });
 
+  it("places the password recovery link before a shared full-width login action in both login modes", async () => {
+    apiMock.mockResolvedValue({
+      smsLoginEnabled: true,
+      captcha: { enabled: false, region: "cn", prefix: "", scenes: {} }
+    });
+    const wrapper = mount(AuthPage);
+    await flushPromises();
+
+    const passwordForm = wrapper.get('[data-auth-form="login"]');
+    const passwordInput = passwordForm.get('input[type="password"]');
+    const forgotRow = passwordForm.get(".auth-forgot-row");
+    const passwordActions = passwordForm.get(".auth-login-actions");
+
+    expect(forgotRow.text()).toContain("忘记密码？");
+    expect(passwordInput.element.closest("label").nextElementSibling).toBe(forgotRow.element);
+    expect(forgotRow.element.nextElementSibling).toBe(passwordActions.element);
+    expect(passwordActions.get(".auth-login-primary").attributes("type")).toBe("submit");
+
+    await wrapper.get('[data-login-method="sms"]').trigger("click");
+    const smsForm = wrapper.get('[data-auth-form="sms-login"]');
+    expect(smsForm.get(".auth-login-primary").attributes("type")).toBe("submit");
+    expect(smsForm.find(".auth-forgot-row").exists()).toBe(false);
+  });
+
   it("keeps registration, SMS login, and SMS reset switches independent while preserving password and email paths", async () => {
     apiMock.mockResolvedValue({
       smsRegistrationEnabled: false,
