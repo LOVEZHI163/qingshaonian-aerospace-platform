@@ -113,7 +113,7 @@ function normalizeTeamMemberBounds(next) {
   if (next.type !== "team") return { teamMinMembers: 1, teamMaxMembers: 1 };
   const min = Number(next.teamMinMembers ?? 1);
   const max = Number(next.teamMaxMembers ?? 8);
-  if (!Number.isInteger(min) || !Number.isInteger(max) || min < 1 || max > 8) {
+  if (!Number.isInteger(min) || !Number.isInteger(max) || min < 1 || min > 8 || max < 1 || max > 8) {
     throw businessError(422, "团队人数必须是 1 至 8 的整数");
   }
   if (min > max) throw businessError(422, "团队最少人数不能大于最多人数");
@@ -212,11 +212,13 @@ export function copyEvent(db, sourceId, input, { makeId, clock }) {
 
   const sourceProjects = db.projects.filter((row) => row.eventId === sourceId);
   const projects = sourceProjects.map((sourceProject) => {
+    const fields = normalizeProjectFields(sourceProject, sourceProject);
     const project = {
       ...sourceProject,
+      ...fields,
       id: makeId("P"),
       eventId: event.id,
-      allowedGroups: [...sourceProject.allowedGroups]
+      allowedGroups: [...fields.allowedGroups]
     };
     db.projects.push(project);
     syncProjectGroups(db, project);
