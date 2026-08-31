@@ -323,6 +323,80 @@ function previewCandidateForDb(db, certificates) {
   };
 }
 
+function teamPreviewCandidate(rowNumber, participantId, result) {
+  return {
+    rowNumber,
+    registrationId: approvedRegistration.id,
+    participantId,
+    result,
+    certificates: [{ ...stagedCertificate(1), buffer: ONE_PIXEL_PNG, replacing: false }]
+  };
+}
+
+function teamPreviewDb() {
+  const db = serviceDb();
+  db.registrations[0].projectType = "team";
+  db.registrations[0].teamCode = "O1002-PTEAM-01";
+  db.registrationParticipants = [
+    { id: "RP-1", registrationId: approvedRegistration.id, displayOrder: 1, name: "队员甲" },
+    { id: "RP-2", registrationId: approvedRegistration.id, displayOrder: 2, name: "队员乙" }
+  ];
+  return db;
+}
+
+async function previewTeamCandidates(candidates) {
+  let persisted = teamPreviewDb();
+  const staged = [];
+  const preview = await previewCertificateImport({
+    file: { buffer: Buffer.from("workbook"), originalname: "team.xlsx" },
+    eventId: "E1",
+    userId: "U9001",
+    store: {
+      readDb: async () => structuredClone(persisted),
+      writeDb: async (next) => { persisted = structuredClone(next); }
+    },
+    makeId: sequentialIds(),
+    now: () => "2026-08-31T00:00:00.000Z",
+    parseWorkbook: async () => ({ candidates, errors: [] }),
+    storage: {
+      async saveStagingFile({ rowNumber, slot }) {
+        staged.push(`${rowNumber}-${slot}`);
+        return { relativePath: `${rowNumber}-${slot}.png` };
+      },
+      removeStagingBatch: async () => {}
+    }
+  });
+  return { preview, persisted, staged };
+}
+
+test("team certificate import rejects participant rows with conflicting registration-level results", async () => {
+  const first = { awardName: "一等奖", rank: "1", score: "99" };
+  const second = { awardName: "二等奖", rank: "2", score: "95" };
+
+  const { preview, persisted, staged } = await previewTeamCandidates([
+    teamPreviewCandidate(2, "RP-1", first),
+    teamPreviewCandidate(3, "RP-2", second)
+  ]);
+
+  assert.equal(preview.validCount, 0);
+  assert.equal(preview.errorCount, 2);
+  assert.deepEqual(staged, []);
+  assert.equal(persisted.certificateImportErrors.every((row) => /同一报名的成绩必须一致/.test(row.message)), true);
+});
+
+test("team certificate import accepts participant rows with identical registration-level results", async () => {
+  const result = { awardName: "一等奖", rank: "1", score: "99" };
+
+  const { preview, staged } = await previewTeamCandidates([
+    teamPreviewCandidate(2, "RP-1", result),
+    teamPreviewCandidate(3, "RP-2", { ...result })
+  ]);
+
+  assert.equal(preview.validCount, 2);
+  assert.equal(preview.errorCount, 0);
+  assert.deepEqual(staged, ["2-1", "3-1"]);
+});
+
 test("certificate import commits same-slot team participant certificates and propagates the registration result", async () => {
   let persisted = serviceDb();
   persisted.registrations[0].projectType = "team";

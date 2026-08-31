@@ -47,8 +47,9 @@ export function upsertCertificate(db, {
   if (!storedFile?.filePath || !storedFile?.storedName) throw invalid("证书文件不能为空");
   const participantId = String(inputParticipantId || "").trim() || null;
   if (registration.projectType === "team") {
-    if (!participantId) throw invalid("团队证书必须选择队员");
-    const belongs = (db.registrationParticipants || []).some((row) => (
+    const participants = (db.registrationParticipants || []).filter((row) => row.registrationId === registration.id);
+    if (!participantId && participants.length > 0) throw invalid("团队证书必须选择队员");
+    const belongs = !participantId || participants.some((row) => (
       row.id === participantId && row.registrationId === registration.id
     ));
     if (!belongs) throw invalid("证书对象不属于该报名");

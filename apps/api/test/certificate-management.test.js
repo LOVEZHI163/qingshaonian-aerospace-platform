@@ -344,6 +344,35 @@ test("manual team certificate upload requires an owned participant and keeps sam
   }, { prefix: "manual-team-certificate-participant-" });
 });
 
+test("manual certificate upload preserves the legacy target for a historical team with no participants", async () => {
+  await withTestServer(async ({ baseUrl, dbPath, tempDir }) => {
+    const db = JSON.parse(await fs.readFile(dbPath, "utf8"));
+    db.registrations.push({
+      ...db.registrations[0],
+      id: "R-TEAM-HISTORICAL",
+      projectType: "team",
+      teamCode: "O1001-PTEAM-HISTORICAL",
+      status: "approved",
+      personalUserId: null,
+      athlete: { name: "历史团队", school: "历史学校", grade: "五年级" }
+    });
+    await fs.writeFile(dbPath, JSON.stringify(db));
+    const admin = await loginAs(baseUrl, "13900000000", "admin123");
+
+    const response = await uploadCertificate(baseUrl, admin.cookie, "R-TEAM-HISTORICAL", 1, { title: "历史团队证书" });
+
+    assert.equal(response.status, 201);
+    const row = (await responseJson(response)).row;
+    assert.equal(row.participantId, null);
+    const persisted = JSON.parse(await fs.readFile(dbPath, "utf8"));
+    const certificate = persisted.certificates.find((item) => item.registrationId === "R-TEAM-HISTORICAL");
+    assert.equal(certificate.participantId, null);
+    assert.equal(path.dirname(certificate.filePath), path.join(
+      tempDir, "uploads", "certificates", "R-TEAM-HISTORICAL", "registration", "1"
+    ));
+  }, { prefix: "manual-historical-team-certificate-" });
+});
+
 test("certificate bulk audit preserves long normal target IDs and redacts only identity-shaped IDs", async () => {
   await withTestServer(async ({ baseUrl, dbPath }) => {
     const admin = await loginAs(baseUrl, "13900000000", "admin123");

@@ -66,11 +66,23 @@ function candidateValidation(parsedCandidates) {
     byTarget.set(key, (byTarget.get(key) || 0) + 1);
     return byTarget;
   }, new Map());
+  const resultsByRegistration = parsedCandidates.reduce((byRegistration, candidate) => {
+    const resultKey = JSON.stringify([
+      String(candidate.result?.awardName ?? ""),
+      String(candidate.result?.rank ?? ""),
+      String(candidate.result?.score ?? "")
+    ]);
+    if (!byRegistration.has(candidate.registrationId)) byRegistration.set(candidate.registrationId, new Set());
+    byRegistration.get(candidate.registrationId).add(resultKey);
+    return byRegistration;
+  }, new Map());
   const candidates = [];
   const errors = [];
   for (const candidate of parsedCandidates) {
     const key = `${candidate.registrationId}:${candidate.participantId || "legacy"}`;
-    if (counts.get(key) > 1) {
+    if (resultsByRegistration.get(candidate.registrationId)?.size > 1) {
+      errors.push({ rowNumber: candidate.rowNumber, registrationId: candidate.registrationId, message: "同一报名的成绩必须一致" });
+    } else if (counts.get(key) > 1) {
       errors.push({ rowNumber: candidate.rowNumber, registrationId: candidate.registrationId, message: "同一证书对象只能出现一行" });
     } else if (!hasValidCertificateSlots(candidate)) {
       errors.push({ rowNumber: candidate.rowNumber, registrationId: candidate.registrationId, message: "每行必须提供不重复的证书位置 1 或 2" });

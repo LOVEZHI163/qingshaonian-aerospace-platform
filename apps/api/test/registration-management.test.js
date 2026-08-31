@@ -228,6 +228,121 @@ test("team organization and admin PATCH replace the complete roster while person
   });
 });
 
+test("team roster reorder preserves participant IDs and issued certificate ownership by identity", async () => {
+  await withServer(async (baseUrl, dbPath) => {
+    const organization = await loginAs(baseUrl, "13800000011", "123456");
+    const admin = await loginAs(baseUrl, "13900000000", "admin123");
+    await openRegistration(baseUrl, admin.cookie);
+    assert.equal((await fetch(`${baseUrl}/api/organization/events/wz-aerospace-2026/join`, withSession(organization.cookie, { method: "POST" }))).status, 201);
+    const participants = [
+      { name: "证书队员甲", school: "温州市实验小学", grade: "五年级", phone: "13800002101", studentIdNumber: validStudentIdNumber },
+      { name: "证书队员乙", school: "温州市实验小学", grade: "五年级", phone: "13800002102", studentIdNumber: otherValidStudentIdNumber }
+    ];
+    const create = await fetch(`${baseUrl}/api/organization/events/wz-aerospace-2026/registrations`, withSession(organization.cookie, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
+        projectId: "drone-relay", registrationSource: "organization_proxy", participants
+      })
+    }));
+    assert.equal(create.status, 201);
+    const registration = (await json(create)).row;
+    const [participantA, participantB] = registration.participants;
+    await mutateDb(dbPath, (db) => {
+      db.certificates.push(
+        { id: "C-ROSTER-A", registrationId: registration.id, participantId: participantA.id, slot: 1, title: "甲证书", fileName: "a.png", storedName: "a.png", filePath: "/safe/a.png", awardName: "", rank: "", score: "", status: "published", source: "manual", importBatchId: null, uploadedAt: "2026-08-31T00:00:00.000Z", publishedAt: "2026-08-31T00:00:00.000Z", cleanedAt: "" },
+        { id: "C-ROSTER-B", registrationId: registration.id, participantId: participantB.id, slot: 1, title: "乙证书", fileName: "b.png", storedName: "b.png", filePath: "/safe/b.png", awardName: "", rank: "", score: "", status: "published", source: "manual", importBatchId: null, uploadedAt: "2026-08-31T00:00:00.000Z", publishedAt: "2026-08-31T00:00:00.000Z", cleanedAt: "" }
+      );
+    });
+
+    const reorder = await fetch(`${baseUrl}/api/organization/events/wz-aerospace-2026/registrations/${registration.id}`, withSession(organization.cookie, {
+      method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ participants: [participants[1], participants[0]] })
+    }));
+
+    assert.equal(reorder.status, 200);
+    const updated = (await json(reorder)).row;
+    assert.deepEqual(updated.participants.map(({ id, name }) => ({ id, name })), [
+      { id: participantB.id, name: "证书队员乙" },
+      { id: participantA.id, name: "证书队员甲" }
+    ]);
+    const persisted = JSON.parse(await fs.readFile(dbPath, "utf8"));
+    const namesById = new Map(persisted.registrationParticipants.map((row) => [row.id, row.name]));
+    assert.deepEqual(persisted.certificates.filter((row) => row.registrationId === registration.id)
+      .map((row) => [row.id, row.participantId, namesById.get(row.participantId)]).sort(), [
+      ["C-ROSTER-A", participantA.id, "证书队员甲"],
+      ["C-ROSTER-B", participantB.id, "证书队员乙"]
+    ]);
+  });
+});
+
+test("team roster removal rejects deleting a participant who owns an issued certificate", async () => {
+  await withServer(async (baseUrl, dbPath) => {
+    const organization = await loginAs(baseUrl, "13800000011", "123456");
+    const admin = await loginAs(baseUrl, "13900000000", "admin123");
+    await openRegistration(baseUrl, admin.cookie);
+    assert.equal((await fetch(`${baseUrl}/api/organization/events/wz-aerospace-2026/join`, withSession(organization.cookie, { method: "POST" }))).status, 201);
+    const participants = [
+      { name: "保留队员甲", school: "温州市实验小学", grade: "五年级", phone: "13800002201", studentIdNumber: validStudentIdNumber },
+      { name: "持证队员乙", school: "温州市实验小学", grade: "五年级", phone: "13800002202", studentIdNumber: otherValidStudentIdNumber }
+    ];
+    const create = await fetch(`${baseUrl}/api/organization/events/wz-aerospace-2026/registrations`, withSession(organization.cookie, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
+        projectId: "drone-relay", registrationSource: "organization_proxy", participants
+      })
+    }));
+    const registration = (await json(create)).row;
+    const [participantA, participantB] = registration.participants;
+    await mutateDb(dbPath, (db) => {
+      db.certificates.push({ id: "C-REMOVE-B", registrationId: registration.id, participantId: participantB.id, slot: 1, title: "乙证书", fileName: "b.png", storedName: "b.png", filePath: "/safe/b.png", awardName: "", rank: "", score: "", status: "published", source: "manual", importBatchId: null, uploadedAt: "2026-08-31T00:00:00.000Z", publishedAt: "2026-08-31T00:00:00.000Z", cleanedAt: "" });
+    });
+
+    const removal = await fetch(`${baseUrl}/api/organization/events/wz-aerospace-2026/registrations/${registration.id}`, withSession(organization.cookie, {
+      method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ participants: [participants[0]] })
+    }));
+
+    assert.equal(removal.status, 409);
+    assert.equal((await json(removal)).code, "TEAM_PARTICIPANT_CERTIFICATES_EXIST");
+    const persisted = JSON.parse(await fs.readFile(dbPath, "utf8"));
+    assert.deepEqual(persisted.registrationParticipants.filter((row) => row.registrationId === registration.id)
+      .map(({ id, name }) => ({ id, name })), [
+      { id: participantA.id, name: "保留队员甲" },
+      { id: participantB.id, name: "持证队员乙" }
+    ]);
+    assert.equal(persisted.certificates.find((row) => row.id === "C-REMOVE-B").participantId, participantB.id);
+  });
+});
+
+test("team roster removal keeps the remaining certificate owner ID instead of reusing the removed first ID", async () => {
+  await withServer(async (baseUrl, dbPath) => {
+    const organization = await loginAs(baseUrl, "13800000011", "123456");
+    const admin = await loginAs(baseUrl, "13900000000", "admin123");
+    await openRegistration(baseUrl, admin.cookie);
+    assert.equal((await fetch(`${baseUrl}/api/organization/events/wz-aerospace-2026/join`, withSession(organization.cookie, { method: "POST" }))).status, 201);
+    const removedFirst = { name: "待移除队员乙", school: "温州市实验小学", grade: "五年级", phone: "13800002302", studentIdNumber: otherValidStudentIdNumber };
+    const remainingSecond = { name: "持证队员甲", school: "温州市实验小学", grade: "五年级", phone: "13800002301", studentIdNumber: validStudentIdNumber };
+    const create = await fetch(`${baseUrl}/api/organization/events/wz-aerospace-2026/registrations`, withSession(organization.cookie, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
+        projectId: "drone-relay", registrationSource: "organization_proxy", participants: [removedFirst, remainingSecond]
+      })
+    }));
+    const registration = (await json(create)).row;
+    const [participantB, participantA] = registration.participants;
+    await mutateDb(dbPath, (db) => {
+      db.certificates.push({ id: "C-KEEP-A", registrationId: registration.id, participantId: participantA.id, slot: 1, title: "甲证书", fileName: "a.png", storedName: "a.png", filePath: "/safe/a.png", awardName: "", rank: "", score: "", status: "published", source: "manual", importBatchId: null, uploadedAt: "2026-08-31T00:00:00.000Z", publishedAt: "2026-08-31T00:00:00.000Z", cleanedAt: "" });
+    });
+
+    const removal = await fetch(`${baseUrl}/api/organization/events/wz-aerospace-2026/registrations/${registration.id}`, withSession(organization.cookie, {
+      method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ participants: [remainingSecond] })
+    }));
+
+    assert.equal(removal.status, 200);
+    assert.deepEqual((await json(removal)).row.participants.map(({ id, name }) => ({ id, name })), [
+      { id: participantA.id, name: "持证队员甲" }
+    ]);
+    const persisted = JSON.parse(await fs.readFile(dbPath, "utf8"));
+    assert.equal(persisted.registrationParticipants.some((row) => row.id === participantB.id), false);
+    assert.equal(persisted.certificates.find((row) => row.id === "C-KEEP-A").participantId, participantA.id);
+  });
+});
+
 test("ACTIVE_ORGANIZATION_REQUIRED also blocks personal updates and upload-session creation", async () => {
   await withServer(async (baseUrl, dbPath) => {
     const ordinary = await loginAs(baseUrl, "13800000001", "123456");

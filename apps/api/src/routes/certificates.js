@@ -256,8 +256,12 @@ function approvedManualCertificateRegistration(db, eventId, registrationId) {
 function participantIdForManualUpload(db, registration, value) {
   const participantId = String(value || "").trim() || null;
   if (registration.projectType === "team") {
-    if (!participantId) throw new CertificateError(422, "团队证书必须选择队员");
-    const belongs = (db.registrationParticipants || []).some((row) => (
+    const participants = (db.registrationParticipants || []).filter((row) => row.registrationId === registration.id);
+    if (!participantId) {
+      if (participants.length === 0) return null;
+      throw new CertificateError(422, "团队证书必须选择队员");
+    }
+    const belongs = participants.some((row) => (
       row.id === participantId && row.registrationId === registration.id
     ));
     if (!belongs) throw new CertificateError(422, "证书对象不属于该报名");

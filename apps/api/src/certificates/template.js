@@ -26,7 +26,17 @@ export function certificateTargets(registrations) {
         participantGrade: registration.athlete?.grade || ""
       }];
     }
-    return (registration.participants || []).map((participant) => ({
+    const participants = registration.participants || [];
+    if (participants.length === 0) {
+      return [{
+        ...registration,
+        participantId: null,
+        participantName: registration.athlete?.name || "",
+        participantSchool: registration.athlete?.school || "",
+        participantGrade: registration.athlete?.grade || ""
+      }];
+    }
+    return participants.map((participant) => ({
       ...registration,
       participantId: participant.id,
       participantName: participant.name,

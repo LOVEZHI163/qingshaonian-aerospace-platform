@@ -159,7 +159,9 @@ export function prepareTeamRoster(db, input, context = {}) {
 
   const timestamp = preparedTimestamp(context);
   const participants = normalized.map((row, index) => {
-    const existingId = String(rows[index]?.id || "").trim();
+    const existingId = context.existingParticipantIdsByFingerprint instanceof Map
+      ? String(context.existingParticipantIdsByFingerprint.get(fingerprints[index]) || "").trim()
+      : String(rows[index]?.id || "").trim();
     const id = existingId || context.makeId?.("RP");
     if (!id) throw new Error("prepareTeamRoster requires context.makeId for new participants");
     return {

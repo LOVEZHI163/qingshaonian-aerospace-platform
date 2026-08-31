@@ -248,6 +248,36 @@ function submittedOrStoredFingerprint(db, registration, input) {
   return registrationIdentityFingerprints(db, registration)[0] || null;
 }
 
+function verifiedTeamParticipantIdsByFingerprint(db, registrationId) {
+  const identities = new Map((db.registrationParticipantIdentities || [])
+    .map((identity) => [identity.participantId, identity]));
+  const idsByFingerprint = new Map();
+  for (const participant of (db.registrationParticipants || []).filter((row) => row.registrationId === registrationId)) {
+    const identity = identities.get(participant.id);
+    try {
+      const fingerprint = fingerprintStudentId(decryptStudentId(identity));
+      if (!identity?.idFingerprint || identity.idFingerprint !== fingerprint || idsByFingerprint.has(fingerprint)) {
+        throw new Error("participant identity mismatch");
+      }
+      idsByFingerprint.set(fingerprint, participant.id);
+    } catch {
+      throw businessError(409, "团队队员身份证信息不一致", "REGISTRATION_IDENTITY_CONFLICT");
+    }
+  }
+  return idsByFingerprint;
+}
+
+function assertNoIssuedCertificateParticipantRemoval(db, registrationId, currentParticipants, nextParticipants) {
+  const nextIds = new Set(nextParticipants.map((participant) => participant.id));
+  const removedIds = new Set(currentParticipants
+    .map((participant) => participant.id)
+    .filter((participantId) => !nextIds.has(participantId)));
+  if (!(db.certificates || []).some((certificate) => (
+    certificate.registrationId === registrationId && removedIds.has(certificate.participantId)
+  ))) return;
+  throw businessError(409, "持有证书的队员不能从团队名单中删除", "TEAM_PARTICIPANT_CERTIFICATES_EXIST");
+}
+
 function assertIndividualTypeAvailability(db, registration, input, project, eventId, ignoreRegistrationId = null) {
   if ((project?.type || "individual") !== "individual") return;
   if (RELEASED_REGISTRATION_STATUSES.has(registration?.status)) return;
@@ -335,21 +365,16 @@ export function prepareAdminRegistrationUpdate(db, row, input, context = {}) {
     const existingParticipants = (db.registrationParticipants || [])
       .filter((participant) => participant.registrationId === row.id)
       .sort((left, right) => left.displayOrder - right.displayOrder || left.id.localeCompare(right.id));
-    const rosterInput = {
-      ...input,
-      participants: input.participants.map((participant, index) => ({
-        ...participant,
-        id: existingParticipants[index]?.id || undefined
-      }))
-    };
-    const teamRoster = prepareTeamRoster(db, rosterInput, {
+    const teamRoster = prepareTeamRoster(db, input, {
       eventId: row.eventId,
       project,
       makeId: context.makeId,
       now: context.now,
       ignoreRegistrationId: row.id,
-      registrationStatus: row.status
+      registrationStatus: row.status,
+      existingParticipantIdsByFingerprint: verifiedTeamParticipantIdsByFingerprint(db, row.id)
     });
+    assertNoIssuedCertificateParticipantRemoval(db, row.id, existingParticipants, teamRoster.participants);
     const athlete = { ...teamRoster.participants[0] };
     delete athlete.id;
     delete athlete.displayOrder;

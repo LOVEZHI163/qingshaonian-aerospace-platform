@@ -84,6 +84,32 @@ test("team certificate targets flatten approved participants into independent te
   assert.equal(sheet.getCell("B2").fill.fgColor.argb, "FFE7E6E6");
 });
 
+test("historical team certificate target keeps one registration-level legacy row when no participants exist", async () => {
+  const historicalTeam = {
+    ...approvedTeamRegistration,
+    id: "R-TEAM-LEGACY",
+    athlete: { name: "历史团队", school: "历史学校", grade: "五年级" },
+    participants: []
+  };
+
+  const targets = certificateTemplate.certificateTargets([historicalTeam]);
+
+  assert.equal(targets.length, 1);
+  assert.deepEqual({
+    id: targets[0].id,
+    participantId: targets[0].participantId,
+    participantName: targets[0].participantName
+  }, {
+    id: "R-TEAM-LEGACY",
+    participantId: null,
+    participantName: "历史团队"
+  });
+  const workbook = await buildCertificateTemplate(targets);
+  assert.deepEqual(workbook.getWorksheet("证书导入").getRow(2).values.slice(1, 4), [
+    "R-TEAM-LEGACY", "", "历史团队"
+  ]);
+});
+
 test("team certificate parser keys rows by registration and participant and rejects foreign participants", async () => {
   const targets = certificateTemplate.certificateTargets([approvedTeamRegistration]);
   const workbook = await buildCertificateTemplate(targets);
