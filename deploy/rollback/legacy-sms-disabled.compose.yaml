@@ -1,0 +1,12 @@
+# sms-rollback-v1: compose override for archived releases predating migration 018.
+# Literal empty values intentionally override both the archived .env and caller environment.
+services:
+  api:
+    environment:
+      ALIBABA_CLOUD_ACCESS_KEY_ID: ""
+      ALIBABA_CLOUD_ACCESS_KEY_SECRET: ""
+      ALIYUN_SMS_SIGN_NAME: ""
+      ALIYUN_SMS_TEMPLATE_CODE: ""
+      ALIYUN_SMS_REGISTRATION_TEMPLATE_CODE: ""
+      ALIYUN_SMS_LOGIN_TEMPLATE_CODE: ""
+      ALIYUN_SMS_RESET_TEMPLATE_CODE: ""

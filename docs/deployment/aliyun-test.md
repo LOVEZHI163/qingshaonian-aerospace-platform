@@ -270,6 +270,8 @@ CONFIRM_RESTORE=yes docker compose run --rm \
 
 应用回滚只切换到已经验证过的 Git commit。先把上一版本完整 SHA 保存到 `PREVIOUS_RELEASE`，再执行健康等待、版本一致性验证和 smoke；只有所有检查成功后才更新 `.release`：
 
+如果目标归档早于 `018-sms-challenge-purposes.sql`，不能直接执行下方的普通 `docker compose up`：旧 API 的通用短信变量与当前启用的专用短信环境不兼容。按 [短信认证上线与应急运维手册](../operations/sms-auth.md#回滚到短信-purpose-之前的归档版本) 预先安装并使用 `sms-rollback-v1` wrapper；它禁用所有 SMS 输入、保留 DirectMail，并在不删除 017–019 加法迁移的前提下验证密码和邮箱通道。普通回滚流程只适用于已兼容 purpose schema 的目标版本。
+
 ```bash
 : "${PREVIOUS_RELEASE:?请显式提供已经验证过的上一版本完整 release SHA}"
 case "$PREVIOUS_RELEASE" in

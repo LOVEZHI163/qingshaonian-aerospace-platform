@@ -190,9 +190,44 @@ docker compose ps
 
 ## 代码与整版回滚
 
-代码异常时先保留日志和失败摘要，切回已经验证的上一 release，复用现有 `.env` 和命名卷，执行 `docker compose up -d`/健康等待，再用上一 release 的 40 位 SHA 和三个明确期望布尔运行两类验证。只有确认数据库迁移不兼容且接受发布后写入损失时才恢复已验证数据库备份。
+代码异常时先保留日志和失败摘要，切回已经验证的上一 release，并保留 `.env`、PostgreSQL、uploads 和 Caddy 命名卷。只有确认数据库迁移不兼容且接受发布后写入损失时才恢复已验证数据库备份。
 
-短信登录本身不修改密码，注册继续使用现有账号结构，因此供应商或模板异常通常优先使用单用途配置关闭，不需要数据库回滚。
+### 回滚到短信 purpose 之前的归档版本
+
+`017-account-email-recovery.sql`、`018-sms-challenge-purposes.sql` 和 `019-team-registration.sql` 都是加法迁移，代码回滚时必须保留。尤其是 `018` 把短信 challenge 的主键改为 `(purpose, phone)`；purpose 之前的归档 API 仍使用旧通用 `ALIYUN_SMS_TEMPLATE_CODE` 和按 `phone` 的短信 SQL。若直接复用已经启用的当前短信环境，旧 API 会因“AccessKey/签名存在而旧模板为空”的不完整配置拒绝启动；即使强行提供旧模板，旧短信请求也不兼容 `018`。不要为此回退或删除任何迁移。
+
+在部署本 release 时，把无秘密的、版本固定为 `sms-rollback-v1` 的回滚工具放到源码树之外；归档旧源码或切换旧镜像后仍可使用它：
+
+```sh
+cd /opt/aerogp
+install -d -m 700 /opt/aerogp-rollback-tools/sms-rollback-v1
+install -m 700 deploy/rollback/run-legacy-sms-disabled.sh \
+  /opt/aerogp-rollback-tools/sms-rollback-v1/run-legacy-sms-disabled.sh
+install -m 700 deploy/rollback/verify-legacy-sms-disabled.sh \
+  /opt/aerogp-rollback-tools/sms-rollback-v1/verify-legacy-sms-disabled.sh
+install -m 600 deploy/rollback/legacy-sms-disabled.compose.yaml \
+  /opt/aerogp-rollback-tools/sms-rollback-v1/legacy-sms-disabled.compose.yaml
+```
+
+恢复已经验证的 purpose 前归档源码到 `/opt/aerogp` 时，不覆盖该目录现有 `.env`。随后以目标 SHA 启动；wrapper 会在 Compose 读取 `.env` 之前和 Compose API 环境内两次将 AccessKey、签名、旧通用模板以及三个新模板置空。它不会打印环境或调用会展开环境的 `docker compose config`，并保留 DirectMail 输入，因此密码登录和邮箱重置继续可用：
+
+```sh
+: "${PREVIOUS_RELEASE:?provide the verified 40-character previous SHA}"
+RELEASE_SHA="$PREVIOUS_RELEASE" \
+  /opt/aerogp-rollback-tools/sms-rollback-v1/run-legacy-sms-disabled.sh \
+  /opt/aerogp -d --build --wait --wait-timeout 240
+```
+
+使用 root-owned、`0600` 的一次性密码文件运行回滚 smoke；文件路径可以进入命令，密码内容绝不能进入命令、日志或终端。该 smoke 只向保留的 PostgreSQL 查询 017–019 是否仍记录、确认旧 API 的短信 feature 为 `false` 且邮箱 feature 为 `true`、登录一个受控测试账号，并对保留的邮箱重置路由使用保留域名的未知地址（不触发实际邮件投递）：
+
+```sh
+ROLLBACK_SMOKE_PHONE='<controlled test phone>' \
+ROLLBACK_SMOKE_PASSWORD_FILE='/root/aerogp-rollback-smoke-password' \
+BASE_URL='http://127.0.0.1' \
+  /opt/aerogp-rollback-tools/sms-rollback-v1/verify-legacy-sms-disabled.sh /opt/aerogp
+```
+
+只有 wrapper 启动、health check 和这项 smoke 都成功后，才能更新 `.release` 为 `PREVIOUS_RELEASE`。短信登录本身不修改密码，注册继续使用现有账号结构，因此供应商或模板异常通常优先使用单用途配置关闭，不需要数据库回滚。
 
 ## 严禁输出的内容
 
