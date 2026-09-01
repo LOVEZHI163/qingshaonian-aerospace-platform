@@ -600,9 +600,24 @@ assert_status "submission-event-copy" 201 \
   "$base_url/api/admin/events/$smoke_source_event_id/copy"
 assert_json_response "submission-event-copy"
 smoke_event_id="$(json_path 'let input="";process.stdin.on("data",chunk=>input+=chunk).on("end",()=>{const data=JSON.parse(input);if(data.event&&data.event.id)process.stdout.write(encodeURIComponent(data.event.id));});')"
-smoke_project_id="$(json_path 'let input="";process.stdin.on("data",chunk=>input+=chunk).on("end",()=>{const data=JSON.parse(input);const project=(data.projects||[])[0];if(project&&project.id)process.stdout.write(encodeURIComponent(project.id));});')"
-if test -z "$smoke_event_id" || test -z "$smoke_project_id"; then
-  echo "Submission smoke fixture creation returned no event or project" >&2
+if test -z "$smoke_event_id"; then
+  echo "Submission smoke fixture creation returned no event" >&2
+  exit 1
+fi
+printf '{"name":"个人冒烟-%s","type":"individual","category":"发布冒烟","enabled":true,"instructorRequired":false,"displayOrder":9000,"allowedGroups":["小学低段"],"submissionMode":"none","teamMinMembers":1,"teamMaxMembers":1}' "$submission_token" | \
+assert_status "submission-individual-project-create" 201 \
+  -b "$cookie_jar" -H 'Content-Type: application/json' --data-binary @- \
+  "$base_url/api/admin/events/$smoke_event_id/projects"
+assert_json_response "submission-individual-project-create"
+smoke_project_id="$(json_path 'let input="";process.stdin.on("data",chunk=>input+=chunk).on("end",()=>{const data=JSON.parse(input);if(data.row&&data.row.id)process.stdout.write(encodeURIComponent(data.row.id));});')"
+printf '{"name":"团队冒烟-%s","type":"team","category":"发布冒烟","enabled":true,"instructorRequired":true,"displayOrder":9001,"allowedGroups":["小学低段"],"submissionMode":"none","teamMinMembers":1,"teamMaxMembers":8}' "$submission_token" | \
+assert_status "submission-team-project-create" 201 \
+  -b "$cookie_jar" -H 'Content-Type: application/json' --data-binary @- \
+  "$base_url/api/admin/events/$smoke_event_id/projects"
+assert_json_response "submission-team-project-create"
+smoke_team_project_id="$(json_path 'let input="";process.stdin.on("data",chunk=>input+=chunk).on("end",()=>{const data=JSON.parse(input);if(data.row&&data.row.id)process.stdout.write(encodeURIComponent(data.row.id));});')"
+if test -z "$smoke_project_id" || test -z "$smoke_team_project_id"; then
+  echo "Submission smoke fixture creation returned no explicit individual/team project pair" >&2
   exit 1
 fi
 refresh_submission_cleanup_events
@@ -713,6 +728,17 @@ assert_json_response "organization-registration-create"
 organization_registration_id="$(json_path 'let input="";process.stdin.on("data",chunk=>input+=chunk).on("end",()=>{const data=JSON.parse(input);if(data.row&&data.row.id)process.stdout.write(encodeURIComponent(data.row.id));});')"
 if test -z "$organization_registration_id"; then
   echo "Organization smoke registration returned no registration id" >&2
+  exit 1
+fi
+
+printf '{"registrationSource":"organization_proxy","projectId":"%s","instructor":"团队冒烟指导老师","participants":[{"name":"组织冒烟选手","school":"%s","grade":"三年级","phone":"%s","studentIdNumber":"11010519491231002X"}]}' \
+  "$smoke_team_project_id" "$smoke_organization_name" "$smoke_organization_phone" | \
+assert_status "organization-team-registration-create" 201 \
+  -b "$smoke_organization_cookie_jar" -H 'Content-Type: application/json' --data-binary @- \
+  "$base_url/api/organization/events/$smoke_event_id/registrations"
+assert_json_response "organization-team-registration-create"
+if ! docker compose exec -T api node -e 'let input="";process.stdin.on("data",chunk=>input+=chunk).on("end",()=>{const data=JSON.parse(input);if(data.row?.projectType!=="team"||data.row?.instructor!=="团队冒烟指导老师"||!Array.isArray(data.row?.participants)||data.row.participants.length!==1)process.exit(2);});' < "$response_file" >/dev/null; then
+  echo "organization-team-registration-create did not return one complete team" >&2
   exit 1
 fi
 

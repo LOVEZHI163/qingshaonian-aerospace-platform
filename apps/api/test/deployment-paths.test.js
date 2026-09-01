@@ -1059,3 +1059,17 @@ test("authenticated smoke establishes approved organization leaders and supplies
   assert.match(smoke, /add_student_id "110105194912310038"/);
   assert.match(smoke, /add_student_id "110105201401011231"/);
 });
+
+test("authenticated smoke selects both project types and submits one complete team at a time", async () => {
+  const smoke = await fs.readFile(path.join(root, "deploy/remote-smoke-test.sh"), "utf8");
+
+  assert.match(smoke, /assert_status "submission-individual-project-create" 201/);
+  assert.match(smoke, /assert_status "submission-team-project-create" 201/);
+  assert.match(smoke, /"allowedGroups":\["小学低段"\]/);
+  assert.match(smoke, /"teamMinMembers":1,"teamMaxMembers":8/);
+  assert.match(smoke, /assert_status "organization-team-registration-create" 201/);
+  assert.match(smoke, /"participants":\[\{/);
+  assert.match(smoke, /"instructor":"团队冒烟指导老师"/);
+  assert.match(smoke, /data\.row\?\.projectType!=="team"/);
+  assert.match(smoke, /data\.row\.participants\.length!==1/);
+});
