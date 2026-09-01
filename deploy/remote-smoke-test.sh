@@ -863,7 +863,7 @@ assert_status "submission-user-force-password-change" 200 \
   "$base_url/api/auth/change-password"
 assert_json_response "submission-user-force-password-change"
 
-printf '{"projectId":"%s","athlete":{"name":"未入组织冒烟选手","school":"未入组织冒烟学校","grade":"五年级","phone":"%s"}}' \
+printf '{"projectId":"%s","athlete":{"name":"未入组织冒烟选手","school":"未入组织冒烟学校","grade":"三年级","phone":"%s"}}' \
   "$smoke_project_id" "$smoke_user_phone" | add_student_id "110105201401011231" | \
 assert_status "submission-registration-unaffiliated" 403 \
   -b "$smoke_cookie_jar" -H 'Content-Type: application/json' --data-binary @- \
@@ -911,7 +911,7 @@ assert_status "submission-video-upload" 201 \
   "$base_url/api/upload-sessions/$submission_session_id/creation-video"
 assert_json_response "submission-video-upload"
 
-printf '{"projectId":"%s","athlete":{"name":"上传冒烟选手","school":"上传冒烟学校","grade":"五年级","phone":"%s"},"uploadSessionId":"%s"}' \
+printf '{"projectId":"%s","athlete":{"name":"上传冒烟选手","school":"上传冒烟学校","grade":"三年级","phone":"%s"},"uploadSessionId":"%s"}' \
   "$smoke_project_id" "$smoke_phone" "$submission_session_id" | add_student_id "110105201401011231" | \
 assert_status "submission-registration-bind" 201 \
   -b "$smoke_cookie_jar" -H 'Content-Type: application/json' --data-binary @- \

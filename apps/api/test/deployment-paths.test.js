@@ -1067,6 +1067,8 @@ test("authenticated smoke selects both project types and submits one complete te
   assert.match(smoke, /assert_status "submission-team-project-create" 201/);
   assert.match(smoke, /"allowedGroups":\["小学低段"\]/);
   assert.match(smoke, /"teamMinMembers":1,"teamMaxMembers":8/);
+  assert.match(smoke, /"name":"未入组织冒烟选手"[^\r\n]+"grade":"三年级"/);
+  assert.match(smoke, /"name":"上传冒烟选手"[^\r\n]+"grade":"三年级"/);
   assert.match(smoke, /assert_status "organization-team-registration-create" 201/);
   assert.match(smoke, /"participants":\[\{/);
   assert.match(smoke, /"instructor":"团队冒烟指导老师"/);
