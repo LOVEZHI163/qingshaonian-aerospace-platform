@@ -181,6 +181,20 @@ function checkViolation(constraint) {
   });
 }
 
+function uniqueViolation(constraint) {
+  return Object.assign(new Error(`unique constraint ${constraint} failed`), {
+    code: "23505",
+    constraint
+  });
+}
+
+const FORMER_HARDCODED_PROBE_IDS = [
+  "migration-check-participant-order-zero",
+  "migration-check-participant-order-nine",
+  "migration-check-participant-order-one",
+  "migration-check-participant-order-eight"
+];
+
 function migrationRestartState(overrides = {}) {
   const migrationCount = overrides.migrationCount ?? 1;
   const tableNames = overrides.tableNames ?? [
@@ -192,6 +206,7 @@ function migrationRestartState(overrides = {}) {
   const constraintCatalog = overrides.constraintCatalog ?? structuredClone(TEAM_CONSTRAINT_CATALOG);
   const indexCatalog = overrides.indexCatalog ?? structuredClone(TEAM_INDEX_CATALOG);
   const probeBehavior = overrides.probeBehavior ?? {};
+  const initialParticipantIds = overrides.initialParticipantIds ?? [];
   const afterRestart = overrides.afterRestart ?? {
     projects: [{ id: "P-individual", teamMinMembers: 1, teamMaxMembers: 8 }],
     registrations: [structuredClone(LEGACY_PERSONAL_REGISTRATION)],
@@ -199,9 +214,16 @@ function migrationRestartState(overrides = {}) {
   };
   const probeState = {
     projectBounds: { min: 1, max: 8 },
-    participantIds: new Set(),
+    participantIds: new Set(initialParticipantIds),
+    observedParticipantProbeIds: new Set(),
+    cleanupParticipantProbeIds: [],
     transactions: 0,
-    releases: 0
+    outerRollbacks: 0,
+    savepointRollbacks: 0,
+    transactionActive: false,
+    releases: 0,
+    releasedInactive: false,
+    releaseAttemptsWithActiveTransaction: 0
   };
   let transaction = null;
   let savepoint = null;
@@ -219,6 +241,7 @@ function migrationRestartState(overrides = {}) {
           participantIds: new Set(probeState.participantIds)
         };
         probeState.transactions += 1;
+        probeState.transactionActive = true;
         return { rows: [], rowCount: null };
       }
       if (normalizedSql === "SAVEPOINT migration_check_probe") {
@@ -236,6 +259,7 @@ function migrationRestartState(overrides = {}) {
         transaction.projectBounds = { ...savepoint.projectBounds };
         transaction.participantIds = new Set(savepoint.participantIds);
         transactionAborted = false;
+        probeState.savepointRollbacks += 1;
         return { rows: [], rowCount: null };
       }
       if (normalizedSql === "RELEASE SAVEPOINT migration_check_probe") {
@@ -245,9 +269,12 @@ function migrationRestartState(overrides = {}) {
         return { rows: [], rowCount: null };
       }
       if (normalizedSql === "ROLLBACK") {
+        assert.ok(transaction);
+        probeState.outerRollbacks += 1;
         transaction = null;
         savepoint = null;
         transactionAborted = false;
+        probeState.transactionActive = false;
         return { rows: [], rowCount: null };
       }
       if (normalizedSql === "COMMIT") {
@@ -256,6 +283,7 @@ function migrationRestartState(overrides = {}) {
         probeState.participantIds = new Set(transaction.participantIds);
         transaction = null;
         savepoint = null;
+        probeState.transactionActive = false;
         return { rows: [], rowCount: null };
       }
       if (transactionAborted) {
@@ -287,6 +315,7 @@ function migrationRestartState(overrides = {}) {
         assert.ok(transaction);
         const [id, registrationId, displayOrder] = params;
         assert.equal(registrationId, LEGACY_PERSONAL_REGISTRATION.id);
+        probeState.observedParticipantProbeIds.add(id);
         const valid = displayOrder >= 1 && displayOrder <= 8;
         const allowedInvalid = (probeBehavior.allowInvalidDisplayOrders ?? []).includes(displayOrder);
         const rejectedValid = (probeBehavior.rejectValidDisplayOrders ?? []).includes(displayOrder);
@@ -294,18 +323,28 @@ function migrationRestartState(overrides = {}) {
           transactionAborted = true;
           throw checkViolation("registration_participants_display_order_check");
         }
+        if (transaction.participantIds.has(id)) {
+          transactionAborted = true;
+          throw uniqueViolation("registration_participants_pkey");
+        }
         transaction.participantIds.add(id);
         return { rows: [{ id }], rowCount: 1 };
       }
       if (normalizedSql.includes("COUNT(*)::integer AS count")
         && normalizedSql.includes("FROM registration_participants")) {
+        probeState.cleanupParticipantProbeIds = [...params[0]];
         const participantIds = transaction?.participantIds ?? probeState.participantIds;
         return { rows: [{ count: params[0].filter((id) => participantIds.has(id)).length }] };
       }
       throw new Error(`unexpected restart-smoke client query: ${sql}`);
     },
     release() {
+      if (transaction) {
+        probeState.releaseAttemptsWithActiveTransaction += 1;
+        throw new Error("fake PostgreSQL client released with an active transaction");
+      }
       probeState.releases += 1;
+      probeState.releasedInactive = true;
     }
   };
   const pool = {
@@ -364,6 +403,18 @@ function migrationRestartState(overrides = {}) {
     legacyIdentityBeforeRestart: structuredClone(LEGACY_PERSONAL_IDENTITY),
     probeState
   };
+}
+
+function assertCompletedProbeLifecycle(probeState, { savepointRollbacks } = {}) {
+  assert.equal(probeState.transactions, 1);
+  assert.equal(probeState.outerRollbacks, 1);
+  if (savepointRollbacks !== undefined) {
+    assert.equal(probeState.savepointRollbacks, savepointRollbacks);
+  }
+  assert.equal(probeState.transactionActive, false);
+  assert.equal(probeState.releaseAttemptsWithActiveTransaction, 0);
+  assert.equal(probeState.releases, 1);
+  assert.equal(probeState.releasedInactive, true);
 }
 
 function runNode(args, options = {}) {
@@ -681,8 +732,7 @@ test("migration restart smoke probes project and participant CHECK behavior with
     await assert.doesNotReject(
       migrationRestartSmoke.assertTeamMigrationRestartState(state)
     );
-    assert.equal(state.probeState.transactions, 1);
-    assert.equal(state.probeState.releases, 1);
+    assertCompletedProbeLifecycle(state.probeState, { savepointRollbacks: 9 });
     assert.deepEqual(state.probeState.projectBounds, { min: 1, max: 8 });
     assert.equal(state.probeState.participantIds.size, 0);
   });
@@ -696,6 +746,7 @@ test("migration restart smoke probes project and participant CHECK behavior with
         migrationRestartSmoke.assertTeamMigrationRestartState(state),
         /migration 019 project bounds check behavior is malformed/i
       );
+      assertCompletedProbeLifecycle(state.probeState);
       assert.deepEqual(state.probeState.projectBounds, { min: 1, max: 8 });
       assert.equal(state.probeState.participantIds.size, 0);
     });
@@ -710,6 +761,7 @@ test("migration restart smoke probes project and participant CHECK behavior with
         migrationRestartSmoke.assertTeamMigrationRestartState(state),
         /migration 019 project bounds check behavior is malformed/i
       );
+      assertCompletedProbeLifecycle(state.probeState);
       assert.deepEqual(state.probeState.projectBounds, { min: 1, max: 8 });
       assert.equal(state.probeState.participantIds.size, 0);
     });
@@ -724,6 +776,7 @@ test("migration restart smoke probes project and participant CHECK behavior with
         migrationRestartSmoke.assertTeamMigrationRestartState(state),
         /migration 019 participant display_order check behavior is malformed/i
       );
+      assertCompletedProbeLifecycle(state.probeState);
       assert.deepEqual(state.probeState.projectBounds, { min: 1, max: 8 });
       assert.equal(state.probeState.participantIds.size, 0);
     });
@@ -738,6 +791,7 @@ test("migration restart smoke probes project and participant CHECK behavior with
         migrationRestartSmoke.assertTeamMigrationRestartState(state),
         /migration 019 participant display_order check behavior is malformed/i
       );
+      assertCompletedProbeLifecycle(state.probeState);
       assert.deepEqual(state.probeState.projectBounds, { min: 1, max: 8 });
       assert.equal(state.probeState.participantIds.size, 0);
     });
@@ -754,6 +808,7 @@ test("migration restart smoke probes project and participant CHECK behavior with
       migrationRestartSmoke.assertTeamMigrationRestartState(state),
       /migration 019 project bounds check behavior is malformed/i
     );
+    assertCompletedProbeLifecycle(state.probeState);
   });
 
   await t.test("OR TRUE cannot weaken participant display order", async () => {
@@ -769,6 +824,48 @@ test("migration restart smoke probes project and participant CHECK behavior with
       migrationRestartSmoke.assertTeamMigrationRestartState(state),
       /migration 019 participant display_order check behavior is malformed/i
     );
+    assertCompletedProbeLifecycle(state.probeState);
+  });
+});
+
+test("migration restart smoke generates an isolated participant probe namespace per run", async (t) => {
+  const uuidV4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+  await t.test("two runs use disjoint UUID probe IDs and clean up only those IDs", async () => {
+    const first = migrationRestartState();
+    const second = migrationRestartState();
+    await assert.doesNotReject(migrationRestartSmoke.assertTeamMigrationRestartState(first));
+    await assert.doesNotReject(migrationRestartSmoke.assertTeamMigrationRestartState(second));
+
+    const firstIds = [...first.probeState.observedParticipantProbeIds];
+    const secondIds = [...second.probeState.observedParticipantProbeIds];
+    assert.equal(firstIds.length, 4);
+    assert.equal(secondIds.length, 4);
+    assert.ok(firstIds.every((id) => uuidV4.test(id)));
+    assert.ok(secondIds.every((id) => uuidV4.test(id)));
+    assert.equal(firstIds.some((id) => second.probeState.observedParticipantProbeIds.has(id)), false);
+    assert.deepEqual(new Set(first.probeState.cleanupParticipantProbeIds), new Set(firstIds));
+    assert.deepEqual(new Set(second.probeState.cleanupParticipantProbeIds), new Set(secondIds));
+    assertCompletedProbeLifecycle(first.probeState, { savepointRollbacks: 9 });
+    assertCompletedProbeLifecycle(second.probeState, { savepointRollbacks: 9 });
+  });
+
+  await t.test("former hardcoded probe IDs may pre-exist without collision or cleanup misclassification", async () => {
+    const state = migrationRestartState({
+      initialParticipantIds: FORMER_HARDCODED_PROBE_IDS
+    });
+    await assert.doesNotReject(migrationRestartSmoke.assertTeamMigrationRestartState(state));
+
+    const generatedIds = [...state.probeState.observedParticipantProbeIds];
+    assert.equal(generatedIds.length, 4);
+    assert.ok(generatedIds.every((id) => uuidV4.test(id)));
+    assert.equal(generatedIds.some((id) => FORMER_HARDCODED_PROBE_IDS.includes(id)), false);
+    assert.deepEqual(
+      new Set(state.probeState.cleanupParticipantProbeIds),
+      new Set(generatedIds)
+    );
+    assert.deepEqual(state.probeState.participantIds, new Set(FORMER_HARDCODED_PROBE_IDS));
+    assertCompletedProbeLifecycle(state.probeState, { savepointRollbacks: 9 });
   });
 });
 

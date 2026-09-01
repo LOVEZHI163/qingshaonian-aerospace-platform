@@ -1,4 +1,5 @@
 import pg from "pg";
+import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { isDeepStrictEqual } from "node:util";
@@ -163,12 +164,7 @@ async function assertAcceptedByCheck(client, sql, params, message) {
 }
 
 async function assertTeamCheckBehavior(pool, { projectId, registrationId }) {
-  const participantProbeIds = [
-    "migration-check-participant-order-zero",
-    "migration-check-participant-order-nine",
-    "migration-check-participant-order-one",
-    "migration-check-participant-order-eight"
-  ];
+  const participantProbeIds = Array.from({ length: 4 }, () => randomUUID());
   const projectSql = `UPDATE projects
      SET team_min_members = $1, team_max_members = $2
    WHERE id = $3
