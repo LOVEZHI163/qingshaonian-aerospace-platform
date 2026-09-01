@@ -768,6 +768,45 @@ describe("App session integration", () => {
     expect(roster.text()).toContain("110105201401021234");
   });
 
+  it("confirms and cancels one organization-owned team from registration records", async () => {
+    const team = { ...teamRegistration(), status: "approved" };
+    let cancelled = false;
+    const statusPath = "/api/organization/events/E1/registrations/R-TEAM/status";
+    apiMock.mockImplementation(async (path, options) => {
+      if (path.startsWith("/api/organization/registrations?")) {
+        return {
+          rows: [{ ...team, status: cancelled ? "cancelled" : "approved" }],
+          total: 1, page: 1, pageSize: 25, filterOptions: { events: [], projects: [] }
+        };
+      }
+      if (path === statusPath && options?.method === "PATCH") {
+        cancelled = true;
+        return { row: { ...team, status: "cancelled" } };
+      }
+      return { rows: [] };
+    });
+
+    const wrapper = mount(OrganizationRegistrationRecordsPage);
+    await flushPromises();
+    await wrapper.get('[data-action="cancel-organization-team-R-TEAM"]').trigger("click");
+
+    const dialog = wrapper.get('[data-testid="organization-team-cancellation-dialog"]');
+    expect(dialog.text()).toContain("O1-P-TEAM-01");
+    expect(apiMock.mock.calls.some(([path]) => path === statusPath)).toBe(false);
+    await dialog.get('[data-action="dismiss-organization-team-cancellation"]').trigger("click");
+    expect(wrapper.find('[data-testid="organization-team-cancellation-dialog"]').exists()).toBe(false);
+
+    await wrapper.get('[data-action="cancel-organization-team-R-TEAM"]').trigger("click");
+    await wrapper.get('[data-action="confirm-organization-team-cancellation"]').trigger("click");
+    await flushPromises();
+
+    const request = apiMock.mock.calls.find(([path, options]) => path === statusPath && options?.method === "PATCH");
+    expect(JSON.parse(request[1].body)).toEqual({ status: "cancelled" });
+    expect(wrapper.find('[data-testid="organization-team-cancellation-dialog"]').exists()).toBe(false);
+    expect(wrapper.find('[data-action="cancel-organization-team-R-TEAM"]').exists()).toBe(false);
+    expect(wrapper.text()).toContain("已取消");
+  });
+
   it("shows one expandable complete team roster in administrator registration management", async () => {
     const team = teamRegistration();
     apiMock.mockImplementation(async (path) => {

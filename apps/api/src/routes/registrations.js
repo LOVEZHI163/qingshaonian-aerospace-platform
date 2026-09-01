@@ -8,6 +8,7 @@ import { sendPrivateJson, setPrivateNoStore } from "../http/private-response.js"
 
 import {
   attachAuthorizedIdentity,
+  cancelOrganizationTeamRegistration,
   createOrMergeRegistration,
   findSchools,
   filterAdminRegistrations,
@@ -233,7 +234,7 @@ export function createRegistrationsRouter({
   }
 
   function replaceTeamRoster(db, row, prepared) {
-    if (!prepared.teamRoster) return;
+    if (!prepared.teamRoster || !prepared.rosterChanged) return;
     const previousIds = new Set((db.registrationParticipants || [])
       .filter((participant) => participant.registrationId === row.id)
       .map((participant) => participant.id));
@@ -270,11 +271,53 @@ export function createRegistrationsRouter({
     if (req.body?.organizationId && req.body.organizationId !== organization.id) {
       throw Object.assign(new Error("Organization id does not match owner"), { status: 403 });
     }
-    const prepared = prepareAdminRegistrationUpdate(db, row, { ...eventScopedInput(req), organizationId: organization.id }, { makeId, now });
+    const prepared = prepareAdminRegistrationUpdate(
+      db,
+      row,
+      { ...eventScopedInput(req), organizationId: organization.id },
+      { makeId, now, reReviewOnChange: true }
+    );
     const timestamp = now();
     applyRegistrationUpdate(row, prepared, timestamp);
     replaceTeamRoster(db, row, prepared);
-    updateExistingRegistrationIdentity(db, row.id, req.body, timestamp);
+    if (prepared.rosterChanged && !prepared.teamRoster) {
+      updateExistingRegistrationIdentity(db, row.id, req.body, timestamp);
+    }
+    if (prepared.reviewRelevantChanged) {
+      row.status = "pending";
+      row.rejectReason = "";
+      recordAudit(db, {
+        actor: req.user,
+        action: "registration.organization_update",
+        targetType: "registration",
+        targetId: row.id,
+        summary: "Organization updated review-relevant registration data; review returned to pending",
+        createdAt: timestamp
+      });
+    }
+    await store.writeDb(db);
+    sendPrivateJson(res, { row: registrationResponse(db, row, req.user) });
+  }));
+
+  router.patch("/organization/events/:eventId/registrations/:registrationId/status", ...user, asyncRoute(async (req, res) => {
+    const db = await store.readDb();
+    const { organization } = requireOrganizationEventParticipation(db, req.user, req.params.eventId, { writable: true });
+    const row = db.registrations.find((item) => (
+      item.id === req.params.registrationId
+      && item.eventId === req.params.eventId
+      && item.organizationId === organization.id
+    ));
+    if (!row) return res.status(404).json({ error: "Registration not found" });
+    cancelOrganizationTeamRegistration(row, req.body);
+    row.updatedAt = now();
+    recordAudit(db, {
+      actor: req.user,
+      action: "registration.organization_cancel",
+      targetType: "registration",
+      targetId: row.id,
+      summary: "Organization cancelled one team registration",
+      createdAt: row.updatedAt
+    });
     await store.writeDb(db);
     sendPrivateJson(res, { row: registrationResponse(db, row, req.user) });
   }));
@@ -326,7 +369,9 @@ export function createRegistrationsRouter({
     const timestamp = now();
     applyRegistrationUpdate(row, prepared, timestamp);
     replaceTeamRoster(db, row, prepared);
-    updateExistingRegistrationIdentity(db, row.id, req.body, timestamp);
+    if (prepared.rosterChanged && !prepared.teamRoster) {
+      updateExistingRegistrationIdentity(db, row.id, req.body, timestamp);
+    }
     await store.writeDb(db);
     sendPrivateJson(res, { row: registrationResponse(db, row, req.user) });
   }));

@@ -267,20 +267,43 @@ function verifiedTeamParticipantIdsByFingerprint(db, registrationId) {
   return idsByFingerprint;
 }
 
-function assertNoIssuedCertificateParticipantRemoval(db, registrationId, currentParticipants, nextParticipants) {
-  const nextIds = new Set(nextParticipants.map((participant) => participant.id));
-  const removedIds = new Set(currentParticipants
-    .map((participant) => participant.id)
-    .filter((participantId) => !nextIds.has(participantId)));
-  if (!(db.certificates || []).some((certificate) => (
-    certificate.registrationId === registrationId && removedIds.has(certificate.participantId)
-  ))) return;
-  throw businessError(409, "持有证书的队员不能从团队名单中删除", "TEAM_PARTICIPANT_CERTIFICATES_EXIST");
+function teamRosterChanged(db, registrationId, currentParticipants, nextRoster) {
+  if (currentParticipants.length !== nextRoster.participants.length) return true;
+  const currentIdentities = new Map((db.registrationParticipantIdentities || [])
+    .map((identity) => [identity.participantId, identity]));
+  const nextIdentities = new Map(nextRoster.identities
+    .map((identity) => [identity.participantId, identity]));
+  return currentParticipants.some((current, index) => {
+    const next = nextRoster.participants[index];
+    if (!next || current.id !== next.id) return true;
+    if (["displayOrder", "name", "school", "grade", "phone"].some((field) => current[field] !== next[field])) return true;
+    return currentIdentities.get(current.id)?.idFingerprint !== nextIdentities.get(next.id)?.idFingerprint;
+  });
 }
 
-function assertIndividualTypeAvailability(db, registration, input, project, eventId, ignoreRegistrationId = null) {
+function registrationHasResult(row) {
+  return Boolean(
+    String(row.resultRecordedAt || "").trim()
+    || String(row.awardName || "").trim()
+    || String(row.rank || "").trim()
+    || String(row.score ?? "").trim()
+  );
+}
+
+function assertRegistrationRosterMutable(db, row, changed) {
+  if (!changed) return;
+  const hasCertificate = (db.certificates || []).some((certificate) => certificate.registrationId === row.id);
+  if (!registrationHasResult(row) && !hasCertificate) return;
+  throw businessError(
+    409,
+    "报名已有成绩或证书，不能修改参赛名单或身份信息",
+    "REGISTRATION_ROSTER_LOCKED"
+  );
+}
+
+function assertIndividualTypeAvailability(db, registration, input, project, eventId, ignoreRegistrationId = null, registrationStatus = registration?.status) {
   if ((project?.type || "individual") !== "individual") return;
-  if (RELEASED_REGISTRATION_STATUSES.has(registration?.status)) return;
+  if (RELEASED_REGISTRATION_STATUSES.has(registrationStatus)) return;
   const fingerprint = submittedOrStoredFingerprint(db, registration, input);
   if (!fingerprint) return;
   assertAthleteTypeAvailability(db, {
@@ -343,6 +366,10 @@ export function registrationDuplicateCheck(db, input, actor, clock = () => new D
 }
 
 export function prepareAdminRegistrationUpdate(db, row, input, context = {}) {
+  const organizationEdit = context.reReviewOnChange === true;
+  if (organizationEdit && row.status === "cancelled") {
+    throw businessError(409, "已取消报名不能再次编辑", "REGISTRATION_CANCELLED");
+  }
   if (Object.hasOwn(input, "eventId") && input.eventId !== row.eventId) {
     throw businessError(422, "不能把历史报名移动到其他赛事");
   }
@@ -371,10 +398,23 @@ export function prepareAdminRegistrationUpdate(db, row, input, context = {}) {
       makeId: context.makeId,
       now: context.now,
       ignoreRegistrationId: row.id,
-      registrationStatus: row.status,
+      skipAvailability: true,
       existingParticipantIdsByFingerprint: verifiedTeamParticipantIdsByFingerprint(db, row.id)
     });
-    assertNoIssuedCertificateParticipantRemoval(db, row.id, existingParticipants, teamRoster.participants);
+    const rosterChanged = teamRosterChanged(db, row.id, existingParticipants, teamRoster);
+    assertRegistrationRosterMutable(db, row, rosterChanged);
+    const instructor = String(input.instructor ?? row.instructor ?? "").trim();
+    const instructorChanged = instructor !== String(row.instructor || "").trim();
+    const reviewRelevantChanged = rosterChanged || instructorChanged;
+    const nextStatus = organizationEdit && reviewRelevantChanged ? "pending" : row.status;
+    if (!RELEASED_REGISTRATION_STATUSES.has(nextStatus)) {
+      assertAthleteTypeAvailability(db, {
+        eventId: row.eventId,
+        projectType: "team",
+        fingerprints: teamRoster.fingerprints,
+        ignoreRegistrationId: row.id
+      });
+    }
     const athlete = { ...teamRoster.participants[0] };
     delete athlete.id;
     delete athlete.displayOrder;
@@ -386,9 +426,11 @@ export function prepareAdminRegistrationUpdate(db, row, input, context = {}) {
       project,
       organizationId,
       organization,
-      instructor: String(input.instructor ?? row.instructor ?? "").trim(),
+      instructor,
       validation: { athleteKey: athleteKey(athlete), projectType: "team" },
-      teamRoster
+      teamRoster,
+      rosterChanged,
+      reviewRelevantChanged
     };
   }
   const athlete = safeRegistrationAthlete(input, row.athlete);
@@ -408,11 +450,37 @@ export function prepareAdminRegistrationUpdate(db, row, input, context = {}) {
   if (row.source === "member_registration") {
     requireMemberIdentity(db, organizationId, row.personalUserId, athlete);
   }
-  const next = { ...row, athlete, group, projectId, organizationId, instructor: input.instructor ?? row.instructor };
-  assertIndividualTypeAvailability(db, row, input, project, row.eventId, row.id);
+  const instructor = String(input.instructor ?? row.instructor ?? "").trim();
+  const currentFingerprint = registrationIdentityFingerprints(db, row)[0] || null;
+  const nextFingerprint = submittedOrStoredFingerprint(db, row, input);
+  const rosterChanged = ATHLETE_FIELDS.some((field) => athlete[field] !== row.athlete?.[field])
+    || nextFingerprint !== currentFingerprint;
+  assertRegistrationRosterMutable(db, row, rosterChanged);
+  const reviewRelevantChanged = rosterChanged || instructor !== String(row.instructor || "").trim();
+  const nextStatus = organizationEdit && reviewRelevantChanged ? "pending" : row.status;
+  const next = { ...row, athlete, group, projectId, organizationId, instructor };
+  assertIndividualTypeAvailability(db, row, input, project, row.eventId, row.id, nextStatus);
   const validation = validateRegistration(next, db.registrations, project, row.eventId, row.id);
   if (!validation.ok) throw Object.assign(businessError(422, validation.errors[0]), { validation });
-  return { athlete, group, project, organizationId, organization, instructor: next.instructor || "", validation };
+  return {
+    athlete, group, project, organizationId, organization, instructor: next.instructor || "", validation,
+    rosterChanged, reviewRelevantChanged
+  };
+}
+
+export function cancelOrganizationTeamRegistration(row, input) {
+  if ((row.projectType || "individual") !== "team") {
+    throw businessError(422, "只有团队报名可以由组织取消", "TEAM_REGISTRATION_REQUIRED");
+  }
+  if (String(input?.status || "") !== "cancelled") {
+    throw businessError(422, "组织团队报名只允许执行取消操作", "ORGANIZATION_TEAM_CANCELLATION_ONLY");
+  }
+  if (!new Set(["pending", "approved"]).has(row.status)) {
+    throw businessError(409, "当前报名状态不能取消", "REGISTRATION_CANCELLATION_NOT_ALLOWED");
+  }
+  row.status = "cancelled";
+  row.rejectReason = "";
+  return row;
 }
 
 export function prepareOrdinaryRegistrationUpdate(db, row, input, userId) {

@@ -148,7 +148,7 @@ export function prepareTeamRoster(db, input, context = {}) {
   if (new Set(fingerprints).size !== fingerprints.length) {
     throw businessError(422, "同一队伍中不能重复添加同一名队员", "DUPLICATE_TEAM_PARTICIPANT");
   }
-  if (!RELEASED_REGISTRATION_STATUSES.has(context.registrationStatus)) {
+  if (!context.skipAvailability && !RELEASED_REGISTRATION_STATUSES.has(context.registrationStatus)) {
     assertAthleteTypeAvailability(db, {
       eventId: context.eventId || project.eventId,
       projectType: project.type,
@@ -178,5 +178,5 @@ export function prepareTeamRoster(db, input, context = {}) {
   const identities = participants.map((row, index) => (
     createParticipantIdentity(row.id, normalized[index].studentIdNumber, timestamp)
   ));
-  return { participants, identities, group: groups[0] };
+  return { participants, identities, fingerprints, group: groups[0] };
 }
