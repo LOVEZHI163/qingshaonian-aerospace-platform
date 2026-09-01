@@ -91,12 +91,15 @@ export function createSmsChallengeService({
       if (!/^1[3-9]\d{9}$/.test(phone)) {
         throw new SmsChallengeError(422, "手机号格式无效");
       }
+      const ipAllowed = await authState.consumeRateLimits([
+        { key: `sms:ip:${ip}`, limit: 20, windowMs: HOUR_MS }
+      ], clock());
+      if (!ipAllowed) throw new SmsChallengeError(429, "请求过于频繁，请稍后再试");
       const verified = await verifyHuman({ scene: purpose, captchaVerifyParam });
       if (!verified) throw new SmsChallengeError(422, "人机验证未通过，请重试");
       const currentTime = clock();
       const allowed = await authState.consumeRateLimits([
-        { key: `sms:phone:${phone}`, limit: 5, windowMs: HOUR_MS, cooldownMs: 60_000 },
-        { key: `sms:ip:${ip}`, limit: 20, windowMs: HOUR_MS }
+        { key: `sms:phone:${phone}`, limit: 5, windowMs: HOUR_MS, cooldownMs: 60_000 }
       ], currentTime);
       if (!allowed) throw new SmsChallengeError(429, "请求过于频繁，请稍后再试");
       const requestDigest = randomBytes(32).toString("hex");

@@ -109,10 +109,12 @@ export function createAccountEmailService({
       if (!emailProvider) throw new AccountEmailError(503, "EMAIL_SERVICE_UNAVAILABLE", "邮箱服务暂未启用");
       let email;
       try { email = normalizeEmail(incomingEmail); } catch { email = "invalid"; }
+      await rateLimit([
+        { key: `email-reset:ip:${ip}`, limit: 20, windowMs: HOUR_MS }
+      ]);
       await verifyHuman({ scene: "email-password-reset", captchaVerifyParam });
       await rateLimit([
-        { key: `email-reset:email:${email}`, limit: 5, windowMs: HOUR_MS, cooldownMs: 60_000 },
-        { key: `email-reset:ip:${ip}`, limit: 20, windowMs: HOUR_MS }
+        { key: `email-reset:email:${email}`, limit: 5, windowMs: HOUR_MS, cooldownMs: 60_000 }
       ]);
       void (async () => {
         const db = await readDb();

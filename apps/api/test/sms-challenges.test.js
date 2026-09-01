@@ -261,24 +261,49 @@ test("registration rejects invalid mainland phones before rate limiting or dispa
   assert.equal(registration.sent.length, 0);
 });
 
-test("failed captcha does not consume SMS phone cooldown or hourly send allowance", async () => {
-  let captchaAccepted = false;
+test("SMS bounds failed captcha verification by IP without consuming the phone allowance", async () => {
+  let verifierCalls = 0;
   const challenge = challengeHarness({
-    verifyHuman: async () => {
-      if (!captchaAccepted) throw Object.assign(new Error("人机验证未通过，请重试"), { statusCode: 422 });
+    verifyHuman: async ({ captchaVerifyParam }) => {
+      verifierCalls += 1;
+      if (captchaVerifyParam !== "accepted") {
+        throw Object.assign(new Error("人机验证未通过，请重试"), { statusCode: 422 });
+      }
       return true;
     }
   });
 
+  for (let attempt = 1; attempt <= 20; attempt += 1) {
+    await assert.rejects(
+      challenge.service.request({ phone: "13800000001", ip: "203.0.113.10", captchaVerifyParam: `forged-${attempt}` }),
+      (error) => error.statusCode === 422
+    );
+  }
+  assert.equal(verifierCalls, 20);
+
   await assert.rejects(
-    challenge.service.request({ phone: "13800000001", ip: "127.0.0.1", captchaVerifyParam: "rejected" }),
+    challenge.service.request({ phone: "13800000001", ip: "203.0.113.10", captchaVerifyParam: "forged-21" }),
+    (error) => error.statusCode === 429
+  );
+  assert.equal(verifierCalls, 20);
+
+  await assert.rejects(
+    challenge.service.request({ phone: "13800000001", ip: "203.0.113.20", captchaVerifyParam: "forged-other-ip" }),
     (error) => error.statusCode === 422
   );
-  captchaAccepted = true;
+  assert.equal(verifierCalls, 21);
+
   assert.deepEqual(
-    await challenge.service.request({ phone: "13800000001", ip: "127.0.0.1", captchaVerifyParam: "accepted" }),
+    await challenge.service.request({ phone: "13800000001", ip: "203.0.113.20", captchaVerifyParam: "accepted" }),
     { ok: true, message: "如果该手机号已注册，验证码将发送到该号码" }
   );
+  assert.equal(verifierCalls, 22);
+
+  await assert.rejects(
+    challenge.service.request({ phone: "13800000001", ip: "203.0.113.30", captchaVerifyParam: "accepted" }),
+    (error) => error.statusCode === 429
+  );
+  assert.equal(verifierCalls, 23);
 });
 
 test("registration limits an IP address to twenty requests per hour", async () => {
