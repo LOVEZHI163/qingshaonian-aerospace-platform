@@ -104,7 +104,7 @@ docker compose ps
 docker compose logs --tail=200 api web
 ```
 
-更新应用前必须先补齐缺失密钥、备份数据库和上传文件，构建已审核的候选 API 镜像，再运行升级预检。`bootstrap-secrets.sh` 只补齐缺失或空值，不会覆盖现有非空值。预检不会替换或重启当前业务容器；它会在当前 PostgreSQL 服务内创建一个强随机命名的临时数据库，用候选 API 镜像执行两次初始化以模拟进程重启。除继续验证 `015-registration-identities-and-organization-leaders.sql`、四张既有新增表和加密行持久化外，smoke 还会确认 `019-team-registration.sql` 恰好记录一次、`registration_participants` 与 `registration_participant_identities` 均存在、项目列 `team_min_members` 与 `team_max_members` 可读，并确认历史个人报名与加密身份记录在第二次初始化后保持不变。成功输出包含 `team-registration-migration-019=applied-once` 和 `PostgreSQL migration/restart smoke passed.`；无论成功失败都会删除临时数据库。该 smoke 不连接或修改业务数据库：
+更新应用前必须先补齐缺失密钥、备份数据库和上传文件，构建已审核的候选 API 镜像，再运行升级预检。`bootstrap-secrets.sh` 只补齐缺失或空值，不会覆盖现有非空值。预检不会替换或重启当前业务容器；它会在当前 PostgreSQL 服务内创建一个强随机命名的临时数据库，用候选 API 镜像执行两次初始化以模拟进程重启。除继续验证 `015-registration-identities-and-organization-leaders.sql`、四张既有新增表和加密行持久化外，smoke 还会确认 `019-team-registration.sql` 恰好记录一次，并直接读取临时 PostgreSQL 的 `pg_attribute`、`pg_constraint` 与 `pg_index`：校验项目列 `team_min_members`、`team_max_members` 和报名列 `team_code` 的类型、默认值与非空约束，团队人数 1–8 检查，`registration_participants` 的报名级联外键、顺序检查和身份/顺序唯一约束，`registration_participant_identities` 的参与人级联外键、主键和非唯一身份指纹索引，以及证书参与人复合外键和两类部分唯一索引的键顺序、唯一性与谓词。随后再次读取业务映射，确认项目人数范围有效，且历史个人报名与加密身份记录在第二次初始化后保持不变。成功输出包含 `team-registration-migration-019=applied-once` 和 `PostgreSQL migration/restart smoke passed.`；无论成功失败都会删除临时数据库。该 smoke 不连接或修改业务数据库：
 
 ```bash
 cd /opt/aerogp
