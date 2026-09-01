@@ -23,6 +23,7 @@ function Require-NoMatch([string]$content, [string]$pattern, [string]$message) {
 $apiDockerfile = Read-RequiredFile "Dockerfile.api"
 $webDockerfile = Read-RequiredFile "Dockerfile.web"
 $nginx = Read-RequiredFile "deploy/nginx.conf"
+$caddy = Read-RequiredFile "deploy/Caddyfile"
 $dockerIgnore = Read-RequiredFile ".dockerignore"
 $compose = Read-RequiredFile "compose.yaml"
 $backup = Read-RequiredFile "deploy/backup-postgres.sh"
@@ -47,6 +48,10 @@ Require-Match $nginx 'location\s+/api/\s*\{' "Nginx must proxy /api/"
 Require-Match $nginx 'resolver\s+127\.0\.0\.11\s+valid=10s\s+ipv6=off\s*;' "Nginx must use Docker DNS for dynamic API discovery"
 Require-Match $nginx 'server\s+api:4300\s+resolve\s*;' "Nginx upstream must re-resolve the API container"
 Require-Match $nginx 'proxy_pass\s+http://api_backend\s*;' "Nginx must preserve the /api/ prefix when proxying"
+Require-NoMatch $nginx 'proxy_set_header\s+X-Forwarded-Proto\s+\$scheme\s*;' "Nginx must not replace the trusted original HTTPS scheme"
+if (($nginx | Select-String -AllMatches 'proxy_set_header\s+X-Forwarded-Proto\s+\$http_x_forwarded_proto\s*;').Matches.Count -ne 3) {
+  $failures.Add("Nginx must preserve the trusted original scheme on all three API proxy locations")
+}
 Require-NoMatch $nginx '(?m)^\s*auth_basic(?:_user_file)?\b' "Nginx must not require Basic Auth"
 Require-NoMatch $webDockerfile 'entrypoint-web\.sh|check-aerogp-auth' "Web image must not require the Basic Auth entrypoint"
 Require-Match $webDockerfile '(?m)^ARG VITE_PUBLIC_SITE_URL\s*$' "Web image must accept the canonical public origin"
@@ -59,6 +64,9 @@ foreach ($content in @($apiDockerfile, $webDockerfile)) {
 }
 
 Require-Match $compose '(?ms)^\s*caddy:\s*.*?^\s*ports:\s*\r?\n\s*-\s*"80:80"\s*\r?\n\s*-\s*"443:443"' "Caddy must publish HTTPS ports 80 and 443"
+Require-Match $caddy 'header_up\s+X-Forwarded-For\s+\{remote_host\}' "Caddy must replace untrusted client forwarding chains"
+Require-Match $caddy 'header_up\s+X-Forwarded-Proto\s+\{scheme\}' "Caddy must forward the trusted original request scheme"
+Require-Match $caddy 'Strict-Transport-Security\s+"max-age=31536000; includeSubDomains"' "Caddy must enforce HTTPS with HSTS"
 Require-NoMatch $compose '(?ms)^\s{2}web:\s*$(?:(?!^\s{2}\S).)*^\s{4}ports:' "Web must remain internal behind Caddy"
 if ($compose -match '(?m)["''](?:4300|5432):') { $failures.Add("API and PostgreSQL ports must not be published") }
 Require-Match $compose 'postgres_data:/var/lib/postgresql/data' "PostgreSQL data must use a named volume"

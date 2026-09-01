@@ -149,3 +149,54 @@ test("public auth features have a stable full shape and disabled SMS login fails
     assert.deepEqual(await response.json(), { error: "短信验证暂未启用" });
   }, { prefix: "aerogp-sms-login-", smsRegistrationEnabled: false });
 });
+
+test("partial SMS configuration leaves the API, password login, and email reset available", async () => {
+  await withTestServer(async ({ baseUrl }) => {
+    const features = await fetch(`${baseUrl}/api/public/features`);
+    assert.equal(features.status, 200);
+    const featureBody = await features.json();
+    assert.equal(featureBody.smsRegistrationEnabled, false);
+    assert.equal(featureBody.smsLoginEnabled, false);
+    assert.equal(featureBody.smsPasswordResetEnabled, false);
+    assert.equal(featureBody.emailPasswordResetEnabled, true);
+
+    for (const route of [
+      "/api/auth/register/sms/request",
+      "/api/auth/sms-login/request",
+      "/api/auth/password-reset/sms/request"
+    ]) {
+      const sms = await fetch(`${baseUrl}${route}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phone: "13800000001" })
+      });
+      assert.equal(sms.status, 503, route);
+      assert.deepEqual(await sms.json(), { error: "短信验证暂未启用" }, route);
+    }
+
+    const password = await fetch(`${baseUrl}/api/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ phone: "13900000000", password: "admin123" })
+    });
+    assert.equal(password.status, 200);
+
+    const email = await fetch(`${baseUrl}/api/auth/password-reset/email/request`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: "unknown@example.com" })
+    });
+    assert.equal(email.status, 200);
+  }, {
+    prefix: "aerogp-partial-sms-config-",
+    env: {
+      ALIBABA_CLOUD_ACCESS_KEY_SECRET: "",
+      ALIYUN_SMS_LOGIN_TEMPLATE_CODE: "SMS_LOGIN_TEST",
+      DIRECTMAIL_SMTP_HOST: "smtp.example.test",
+      DIRECTMAIL_SMTP_PORT: "465",
+      DIRECTMAIL_SMTP_USER: "mailer@example.test",
+      DIRECTMAIL_SMTP_PASSWORD: "test-password",
+      DIRECTMAIL_FROM: "mailer@example.test"
+    }
+  });
+});

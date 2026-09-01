@@ -70,18 +70,23 @@ test("Aliyun SMS exposes purpose feature gates and fails closed on partial base 
   assert.equal(resetOnly.enabled(PURPOSES.login), false);
   assert.equal(resetOnly.enabled(PURPOSES.passwordReset), true);
 
-  assert.throws(() => createAliyunSmsProvider({
+  const missingCredentials = createAliyunSmsProvider({
     ALIYUN_SMS_LOGIN_TEMPLATE_CODE: "SMS_LOGIN"
-  }), /Aliyun SMS configuration is incomplete/);
-  assert.throws(() => createAliyunSmsProvider({
+  });
+  assert.equal(missingCredentials.enabled(PURPOSES.login), false);
+
+  const missingSecret = createAliyunSmsProvider({
     ALIBABA_CLOUD_ACCESS_KEY_ID: "id",
     ALIYUN_SMS_REGISTRATION_TEMPLATE_CODE: "SMS_REGISTER"
-  }), /Aliyun SMS configuration is incomplete/);
-  assert.throws(() => createAliyunSmsProvider({
+  });
+  assert.equal(missingSecret.enabled(PURPOSES.registration), false);
+
+  const missingSign = createAliyunSmsProvider({
     ALIBABA_CLOUD_ACCESS_KEY_ID: "id",
     ALIBABA_CLOUD_ACCESS_KEY_SECRET: "secret",
     ALIYUN_SMS_REGISTRATION_TEMPLATE_CODE: "SMS_REGISTER"
-  }), /Aliyun SMS configuration is incomplete/);
+  });
+  assert.equal(missingSign.enabled(PURPOSES.registration), false);
 });
 
 test("Aliyun credentials used by other products do not implicitly enable SMS", () => {
@@ -94,7 +99,7 @@ test("Aliyun credentials used by other products do not implicitly enable SMS", (
   assert.equal(provider.enabled(PURPOSES.passwordReset), false);
 });
 
-function challengeHarness({ purpose = PURPOSES.login, readDb, sendCode, generateCode, shared = {} } = {}) {
+function challengeHarness({ purpose = PURPOSES.login, readDb, sendCode, generateCode, verifyHuman = async () => true, shared = {} } = {}) {
   const time = shared.time ||= { now: Date.parse("2026-08-18T00:00:00.000Z") };
   const scheduled = [];
   const stored = shared.stored ||= new Map();
@@ -155,7 +160,7 @@ function challengeHarness({ purpose = PURPOSES.login, readDb, sendCode, generate
     smsProvider,
     authState,
     resolveEligibleTarget: (db, phone) => db.users.find((user) => user.phone === phone && user.status === "active"),
-    verifyHuman: async () => true,
+    verifyHuman,
     clock: () => time.now,
     generateCode: generateCode || (() => "123456"),
     logger: { warn() {}, error() {} },
@@ -254,6 +259,26 @@ test("registration rejects invalid mainland phones before rate limiting or dispa
   assert.equal(registration.rateRequests.length, 0);
   assert.equal(registration.scheduled.length, 0);
   assert.equal(registration.sent.length, 0);
+});
+
+test("failed captcha does not consume SMS phone cooldown or hourly send allowance", async () => {
+  let captchaAccepted = false;
+  const challenge = challengeHarness({
+    verifyHuman: async () => {
+      if (!captchaAccepted) throw Object.assign(new Error("人机验证未通过，请重试"), { statusCode: 422 });
+      return true;
+    }
+  });
+
+  await assert.rejects(
+    challenge.service.request({ phone: "13800000001", ip: "127.0.0.1", captchaVerifyParam: "rejected" }),
+    (error) => error.statusCode === 422
+  );
+  captchaAccepted = true;
+  assert.deepEqual(
+    await challenge.service.request({ phone: "13800000001", ip: "127.0.0.1", captchaVerifyParam: "accepted" }),
+    { ok: true, message: "如果该手机号已注册，验证码将发送到该号码" }
+  );
 });
 
 test("registration limits an IP address to twenty requests per hour", async () => {

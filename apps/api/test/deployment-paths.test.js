@@ -416,6 +416,22 @@ test("upgrade preflight runs the candidate migration twice against a disposable 
   assert.match(guide, /历史个人报名与加密身份记录[^。]*第二次初始化[^。]*保持不变/);
 });
 
+test("the fixed two-hop proxy chain sanitizes forwarding metadata and preserves HTTPS", async () => {
+  const [caddy, nginx] = await Promise.all([
+    fs.readFile(path.join(root, "deploy/Caddyfile"), "utf8"),
+    fs.readFile(path.join(root, "deploy/nginx.conf"), "utf8")
+  ]);
+
+  assert.match(caddy, /header_up\s+X-Forwarded-For\s+\{remote_host\}/);
+  assert.match(caddy, /header_up\s+X-Forwarded-Proto\s+\{scheme\}/);
+  assert.match(caddy, /Strict-Transport-Security\s+"max-age=31536000; includeSubDomains"/);
+  assert.equal(
+    [...nginx.matchAll(/proxy_set_header\s+X-Forwarded-Proto\s+\$http_x_forwarded_proto\s*;/g)].length,
+    3
+  );
+  assert.doesNotMatch(nginx, /proxy_set_header\s+X-Forwarded-Proto\s+\$scheme\s*;/);
+});
+
 test("upgrade preflight validates host backups when the candidate lives outside the deploy directory", async () => {
   const preflight = await fs.readFile(
     path.join(root, "deploy/preflight-admin-upgrade.sh"),

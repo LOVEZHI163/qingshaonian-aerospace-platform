@@ -8,6 +8,13 @@ async function withServer(fn) {
   await withTestServer(fn, { prefix: "aerogp-auth-" });
 }
 
+function forwardedHeaders(clientIp) {
+  return {
+    "X-Forwarded-For": `${clientIp}, 172.18.0.20`,
+    "X-Forwarded-Proto": "https"
+  };
+}
+
 test("login upgrades a legacy password and restores the user from a session", async () => {
   await withServer(async ({ baseUrl, dbPath }) => {
     const login = await fetch(`${baseUrl}/api/auth/login`, {
@@ -162,11 +169,11 @@ test("logout is idempotent without an existing session", async () => {
   });
 });
 
-test("proxy HTTPS marks the session cookie Secure while HTTP does not", async () => {
+test("production two-hop proxy HTTPS marks the login session cookie Secure while HTTP does not", async () => {
   await withServer(async ({ baseUrl }) => {
     const secureLogin = await fetch(`${baseUrl}/api/auth/login`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "X-Forwarded-Proto": "https" },
+      headers: { "Content-Type": "application/json", ...forwardedHeaders("203.0.113.10") },
       body: JSON.stringify({ phone: "13900000000", password: "admin123" })
     });
     assert.match(secureLogin.headers.get("set-cookie") || "", /; Secure(?:;|$)/);
@@ -177,6 +184,61 @@ test("proxy HTTPS marks the session cookie Secure while HTTP does not", async ()
       body: JSON.stringify({ phone: "13800000001", password: "123456" })
     });
     assert.doesNotMatch(plainLogin.headers.get("set-cookie") || "", /; Secure(?:;|$)/);
+  });
+});
+
+test("two clients behind the same edge proxy do not share the password-login IP bucket", async () => {
+  await withServer(async ({ baseUrl }) => {
+    for (let index = 0; index < 20; index += 1) {
+      const failure = await fetch(`${baseUrl}/api/auth/login`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...forwardedHeaders("203.0.113.20")
+        },
+        body: JSON.stringify({ phone: `137${String(index).padStart(8, "0")}`, password: "wrong" })
+      });
+      assert.equal(failure.status, 401);
+    }
+
+    const independentClient = await fetch(`${baseUrl}/api/auth/login`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...forwardedHeaders("198.51.100.30")
+      },
+      body: JSON.stringify({ phone: "13900000000", password: "admin123" })
+    });
+    assert.equal(independentClient.status, 200);
+  });
+});
+
+test("two clients behind the same edge proxy do not share the SMS IP bucket", async () => {
+  await withTestServer(async ({ baseUrl }) => {
+    for (let index = 0; index < 20; index += 1) {
+      const accepted = await fetch(`${baseUrl}/api/auth/sms-login/request`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...forwardedHeaders("203.0.113.40")
+        },
+        body: JSON.stringify({ phone: `136${String(index).padStart(8, "0")}` })
+      });
+      assert.equal(accepted.status, 200);
+    }
+
+    const independentClient = await fetch(`${baseUrl}/api/auth/sms-login/request`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...forwardedHeaders("198.51.100.50")
+      },
+      body: JSON.stringify({ phone: "13800000001" })
+    });
+    assert.equal(independentClient.status, 200);
+  }, {
+    prefix: "aerogp-auth-sms-proxy-",
+    env: { ALIYUN_SMS_LOGIN_TEMPLATE_CODE: "SMS_LOGIN_TEST" }
   });
 });
 

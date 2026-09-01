@@ -4,7 +4,13 @@ import test from "node:test";
 import { createAccountEmailService, normalizeEmail, UNIFORM_EMAIL_RESET_RESPONSE } from "../src/auth/account-email.js";
 import { createAccountEmailTokenStore } from "../src/data/account-email-tokens.js";
 
-function fixture({ sendFailure = false, verifiedEmail = false, deferredReset = false, verifyHuman = async () => true } = {}) {
+function fixture({
+  sendFailure = false,
+  verifiedEmail = false,
+  deferredReset = false,
+  verifyHuman = async () => true,
+  authState = { consumeRateLimits: async () => true }
+} = {}) {
   let currentTime = Date.parse("2026-08-17T10:00:00.000Z");
   let tokenCounter = 0;
   let state = { users: [{
@@ -36,7 +42,7 @@ function fixture({ sendFailure = false, verifiedEmail = false, deferredReset = f
   };
   const service = createAccountEmailService({
     readDb, writeDb, withMutationLock, tokenStore, emailProvider, secret: "test-secret", publicAppUrl: "https://aerogp.cn",
-    authState: { consumeRateLimits: async () => true }, clock: () => currentTime,
+    authState, clock: () => currentTime,
     randomBytes: () => Buffer.alloc(32, ++tokenCounter),
     verifyPassword: async (value, stored) => value === stored,
     hashPassword: async (value) => `hashed:${value}`,
@@ -55,6 +61,35 @@ test("email password reset verifies the configured human challenge before accoun
   assert.deepEqual(calls, [{ scene: "email-password-reset", captchaVerifyParam: "signed-param" }]);
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(sent.length, 1);
+});
+
+test("failed captcha does not consume email target cooldown or hourly send allowance", async () => {
+  let captchaAccepted = false;
+  let targetAllowanceConsumed = false;
+  const { service } = fixture({
+    verifiedEmail: true,
+    verifyHuman: async () => {
+      if (!captchaAccepted) throw Object.assign(new Error("人机验证未通过，请重试"), { statusCode: 422 });
+      return true;
+    },
+    authState: {
+      async consumeRateLimits() {
+        if (targetAllowanceConsumed) return false;
+        targetAllowanceConsumed = true;
+        return true;
+      }
+    }
+  });
+
+  await assert.rejects(
+    service.requestPasswordReset({ email: "user@example.com", ip: "127.0.0.1", captchaVerifyParam: "rejected" }),
+    (error) => error.statusCode === 422
+  );
+  captchaAccepted = true;
+  assert.deepEqual(
+    await service.requestPasswordReset({ email: "user@example.com", ip: "127.0.0.1", captchaVerifyParam: "accepted" }),
+    UNIFORM_EMAIL_RESET_RESPONSE
+  );
 });
 
 test("email normalization lowercases and rejects malformed values", () => {

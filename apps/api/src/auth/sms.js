@@ -16,7 +16,6 @@ export function createAliyunSmsProvider(env, { client: injectedClient } = {}) {
     env.ALIYUN_SMS_SIGN_NAME
   ];
   const baseConfigured = smsConfigured && base.every(Boolean);
-  if (smsConfigured && !baseConfigured) throw new Error("Aliyun SMS configuration is incomplete");
   const templateByPurpose = {
     "sms-registration": env.ALIYUN_SMS_REGISTRATION_TEMPLATE_CODE,
     "sms-login": env.ALIYUN_SMS_LOGIN_TEMPLATE_CODE,

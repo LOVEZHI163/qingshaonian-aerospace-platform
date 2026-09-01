@@ -13,9 +13,12 @@ describe("AuthPage", () => {
     apiMock.mockResolvedValue({ smsRegistrationEnabled: false, smsPasswordResetEnabled: false });
   });
 
-  it("does not expose seeded test account credentials on the public login page", () => {
+  it("starts production password-login fields empty and does not expose seeded account copy", () => {
     const wrapper = mount(AuthPage);
 
+    const loginForm = wrapper.get('[data-auth-form="login"]');
+    expect(loginForm.get('input[autocomplete="username"]').element.value).toBe("");
+    expect(loginForm.get('input[autocomplete="current-password"]').element.value).toBe("");
     expect(wrapper.find(".auth-test-accounts").exists()).toBe(false);
     expect(wrapper.text()).not.toContain("测试账号");
     expect(wrapper.text()).not.toContain("13800000001");
