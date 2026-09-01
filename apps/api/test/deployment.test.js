@@ -146,6 +146,9 @@ const TEAM_INDEX_CATALOG = [
     table_name: "registration_participant_identities",
     index_name: "registration_participant_identity_fingerprint_idx",
     is_unique: false,
+    is_valid: true,
+    is_ready: true,
+    is_live: true,
     definition: "CREATE INDEX registration_participant_identity_fingerprint_idx ON public.registration_participant_identities USING btree (id_fingerprint)",
     predicate: null
   },
@@ -153,6 +156,9 @@ const TEAM_INDEX_CATALOG = [
     table_name: "certificates",
     index_name: "certificates_registration_slot_legacy_key",
     is_unique: true,
+    is_valid: true,
+    is_ready: true,
+    is_live: true,
     definition: "CREATE UNIQUE INDEX certificates_registration_slot_legacy_key ON public.certificates USING btree (registration_id, slot) WHERE (participant_id IS NULL)",
     predicate: "participant_id IS NULL"
   },
@@ -160,10 +166,20 @@ const TEAM_INDEX_CATALOG = [
     table_name: "certificates",
     index_name: "certificates_participant_slot_key",
     is_unique: true,
+    is_valid: true,
+    is_ready: true,
+    is_live: true,
     definition: "CREATE UNIQUE INDEX certificates_participant_slot_key ON public.certificates USING btree (registration_id, participant_id, slot) WHERE (participant_id IS NOT NULL)",
     predicate: "participant_id IS NOT NULL"
   }
 ];
+
+function checkViolation(constraint) {
+  return Object.assign(new Error(`check constraint ${constraint} failed`), {
+    code: "23514",
+    constraint
+  });
+}
 
 function migrationRestartState(overrides = {}) {
   const migrationCount = overrides.migrationCount ?? 1;
@@ -175,10 +191,122 @@ function migrationRestartState(overrides = {}) {
   const columnCatalog = overrides.columnCatalog ?? structuredClone(TEAM_COLUMN_CATALOG);
   const constraintCatalog = overrides.constraintCatalog ?? structuredClone(TEAM_CONSTRAINT_CATALOG);
   const indexCatalog = overrides.indexCatalog ?? structuredClone(TEAM_INDEX_CATALOG);
+  const probeBehavior = overrides.probeBehavior ?? {};
   const afterRestart = overrides.afterRestart ?? {
     projects: [{ id: "P-individual", teamMinMembers: 1, teamMaxMembers: 8 }],
     registrations: [structuredClone(LEGACY_PERSONAL_REGISTRATION)],
     registrationIdentities: [structuredClone(LEGACY_PERSONAL_IDENTITY)]
+  };
+  const probeState = {
+    projectBounds: { min: 1, max: 8 },
+    participantIds: new Set(),
+    transactions: 0,
+    releases: 0
+  };
+  let transaction = null;
+  let savepoint = null;
+  let transactionAborted = false;
+  const matchesPair = (pairs, min, max) => (pairs ?? []).some((pair) => (
+    pair[0] === min && pair[1] === max
+  ));
+  const client = {
+    async query(sql, params = []) {
+      const normalizedSql = sql.replace(/\s+/g, " ").trim();
+      if (normalizedSql === "BEGIN") {
+        assert.equal(transaction, null);
+        transaction = {
+          projectBounds: { ...probeState.projectBounds },
+          participantIds: new Set(probeState.participantIds)
+        };
+        probeState.transactions += 1;
+        return { rows: [], rowCount: null };
+      }
+      if (normalizedSql === "SAVEPOINT migration_check_probe") {
+        assert.ok(transaction);
+        assert.equal(transactionAborted, false);
+        savepoint = {
+          projectBounds: { ...transaction.projectBounds },
+          participantIds: new Set(transaction.participantIds)
+        };
+        return { rows: [], rowCount: null };
+      }
+      if (normalizedSql === "ROLLBACK TO SAVEPOINT migration_check_probe") {
+        assert.ok(transaction);
+        assert.ok(savepoint);
+        transaction.projectBounds = { ...savepoint.projectBounds };
+        transaction.participantIds = new Set(savepoint.participantIds);
+        transactionAborted = false;
+        return { rows: [], rowCount: null };
+      }
+      if (normalizedSql === "RELEASE SAVEPOINT migration_check_probe") {
+        assert.ok(transaction);
+        assert.equal(transactionAborted, false);
+        savepoint = null;
+        return { rows: [], rowCount: null };
+      }
+      if (normalizedSql === "ROLLBACK") {
+        transaction = null;
+        savepoint = null;
+        transactionAborted = false;
+        return { rows: [], rowCount: null };
+      }
+      if (normalizedSql === "COMMIT") {
+        assert.ok(transaction);
+        probeState.projectBounds = { ...transaction.projectBounds };
+        probeState.participantIds = new Set(transaction.participantIds);
+        transaction = null;
+        savepoint = null;
+        return { rows: [], rowCount: null };
+      }
+      if (transactionAborted) {
+        throw Object.assign(new Error("current transaction is aborted"), { code: "25P02" });
+      }
+      if (normalizedSql.includes("SELECT team_min_members") && normalizedSql.includes("FROM projects")) {
+        assert.deepEqual(params, [LEGACY_PERSONAL_REGISTRATION.projectId]);
+        const bounds = transaction?.projectBounds ?? probeState.projectBounds;
+        return {
+          rows: [{ team_min_members: bounds.min, team_max_members: bounds.max }],
+          rowCount: 1
+        };
+      }
+      if (normalizedSql.startsWith("UPDATE projects")) {
+        assert.ok(transaction);
+        const [min, max, projectId] = params;
+        assert.equal(projectId, LEGACY_PERSONAL_REGISTRATION.projectId);
+        const valid = min >= 1 && min <= 8 && max >= 1 && max <= 8 && min <= max;
+        const allowedInvalid = matchesPair(probeBehavior.allowInvalidProjectBounds, min, max);
+        const rejectedValid = matchesPair(probeBehavior.rejectValidProjectBounds, min, max);
+        if ((!valid && !allowedInvalid) || (valid && rejectedValid)) {
+          transactionAborted = true;
+          throw checkViolation("projects_team_member_bounds_check");
+        }
+        transaction.projectBounds = { min, max };
+        return { rows: [{ id: projectId }], rowCount: 1 };
+      }
+      if (normalizedSql.startsWith("INSERT INTO registration_participants")) {
+        assert.ok(transaction);
+        const [id, registrationId, displayOrder] = params;
+        assert.equal(registrationId, LEGACY_PERSONAL_REGISTRATION.id);
+        const valid = displayOrder >= 1 && displayOrder <= 8;
+        const allowedInvalid = (probeBehavior.allowInvalidDisplayOrders ?? []).includes(displayOrder);
+        const rejectedValid = (probeBehavior.rejectValidDisplayOrders ?? []).includes(displayOrder);
+        if ((!valid && !allowedInvalid) || (valid && rejectedValid)) {
+          transactionAborted = true;
+          throw checkViolation("registration_participants_display_order_check");
+        }
+        transaction.participantIds.add(id);
+        return { rows: [{ id }], rowCount: 1 };
+      }
+      if (normalizedSql.includes("COUNT(*)::integer AS count")
+        && normalizedSql.includes("FROM registration_participants")) {
+        const participantIds = transaction?.participantIds ?? probeState.participantIds;
+        return { rows: [{ count: params[0].filter((id) => participantIds.has(id)).length }] };
+      }
+      throw new Error(`unexpected restart-smoke client query: ${sql}`);
+    },
+    release() {
+      probeState.releases += 1;
+    }
   };
   const pool = {
     async query(sql, params) {
@@ -210,6 +338,7 @@ function migrationRestartState(overrides = {}) {
       if (sql.includes("FROM pg_constraint")) {
         assert.deepEqual(new Set(params[0]), new Set([
           "projects",
+          "registrations",
           "registration_participants",
           "registration_participant_identities",
           "certificates"
@@ -224,12 +353,16 @@ function migrationRestartState(overrides = {}) {
         return { rows: indexCatalog };
       }
       throw new Error(`unexpected restart-smoke query: ${sql}`);
+    },
+    async connect() {
+      return client;
     }
   };
   return {
     restarted: { pool, readDb: async () => afterRestart },
     legacyRegistrationBeforeRestart: structuredClone(LEGACY_PERSONAL_REGISTRATION),
-    legacyIdentityBeforeRestart: structuredClone(LEGACY_PERSONAL_IDENTITY)
+    legacyIdentityBeforeRestart: structuredClone(LEGACY_PERSONAL_IDENTITY),
+    probeState
   };
 }
 
@@ -437,16 +570,18 @@ test("migration restart smoke rejects missing or malformed live migration 019 ca
         `${expected.table_name}.${expected.constraint_name} validation`
       );
 
-      const malformedDefinition = structuredClone(TEAM_CONSTRAINT_CATALOG);
-      malformedDefinition.find((row) => row.constraint_name === expected.constraint_name).definition =
-        expected.constraint_type === "f"
-          ? expected.definition.replace(" ON DELETE CASCADE", "")
-          : "CHECK (TRUE)";
-      await assert.rejects(
-        assertRestartState(migrationRestartState({ constraintCatalog: malformedDefinition })),
-        /migration 019 live constraint contract is incomplete or malformed/i,
-        `${expected.table_name}.${expected.constraint_name} definition`
-      );
+      if (expected.constraint_type !== "c") {
+        const malformedDefinition = structuredClone(TEAM_CONSTRAINT_CATALOG);
+        malformedDefinition.find((row) => row.constraint_name === expected.constraint_name).definition =
+          expected.constraint_type === "f"
+            ? expected.definition.replace(" ON DELETE CASCADE", "")
+            : "CHECK (TRUE)";
+        await assert.rejects(
+          assertRestartState(migrationRestartState({ constraintCatalog: malformedDefinition })),
+          /migration 019 live constraint contract is incomplete or malformed/i,
+          `${expected.table_name}.${expected.constraint_name} definition`
+        );
+      }
     }
   });
 
@@ -496,6 +631,144 @@ test("migration restart smoke rejects missing or malformed live migration 019 ca
         `${expected.table_name}.${expected.index_name} predicate`
       );
     }
+  });
+
+  await t.test("every required index is valid, ready, and live", async () => {
+    for (const expected of TEAM_INDEX_CATALOG) {
+      for (const stateField of ["is_valid", "is_ready", "is_live"]) {
+        const catalog = structuredClone(TEAM_INDEX_CATALOG);
+        catalog.find((row) => row.index_name === expected.index_name)[stateField] = false;
+        await assert.rejects(
+          assertRestartState(migrationRestartState({ indexCatalog: catalog })),
+          /migration 019 live index contract is incomplete or malformed/i,
+          `${expected.table_name}.${expected.index_name}.${stateField}`
+        );
+      }
+    }
+  });
+});
+
+test("migration restart smoke rejects every forbidden legacy uniqueness constraint", async (t) => {
+  const forbiddenConstraints = [
+    ["registrations", "registrations_event_project_athlete_key"],
+    ["registrations", "registrations_event_id_project_id_athlete_key_key"],
+    ["certificates", "certificates_registration_id_slot_key"]
+  ];
+
+  for (const [tableName, constraintName] of forbiddenConstraints) {
+    await t.test(constraintName, async () => {
+      const catalog = structuredClone(TEAM_CONSTRAINT_CATALOG);
+      catalog.push({
+        table_name: tableName,
+        constraint_name: constraintName,
+        constraint_type: "u",
+        is_validated: true,
+        definition: "UNIQUE (legacy_column)"
+      });
+      await assert.rejects(
+        migrationRestartSmoke.assertTeamMigrationRestartState(
+          migrationRestartState({ constraintCatalog: catalog })
+        ),
+        /migration 019 retained a forbidden legacy uniqueness constraint/i
+      );
+    });
+  }
+});
+
+test("migration restart smoke probes project and participant CHECK behavior without persistence", async (t) => {
+  await t.test("valid edge probes roll back every project change and participant row", async () => {
+    const state = migrationRestartState();
+    await assert.doesNotReject(
+      migrationRestartSmoke.assertTeamMigrationRestartState(state)
+    );
+    assert.equal(state.probeState.transactions, 1);
+    assert.equal(state.probeState.releases, 1);
+    assert.deepEqual(state.probeState.projectBounds, { min: 1, max: 8 });
+    assert.equal(state.probeState.participantIds.size, 0);
+  });
+
+  for (const bounds of [[0, 1], [1, 9], [2, 1]]) {
+    await t.test(`project bounds ${bounds.join("..")}`, async () => {
+      const state = migrationRestartState({
+        probeBehavior: { allowInvalidProjectBounds: [bounds] }
+      });
+      await assert.rejects(
+        migrationRestartSmoke.assertTeamMigrationRestartState(state),
+        /migration 019 project bounds check behavior is malformed/i
+      );
+      assert.deepEqual(state.probeState.projectBounds, { min: 1, max: 8 });
+      assert.equal(state.probeState.participantIds.size, 0);
+    });
+  }
+
+  for (const bounds of [[1, 1], [8, 8]]) {
+    await t.test(`valid project edge ${bounds.join("..")}`, async () => {
+      const state = migrationRestartState({
+        probeBehavior: { rejectValidProjectBounds: [bounds] }
+      });
+      await assert.rejects(
+        migrationRestartSmoke.assertTeamMigrationRestartState(state),
+        /migration 019 project bounds check behavior is malformed/i
+      );
+      assert.deepEqual(state.probeState.projectBounds, { min: 1, max: 8 });
+      assert.equal(state.probeState.participantIds.size, 0);
+    });
+  }
+
+  for (const displayOrder of [0, 9]) {
+    await t.test(`participant display order ${displayOrder}`, async () => {
+      const state = migrationRestartState({
+        probeBehavior: { allowInvalidDisplayOrders: [displayOrder] }
+      });
+      await assert.rejects(
+        migrationRestartSmoke.assertTeamMigrationRestartState(state),
+        /migration 019 participant display_order check behavior is malformed/i
+      );
+      assert.deepEqual(state.probeState.projectBounds, { min: 1, max: 8 });
+      assert.equal(state.probeState.participantIds.size, 0);
+    });
+  }
+
+  for (const displayOrder of [1, 8]) {
+    await t.test(`valid participant display edge ${displayOrder}`, async () => {
+      const state = migrationRestartState({
+        probeBehavior: { rejectValidDisplayOrders: [displayOrder] }
+      });
+      await assert.rejects(
+        migrationRestartSmoke.assertTeamMigrationRestartState(state),
+        /migration 019 participant display_order check behavior is malformed/i
+      );
+      assert.deepEqual(state.probeState.projectBounds, { min: 1, max: 8 });
+      assert.equal(state.probeState.participantIds.size, 0);
+    });
+  }
+
+  await t.test("OR TRUE cannot weaken project bounds", async () => {
+    const catalog = structuredClone(TEAM_CONSTRAINT_CATALOG);
+    catalog.find((row) => row.constraint_name === "projects_team_member_bounds_check").definition += " OR TRUE";
+    const state = migrationRestartState({
+      constraintCatalog: catalog,
+      probeBehavior: { allowInvalidProjectBounds: [[0, 1]] }
+    });
+    await assert.rejects(
+      migrationRestartSmoke.assertTeamMigrationRestartState(state),
+      /migration 019 project bounds check behavior is malformed/i
+    );
+  });
+
+  await t.test("OR TRUE cannot weaken participant display order", async () => {
+    const catalog = structuredClone(TEAM_CONSTRAINT_CATALOG);
+    catalog.find((row) => (
+      row.constraint_name === "registration_participants_display_order_check"
+    )).definition += " OR TRUE";
+    const state = migrationRestartState({
+      constraintCatalog: catalog,
+      probeBehavior: { allowInvalidDisplayOrders: [0] }
+    });
+    await assert.rejects(
+      migrationRestartSmoke.assertTeamMigrationRestartState(state),
+      /migration 019 participant display_order check behavior is malformed/i
+    );
   });
 });
 

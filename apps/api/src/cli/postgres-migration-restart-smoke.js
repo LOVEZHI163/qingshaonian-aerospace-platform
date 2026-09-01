@@ -54,22 +54,23 @@ const TEAM_COLUMN_CONTRACTS = [
 ];
 const TEAM_CONSTRAINT_TABLES = [
   "projects",
+  "registrations",
   "registration_participants",
   "registration_participant_identities",
   "certificates"
 ];
+const FORBIDDEN_TEAM_CONSTRAINT_NAMES = new Set([
+  "registrations_event_project_athlete_key",
+  "registrations_event_id_project_id_athlete_key_key",
+  "certificates_registration_id_slot_key"
+]);
 const TEAM_CONSTRAINT_CONTRACTS = [
-  ["projects", "projects_team_member_bounds_check", "c", [
-    "check", "team_min_members >= 1", "team_min_members <= 8",
-    "team_max_members >= 1", "team_max_members <= 8", "team_min_members <= team_max_members"
-  ]],
+  ["projects", "projects_team_member_bounds_check", "c", []],
   ["registration_participants", "registration_participants_pkey", "p", ["primary key(id)"]],
   ["registration_participants", "registration_participants_registration_id_fkey", "f", [
     "foreign key(registration_id)", "references registrations(id)", "on delete cascade"
   ]],
-  ["registration_participants", "registration_participants_display_order_check", "c", [
-    "check", "display_order >= 1", "display_order <= 8"
-  ]],
+  ["registration_participants", "registration_participants_display_order_check", "c", []],
   ["registration_participants", "registration_participants_registration_id_display_order_key", "u", [
     "unique(registration_id,display_order)"
   ]],
@@ -135,6 +136,130 @@ function catalogDefaultMatches(actual, expected) {
   if (expected === "1") return normalized === "'1'::smallint" || normalized === "'1'::integer";
   if (expected === "8") return normalized === "'8'::smallint";
   return false;
+}
+
+async function runCheckProbe(client, sql, params) {
+  await client.query("SAVEPOINT migration_check_probe");
+  let result;
+  let error;
+  try {
+    result = await client.query(sql, params);
+  } catch (probeError) {
+    error = probeError;
+  }
+  await client.query("ROLLBACK TO SAVEPOINT migration_check_probe");
+  await client.query("RELEASE SAVEPOINT migration_check_probe");
+  return { result, error };
+}
+
+async function assertRejectedByCheck(client, sql, params, message) {
+  const { result, error } = await runCheckProbe(client, sql, params);
+  if (error?.code !== "23514" || result?.rowCount) throw new Error(message);
+}
+
+async function assertAcceptedByCheck(client, sql, params, message) {
+  const { result, error } = await runCheckProbe(client, sql, params);
+  if (error || result?.rowCount !== 1) throw new Error(message);
+}
+
+async function assertTeamCheckBehavior(pool, { projectId, registrationId }) {
+  const participantProbeIds = [
+    "migration-check-participant-order-zero",
+    "migration-check-participant-order-nine",
+    "migration-check-participant-order-one",
+    "migration-check-participant-order-eight"
+  ];
+  const projectSql = `UPDATE projects
+     SET team_min_members = $1, team_max_members = $2
+   WHERE id = $3
+   RETURNING id`;
+  const participantSql = `INSERT INTO registration_participants
+      (id, registration_id, display_order, name, school, grade, phone, created_at, updated_at)
+    VALUES ($1, $2, $3, 'migration-check', 'migration-check', '一年级', '13800000000', NOW(), NOW())
+    RETURNING id`;
+  const client = await pool.connect();
+  try {
+    const before = await client.query(
+      `SELECT team_min_members, team_max_members
+         FROM projects
+        WHERE id = $1`,
+      [projectId]
+    );
+    if (before.rowCount !== 1) throw new Error("migration 019 CHECK probe project is missing");
+
+    let probeError;
+    let transactionStarted = false;
+    let rollbackError;
+    try {
+      await client.query("BEGIN");
+      transactionStarted = true;
+      try {
+        for (const bounds of [[0, 1], [1, 9], [2, 1]]) {
+          await assertRejectedByCheck(
+            client,
+            projectSql,
+            [...bounds, projectId],
+            "migration 019 project bounds CHECK behavior is malformed"
+          );
+        }
+        for (const bounds of [[1, 1], [8, 8]]) {
+          await assertAcceptedByCheck(
+            client,
+            projectSql,
+            [...bounds, projectId],
+            "migration 019 project bounds CHECK behavior is malformed"
+          );
+        }
+        for (const [index, displayOrder] of [0, 9].entries()) {
+          await assertRejectedByCheck(
+            client,
+            participantSql,
+            [participantProbeIds[index], registrationId, displayOrder],
+            "migration 019 participant display_order CHECK behavior is malformed"
+          );
+        }
+        for (const [index, displayOrder] of [1, 8].entries()) {
+          await assertAcceptedByCheck(
+            client,
+            participantSql,
+            [participantProbeIds[index + 2], registrationId, displayOrder],
+            "migration 019 participant display_order CHECK behavior is malformed"
+          );
+        }
+      } catch (error) {
+        probeError = error;
+      }
+    } finally {
+      if (transactionStarted) {
+        try {
+          await client.query("ROLLBACK");
+        } catch (error) {
+          rollbackError = error;
+        }
+      }
+    }
+    if (rollbackError) throw new Error("migration 019 CHECK probe rollback failed");
+
+    const after = await client.query(
+      `SELECT team_min_members, team_max_members
+         FROM projects
+        WHERE id = $1`,
+      [projectId]
+    );
+    const participantCleanup = await client.query(
+      `SELECT COUNT(*)::integer AS count
+         FROM registration_participants
+        WHERE id = ANY($1::text[])`,
+      [participantProbeIds]
+    );
+    if (!isDeepStrictEqual(after.rows, before.rows)
+      || participantCleanup.rows[0]?.count !== 0) {
+      throw new Error("migration 019 CHECK probes left persistent data");
+    }
+    if (probeError) throw probeError;
+  } finally {
+    client.release();
+  }
 }
 
 async function openStore(connectionString) {
@@ -228,6 +353,9 @@ export async function assertTeamMigrationRestartState({
   const constraintsByKey = new Map(constraintCatalog.rows.map((row) => (
     [`${row.table_name}.${row.constraint_name}`, row]
   )));
+  if (constraintCatalog.rows.some((row) => FORBIDDEN_TEAM_CONSTRAINT_NAMES.has(row.constraint_name))) {
+    throw new Error("migration 019 retained a forbidden legacy uniqueness constraint");
+  }
   for (const [tableName, constraintName, constraintType, definitionFragments] of TEAM_CONSTRAINT_CONTRACTS) {
     const row = constraintsByKey.get(`${tableName}.${constraintName}`);
     const definition = normalizeCatalogExpression(row?.definition) || "";
@@ -243,6 +371,9 @@ export async function assertTeamMigrationRestartState({
     `SELECT table_relation.relname AS table_name,
             index_relation.relname AS index_name,
             index_row.indisunique AS is_unique,
+            index_row.indisvalid AS is_valid,
+            index_row.indisready AS is_ready,
+            index_row.indislive AS is_live,
             pg_get_indexdef(index_row.indexrelid, 0, true) AS definition,
             pg_get_expr(index_row.indpred, index_row.indrelid, true) AS predicate
        FROM pg_index AS index_row
@@ -261,11 +392,19 @@ export async function assertTeamMigrationRestartState({
     const definition = normalizeCatalogExpression(row?.definition) || "";
     if (!row
       || row.is_unique !== isUnique
+      || row.is_valid !== true
+      || row.is_ready !== true
+      || row.is_live !== true
       || definitionFragments.some((fragment) => !definition.includes(fragment))
       || normalizeCatalogPredicate(row.predicate) !== predicate) {
       throw new Error("migration 019 live index contract is incomplete or malformed");
     }
   }
+
+  await assertTeamCheckBehavior(restarted.pool, {
+    projectId: legacyRegistrationBeforeRestart.projectId,
+    registrationId: legacyRegistrationBeforeRestart.id
+  });
 
   const afterRestart = await restarted.readDb();
   if (!afterRestart.projects.length || afterRestart.projects.some((project) => (
