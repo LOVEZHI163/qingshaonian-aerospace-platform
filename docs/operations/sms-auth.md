@@ -218,7 +218,7 @@ RELEASE_SHA="$PREVIOUS_RELEASE" \
   /opt/aerogp -d --build --wait --wait-timeout 240
 ```
 
-使用 root-owned、`0600` 的一次性密码文件运行回滚 smoke；文件路径可以进入命令，密码内容绝不能进入命令、日志或终端。该 smoke 只向保留的 PostgreSQL 查询 017–019 是否仍记录、确认旧 API 的短信 feature 为 `false` 且邮箱 feature 为 `true`、登录一个受控测试账号，并对保留的邮箱重置路由使用保留域名的未知地址（不触发实际邮件投递）：
+使用 root-owned、`0600` 的一次性密码文件运行回滚 smoke；文件路径可以进入命令，密码内容绝不能进入命令、日志或终端。该 smoke 只向保留的 PostgreSQL 查询 017–019 是否仍记录、确认旧 API 的短信 feature 为 `false` 且邮箱 feature 为 `true`、登录一个受控测试账号，并对保留的邮箱重置路由使用保留域名的未知地址（不触发实际邮件投递）。JSON 解析和包含密码的登录 payload 都在 API 容器内完成；主机只需要 Docker、curl 和 POSIX shell，不需要 Node.js：
 
 ```sh
 ROLLBACK_SMOKE_PHONE='<controlled test phone>' \

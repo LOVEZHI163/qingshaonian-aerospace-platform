@@ -63,8 +63,14 @@ assert_status() {
   fi
 }
 
-migration_count=$(compose exec -T postgres psql -v ON_ERROR_STOP=1 -Atqc \
-  "SELECT count(*) FROM schema_migrations WHERE name IN ('017-account-email-recovery.sql', '018-sms-challenge-purposes.sql', '019-team-registration.sql');" \
+api_node() {
+  compose exec -T api node -e "$1"
+}
+
+migration_sql="SELECT count(*) FROM schema_migrations WHERE name IN ('017-account-email-recovery.sql', '018-sms-challenge-purposes.sql', '019-team-registration.sql');"
+migration_count=$(compose exec -T postgres sh -ec \
+  'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atqc "$1"' \
+  sh "$migration_sql" \
   | tr -d '[:space:]')
 if [ "$migration_count" != "3" ]; then
   echo "additive migrations 017-019 are not all present" >&2
@@ -72,19 +78,19 @@ if [ "$migration_count" != "3" ]; then
 fi
 
 assert_status "legacy-features" 200 "$base_url/api/public/features"
-if ! node -e 'let raw="";process.stdin.on("data",chunk=>raw+=chunk).on("end",()=>{const value=JSON.parse(raw);if(value.smsPasswordResetEnabled!==false||value.emailPasswordResetEnabled!==true)process.exit(2);});' < "$response_file"; then
+if ! api_node 'let raw="";process.stdin.on("data",chunk=>raw+=chunk).on("end",()=>{const value=JSON.parse(raw);if(value.smsPasswordResetEnabled!==false||value.emailPasswordResetEnabled!==true)process.exit(2);});' < "$response_file"; then
   echo "legacy feature flags did not keep SMS disabled and email enabled" >&2
   exit 1
 fi
 
-ROLLBACK_SMOKE_PASSWORD_FILE="$ROLLBACK_SMOKE_PASSWORD_FILE" ROLLBACK_SMOKE_PHONE="$ROLLBACK_SMOKE_PHONE" \
-  node -e 'const fs=require("fs");process.stdout.write(JSON.stringify({phone:process.env.ROLLBACK_SMOKE_PHONE,password:fs.readFileSync(process.env.ROLLBACK_SMOKE_PASSWORD_FILE,"utf8")}));' \
+cat "$ROLLBACK_SMOKE_PASSWORD_FILE" | \
+  compose exec -T -e ROLLBACK_SMOKE_PHONE api node -e 'let password="";process.stdin.on("data",chunk=>password+=chunk).on("end",()=>process.stdout.write(JSON.stringify({phone:process.env.ROLLBACK_SMOKE_PHONE,password})));' \
   > "$payload_file"
 chmod 600 "$payload_file"
 assert_status "legacy-password-login" 200 \
   -H 'Content-Type: application/json' --data-binary "@$payload_file" \
   "$base_url/api/auth/login"
-if ! node -e 'let raw="";process.stdin.on("data",chunk=>raw+=chunk).on("end",()=>{const value=JSON.parse(raw);if(!value.user||!value.user.id)process.exit(2);});' < "$response_file"; then
+if ! api_node 'let raw="";process.stdin.on("data",chunk=>raw+=chunk).on("end",()=>{const value=JSON.parse(raw);if(!value.user||!value.user.id)process.exit(2);});' < "$response_file"; then
   echo "legacy password login did not return an authenticated user" >&2
   exit 1
 fi
@@ -93,7 +99,7 @@ printf '%s' '{"email":"rollback-sms-disabled-check@invalid.example"}' > "$payloa
 assert_status "legacy-email-reset-request" 200 \
   -H 'Content-Type: application/json' --data-binary "@$payload_file" \
   "$base_url/api/auth/password-reset/email/request"
-if ! node -e 'let raw="";process.stdin.on("data",chunk=>raw+=chunk).on("end",()=>{const value=JSON.parse(raw);if(value.ok!==true)process.exit(2);});' < "$response_file"; then
+if ! api_node 'let raw="";process.stdin.on("data",chunk=>raw+=chunk).on("end",()=>{const value=JSON.parse(raw);if(value.ok!==true)process.exit(2);});' < "$response_file"; then
   echo "legacy email password-reset route did not remain available" >&2
   exit 1
 fi

@@ -148,7 +148,10 @@ test("legacy rollback verifier proves migrations remain and password and email r
   const releaseDir = path.join(tempDir, "archived-release");
   const fakeDocker = path.join(tempDir, "fake-docker.sh");
   const fakeCurl = path.join(tempDir, "fake-curl.sh");
+  const fakeNode = path.join(tempDir, "node");
   const passwordFile = path.join(tempDir, "password");
+  const dockerEvidence = path.join(tempDir, "docker-argv.txt");
+  const hostNodeEvidence = path.join(tempDir, "host-node-invoked");
   await fs.mkdir(releaseDir, { recursive: true });
   await fs.writeFile(path.join(releaseDir, "compose.yaml"), "services: {}\n", "utf8");
   await fs.writeFile(passwordFile, "rollback-password", "utf8");
@@ -159,9 +162,26 @@ test("legacy rollback verifier proves migrations remain and password and email r
     "test \"$ALIBABA_CLOUD_ACCESS_KEY_ID\" = \"\"",
     "test \"$ALIYUN_SMS_TEMPLATE_CODE\" = \"\"",
     "test \"$DIRECTMAIL_SMTP_USER\" = \"email-user-is-retained\"",
+    "printf '%s\\n' \"$@\" >> \"$ROLLBACK_DOCKER_ARGV_FILE\"",
     "test \"$1\" = compose",
     "test \"$8\" = exec",
-    "printf 3"
+    "shift 8",
+    "test \"$1\" = -T",
+    "shift",
+    "if test \"$1\" = -e; then test \"$2\" = ROLLBACK_SMOKE_PHONE; shift 2; fi",
+    "if test \"$1:$2\" = postgres:sh; then",
+    "  test \"$3\" = -ec",
+    "  case \"$4\" in *'psql -v ON_ERROR_STOP=1 -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\" -Atqc'*) ;; *) exit 81 ;; esac",
+    "  printf 3",
+    "elif test \"$1:$2\" = api:node; then",
+    "  test \"$3\" = -e",
+    "  case \"$4\" in",
+    "    *'process.stdout.write(JSON.stringify({phone:process.env.ROLLBACK_SMOKE_PHONE,password}))'*) cat >/dev/null; printf '%s' '{\"phone\":\"13800000001\",\"password\":\"private\"}' ;;",
+    "    *) cat >/dev/null ;;",
+    "  esac",
+    "else",
+    "  exit 82",
+    "fi"
   ].join("\n"), "utf8");
   await fs.writeFile(fakeCurl, [
     "#!/bin/sh",
@@ -181,8 +201,14 @@ test("legacy rollback verifier proves migrations remain and password and email r
     "esac",
     "printf 200"
   ].join("\n"), "utf8");
+  await fs.writeFile(fakeNode, [
+    "#!/bin/sh",
+    "printf '%s' host-node-invoked > \"$HOST_NODE_EVIDENCE_FILE\"",
+    "exit 97"
+  ].join("\n"), "utf8");
   await fs.chmod(fakeDocker, 0o700);
   await fs.chmod(fakeCurl, 0o700);
+  await fs.chmod(fakeNode, 0o700);
 
   const result = await run(shellCommand(), [rollbackVerifier, releaseDir], {
     cwd: root,
@@ -190,6 +216,9 @@ test("legacy rollback verifier proves migrations remain and password and email r
       ...process.env,
       DOCKER_BIN: shellPath(fakeDocker),
       CURL_BIN: shellPath(fakeCurl),
+      ROLLBACK_DOCKER_ARGV_FILE: dockerEvidence,
+      HOST_NODE_EVIDENCE_FILE: hostNodeEvidence,
+      PATH: `${shellPath(tempDir)}${path.delimiter}${process.env.PATH}`,
       ROLLBACK_SMOKE_PHONE: "13800000001",
       ROLLBACK_SMOKE_PASSWORD_FILE: shellPath(passwordFile),
       DIRECTMAIL_SMTP_USER: "email-user-is-retained",
@@ -202,6 +231,11 @@ test("legacy rollback verifier proves migrations remain and password and email r
   assert.equal(result.code, 0, result.stderr);
   assert.match(result.stdout, /legacy-sms-disabled rollback smoke passed/);
   assert.doesNotMatch(`${result.stdout}\n${result.stderr}`, /rollback-password|current-access-key|legacy-template/i);
+  assert.equal(await fs.stat(hostNodeEvidence).then(() => true, () => false), false);
+  const dockerArgs = await fs.readFile(dockerEvidence, "utf8");
+  assert.doesNotMatch(dockerArgs, /rollback-password|current-access-key|legacy-template/i);
+  assert.match(dockerArgs, /\napi\nnode\n-e\n/);
+  assert.match(dockerArgs, /\npostgres\nsh\n-ec\n/);
 });
 
 test("pre-purpose baseline starts with SMS disabled while password and email routes remain usable", async (t) => {
