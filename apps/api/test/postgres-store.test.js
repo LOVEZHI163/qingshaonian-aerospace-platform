@@ -466,6 +466,26 @@ test("PostgreSQL store leaves production empty databases unseeded", async () => 
     assert.deepEqual(data.users, []);
     assert.deepEqual(data.organizations, []);
     assert.deepEqual(data.registrations, []);
+
+    const aiShortFilmProjects = data.projects.filter((project) => (
+      project.category === "青少年航空航天创意创作比赛"
+      && project.name.includes("AI短片创意创作")
+    ));
+    assert.deepEqual(aiShortFilmProjects.map((project) => project.type).sort(), ["individual", "team"]);
+    assert.deepEqual(aiShortFilmProjects.find((project) => project.type === "team"), {
+      id: "ai-short-film-team",
+      eventId: "wz-aerospace-2026",
+      name: "“航天梦·强国梦”青少年AI短片创意创作团队赛",
+      type: "team",
+      category: "青少年航空航天创意创作比赛",
+      enabled: true,
+      instructorRequired: true,
+      displayOrder: 9,
+      allowedGroups: ["中学组", "小学低段", "小学高段", "职高/高中组"],
+      submissionMode: "image_video",
+      teamMinMembers: 1,
+      teamMaxMembers: 8
+    });
   } finally {
     await store.close();
   }

@@ -307,7 +307,7 @@ onMounted(async () => {
       <label v-if="!editing">学生身份证号<input v-model="form.studentIdNumber" data-field="student-id-number" inputmode="text" autocomplete="off" minlength="18" maxlength="18" pattern="[0-9]{17}[0-9Xx]" placeholder="18 位居民身份证号，末位可为 X" required /></label>
     </template>
     <TeamRegistrationFields v-else v-model="form.participants" :min-members="selectedProject.teamMinMembers ?? 1" :max-members="selectedProject.teamMaxMembers ?? 8" :default-school="defaultSchool" />
-    <div class="two"><label>赛项<select v-model="form.projectId" :disabled="editing" required><option v-for="project in projects" :key="project.id" :value="project.id">{{ project.name }}</option></select></label><label>指导老师<input v-model="form.instructor" data-field="instructor" /></label></div>
+    <div class="two"><label>赛项<select v-model="form.projectId" :disabled="editing" required><option v-for="project in projects" :key="project.id" :value="project.id">{{ project.name }}</option></select></label><label>指导老师<input v-model="form.instructor" data-field="instructor" :required="selectedProject?.instructorRequired" /></label></div>
     <p v-if="editing" class="hint">赛项在报名创建后不可修改；如需更换赛项，请取消后重新报名。</p>
     <section v-if="requiresSubmission" class="registration-submission" aria-label="作品材料">
       <p v-if="uploadSessionLoading" class="hint">正在创建作品上传会话…</p>

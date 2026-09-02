@@ -232,6 +232,7 @@ export function validateRegistration(input, existingRows, project, eventId, igno
   for (const [value, label] of [[athlete.name, "姓名"], [athlete.school, "学校"], [athlete.grade, "年级"], [athlete.phone, "手机号/家长手机号"], [input.projectId, "赛项"]]) {
     if (!String(value || "").trim()) errors.push(`${label}不能为空`);
   }
+  if (project?.instructorRequired && !String(input.instructor || "").trim()) errors.push("指导老师不能为空");
   const key = athleteKey(athlete);
   const projectType = project?.type || "individual";
   const activeRows = existingRows.filter((row) => (
@@ -239,6 +240,14 @@ export function validateRegistration(input, existingRows, project, eventId, igno
   ));
   const sameAthleteRows = activeRows.filter((row) => row.athleteKey === key);
   return { ok: errors.length === 0, errors, athleteKey: key, projectType, duplicateCount: sameAthleteRows.length };
+}
+
+function requiredInstructor(project, value) {
+  const instructor = String(value ?? "").trim();
+  if (project?.instructorRequired && !instructor) {
+    throw businessError(422, "指导老师不能为空", "INSTRUCTOR_REQUIRED");
+  }
+  return instructor;
 }
 
 function submittedOrStoredFingerprint(db, registration, input) {
@@ -403,7 +412,7 @@ export function prepareAdminRegistrationUpdate(db, row, input, context = {}) {
     });
     const rosterChanged = teamRosterChanged(db, row.id, existingParticipants, teamRoster);
     assertRegistrationRosterMutable(db, row, rosterChanged);
-    const instructor = String(input.instructor ?? row.instructor ?? "").trim();
+    const instructor = requiredInstructor(project, input.instructor ?? row.instructor);
     const instructorChanged = instructor !== String(row.instructor || "").trim();
     const reviewRelevantChanged = rosterChanged || instructorChanged;
     const nextStatus = organizationEdit && reviewRelevantChanged ? "pending" : row.status;
@@ -450,7 +459,7 @@ export function prepareAdminRegistrationUpdate(db, row, input, context = {}) {
   if (row.source === "member_registration") {
     requireMemberIdentity(db, organizationId, row.personalUserId, athlete);
   }
-  const instructor = String(input.instructor ?? row.instructor ?? "").trim();
+  const instructor = requiredInstructor(project, input.instructor ?? row.instructor);
   const currentFingerprint = registrationIdentityFingerprints(db, row)[0] || null;
   const nextFingerprint = submittedOrStoredFingerprint(db, row, input);
   const rosterChanged = ATHLETE_FIELDS.some((field) => athlete[field] !== row.athlete?.[field])
@@ -690,6 +699,7 @@ function requireMemberIdentity(db, organizationId, memberUserId, athlete) {
 function validateCreateForEvent(db, input, event, actor, channel, context) {
   const projectId = requireText(input?.projectId, "赛项");
   const trustedProject = requireEnabledProjectForEvent(db, event.id, projectId);
+  const instructor = requiredInstructor(trustedProject, input?.instructor);
   if (trustedProject.type === "team") {
     if (channel !== "organization") {
       requireOrdinaryUser(actor);
@@ -720,6 +730,7 @@ function validateCreateForEvent(db, input, event, actor, channel, context) {
       organization,
       registrationSource: "organization_proxy",
       personalUserId: null,
+      instructor,
       key: athleteKey(athlete),
       teamRoster
     };
@@ -757,7 +768,7 @@ function validateCreateForEvent(db, input, event, actor, channel, context) {
   } else {
     throw businessError(422, "报名渠道不合法");
   }
-  return { athlete, group, project, organization, registrationSource, personalUserId, key: athleteKey(athlete) };
+  return { athlete, group, project, organization, registrationSource, personalUserId, instructor, key: athleteKey(athlete) };
 }
 
 function nextTeamCode(db, eventId, organizationId, projectId) {
@@ -789,7 +800,7 @@ export function createOrMergeRegistration(db, input, actor, channel, {
       athlete: prepared.athlete, athleteKey: prepared.key, group: prepared.group,
       projectId: prepared.project.id, projectName: prepared.project.name, projectType: "team",
       teamCode: nextTeamCode(db, event.id, organizationId, prepared.project.id),
-      instructor: String(input?.instructor || "").trim(), status: "pending", rejectReason: "",
+      instructor: prepared.instructor, status: "pending", rejectReason: "",
       createdAt: timestamp, updatedAt: timestamp
     };
     db.registrations.unshift(row);
@@ -824,7 +835,7 @@ export function createOrMergeRegistration(db, input, actor, channel, {
       personalUserId, organizationId, createdVia: channel, organization: prepared.organization?.name || "",
       athlete: prepared.athlete, athleteKey: prepared.key, group: prepared.group,
       projectId: prepared.project.id, projectName: prepared.project.name, projectType: prepared.project.type,
-      instructor: String(input?.instructor || "").trim(), status: "pending", rejectReason: "",
+      instructor: prepared.instructor, status: "pending", rejectReason: "",
       createdAt: timestamp, updatedAt: timestamp
     };
     db.registrations.unshift(row);

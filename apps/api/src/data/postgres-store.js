@@ -476,10 +476,14 @@ export function createPostgresStore(pool, { seedOnEmpty = true, testOnlyPgMemCom
           if (existingProject.rowCount > 0) continue;
           const inserted = await client.query(
             `INSERT INTO projects
-              (id, event_id, name, type, category, enabled, instructor_required, display_order, team_min_members, team_max_members)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+              (id, event_id, name, type, category, enabled, instructor_required, display_order, submission_mode, team_min_members, team_max_members)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
              ON CONFLICT (id) DO NOTHING`,
-            [project.id, project.eventId || EVENT.id, project.name, project.type, project.category, project.enabled, project.instructorRequired, project.displayOrder, project.teamMinMembers || 1, project.teamMaxMembers || 8]
+            [
+              project.id, project.eventId || EVENT.id, project.name, project.type, project.category,
+              project.enabled, project.instructorRequired, project.displayOrder, project.submissionMode || "none",
+              project.teamMinMembers || 1, project.teamMaxMembers || 8
+            ]
           );
           if (inserted.rowCount > 0) insertedProjectIds.add(project.id);
         }
