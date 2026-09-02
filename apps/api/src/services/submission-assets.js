@@ -326,7 +326,10 @@ export function uploadSessionSummary(db, session) {
 }
 
 export function createUploadSession({ db, eventId, projectId, actor, channel, now, makeId }) {
-  eventProject(db, eventId, projectId);
+  const { project } = eventProject(db, eventId, projectId);
+  if (project.type === "team" && channel === "personal") {
+    throw businessError(422, "团队赛只允许组织代报名", "TEAM_ORGANIZATION_PROXY_REQUIRED");
+  }
   let organizationId = null;
   if (channel === "personal") {
     requireOrdinaryUser(actor);
@@ -369,7 +372,10 @@ export function requireUploadSessionAccess({ db, sessionId, actor, channel, now,
   } else {
     throw businessError(422, "上传渠道不合法", "SUBMISSION_CHANNEL_INVALID");
   }
-  eventProject(db, session.eventId, session.projectId);
+  const { project } = eventProject(db, session.eventId, session.projectId);
+  if (project.type === "team" && channel === "personal") {
+    throw businessError(422, "团队赛只允许组织代报名", "TEAM_ORGANIZATION_PROXY_REQUIRED");
+  }
   if (session.state !== "active") throw businessError(409, "上传会话已提交或不可用", "UPLOAD_SESSION_NOT_ACTIVE");
   if (sessionIsExpired(session, now)) throw businessError(409, "上传会话已过期", "UPLOAD_SESSION_EXPIRED");
   return session;
@@ -396,6 +402,10 @@ export function commitUploadSession({ db, sessionId, registration, actor, channe
   }
   if (session.eventId !== registration.eventId || session.projectId !== registration.projectId) {
     throw businessError(422, "上传会话与报名赛项不匹配", "UPLOAD_SESSION_SCOPE_MISMATCH");
+  }
+  const { project } = eventProject(db, session.eventId, session.projectId);
+  if (project.type === "team" && channel === "personal") {
+    throw businessError(422, "团队赛只允许组织代报名", "TEAM_ORGANIZATION_PROXY_REQUIRED");
   }
   if (session.state !== "active") {
     throw businessError(409, "上传会话已提交或不可用", "UPLOAD_SESSION_NOT_ACTIVE");

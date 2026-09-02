@@ -21,7 +21,7 @@ test("certificate schema migrates legacy certificates to slot 1 and permits one 
   const memory = newDb({ autoCreateForeignKeyIndices: true });
   const { Pool } = memory.adapters.createPg();
   const pool = new Pool();
-  const store = createPostgresStore(pool);
+  const store = createPostgresStore(pool, { testOnlyPgMemCompatibility: true });
 
   try {
     await store.initialize();

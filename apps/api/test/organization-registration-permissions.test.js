@@ -18,6 +18,8 @@ test.after(() => {
 const eventId = "E1";
 const projectId = "P1";
 const validStudentId = "11010519491231002X";
+const otherValidStudentId = "110105194912310038";
+const thirdValidStudentId = "110105201401011231";
 const fixedNow = "2026-08-07T08:00:00.000Z";
 const actor = { id: "U1", type: "ordinary" };
 const owner = { id: "UO1", type: "organization", mustChangePassword: false };
@@ -46,9 +48,14 @@ function fixture(leaders = []) {
     projects: [{
       id: projectId, eventId, name: "纸飞机", type: "individual", enabled: true,
       allowedGroups: ["小学高段"], submissionMode: "none"
+    }, {
+      id: "P-TEAM", eventId, name: "接力赛", type: "team", enabled: true,
+      allowedGroups: ["小学高段"], submissionMode: "none", teamMinMembers: 1, teamMaxMembers: 8
     }],
     registrations: [],
     registrationIdentities: [],
+    registrationParticipants: [],
+    registrationParticipantIdentities: [],
     registrationSubmissionAssets: [],
     certificates: []
   };
@@ -137,9 +144,58 @@ test("leader loss blocks later creates but not an existing retry, read, or ordin
   assert.throws(
     () => create(db, "personal", registrationInput({
       projectId,
+      studentIdNumber: otherValidStudentId,
       athlete: { ...registrationInput().athlete, name: "李同学", phone: "13800000002" }
     })),
     (error) => error.status === 403 && error.code === "ORGANIZATION_LEADER_REQUIRED"
   );
   assert.equal(db.registrations.length, 1);
+});
+
+test("team organization proxy is the only channel that creates one persisted roster", () => {
+  process.env.REGISTRATION_ID_ENCRYPTION_KEY = Buffer.alloc(32, 9).toString("base64");
+  const teamPayload = {
+    eventId,
+    projectId: "P-TEAM",
+    registrationSource: "organization_proxy",
+    instructor: "林老师",
+    participants: [
+      { name: "队员甲", school: "实验小学", grade: "五年级", phone: "13800000001", studentIdNumber: validStudentId },
+      { name: "队员乙", school: "实验小学", grade: "五年级", phone: "13800000002", studentIdNumber: otherValidStudentId }
+    ]
+  };
+  const context = (() => {
+    let sequence = 0;
+    return {
+      makeId: (prefix) => `${prefix}-${++sequence}`,
+      now: () => fixedNow,
+      clock: () => new Date(fixedNow)
+    };
+  })();
+
+  for (const [channel, input] of [
+    ["personal", teamPayload],
+    ["organization", { ...teamPayload, registrationSource: "member_registration", memberUserId: actor.id }]
+  ]) {
+    const db = fixture([{ reviewStatus: "approved", enabled: true }]);
+    assert.throws(
+      () => createOrMergeRegistration(db, input, channel === "personal" ? actor : owner, channel, context),
+      (error) => error.status === 422 && error.code === "TEAM_ORGANIZATION_PROXY_REQUIRED"
+    );
+    assert.deepEqual(db.registrations, []);
+    assert.deepEqual(db.registrationParticipants, []);
+    assert.deepEqual(db.registrationParticipantIdentities, []);
+  }
+
+  const db = fixture([{ reviewStatus: "approved", enabled: true }]);
+  const created = createOrMergeRegistration(db, teamPayload, owner, "organization", context);
+  assert.equal(created.created, true);
+  assert.equal(created.row.teamCode, "O1-P-TEAM-01");
+  assert.equal(created.row.athlete.name, "队员甲");
+  assert.equal(created.row.personalUserId, null);
+  assert.deepEqual(db.registrationParticipants.map((row) => [row.registrationId, row.name]), [
+    [created.row.id, "队员甲"], [created.row.id, "队员乙"]
+  ]);
+  assert.equal(db.registrationParticipantIdentities.length, 2);
+  assert.equal(JSON.stringify(db).includes(thirdValidStudentId), false);
 });

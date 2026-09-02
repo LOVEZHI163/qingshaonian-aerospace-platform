@@ -7,10 +7,11 @@ import test from "node:test";
 import { newDb } from "pg-mem";
 
 import { CREDENTIAL_POLICY, validateUpload } from "../src/files/policy.js";
+import { createSmsRegistrationService } from "../src/auth/sms-registration.js";
 import { deletePrivateFile, savePrivateFile } from "../src/files/storage.js";
 import { createPostgresStore } from "../src/data/postgres-store.js";
 import { ensureDbShape, seedDb } from "../src/data/seed.js";
-import { registerOrganization, resubmitOrganization } from "../src/services/organizations.js";
+import { OrganizationError, registerOrdinary, registerOrganization, resubmitOrganization } from "../src/services/organizations.js";
 import { withTestServer } from "../test-support/server.js";
 import { loginAs, withSession } from "./helpers/api-client.js";
 
@@ -45,19 +46,170 @@ function organizationRegistration({
   return form;
 }
 
-async function postOrganizationRegistration(baseUrl, options) {
+async function postOrganizationRegistration(baseUrl, options, issuePhoneVerificationToken) {
+  const form = organizationRegistration(options);
+  const phone = options?.phone || "13600009991";
+  form.set("phoneVerificationToken", issuePhoneVerificationToken(phone));
   return fetch(`${baseUrl}/api/auth/register/organization`, {
     method: "POST",
-    body: organizationRegistration(options)
+    body: form
   });
 }
 
+const registrationVerificationError = (error) => (
+  error instanceof OrganizationError
+  && error.status === 422
+  && error.message === "手机号验证已过期，请重新验证"
+);
+
+async function historicalTokenWithDisabledVerifier(phone) {
+  const secret = "registration-shutdown-test-secret";
+  const now = Date.parse("2026-08-30T00:00:00.000Z");
+  const enabled = createSmsRegistrationService({
+    challengeService: { enabled: true, consume: async () => true, request: async () => ({ ok: true }) },
+    readDb: async () => ({ users: [] }),
+    secret,
+    clock: () => now,
+    randomNonce: () => "historical-token"
+  });
+  const issued = await enabled.confirm({ phone, code: "123456" });
+  const disabled = createSmsRegistrationService({
+    challengeService: { enabled: false, consume: async () => true, request: async () => ({ ok: true }) },
+    readDb: async () => ({ users: [] }),
+    secret,
+    clock: () => now
+  });
+  return { issued, verifyPhoneRegistration: disabled.verify };
+}
+
+test("ordinary registration rejects failed phone verification before hashing or persistence", async () => {
+  let hashed = false;
+  let wrote = false;
+  await assert.rejects(() => registerOrdinary({
+    input: { name: "普通用户", phone: " 136-0000-9981 ", password: "Strong123", phoneVerificationToken: "invalid-token" },
+    readDb: async () => ({ users: [], organizations: [] }),
+    writeDb: async () => { wrote = true; },
+    hashPassword: async () => { hashed = true; return "hash"; },
+    validatePassword: () => "",
+    verifyPhoneRegistration: async () => { throw new Error("invalid registration token"); },
+    makeId: (prefix) => `${prefix}1`,
+    now: () => "2026-08-30T00:00:00.000Z"
+  }), registrationVerificationError);
+  assert.equal(hashed, false);
+  assert.equal(wrote, false);
+});
+
+test("organization registration rejects failed phone verification before hashing, file save, or persistence", async () => {
+  let hashed = false;
+  let saved = false;
+  let wrote = false;
+  await assert.rejects(() => registerOrganization({
+    input: {
+      name: "组织负责人", phone: " 136-0000-9982 ", password: "Strong123",
+      organizationName: "验证失败组织", creditCode: "91330300TEST000082", documentType: "business_license",
+      phoneVerificationToken: "invalid-token"
+    },
+    file: uploadedFile(pdfBuffer, "license.pdf", "application/pdf"),
+    readDb: async () => ({ users: [], organizations: [], organizationDocuments: [] }),
+    writeDb: async () => { wrote = true; },
+    hashPassword: async () => { hashed = true; return "hash"; },
+    validatePassword: () => "",
+    verifyPhoneRegistration: async () => { throw new Error("invalid registration token"); },
+    makeId: (prefix) => `${prefix}1`,
+    now: () => "2026-08-30T00:00:00.000Z",
+    saveFile: async () => { saved = true; return {}; }
+  }), registrationVerificationError);
+  assert.equal(hashed, false);
+  assert.equal(saved, false);
+  assert.equal(wrote, false);
+});
+
+test("ordinary registration rejects a historical phone token after SMS registration is disabled", async () => {
+  const phone = "13600009985";
+  const { issued, verifyPhoneRegistration } = await historicalTokenWithDisabledVerifier(phone);
+  let hashed = false;
+  let wrote = false;
+  await assert.rejects(() => registerOrdinary({
+    input: { name: "普通用户", phone, password: "Strong123", phoneVerificationToken: issued.phoneVerificationToken },
+    readDb: async () => ({ users: [], organizations: [] }),
+    writeDb: async () => { wrote = true; },
+    hashPassword: async () => { hashed = true; return "hash"; },
+    validatePassword: () => "",
+    verifyPhoneRegistration,
+    makeId: (prefix) => `${prefix}1`,
+    now: () => "2026-08-30T00:00:00.000Z"
+  }), registrationVerificationError);
+  assert.equal(hashed, false);
+  assert.equal(wrote, false);
+});
+
+test("organization registration rejects a historical phone token after SMS registration is disabled", async () => {
+  const phone = "13600009986";
+  const { issued, verifyPhoneRegistration } = await historicalTokenWithDisabledVerifier(phone);
+  let hashed = false;
+  let saved = false;
+  let wrote = false;
+  await assert.rejects(() => registerOrganization({
+    input: {
+      name: "组织负责人", phone, password: "Strong123",
+      organizationName: "关闭短信组织", creditCode: "91330300TEST000086", documentType: "business_license",
+      phoneVerificationToken: issued.phoneVerificationToken
+    },
+    file: uploadedFile(pdfBuffer, "license.pdf", "application/pdf"),
+    readDb: async () => ({ users: [], organizations: [], organizationDocuments: [] }),
+    writeDb: async () => { wrote = true; },
+    hashPassword: async () => { hashed = true; return "hash"; },
+    validatePassword: () => "",
+    verifyPhoneRegistration,
+    makeId: (prefix) => `${prefix}1`,
+    now: () => "2026-08-30T00:00:00.000Z",
+    saveFile: async () => { saved = true; return {}; }
+  }), registrationVerificationError);
+  assert.equal(hashed, false);
+  assert.equal(saved, false);
+  assert.equal(wrote, false);
+});
+
+test("both registration services verify the normalized phone and submitted token", async () => {
+  const calls = [];
+  const verifyPhoneRegistration = async (input) => { calls.push(input); return true; };
+  const baseDeps = {
+    readDb: async () => ({ users: [], organizations: [], organizationDocuments: [] }),
+    writeDb: async () => {},
+    hashPassword: async () => "hash",
+    validatePassword: () => "",
+    verifyPhoneRegistration,
+    makeId: (() => { let sequence = 0; return (prefix) => `${prefix}${++sequence}`; })(),
+    now: () => "2026-08-30T00:00:00.000Z"
+  };
+  await registerOrdinary({
+    ...baseDeps,
+    input: { name: "普通用户", phone: " 136-0000-9983 ", password: "Strong123", phoneVerificationToken: "ordinary-token" }
+  });
+  await registerOrganization({
+    ...baseDeps,
+    input: {
+      name: "组织负责人", phone: " 136-0000-9984 ", password: "Strong123",
+      organizationName: "验证成功组织", creditCode: "91330300TEST000084", documentType: "business_license",
+      phoneVerificationToken: "organization-token"
+    },
+    file: uploadedFile(pdfBuffer, "license.pdf", "application/pdf"),
+    saveFile: async () => ({
+      filePath: "/safe/license.pdf", originalName: "license.pdf", storedName: "license.pdf", mimeType: "application/pdf", size: pdfBuffer.length
+    })
+  });
+  assert.deepEqual(calls, [
+    { phone: "13600009983", phoneVerificationToken: "ordinary-token" },
+    { phone: "13600009984", phoneVerificationToken: "organization-token" }
+  ]);
+});
+
 test("organization registration review keeps pending organizations outside organization capabilities", async () => {
-  await withTestServer(async ({ baseUrl }) => {
+  await withTestServer(async ({ baseUrl, phoneVerificationToken }) => {
     const ordinary = await fetch(`${baseUrl}/api/auth/register/ordinary`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: "普通家长", phone: "13600009990", password: "Strong123", type: "organization" })
+      body: JSON.stringify({ name: "普通家长", phone: "13600009990", password: "Strong123", type: "organization", phoneVerificationToken: phoneVerificationToken("13600009990") })
     });
     assert.equal(ordinary.status, 201);
     assert.equal((await ordinary.json()).user.type, "ordinary");
@@ -67,9 +219,9 @@ test("organization registration review keeps pending organizations outside organ
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name: "绕过审核", phone: "13600009989", password: "Strong123", type: "organization", organizationName: "无资质组织" })
     });
-    assert.equal(legacyOrganizationRegistration.status, 422);
+    assert.equal(legacyOrganizationRegistration.status, 404);
 
-    const register = await postOrganizationRegistration(baseUrl);
+    const register = await postOrganizationRegistration(baseUrl, undefined, phoneVerificationToken);
     assert.equal(register.status, 201);
     const payload = await register.json();
     assert.equal(payload.organization.reviewStatus, "pending");
@@ -84,13 +236,13 @@ test("organization registration review keeps pending organizations outside organ
     const pendingConsole = await fetch(`${baseUrl}/api/organizations/${payload.organization.id}/members`, withSession(owner.cookie));
     assert.equal(pendingConsole.status, 403);
 
-    const duplicate = await postOrganizationRegistration(baseUrl, { creditCode: "91330300TEST000001" });
+    const duplicate = await postOrganizationRegistration(baseUrl, { creditCode: "91330300TEST000001" }, phoneVerificationToken);
     assert.equal(duplicate.status, 409);
-    const missing = await postOrganizationRegistration(baseUrl, { creditCode: "91330300TEST000002", includeCredential: false });
+    const missing = await postOrganizationRegistration(baseUrl, { creditCode: "91330300TEST000002", includeCredential: false }, phoneVerificationToken);
     assert.equal(missing.status, 422);
-    const invalidType = await postOrganizationRegistration(baseUrl, { creditCode: "91330300TEST000003", documentType: "invalid" });
+    const invalidType = await postOrganizationRegistration(baseUrl, { creditCode: "91330300TEST000003", documentType: "invalid" }, phoneVerificationToken);
     assert.equal(invalidType.status, 422);
-    const lowercaseCredit = await postOrganizationRegistration(baseUrl, { creditCode: "91330300test000004", phone: "13600009984" });
+    const lowercaseCredit = await postOrganizationRegistration(baseUrl, { creditCode: "91330300test000004", phone: "13600009984" }, phoneVerificationToken);
     assert.equal(lowercaseCredit.status, 422);
 
     const nonAdminReview = await fetch(`${baseUrl}/api/admin/organizations/${payload.organization.id}/review`, withSession(owner.cookie, {
@@ -128,8 +280,8 @@ test("organization registration review keeps pending organizations outside organ
 });
 
 test("rejected owner can replace credentials and resubmit organization for review", async () => {
-  await withTestServer(async ({ baseUrl }) => {
-    const register = await postOrganizationRegistration(baseUrl, { creditCode: "91330300TEST000011" });
+  await withTestServer(async ({ baseUrl, phoneVerificationToken }) => {
+    const register = await postOrganizationRegistration(baseUrl, { creditCode: "91330300TEST000011" }, phoneVerificationToken);
     const firstPayload = await register.json();
     const { organization } = firstPayload;
     const admin = await loginAs(baseUrl, "13900000000", "admin123");
@@ -157,8 +309,8 @@ test("rejected owner can replace credentials and resubmit organization for revie
 });
 
 test("admin organization status disables only the unique owner capabilities and persists the organization state", async () => {
-  await withTestServer(async ({ baseUrl, dbPath }) => {
-    const register = await postOrganizationRegistration(baseUrl, { creditCode: "91330300TEST000071", phone: "13600009971" });
+  await withTestServer(async ({ baseUrl, dbPath, phoneVerificationToken }) => {
+    const register = await postOrganizationRegistration(baseUrl, { creditCode: "91330300TEST000071", phone: "13600009971" }, phoneVerificationToken);
     const { organization } = await register.json();
     const admin = await loginAs(baseUrl, "13900000000", "admin123");
     assert.equal((await fetch(`${baseUrl}/api/admin/organizations/${organization.id}/review`, withSession(admin.cookie, {
@@ -171,7 +323,7 @@ test("admin organization status disables only the unique owner capabilities and 
     }))).status, 201);
     const ordinaryRegistration = await fetch(`${baseUrl}/api/auth/register/ordinary`, {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: "普通成员", phone: "13600009972", password: "Member72" })
+      body: JSON.stringify({ name: "普通成员", phone: "13600009972", password: "Member72", phoneVerificationToken: phoneVerificationToken("13600009972") })
     });
     assert.equal(ordinaryRegistration.status, 201);
     const member = await loginAs(baseUrl, "13600009972", "Member72");
@@ -225,6 +377,7 @@ test("organization registration removes the saved credential when its atomic dat
       writeDb: async () => { throw new Error("simulated database failure"); },
       hashPassword: async () => "hash",
       validatePassword: () => "",
+      verifyPhoneRegistration: async () => true,
       makeId: (prefix) => `${prefix}1`,
       now: () => "2026-07-17T00:00:00.000Z",
       saveFile: async () => saved,
@@ -244,7 +397,8 @@ test("organization registration records a cleanup tombstone when database failur
     file: uploadedFile(pdfBuffer, "license.pdf", "application/pdf"),
     readDb: async () => ({ users: [], organizations: [], memberships: [], organizationDocuments: [], fileCleanupJournal: [] }),
     writeDb: async (db) => { if (writes++ === 0) throw new Error("database failure"); journal = db.fileCleanupJournal; },
-    hashPassword: async () => "hash", validatePassword: () => "", makeId: (prefix) => `${prefix}3`, now: () => "2026-07-17T00:00:00.000Z",
+    hashPassword: async () => "hash", validatePassword: () => "", verifyPhoneRegistration: async () => true,
+    makeId: (prefix) => `${prefix}3`, now: () => "2026-07-17T00:00:00.000Z",
     saveFile: async () => saved, removePrivateFile: async () => { throw new Error("disk unavailable"); }
   }), /database failure/);
   assert.equal(journal.length, 1);
@@ -252,8 +406,8 @@ test("organization registration records a cleanup tombstone when database failur
 });
 
 test("organization registrations reject pending, rejected, and disabled organizations and unaffiliated personal registration", async () => {
-  await withTestServer(async ({ baseUrl, dbPath }) => {
-    const registered = await postOrganizationRegistration(baseUrl, { creditCode: "91330300TEST000020" });
+  await withTestServer(async ({ baseUrl, dbPath, phoneVerificationToken }) => {
+    const registered = await postOrganizationRegistration(baseUrl, { creditCode: "91330300TEST000020" }, phoneVerificationToken);
     const { organization } = await registered.json();
     const owner = await loginAs(baseUrl, "13600009991", "Strong123");
     const admin = await loginAs(baseUrl, "13900000000", "admin123");
@@ -294,7 +448,7 @@ test("organization registrations reject pending, rejected, and disabled organiza
 
     const personalRegister = await fetch(`${baseUrl}/api/auth/register/ordinary`, {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: "个人参赛家长", phone: "13600009923", password: "Strong123" })
+      body: JSON.stringify({ name: "个人参赛家长", phone: "13600009923", password: "Strong123", phoneVerificationToken: phoneVerificationToken("13600009923") })
     });
     assert.equal(personalRegister.status, 201);
     const personal = await loginAs(baseUrl, "13600009923", "Strong123");
@@ -302,7 +456,7 @@ test("organization registrations reject pending, rejected, and disabled organiza
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         athlete: { name: "个人报名学生", school: "个人学校", grade: "初二", phone: "13600009924" },
-        group: "中学组", projectId: "drone-relay"
+        group: "中学组", projectId: "ai-short-film"
       })
     }));
     assert.equal(personalRegistration.status, 403);
@@ -322,6 +476,7 @@ test("organization registration rejects an account that already owns an organiza
     file: uploadedFile(pdfBuffer, "license.pdf", "application/pdf"),
     readDb: async () => structuredClone(db), writeDb: async () => {},
     hashPassword: async (value) => value, validatePassword: () => "",
+    verifyPhoneRegistration: async () => true,
     makeId: (() => { const values = ["U2001", "O2003"]; return () => values.shift(); })(),
     now: () => "2026-07-30T00:00:00.000Z",
     saveFile: async () => { saved = true; return {}; }
@@ -330,10 +485,10 @@ test("organization registration rejects an account that already owns an organiza
 });
 
 test("concurrent organization registrations preserve every committed user, organization, document, and file", async () => {
-  await withTestServer(async ({ baseUrl, dbPath }) => {
+  await withTestServer(async ({ baseUrl, dbPath, phoneVerificationToken }) => {
     const [first, second] = await Promise.all([
-      postOrganizationRegistration(baseUrl, { creditCode: "91330300TEST000030", phone: "13600009930", organizationName: "并发组织一" }),
-      postOrganizationRegistration(baseUrl, { creditCode: "91330300TEST000031", phone: "13600009931", organizationName: "并发组织二" })
+      postOrganizationRegistration(baseUrl, { creditCode: "91330300TEST000030", phone: "13600009930", organizationName: "并发组织一" }, phoneVerificationToken),
+      postOrganizationRegistration(baseUrl, { creditCode: "91330300TEST000031", phone: "13600009931", organizationName: "并发组织二" }, phoneVerificationToken)
     ]);
     assert.deepEqual([first.status, second.status], [201, 201]);
     const firstPayload = await first.json();
@@ -350,11 +505,51 @@ test("concurrent organization registrations preserve every committed user, organ
   }, { prefix: "organization-concurrent-" });
 });
 
+test("concurrent ordinary registrations with one verified-phone token create exactly one account", async () => {
+  await withTestServer(async ({ baseUrl, dbPath, phoneVerificationToken }) => {
+    const phone = "13600009934";
+    const token = phoneVerificationToken(phone);
+    const request = () => fetch(`${baseUrl}/api/auth/register/ordinary`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "并发普通用户", phone, password: "Strong123", phoneVerificationToken: token })
+    });
+    const responses = await Promise.all([request(), request()]);
+    assert.deepEqual(responses.map((response) => response.status).sort(), [201, 409]);
+    const db = JSON.parse(await fs.readFile(dbPath, "utf8"));
+    assert.equal(db.users.filter((user) => user.phone === phone).length, 1);
+  }, { prefix: "ordinary-phone-race-" });
+});
+
+test("concurrent organization registrations with one verified-phone token leave one account and no orphan credential", async () => {
+  await withTestServer(async ({ baseUrl, dbPath, tempDir, phoneVerificationToken }) => {
+    const phone = "13600009935";
+    const token = phoneVerificationToken(phone);
+    const useSameToken = () => token;
+    const responses = await Promise.all([
+      postOrganizationRegistration(baseUrl, {
+        creditCode: "91330300TEST000035", phone, organizationName: "同手机号组织一"
+      }, useSameToken),
+      postOrganizationRegistration(baseUrl, {
+        creditCode: "91330300TEST000036", phone, organizationName: "同手机号组织二"
+      }, useSameToken)
+    ]);
+    assert.deepEqual(responses.map((response) => response.status).sort(), [201, 409]);
+    const db = JSON.parse(await fs.readFile(dbPath, "utf8"));
+    assert.equal(db.users.filter((user) => user.phone === phone).length, 1);
+    assert.equal(db.organizations.filter((organization) => organization.contactPhone === phone).length, 1);
+    assert.equal(db.organizationDocuments.length, 1);
+    const directories = await fs.readdir(path.join(tempDir, "uploads", "organization-documents"));
+    assert.equal(directories.length, 1);
+    await fs.access(db.organizationDocuments[0].filePath);
+  }, { prefix: "organization-phone-race-" });
+});
+
 test("concurrent same-credit registrations return one conflict without an orphan credential", async () => {
-  await withTestServer(async ({ baseUrl, dbPath, tempDir }) => {
+  await withTestServer(async ({ baseUrl, dbPath, tempDir, phoneVerificationToken }) => {
     const [first, second] = await Promise.all([
-      postOrganizationRegistration(baseUrl, { creditCode: "91330300TEST000040", phone: "13600009940", organizationName: "重复信用代码组织一" }),
-      postOrganizationRegistration(baseUrl, { creditCode: "91330300TEST000040", phone: "13600009941", organizationName: "重复信用代码组织二" })
+      postOrganizationRegistration(baseUrl, { creditCode: "91330300TEST000040", phone: "13600009940", organizationName: "重复信用代码组织一" }, phoneVerificationToken),
+      postOrganizationRegistration(baseUrl, { creditCode: "91330300TEST000040", phone: "13600009941", organizationName: "重复信用代码组织二" }, phoneVerificationToken)
     ]);
     assert.deepEqual([first.status, second.status].sort(), [201, 409]);
     const db = JSON.parse(await fs.readFile(dbPath, "utf8"));
@@ -369,7 +564,7 @@ test("concurrent same-credit registrations return one conflict without an orphan
 test("PostgreSQL store mutation lock preserves concurrent registrations across store instances", async () => {
   const memory = newDb({ autoCreateForeignKeyIndices: true });
   const { Pool } = memory.adapters.createPg();
-  const store = createPostgresStore(new Pool());
+  const store = createPostgresStore(new Pool(), { testOnlyPgMemCompatibility: true });
   let sequence = 0;
   const makeId = (prefix) => `${prefix}${++sequence}`;
   const register = (storeInstance, creditCode, phone) => storeInstance.withMutationLock(() =>
@@ -380,6 +575,7 @@ test("PostgreSQL store mutation lock preserves concurrent registrations across s
         writeDb: (db) => storeInstance.writeDb(db),
         hashPassword: async () => "hash",
         validatePassword: () => "",
+        verifyPhoneRegistration: async () => true,
         makeId,
         now: () => "2026-07-17T00:00:00.000Z",
         saveFile: async ({ ownerId }) => ({
@@ -390,7 +586,7 @@ test("PostgreSQL store mutation lock preserves concurrent registrations across s
 
   try {
     await store.initialize();
-    const secondStore = createPostgresStore(new Pool());
+    const secondStore = createPostgresStore(new Pool(), { testOnlyPgMemCompatibility: true });
     await secondStore.initialize();
     const [first, second] = await Promise.all([
       register(store, "91330300TEST000032", "13600009932"),
@@ -421,6 +617,7 @@ test("organization registration maps a PostgreSQL credit-code conflict to 409 an
       writeDb: async () => { throw conflict; },
       hashPassword: async () => "hash",
       validatePassword: () => "",
+      verifyPhoneRegistration: async () => true,
       makeId: (prefix) => `${prefix}2`,
       now: () => "2026-07-17T00:00:00.000Z",
       saveFile: async () => saved,
@@ -453,8 +650,8 @@ test("organization resubmission maps a PostgreSQL credit-code conflict to 409 an
 });
 
 test("deleting an organization owner with credential records is blocked before it can orphan private files", async () => {
-  await withTestServer(async ({ baseUrl }) => {
-    const registered = await postOrganizationRegistration(baseUrl, { creditCode: "91330300TEST000050", phone: "13600009950" });
+  await withTestServer(async ({ baseUrl, phoneVerificationToken }) => {
+    const registered = await postOrganizationRegistration(baseUrl, { creditCode: "91330300TEST000050", phone: "13600009950" }, phoneVerificationToken);
     const payload = await registered.json();
     const admin = await loginAs(baseUrl, "13900000000", "admin123");
     const deletion = await fetch(`${baseUrl}/api/admin/users/${payload.user.id}`, withSession(admin.cookie, { method: "DELETE" }));
@@ -466,25 +663,25 @@ test("deleting an organization owner with credential records is blocked before i
 });
 
 test("organization registration returns 422 with readable errors for forged or oversized credentials", async () => {
-  await withTestServer(async ({ baseUrl }) => {
+  await withTestServer(async ({ baseUrl, phoneVerificationToken }) => {
     const forged = await postOrganizationRegistration(baseUrl, {
       creditCode: "91330300TEST000060", phone: "13600009960", credentialBuffer: Buffer.from("not-a-real-pdf"), credentialName: "forged.pdf"
-    });
+    }, phoneVerificationToken);
     assert.equal(forged.status, 422);
     assert.match((await forged.json()).error, /签名|文件|支持|资质/i);
 
     const oversized = await postOrganizationRegistration(baseUrl, {
       creditCode: "91330300TEST000061", phone: "13600009961", credentialBuffer: Buffer.alloc(10 * 1024 * 1024 + 1), credentialName: "large.pdf"
-    });
+    }, phoneVerificationToken);
     assert.equal(oversized.status, 422);
     assert.match((await oversized.json()).error, /大小|文件|资质/i);
   }, { prefix: "organization-invalid-credential-" });
 });
 
 test("organization review cannot approve historical records missing a credential or valid credit code", async () => {
-  await withTestServer(async ({ baseUrl, dbPath }) => {
+  await withTestServer(async ({ baseUrl, dbPath, phoneVerificationToken }) => {
     const admin = await loginAs(baseUrl, "13900000000", "admin123");
-    const withoutDocument = await postOrganizationRegistration(baseUrl, { creditCode: "91330300TEST000070", phone: "13600009970" });
+    const withoutDocument = await postOrganizationRegistration(baseUrl, { creditCode: "91330300TEST000070", phone: "13600009970" }, phoneVerificationToken);
     const noDocumentPayload = await withoutDocument.json();
     const dbWithoutDocument = JSON.parse(await fs.readFile(dbPath, "utf8"));
     dbWithoutDocument.organizationDocuments = dbWithoutDocument.organizationDocuments.filter((row) => row.organizationId !== noDocumentPayload.organization.id);
@@ -494,7 +691,7 @@ test("organization review cannot approve historical records missing a credential
     }));
     assert.equal(noDocumentApproval.status, 422);
 
-    const invalidCredit = await postOrganizationRegistration(baseUrl, { creditCode: "91330300TEST000071", phone: "13600009971" });
+    const invalidCredit = await postOrganizationRegistration(baseUrl, { creditCode: "91330300TEST000071", phone: "13600009971" }, phoneVerificationToken);
     const invalidCreditPayload = await invalidCredit.json();
     const dbInvalidCredit = JSON.parse(await fs.readFile(dbPath, "utf8"));
     dbInvalidCredit.organizations.find((row) => row.id === invalidCreditPayload.organization.id).creditCode = "INVALID";
@@ -507,11 +704,11 @@ test("organization review cannot approve historical records missing a credential
 });
 
 test("organization review rejects a current credential outside UPLOAD_ROOT or with a changed disk signature", async () => {
-  await withTestServer(async ({ baseUrl, dbPath, tempDir }) => {
+  await withTestServer(async ({ baseUrl, dbPath, tempDir, phoneVerificationToken }) => {
     const admin = await loginAs(baseUrl, "13900000000", "admin123");
     const outsidePath = path.join(tempDir, "outside.pdf");
     await fs.writeFile(outsidePath, pdfBuffer);
-    const outside = await postOrganizationRegistration(baseUrl, { creditCode: "91330300TEST000072", phone: "13600009972" });
+    const outside = await postOrganizationRegistration(baseUrl, { creditCode: "91330300TEST000072", phone: "13600009972" }, phoneVerificationToken);
     const outsidePayload = await outside.json();
     let db = JSON.parse(await fs.readFile(dbPath, "utf8"));
     db.organizationDocuments.find((row) => row.id === outsidePayload.document.id).filePath = outsidePath;
@@ -522,7 +719,7 @@ test("organization review rejects a current credential outside UPLOAD_ROOT or wi
     assert.equal(outsideApproval.status, 422);
     await fs.access(outsidePath);
 
-    const drifted = await postOrganizationRegistration(baseUrl, { creditCode: "91330300TEST000073", phone: "13600009973" });
+    const drifted = await postOrganizationRegistration(baseUrl, { creditCode: "91330300TEST000073", phone: "13600009973" }, phoneVerificationToken);
     const driftedPayload = await drifted.json();
     db = JSON.parse(await fs.readFile(dbPath, "utf8"));
     const driftedDocument = db.organizationDocuments.find((row) => row.id === driftedPayload.document.id);
@@ -764,7 +961,7 @@ test("PostgreSQL credential migration upgrades a legacy organization only during
       ('DOC-B', 'OLEGACY', 'business_license', 'b.pdf', 'b.pdf', '/data/uploads/b.pdf', 'application/pdf', 10, '2026-07-17T00:00:00.000Z', NULL),
       ('DOC-C', 'OLEGACY', 'business_license', 'c.pdf', 'c.pdf', '/data/uploads/c.pdf', 'application/pdf', 10, '2026-07-17T00:00:00.000Z', NULL);
   `);
-  let store = createPostgresStore(pool);
+  let store = createPostgresStore(pool, { testOnlyPgMemCompatibility: true });
 
   try {
     await store.initialize();
@@ -776,7 +973,7 @@ test("PostgreSQL credential migration upgrades a legacy organization only during
     assert.equal((await store.pool.query("SELECT name FROM schema_migrations WHERE name = $1", ["005-organization-current-document.sql"])).rowCount, 1);
 
     await store.close();
-    store = createPostgresStore(new Pool());
+    store = createPostgresStore(new Pool(), { testOnlyPgMemCompatibility: true });
     await store.initialize();
     assert.equal((await store.pool.query("SELECT name FROM schema_migrations WHERE name = $1", ["002-organization-credentials.sql"])).rowCount, 1);
   } finally {
@@ -787,7 +984,7 @@ test("PostgreSQL credential migration upgrades a legacy organization only during
 test("PostgreSQL store creates organization_documents, migrates legacy organizations, and persists credential rows", async () => {
   const memory = newDb({ autoCreateForeignKeyIndices: true });
   const { Pool } = memory.adapters.createPg();
-  let store = createPostgresStore(new Pool());
+  let store = createPostgresStore(new Pool(), { testOnlyPgMemCompatibility: true });
 
   try {
     await store.initialize();
@@ -833,7 +1030,7 @@ test("PostgreSQL store creates organization_documents, migrates legacy organizat
     assert.equal(migrationRows.rowCount, 1);
 
     await store.close();
-    store = createPostgresStore(new Pool());
+    store = createPostgresStore(new Pool(), { testOnlyPgMemCompatibility: true });
     await store.initialize();
     const restarted = await store.readDb();
     const pending = restarted.organizations.find((organization) => organization.id === "OPENDING");

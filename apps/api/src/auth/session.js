@@ -32,11 +32,14 @@ export async function revalidateMutationAuthorization(store, req) {
   req.user = user;
 }
 
-export function createSessionMiddleware({ env, dataStore }) {
-  const secret = env.SESSION_SECRET || (env.NODE_ENV === "test" ? "test-session-secret-32-characters" : "");
+export function requireSessionSecret(env) {
+  const secret = env.SESSION_SECRET;
   if (!secret) throw new Error("SESSION_SECRET is required");
   if (Buffer.byteLength(secret, "utf8") < 32) throw new Error("SESSION_SECRET must be at least 32 bytes");
+  return secret;
+}
 
+export function createSessionMiddleware({ env, dataStore, secret = requireSessionSecret(env) }) {
   const PgStore = connectPgSimple(session);
   const store = dataStore.kind === "postgres"
     ? new PgStore({ pool: dataStore.pool, createTableIfMissing: true })

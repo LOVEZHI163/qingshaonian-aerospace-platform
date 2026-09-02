@@ -1,14 +1,13 @@
-# AeroGP 阿里云测试环境运维手册
+# AeroGP 阿里云部署与历史验收记录
 
 ## 当前环境
 
-- ECS：Ubuntu 22.04，公网 IP `47.99.181.222`
-- 本机 SSH 别名：`aerogp`
+- ECS：公网 IP `115.29.206.107`
+- 当前 SSH 别名：`server115`
 - 服务器目录：`/opt/aerogp`
-- 测试入口：`http://47.99.181.222`
-- 域名 `aerogp.cn` 暂不解析；完成备案后再接入域名和 HTTPS
+- 生产入口：`https://aerogp.cn`
 
-本环境仅供开发者与业主验收，访问 IP 会直接显示主页。只允许使用虚构测试数据，不上传真实身份证件、手机号或正式证书。
+下文含旧测试主机的历史部署证据；历史 IP 和 SSH 别名不得作为当前命令目标。当前短信认证操作以 `docs/operations/sms-auth.md` 为准。
 
 ## 首次准备服务器
 
@@ -90,7 +89,7 @@ ss -lntp
 阿里云安全组入方向只保留：
 
 - TCP 22：SSH
-- TCP 80：测试网站
+- TCP 80、443：网站与 HTTPS
 - ICMP：可选，用于诊断
 
 删除无用途的 TCP 3389。PostgreSQL 5432 和 API 4300 不添加安全组规则。
@@ -105,7 +104,7 @@ docker compose ps
 docker compose logs --tail=200 api web
 ```
 
-更新应用前必须先补齐缺失密钥、备份数据库和上传文件，构建已审核的候选 API 镜像，再运行升级预检。`bootstrap-secrets.sh` 只补齐缺失或空值，不会覆盖现有非空值。预检不会替换或重启当前业务容器；它会在当前 PostgreSQL 服务内创建一个强随机命名的临时数据库，用候选 API 镜像执行两次初始化以模拟进程重启，验证 `015-registration-identities-and-organization-leaders.sql`、四张新增表和加密行持久化，然后无论成功失败都删除临时数据库。该 smoke 不连接或修改业务数据库：
+更新应用前必须先补齐缺失密钥、备份数据库和上传文件，构建已审核的候选 API 镜像，再运行升级预检。`bootstrap-secrets.sh` 只补齐缺失或空值，不会覆盖现有非空值。预检不会替换或重启当前业务容器；它会在当前 PostgreSQL 服务内创建一个强随机命名的临时数据库，用候选 API 镜像执行两次初始化以模拟进程重启。除继续验证 `015-registration-identities-and-organization-leaders.sql`、四张既有新增表和加密行持久化外，smoke 还会确认 `019-team-registration.sql` 恰好记录一次，并直接读取临时 PostgreSQL 的 `pg_attribute`、`pg_constraint` 与 `pg_index`：校验项目列 `team_min_members`、`team_max_members` 和报名列 `team_code` 的类型、默认值与非空约束，`registration_participants` 的报名级联外键、顺序检查和身份/顺序唯一约束，`registration_participant_identities` 的参与人级联外键、主键和非唯一身份指纹索引，以及证书参与人复合外键和两类部分唯一索引的键顺序、唯一性、谓词及 valid/ready/live 状态；同时要求迁移已删除两个报名旧唯一约束和证书旧 slot 唯一约束。CHECK 的真实语义不依赖反编译 SQL 文本判断：smoke 只在临时数据库中开启一个永不提交的事务，以 SAVEPOINT 分隔探针，确认项目人数 0、9、最小值大于最大值及参与人顺序 0、9 均被拒绝，而 1、8 边界被接受；每次运行会为四个参与人探针生成独立 UUID，清理复核只查询本次生成的 ID。随后执行精确的外层 ROLLBACK，在事务结束后才释放客户端，并再次确认项目值恢复且没有任何本次探针参与人行残留。最后再次读取业务映射，确认项目人数范围有效，且历史个人报名与加密身份记录在第二次初始化后保持不变。成功输出包含 `team-registration-migration-019=applied-once` 和 `PostgreSQL migration/restart smoke passed.`；无论成功失败都会删除临时数据库。该 smoke 不连接或修改业务数据库：
 
 ```bash
 cd /opt/aerogp
@@ -224,10 +223,25 @@ if [ "${#RELEASE_SHA}" -ne 40 ]; then
   echo 'RELEASE_SHA 必须是 40 位十六进制 Git commit SHA' >&2
   exit 1
 fi
+: "${EXPECTED_SMS_REGISTRATION_ENABLED:?请显式导出注册短信功能的预期 true/false}"
+case "$EXPECTED_SMS_REGISTRATION_ENABLED" in
+  true|false) ;;
+  *) echo 'EXPECTED_SMS_REGISTRATION_ENABLED 必须是 true 或 false' >&2; exit 1 ;;
+esac
+: "${EXPECTED_SMS_LOGIN_ENABLED:?请显式导出短信登录功能的预期 true/false}"
+case "$EXPECTED_SMS_LOGIN_ENABLED" in
+  true|false) ;;
+  *) echo 'EXPECTED_SMS_LOGIN_ENABLED 必须是 true 或 false' >&2; exit 1 ;;
+esac
+: "${EXPECTED_SMS_PASSWORD_RESET_ENABLED:?请显式导出短信重置功能的预期 true/false}"
+case "$EXPECTED_SMS_PASSWORD_RESET_ENABLED" in
+  true|false) ;;
+  *) echo 'EXPECTED_SMS_PASSWORD_RESET_ENABLED 必须是 true 或 false' >&2; exit 1 ;;
+esac
 : "${ADMIN_TEST_PASSWORD:?请先按前文通过静默输入导出 ADMIN_TEST_PASSWORD}"
 docker compose build --pull api web
 docker compose up -d --no-deps --wait --wait-timeout 240 api web
-if EXPECTED_RELEASE="$RELEASE_SHA" BASE_URL=http://127.0.0.1 sh deploy/verify-release.sh &&
+if EXPECTED_RELEASE="$RELEASE_SHA" EXPECTED_SMS_REGISTRATION_ENABLED="$EXPECTED_SMS_REGISTRATION_ENABLED" EXPECTED_SMS_LOGIN_ENABLED="$EXPECTED_SMS_LOGIN_ENABLED" EXPECTED_SMS_PASSWORD_RESET_ENABLED="$EXPECTED_SMS_PASSWORD_RESET_ENABLED" BASE_URL=http://127.0.0.1 sh deploy/verify-release.sh &&
   BASE_URL=http://127.0.0.1 sh deploy/remote-smoke-test.sh; then
   printf '%s\n' "$RELEASE_SHA" > .release.next
   mv .release.next .release
@@ -241,7 +255,7 @@ fi
 `.release` 只能在 `verify-release.sh` 与 `remote-smoke-test.sh` 均成功后写入；任一验证失败时必须保留当前 marker。
 `RELEASE_SHA` 必须由发布负责人根据已经审核并完成对象级校验的源码归档显式提供；服务器 `/opt/aerogp` 不是 Git 仓库，禁止从远端目录推导版本号。
 
-其中 `ADMIN_TEST_PASSWORD` 必须按前文通过静默输入导出，不得写入命令历史、文档或 Git。
+其中三个 `EXPECTED_SMS_*` 必须由发布负责人按当前配置显式导出严格的 `true` 或 `false`，不得从旧发布记录复制固定值。`ADMIN_TEST_PASSWORD` 必须按前文通过静默输入导出，不得写入命令历史、文档或 Git。
 
 ## 恢复与回滚
 
@@ -256,8 +270,9 @@ CONFIRM_RESTORE=yes docker compose run --rm \
 
 应用回滚只切换到已经验证过的 Git commit。先把上一版本完整 SHA 保存到 `PREVIOUS_RELEASE`，再执行健康等待、版本一致性验证和 smoke；只有所有检查成功后才更新 `.release`：
 
+如果目标归档早于 `018-sms-challenge-purposes.sql`，不能直接执行下方的普通 `docker compose up`：旧 API 的通用短信变量与当前启用的专用短信环境不兼容。按 [短信认证上线与应急运维手册](../operations/sms-auth.md#回滚到短信-purpose-之前的归档版本) 预先安装并使用 `sms-rollback-v1` wrapper；它禁用所有 SMS 输入、保留 DirectMail，并在不删除 017–019 加法迁移的前提下验证密码和邮箱通道。普通回滚流程只适用于已兼容 purpose schema 的目标版本。
+
 ```bash
-PREVIOUS_RELEASE='<上一版本完整 SHA>'
 : "${PREVIOUS_RELEASE:?请显式提供已经验证过的上一版本完整 release SHA}"
 case "$PREVIOUS_RELEASE" in
   (*[!0-9a-fA-F]*|'') echo 'PREVIOUS_RELEASE 必须是 40 位十六进制 Git commit SHA' >&2; exit 1 ;;
@@ -266,12 +281,27 @@ if [ "${#PREVIOUS_RELEASE}" -ne 40 ]; then
   echo 'PREVIOUS_RELEASE 必须是 40 位十六进制 Git commit SHA' >&2
   exit 1
 fi
+: "${EXPECTED_SMS_REGISTRATION_ENABLED:?请显式导出回滚目标的注册短信预期 true/false}"
+case "$EXPECTED_SMS_REGISTRATION_ENABLED" in
+  true|false) ;;
+  *) echo 'EXPECTED_SMS_REGISTRATION_ENABLED 必须是 true 或 false' >&2; exit 1 ;;
+esac
+: "${EXPECTED_SMS_LOGIN_ENABLED:?请显式导出回滚目标的短信登录预期 true/false}"
+case "$EXPECTED_SMS_LOGIN_ENABLED" in
+  true|false) ;;
+  *) echo 'EXPECTED_SMS_LOGIN_ENABLED 必须是 true 或 false' >&2; exit 1 ;;
+esac
+: "${EXPECTED_SMS_PASSWORD_RESET_ENABLED:?请显式导出回滚目标的短信重置预期 true/false}"
+case "$EXPECTED_SMS_PASSWORD_RESET_ENABLED" in
+  true|false) ;;
+  *) echo 'EXPECTED_SMS_PASSWORD_RESET_ENABLED 必须是 true 或 false' >&2; exit 1 ;;
+esac
 export RELEASE_SHA="$PREVIOUS_RELEASE"
 docker compose up -d --build --wait --wait-timeout 240
 curl -fsS http://127.0.0.1/healthz
 curl -fsS http://127.0.0.1/api/public/home >/dev/null
 curl -fsS http://127.0.0.1/admin/ >/dev/null
-if EXPECTED_RELEASE="$PREVIOUS_RELEASE" BASE_URL=http://127.0.0.1 /bin/sh deploy/verify-release.sh &&
+if EXPECTED_RELEASE="$PREVIOUS_RELEASE" EXPECTED_SMS_REGISTRATION_ENABLED="$EXPECTED_SMS_REGISTRATION_ENABLED" EXPECTED_SMS_LOGIN_ENABLED="$EXPECTED_SMS_LOGIN_ENABLED" EXPECTED_SMS_PASSWORD_RESET_ENABLED="$EXPECTED_SMS_PASSWORD_RESET_ENABLED" BASE_URL=http://127.0.0.1 /bin/sh deploy/verify-release.sh &&
   BASE_URL=http://127.0.0.1 /bin/sh deploy/remote-smoke-test.sh; then
   printf '%s\n' "$PREVIOUS_RELEASE" > .release.next
   mv .release.next .release
@@ -596,17 +626,19 @@ CONFIRM_RESTORE=yes docker compose run --rm \
 - Nginx 仅对 `/api/upload-sessions/` 使用 `205m` 请求上限、关闭请求缓冲并设置 300 秒读超时；通用 `/api/` 仍保持较小上限。API 容器环境固定传入 `SUBMISSION_SESSION_TTL_MS=86400000`、`UPLOAD_WARNING_PERCENT=80`、`UPLOAD_CRITICAL_PERCENT=90`。
 - 生产 API 启动时会执行一次已过期临时作品会话清理，并以不阻塞退出的定时器继续执行。清理只处理 `active` 且过期的会话，并且只删除未绑定报名、位于受控目录的文件；删除失败写入 `file_cleanup_journal`，已提交、未过期和已绑定材料不会被该任务删除。
 - 在四个 Compose 服务健康、发布一致性校验完成后，以静默提供的管理员密码运行：`ADMIN_TEST_PASSWORD="$ADMIN_TEST_PASSWORD" BASE_URL=http://127.0.0.1 /bin/sh deploy/remote-smoke-test.sh`。该脚本会生成小 PNG 和短 MP4，复制当前赛事进行隔离验证，覆盖会话、上传、报名绑定、管理员材料汇总和匿名访问拒绝；无论正常结束或中断都会尝试恢复原当前赛事并删除临时赛事、临时账户及文件。脚本不会输出密码、Cookie、响应正文或服务器文件路径。
-# 短信登录、短信找回与人机验证分阶段启用
+# 短信注册、短信登录、短信找回与人机验证分阶段启用
 
-短信签名、运营商报备和两个验证码模板尚未全部可用时，先保持功能关闭。第一阶段在 `/opt/aerogp/.env` 中使用：
+短信签名、运营商报备和三个验证码模板尚未全部可用时，先保持功能关闭。第一阶段在 `/opt/aerogp/.env` 中使用：
 
 ```dotenv
 ALIYUN_SMS_SIGN_NAME=温州市少航科创中心
+ALIYUN_SMS_REGISTRATION_TEMPLATE_CODE=
 ALIYUN_SMS_LOGIN_TEMPLATE_CODE=
 ALIYUN_SMS_RESET_TEMPLATE_CODE=
 ALIYUN_CAPTCHA_ENABLED=false
 ALIYUN_CAPTCHA_REGION=cn
 ALIYUN_CAPTCHA_PREFIX=
+ALIYUN_CAPTCHA_SMS_REGISTRATION_SCENE_ID=
 ALIYUN_CAPTCHA_LOGIN_SCENE_ID=
 ALIYUN_CAPTCHA_SMS_RESET_SCENE_ID=
 ALIYUN_CAPTCHA_EMAIL_RESET_SCENE_ID=
@@ -621,6 +653,6 @@ docker compose up -d --build api web
 curl -fsS https://aerogp.cn/api/public/features
 ```
 
-第一阶段应返回 `smsLoginEnabled=false`、`smsPasswordResetEnabled=false`、`captcha.enabled=false`。邮箱安全链接找回保持可用。
+第一阶段应返回 `smsRegistrationEnabled=false`、`smsLoginEnabled=false`、`smsPasswordResetEnabled=false`、`captcha.enabled=false`。密码登录和邮箱安全链接找回保持可用。
 
-运营商报备和两个模板审核通过后，第二阶段再填入专用 RAM AccessKey、签名、登录模板代码与找回模板代码，然后重建 `api` 和 `web`。两个短信模板必须分开，禁止共用旧的 `ALIYUN_SMS_TEMPLATE_CODE`。阿里云验证码 2.0 暂不开启时继续保持 `ALIYUN_CAPTCHA_ENABLED=false`；后续准备好 Prefix 和三个场景 ID 后再单独启用，并重复检查公开功能开关。
+运营商报备和三个模板审核通过后，第二阶段再填入专用 RAM AccessKey、签名、注册/登录/重置三个模板代码，然后只重建 `api` 以读取新环境。三个短信模板必须分开，禁止共用旧的 `ALIYUN_SMS_TEMPLATE_CODE`。阿里云验证码 2.0 暂不开启时继续保持 `ALIYUN_CAPTCHA_ENABLED=false`；后续准备好 Prefix 和各场景 ID 后再单独启用，并重复检查公开功能开关。详细启停、RAM、轮换、监控和冒烟矩阵见 `docs/operations/sms-auth.md`。

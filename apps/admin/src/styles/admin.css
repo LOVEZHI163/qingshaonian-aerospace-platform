@@ -1462,11 +1462,6 @@ h3 {
   line-height: 1.5;
 }
 
-.auth-test-accounts {
-  padding-top: 12px;
-  border-top: 1px solid #e2e8f0;
-}
-
 .content-grid {
   display: grid;
   grid-template-columns: minmax(420px, 0.9fr) minmax(480px, 1.1fr);
@@ -1523,6 +1518,31 @@ h3 {
 .auth-panel h3 {
   font-size: 20px;
   letter-spacing: 0;
+}
+
+.auth-forgot-row {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: -0.25rem;
+}
+
+.auth-login-actions {
+  display: grid;
+  width: 100%;
+  margin-top: 0.25rem;
+}
+
+.auth-login-primary {
+  width: 100%;
+  min-height: 44px;
+  margin: 0;
+}
+
+@media (max-width: 640px) {
+  .auth-login-actions,
+  .auth-login-primary {
+    width: 100%;
+  }
 }
 
 .org-register {

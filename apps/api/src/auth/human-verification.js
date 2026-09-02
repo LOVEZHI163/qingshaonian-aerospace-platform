@@ -18,6 +18,7 @@ export function createHumanVerification(env, { client: injectedClient, logger = 
   const enabled = env.ALIYUN_CAPTCHA_ENABLED === "true";
   const region = env.ALIYUN_CAPTCHA_REGION || "cn";
   const sceneIds = {
+    "sms-registration": env.ALIYUN_CAPTCHA_SMS_REGISTRATION_SCENE_ID,
     "sms-login": env.ALIYUN_CAPTCHA_LOGIN_SCENE_ID,
     "sms-password-reset": env.ALIYUN_CAPTCHA_SMS_RESET_SCENE_ID,
     "email-password-reset": env.ALIYUN_CAPTCHA_EMAIL_RESET_SCENE_ID

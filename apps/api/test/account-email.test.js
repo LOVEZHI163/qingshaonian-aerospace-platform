@@ -4,7 +4,13 @@ import test from "node:test";
 import { createAccountEmailService, normalizeEmail, UNIFORM_EMAIL_RESET_RESPONSE } from "../src/auth/account-email.js";
 import { createAccountEmailTokenStore } from "../src/data/account-email-tokens.js";
 
-function fixture({ sendFailure = false, verifiedEmail = false, deferredReset = false, verifyHuman = async () => true } = {}) {
+function fixture({
+  sendFailure = false,
+  verifiedEmail = false,
+  deferredReset = false,
+  verifyHuman = async () => true,
+  authState = { consumeRateLimits: async () => true }
+} = {}) {
   let currentTime = Date.parse("2026-08-17T10:00:00.000Z");
   let tokenCounter = 0;
   let state = { users: [{
@@ -36,7 +42,7 @@ function fixture({ sendFailure = false, verifiedEmail = false, deferredReset = f
   };
   const service = createAccountEmailService({
     readDb, writeDb, withMutationLock, tokenStore, emailProvider, secret: "test-secret", publicAppUrl: "https://aerogp.cn",
-    authState: { consumeRateLimits: async () => true }, clock: () => currentTime,
+    authState, clock: () => currentTime,
     randomBytes: () => Buffer.alloc(32, ++tokenCounter),
     verifyPassword: async (value, stored) => value === stored,
     hashPassword: async (value) => `hashed:${value}`,
@@ -55,6 +61,68 @@ test("email password reset verifies the configured human challenge before accoun
   assert.deepEqual(calls, [{ scene: "email-password-reset", captchaVerifyParam: "signed-param" }]);
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(sent.length, 1);
+});
+
+test("email reset bounds failed captcha verification by IP without consuming the email allowance", async () => {
+  let verifierCalls = 0;
+  const rates = new Map();
+  const { service } = fixture({
+    verifiedEmail: true,
+    verifyHuman: async ({ captchaVerifyParam }) => {
+      verifierCalls += 1;
+      if (captchaVerifyParam !== "accepted") {
+        throw Object.assign(new Error("人机验证未通过，请重试"), { statusCode: 422 });
+      }
+      return true;
+    },
+    authState: {
+      async consumeRateLimits(rules, currentTime) {
+        let allowed = true;
+        const prepared = rules.map((rule) => {
+          const events = (rates.get(rule.key) || []).filter((time) => time > currentTime - rule.windowMs);
+          if (events.length >= rule.limit || (rule.cooldownMs && events.at(-1) > currentTime - rule.cooldownMs)) allowed = false;
+          return { rule, events };
+        });
+        for (const { rule, events } of prepared) {
+          if (allowed) events.push(currentTime);
+          rates.set(rule.key, events);
+        }
+        return allowed;
+      }
+    }
+  });
+
+  for (let attempt = 1; attempt <= 20; attempt += 1) {
+    await assert.rejects(
+      service.requestPasswordReset({ email: "user@example.com", ip: "203.0.113.10", captchaVerifyParam: `forged-${attempt}` }),
+      (error) => error.statusCode === 422
+    );
+  }
+  assert.equal(verifierCalls, 20);
+
+  await assert.rejects(
+    service.requestPasswordReset({ email: "user@example.com", ip: "203.0.113.10", captchaVerifyParam: "forged-21" }),
+    (error) => error.statusCode === 429
+  );
+  assert.equal(verifierCalls, 20);
+
+  await assert.rejects(
+    service.requestPasswordReset({ email: "user@example.com", ip: "203.0.113.20", captchaVerifyParam: "forged-other-ip" }),
+    (error) => error.statusCode === 422
+  );
+  assert.equal(verifierCalls, 21);
+
+  assert.deepEqual(
+    await service.requestPasswordReset({ email: "user@example.com", ip: "203.0.113.20", captchaVerifyParam: "accepted" }),
+    UNIFORM_EMAIL_RESET_RESPONSE
+  );
+  assert.equal(verifierCalls, 22);
+
+  await assert.rejects(
+    service.requestPasswordReset({ email: "user@example.com", ip: "203.0.113.30", captchaVerifyParam: "accepted" }),
+    (error) => error.statusCode === 429
+  );
+  assert.equal(verifierCalls, 23);
 });
 
 test("email normalization lowercases and rejects malformed values", () => {

@@ -226,4 +226,25 @@ describe("RegistrationPage selected event context", () => {
 
     expect(apiMock.mock.calls.some(([path]) => path === "/api/registrations")).toBe(false);
   });
+
+  it("includes the verified identity in legacy duplicate checks", async () => {
+    const wrapper = mount(RegistrationPage, { props: { eventId: "E2", accountType: "organization" } });
+    await flushPromises();
+
+    const inputs = wrapper.findAll("form.form-panel input");
+    await inputs[0].setValue("张三");
+    await inputs[1].setValue("实验小学");
+    await inputs[2].setValue("二年级");
+    await inputs[3].setValue("13600005002");
+    await wrapper.get('[data-field="student-id-number"]').setValue("11010520140101123x");
+    await flushPromises();
+
+    const duplicateCall = apiMock.mock.calls.find(([path]) => path === "/api/registrations/check");
+    expect(duplicateCall).toBeDefined();
+    expect(JSON.parse(duplicateCall[1].body)).toMatchObject({
+      eventId: "E2",
+      projectId: "P-E2",
+      studentIdNumber: "11010520140101123x"
+    });
+  });
 });

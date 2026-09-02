@@ -129,16 +129,16 @@ test("temporary password endpoints fail closed when the encryption key is unavai
   }
 });
 
-function serviceHarness({ sendCode, logger } = {}) {
+function serviceHarness({ sendCode, logger, database } = {}) {
   let currentTime = Date.parse("2026-07-17T00:00:00.000Z");
-  let db = {
+  let db = structuredClone(database || {
     users: [{
       id: "U1", name: "短信用户", phone: "13800000001", password: "OldPass1", type: "ordinary",
       status: "active", sessionVersion: 3, mustChangePassword: true,
       temporaryPasswordCiphertext: "sealed", temporaryPasswordIv: "iv", temporaryPasswordTag: "tag",
       temporaryPasswordCreatedAt: "2026-01-02T00:00:00.000Z", createdAt: "2026-01-01T00:00:00.000Z"
     }]
-  };
+  });
   const sent = [];
   const challengeStore = new Map();
   let challengePreparations = 0;
@@ -193,7 +193,7 @@ function serviceHarness({ sendCode, logger } = {}) {
     readDb: async () => structuredClone(db),
     smsProvider,
     authState,
-    resolveEligibleUser: (database, phone) => database.users.find((user) => user.phone === phone && user.status === "active"),
+    resolveEligibleTarget: (database, phone) => database.users.find((user) => user.phone === phone && user.status === "active"),
     clock: () => currentTime,
     generateCode: () => "123456",
     logger: logger || { warn() {}, error() {} }
@@ -323,6 +323,39 @@ test("SMS reset confirms once, changes the password, and increments session vers
   assert.equal(harness.challengeStore.has("sms-password-reset:13800000001"), false);
 });
 
+test("active ordinary, organization, and administrator accounts retain SMS reset and session invalidation semantics", async () => {
+  const database = {
+    users: [
+      { id: "U1", phone: "13800000001", type: "ordinary", status: "active", password: "OldPass1", sessionVersion: 1, mustChangePassword: true, temporaryPasswordCiphertext: "sealed", temporaryPasswordIv: "iv", temporaryPasswordTag: "tag", temporaryPasswordCreatedAt: "2026-01-01T00:00:00.000Z" },
+      { id: "U2", phone: "13800000002", type: "admin", status: "active", password: "OldPass1", sessionVersion: 4, mustChangePassword: true, temporaryPasswordCiphertext: "sealed", temporaryPasswordIv: "iv", temporaryPasswordTag: "tag", temporaryPasswordCreatedAt: "2026-01-01T00:00:00.000Z" },
+      { id: "U3", phone: "13800000003", type: "organization", status: "active", password: "OldPass1", sessionVersion: 2, mustChangePassword: true, temporaryPasswordCiphertext: "sealed", temporaryPasswordIv: "iv", temporaryPasswordTag: "tag", temporaryPasswordCreatedAt: "2026-01-01T00:00:00.000Z" },
+      { id: "U4", phone: "13800000004", type: "organization", status: "active", password: "OldPass1", sessionVersion: 3, mustChangePassword: true, temporaryPasswordCiphertext: "sealed", temporaryPasswordIv: "iv", temporaryPasswordTag: "tag", temporaryPasswordCreatedAt: "2026-01-01T00:00:00.000Z" },
+      { id: "U5", phone: "13800000005", type: "organization", status: "active", password: "OldPass1", sessionVersion: 5, mustChangePassword: true, temporaryPasswordCiphertext: "sealed", temporaryPasswordIv: "iv", temporaryPasswordTag: "tag", temporaryPasswordCreatedAt: "2026-01-01T00:00:00.000Z" }
+    ],
+    organizations: [
+      { id: "O3", ownerUserId: "U3", reviewStatus: "approved", status: "active" },
+      { id: "O4", ownerUserId: "U4", reviewStatus: "pending", status: "active" },
+      { id: "O5", ownerUserId: "U5", reviewStatus: "rejected", status: "active" }
+    ]
+  };
+  const initialVersions = new Map(database.users.map((user) => [user.phone, user.sessionVersion]));
+  const harness = serviceHarness({ database });
+
+  for (const phone of initialVersions.keys()) {
+    await harness.service.request({ phone, ip: "127.0.0.1" });
+    await new Promise((resolve) => setImmediate(resolve));
+    await harness.service.confirm({ phone, code: "123456", password: "NextPass2" });
+    const user = harness.db().users.find((row) => row.phone === phone);
+    assert.equal(user.sessionVersion, initialVersions.get(phone) + 1, phone);
+    assert.equal(user.mustChangePassword, false, phone);
+    assert.equal(user.temporaryPasswordCiphertext, null, phone);
+    assert.equal(user.temporaryPasswordIv, null, phone);
+    assert.equal(user.temporaryPasswordTag, null, phone);
+    assert.equal(user.temporaryPasswordCreatedAt, null, phone);
+    assert.equal(await verifyPassword("NextPass2", user.password), true, phone);
+  }
+});
+
 test("SMS reset expires after five minutes and allows at most five checks", async () => {
   assert.equal(typeof passwordResetModule.createSmsPasswordResetService, "function");
   const expired = serviceHarness();
@@ -370,10 +403,11 @@ test("Aliyun SMS provider is disabled without config and maps code to the offici
 });
 
 test("public features reports SMS reset disabled when Aliyun is not configured", async () => {
-  await withServer(async ({ baseUrl }) => {
+  await withTestServer(async ({ baseUrl }) => {
     const features = await fetch(`${baseUrl}/api/public/features`);
     assert.equal(features.status, 200);
     assert.deepEqual(await features.json(), {
+      smsRegistrationEnabled: false,
       smsLoginEnabled: false,
       smsPasswordResetEnabled: false,
       emailPasswordResetEnabled: false,
@@ -381,7 +415,7 @@ test("public features reports SMS reset disabled when Aliyun is not configured",
         enabled: false,
         region: "cn",
         prefix: "",
-        scenes: { smsLogin: "", smsPasswordReset: "", emailPasswordReset: "" }
+        scenes: { smsRegistration: "", smsLogin: "", smsPasswordReset: "", emailPasswordReset: "" }
       }
     });
 
@@ -391,5 +425,5 @@ test("public features reports SMS reset disabled when Aliyun is not configured",
       body: JSON.stringify({ phone: "13800000001" })
     });
     assert.equal(request.status, 503);
-  });
+  }, { prefix: "aerogp-password-reset-disabled-", smsRegistrationEnabled: false });
 });

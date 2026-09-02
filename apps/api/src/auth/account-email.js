@@ -110,10 +110,12 @@ export function createAccountEmailService({
       let email;
       try { email = normalizeEmail(incomingEmail); } catch { email = "invalid"; }
       await rateLimit([
-        { key: `email-reset:email:${email}`, limit: 5, windowMs: HOUR_MS, cooldownMs: 60_000 },
         { key: `email-reset:ip:${ip}`, limit: 20, windowMs: HOUR_MS }
       ]);
       await verifyHuman({ scene: "email-password-reset", captchaVerifyParam });
+      await rateLimit([
+        { key: `email-reset:email:${email}`, limit: 5, windowMs: HOUR_MS, cooldownMs: 60_000 }
+      ]);
       void (async () => {
         const db = await readDb();
         const user = db.users.find((row) => row.status === "active" && row.emailVerifiedAt && row.email?.toLowerCase() === email);

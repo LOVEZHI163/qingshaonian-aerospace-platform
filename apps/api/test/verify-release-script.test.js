@@ -185,9 +185,24 @@ function shellCommand() {
   return shell;
 }
 
-function runVerifier({ baseUrl, includeRelease = true, release = expectedRelease }) {
+function runVerifier({
+  baseUrl,
+  includeRelease = true,
+  release = expectedRelease,
+  expectedSms = {
+    registration: false,
+    login: false,
+    passwordReset: false
+  }
+}) {
   return new Promise((resolve, reject) => {
-    const env = { ...process.env, BASE_URL: baseUrl };
+    const env = {
+      ...process.env,
+      BASE_URL: baseUrl,
+      EXPECTED_SMS_REGISTRATION_ENABLED: String(expectedSms.registration),
+      EXPECTED_SMS_LOGIN_ENABLED: String(expectedSms.login),
+      EXPECTED_SMS_PASSWORD_RESET_ENABLED: String(expectedSms.passwordReset)
+    };
     if (includeRelease) env.EXPECTED_RELEASE = release;
     else delete env.EXPECTED_RELEASE;
     const child = spawn(shellCommand(), ["deploy/verify-release.sh"], {
@@ -257,12 +272,33 @@ test("verify-release enforces the runtime API and hashed admin asset contract", 
     }
     if (route === "/api/public/features") {
       response.setHeader("Content-Type", "application/json");
-      response.end(JSON.stringify({
+      const validFalse = {
+        smsRegistrationEnabled: false,
         smsLoginEnabled: false,
         smsPasswordResetEnabled: false,
         emailPasswordResetEnabled: true,
         captcha: { enabled: false, region: "cn", prefix: "", scenes: {} }
-      }));
+      };
+      const bodies = {
+        "features-true": JSON.stringify({
+          ...validFalse,
+          smsRegistrationEnabled: true,
+          smsLoginEnabled: true,
+          smsPasswordResetEnabled: true
+        }),
+        "features-mismatch": JSON.stringify({ ...validFalse, smsRegistrationEnabled: true }),
+        "features-nested-only": JSON.stringify({ nested: validFalse }),
+        "features-missing": JSON.stringify({
+          smsRegistrationEnabled: false,
+          smsLoginEnabled: false
+        }),
+        "features-string": JSON.stringify({ ...validFalse, smsRegistrationEnabled: "false" }),
+        "features-null": JSON.stringify({ ...validFalse, smsRegistrationEnabled: null }),
+        "features-number": JSON.stringify({ ...validFalse, smsRegistrationEnabled: 0 }),
+        "features-malformed": `${JSON.stringify(validFalse)} trailing`,
+        "features-duplicate": "{\"smsRegistrationEnabled\":true,\"smsRegistrationEnabled\":false,\"smsLoginEnabled\":false,\"smsPasswordResetEnabled\":false}"
+      };
+      response.end(bodies[mode] ?? JSON.stringify(validFalse));
       return;
     }
     if (route === "/admin/index.html") {
@@ -301,6 +337,42 @@ test("verify-release enforces the runtime API and hashed admin asset contract", 
     assert.equal(successRequests[0].cacheControl, "no-cache");
     assert.equal(successRequests[2].query, `?release-check=${expectedRelease}`);
   });
+
+  await t.test("accepts matching top-level true feature expectations", async () => {
+    const result = await runVerifier({
+      baseUrl: `${origin}/features-true`,
+      expectedSms: { registration: true, login: true, passwordReset: true }
+    });
+    assert.equal(result.code, 0, result.stderr);
+  });
+
+  await t.test("rejects a top-level boolean feature mismatch", async () => {
+    const result = await runVerifier({ baseUrl: `${origin}/features-mismatch` });
+    assert.notEqual(result.code, 0);
+    assert.deepEqual(
+      requests.filter(({ mode }) => mode === "features-mismatch").map(({ route }) => route),
+      ["/api/system/version", "/api/public/features"]
+    );
+  });
+
+  for (const mode of [
+    "features-nested-only",
+    "features-missing",
+    "features-string",
+    "features-null",
+    "features-number",
+    "features-malformed",
+    "features-duplicate"
+  ]) {
+    await t.test(`rejects invalid public feature JSON: ${mode}`, async () => {
+      const result = await runVerifier({ baseUrl: `${origin}/${mode}` });
+      assert.notEqual(result.code, 0);
+      assert.deepEqual(
+        requests.filter(({ mode: requestMode }) => requestMode === mode).map(({ route }) => route),
+        ["/api/system/version", "/api/public/features"]
+      );
+    });
+  }
 
   await t.test("rejects a wrong API release before requesting admin HTML", async () => {
     const result = await runVerifier({ baseUrl: `${origin}/wrong-release` });

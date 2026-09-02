@@ -106,10 +106,22 @@ async function journalCleanup(db, file, result, writeDb, makeId, now) {
   try { await writeDb(rollback); } catch { /* original persistence failure remains primary */ }
 }
 
-export async function registerOrdinary({ input, readDb, writeDb, hashPassword, validatePassword, makeId, now }) {
+async function assertPhoneVerified(input, phone, verifyPhoneRegistration) {
+  try {
+    await verifyPhoneRegistration({
+      phone,
+      phoneVerificationToken: String(input.phoneVerificationToken || "")
+    });
+  } catch {
+    throw validationError("手机号验证已过期，请重新验证");
+  }
+}
+
+export async function registerOrdinary({ input, readDb, writeDb, hashPassword, validatePassword, verifyPhoneRegistration, makeId, now }) {
   const { name, phone, password } = validateOrdinaryInput(input);
   const passwordError = validatePassword(password);
   if (passwordError) throw validationError(passwordError);
+  await assertPhoneVerified(input, phone, verifyPhoneRegistration);
   const db = await readDb();
   assertAccountAvailable(db, phone);
   const user = {
@@ -121,11 +133,12 @@ export async function registerOrdinary({ input, readDb, writeDb, hashPassword, v
   return { user, organization: null, document: null };
 }
 
-export async function registerOrganization({ input, file, readDb, writeDb, hashPassword, validatePassword, makeId, now, saveFile = savePrivateFile, removePrivateFile = deletePrivateFile }) {
+export async function registerOrganization({ input, file, readDb, writeDb, hashPassword, validatePassword, verifyPhoneRegistration, makeId, now, saveFile = savePrivateFile, removePrivateFile = deletePrivateFile }) {
   const values = validateCredentialInput(input, file);
   const passwordError = validatePassword(values.password);
   if (passwordError) throw validationError(passwordError);
   await validateCredentialFile(file);
+  await assertPhoneVerified(input, values.phone, verifyPhoneRegistration);
   const db = await readDb();
   const rollbackDb = structuredClone(db);
   assertAccountAvailable(db, values.phone, values.creditCode);

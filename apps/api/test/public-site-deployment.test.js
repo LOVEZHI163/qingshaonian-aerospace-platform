@@ -130,20 +130,21 @@ test("registration guide embeds the complete document and publishes its PPT down
 
   for (const heading of [
     "赛事用户管理系统",
-    "阅读前提示",
-    "一、名词概念介绍",
-    "二、操作前注意事项",
-    "三、账号注册流程操作说明"
+    "一、操作前注意事项",
+    "二、账号注册流程操作说明"
   ]) {
     assert.match(guideHtml, new RegExp(heading));
   }
+  assert.doesNotMatch(guideHtml, /class="guide-toc"/);
+  assert.doesNotMatch(guideHtml, /id="reading-note"/);
+  assert.doesNotMatch(guideHtml, /id="terms"/);
+  assert.doesNotMatch(guideHtml, /阅读前提示|名词概念介绍/);
   assert.doesNotMatch(guideHtml, /第一块：注册登录流程/);
   assert.doesNotMatch(guideHtml, /第二块：正式报名流程/);
-  assert.match(guideHtml, /往届升学选手解绑规则/);
   assert.match(guideHtml, /证书以此字段为准/);
   assert.equal(
     guideHtml.match(/href="https:\/\/aerogp\.cn" target="_top"/g)?.length,
-    4,
+    3,
     "official site links must escape the embedded iframe"
   );
   assert.match(

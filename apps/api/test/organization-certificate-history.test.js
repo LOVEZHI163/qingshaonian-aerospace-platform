@@ -113,6 +113,40 @@ test("organization certificate history lists every published certificate owned b
   }, { prefix: "organization-all-certificate-history-" });
 });
 
+test("organization team certificate history identifies participants without user accounts", async () => {
+  await withTestServer(async ({ baseUrl, dbPath }) => {
+    const db = JSON.parse(await fs.readFile(dbPath, "utf8"));
+    db.registrations.push({
+      ...db.registrations[0],
+      id: "R-TEAM-CERTIFICATES",
+      organizationId: "O1001",
+      personalUserId: null,
+      projectType: "team",
+      teamCode: "O1001-PTEAM-01",
+      athlete: { name: "兼容姓名", school: "兼容学校", grade: "五年级" },
+      status: "approved"
+    });
+    db.registrationParticipants.push(
+      { id: "RP-CERT-1", registrationId: "R-TEAM-CERTIFICATES", displayOrder: 1, name: "队员甲", school: "甲学校", grade: "五年级", phone: "13800000001" },
+      { id: "RP-CERT-2", registrationId: "R-TEAM-CERTIFICATES", displayOrder: 2, name: "队员乙", school: "乙学校", grade: "六年级", phone: "13800000002" }
+    );
+    db.certificates.push(
+      { id: "C-TEAM-1", registrationId: "R-TEAM-CERTIFICATES", participantId: "RP-CERT-1", slot: 1, title: "甲证书", status: "published", fileName: "one.png", storedName: "one.png", filePath: "/safe/one.png", cleanedAt: "", publishedAt: "2026-08-31T00:00:00.000Z" },
+      { id: "C-TEAM-2", registrationId: "R-TEAM-CERTIFICATES", participantId: "RP-CERT-2", slot: 1, title: "乙证书", status: "published", fileName: "two.png", storedName: "two.png", filePath: "/safe/two.png", cleanedAt: "", publishedAt: "2026-08-31T00:01:00.000Z" }
+    );
+    await fs.writeFile(dbPath, JSON.stringify(db));
+
+    const owner = await loginAs(baseUrl, "13800000011", "123456");
+    const response = await fetch(`${baseUrl}/api/organization/certificates`, withSession(owner.cookie));
+    assert.equal(response.status, 200);
+    const rows = (await payload(response)).rows.filter((row) => row.registrationId === "R-TEAM-CERTIFICATES");
+    assert.deepEqual(rows.map(({ participantId, participantName, teamCode }) => ({ participantId, participantName, teamCode })), [
+      { participantId: "RP-CERT-2", participantName: "队员乙", teamCode: "O1001-PTEAM-01" },
+      { participantId: "RP-CERT-1", participantName: "队员甲", teamCode: "O1001-PTEAM-01" }
+    ]);
+  }, { prefix: "organization-team-certificate-history-" });
+});
+
 test("retains published certificate history after the platform administrator deletes the organization", async () => {
   await withTestServer(async ({ baseUrl, dbPath }) => {
     const db = JSON.parse(await fs.readFile(dbPath, "utf8"));

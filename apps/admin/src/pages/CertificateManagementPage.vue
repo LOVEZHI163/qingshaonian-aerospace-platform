@@ -51,7 +51,7 @@ function matchesListFilters(certificate) {
   if (listFilters.projectId && registration.projectId !== listFilters.projectId) return false;
   const keyword = listFilters.q.trim().toLowerCase();
   if (!keyword) return true;
-  return [certificate.registrationId, registration.athlete?.name, certificate.athlete?.name,
+  return [certificate.registrationId, certificate.participantName, certificate.teamCode, registration.athlete?.name, certificate.athlete?.name,
     registration.athlete?.school, registration.group, certificate.projectName, registration.projectName]
     .filter(Boolean)
     .some((value) => String(value).toLowerCase().includes(keyword));
@@ -328,7 +328,7 @@ onBeforeUnmount(() => {
           <tbody>
             <tr v-for="certificate in filteredCertificates" :key="certificate.id">
               <td><input v-model="selectedIds" data-certificate-select type="checkbox" :value="certificate.id" :disabled="!canSelectCertificate(certificate) || bulkLoading" :aria-label="`选择${certificate.title}`"></td>
-              <td><strong>{{ registrationFor(certificate).athlete?.name || certificate.athlete?.name || '-' }}</strong><br><span>{{ certificate.registrationId }}</span></td>
+              <td><strong>{{ certificate.participantName || registrationFor(certificate).athlete?.name || certificate.athlete?.name || '-' }}</strong><br><span>{{ certificate.teamCode ? `${certificate.teamCode} · ` : '' }}{{ certificate.registrationId }}</span></td>
               <td>{{ registrationFor(certificate).group || '-' }}<br><span>{{ certificate.projectName || registrationFor(certificate).projectName || '-' }}</span></td>
               <td>位置 {{ certificate.slot }}<br><span>{{ certificate.title }}</span></td>
               <td>{{ certificate.awardName || registrationFor(certificate).awardName || '-' }}<br><span>名次 {{ certificate.rank || registrationFor(certificate).rank || '-' }} · 成绩 {{ certificate.score || registrationFor(certificate).score || '-' }}</span></td>

@@ -2,12 +2,13 @@ import express from "express";
 import { deleteSubmissionFile } from "../files/submission-storage.js";
 
 import { MAX_CERTIFICATE_ROWS } from "../certificates/workbook-parser.js";
-import { buildCertificateTemplate } from "../certificates/template.js";
+import { buildCertificateTemplate, certificateTargets } from "../certificates/template.js";
 import { buildBoundRegistrationWorkbook, contentDisposition } from "../exports/registration-workbook.js";
 import { sendPrivateJson, setPrivateNoStore } from "../http/private-response.js";
 
 import {
   attachAuthorizedIdentity,
+  cancelOrganizationTeamRegistration,
   createOrMergeRegistration,
   findSchools,
   filterAdminRegistrations,
@@ -232,6 +233,22 @@ export function createRegistrationsRouter({
     });
   }
 
+  function replaceTeamRoster(db, row, prepared) {
+    if (!prepared.teamRoster || !prepared.rosterChanged) return;
+    const previousIds = new Set((db.registrationParticipants || [])
+      .filter((participant) => participant.registrationId === row.id)
+      .map((participant) => participant.id));
+    db.registrationParticipants = (db.registrationParticipants || [])
+      .filter((participant) => participant.registrationId !== row.id);
+    db.registrationParticipantIdentities = (db.registrationParticipantIdentities || [])
+      .filter((identity) => !previousIds.has(identity.participantId));
+    db.registrationParticipants.push(...prepared.teamRoster.participants.map((participant) => ({
+      ...participant,
+      registrationId: row.id
+    })));
+    db.registrationParticipantIdentities.push(...prepared.teamRoster.identities);
+  }
+
   router.patch("/me/events/:eventId/registrations/:registrationId", ...user, asyncRoute(async (req, res) => {
     requireOrdinaryUser(req.user);
     const db = await store.readDb();
@@ -254,10 +271,53 @@ export function createRegistrationsRouter({
     if (req.body?.organizationId && req.body.organizationId !== organization.id) {
       throw Object.assign(new Error("Organization id does not match owner"), { status: 403 });
     }
-    const prepared = prepareAdminRegistrationUpdate(db, row, { ...eventScopedInput(req), organizationId: organization.id });
+    const prepared = prepareAdminRegistrationUpdate(
+      db,
+      row,
+      { ...eventScopedInput(req), organizationId: organization.id },
+      { makeId, now, reReviewOnChange: true }
+    );
     const timestamp = now();
     applyRegistrationUpdate(row, prepared, timestamp);
-    updateExistingRegistrationIdentity(db, row.id, req.body, timestamp);
+    replaceTeamRoster(db, row, prepared);
+    if (prepared.rosterChanged && !prepared.teamRoster) {
+      updateExistingRegistrationIdentity(db, row.id, req.body, timestamp);
+    }
+    if (prepared.reviewRelevantChanged) {
+      row.status = "pending";
+      row.rejectReason = "";
+      recordAudit(db, {
+        actor: req.user,
+        action: "registration.organization_update",
+        targetType: "registration",
+        targetId: row.id,
+        summary: "Organization updated review-relevant registration data; review returned to pending",
+        createdAt: timestamp
+      });
+    }
+    await store.writeDb(db);
+    sendPrivateJson(res, { row: registrationResponse(db, row, req.user) });
+  }));
+
+  router.patch("/organization/events/:eventId/registrations/:registrationId/status", ...user, asyncRoute(async (req, res) => {
+    const db = await store.readDb();
+    const { organization } = requireOrganizationEventParticipation(db, req.user, req.params.eventId, { writable: true });
+    const row = db.registrations.find((item) => (
+      item.id === req.params.registrationId
+      && item.eventId === req.params.eventId
+      && item.organizationId === organization.id
+    ));
+    if (!row) return res.status(404).json({ error: "Registration not found" });
+    cancelOrganizationTeamRegistration(row, req.body);
+    row.updatedAt = now();
+    recordAudit(db, {
+      actor: req.user,
+      action: "registration.organization_cancel",
+      targetType: "registration",
+      targetId: row.id,
+      summary: "Organization cancelled one team registration",
+      createdAt: row.updatedAt
+    });
     await store.writeDb(db);
     sendPrivateJson(res, { row: registrationResponse(db, row, req.user) });
   }));
@@ -305,10 +365,13 @@ export function createRegistrationsRouter({
     requireWritableEvent(db, req.params.eventId, clock);
     const row = db.registrations.find((item) => item.id === req.params.registrationId && item.eventId === req.params.eventId);
     if (!row) return res.status(404).json({ error: "Registration not found" });
-    const prepared = prepareAdminRegistrationUpdate(db, row, { ...eventScopedInput(req), eventId: req.params.eventId });
+    const prepared = prepareAdminRegistrationUpdate(db, row, { ...eventScopedInput(req), eventId: req.params.eventId }, { makeId, now });
     const timestamp = now();
     applyRegistrationUpdate(row, prepared, timestamp);
-    updateExistingRegistrationIdentity(db, row.id, req.body, timestamp);
+    replaceTeamRoster(db, row, prepared);
+    if (prepared.rosterChanged && !prepared.teamRoster) {
+      updateExistingRegistrationIdentity(db, row.id, req.body, timestamp);
+    }
     await store.writeDb(db);
     sendPrivateJson(res, { row: registrationResponse(db, row, req.user) });
   }));
@@ -367,7 +430,8 @@ export function createRegistrationsRouter({
   router.get("/admin/events/:eventId/certificate-template.xlsx", ...admin, asyncRoute(async (req, res) => {
     const db = await store.readDb();
     const event = requireEventId(db, req.params.eventId);
-    const rows = filterAdminRegistrations(db, { eventId: event.id, status: "approved" });
+    const rows = certificateTargets(filterAdminRegistrations(db, { eventId: event.id, status: "approved" })
+      .map((row) => attachAuthorizedIdentity(db, row, req.user)));
     if (rows.length > MAX_CERTIFICATE_ROWS) {
       const error = new Error(`证书模板最多支持 ${MAX_CERTIFICATE_ROWS.toLocaleString("en-US")} 条已审核报名`);
       error.status = 413;
@@ -383,7 +447,7 @@ export function createRegistrationsRouter({
 
   router.post("/registrations/check", ...user, asyncRoute(async (req, res) => {
     const db = await store.readDb();
-    res.json(registrationDuplicateCheck(db, req.body, clock));
+    res.json(registrationDuplicateCheck(db, req.body, req.user, clock));
   }));
 
   return router;

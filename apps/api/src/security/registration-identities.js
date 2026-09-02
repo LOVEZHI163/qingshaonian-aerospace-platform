@@ -73,6 +73,15 @@ export function encryptStudentId(value) {
   };
 }
 
+export function createParticipantIdentity(participantId, studentIdNumber, timestamp = new Date().toISOString()) {
+  return {
+    participantId,
+    ...encryptStudentId(studentIdNumber),
+    createdAt: timestamp,
+    updatedAt: timestamp
+  };
+}
+
 export function decryptStudentId(row) {
   const key = readEncryptionKey();
   try {

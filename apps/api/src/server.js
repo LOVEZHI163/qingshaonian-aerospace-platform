@@ -3,10 +3,11 @@ import cors from "cors";
 import { hashPassword, isLegacyPassword, validatePassword, verifyLoginPassword } from "./auth/passwords.js";
 import { createSmsPasswordResetService, sendPasswordResetError } from "./auth/password-reset.js";
 import { createTemporaryPasswordVault } from "./auth/temporary-passwords.js";
-import { asyncRoute, createSessionMiddleware, requireAdmin, requirePasswordReady, requireUser } from "./auth/session.js";
+import { asyncRoute, createSessionMiddleware, requireAdmin, requirePasswordReady, requireSessionSecret, requireUser } from "./auth/session.js";
 import { createAliyunSmsProvider } from "./auth/sms.js";
 import { createSmsChallengeService, SMS_PURPOSES } from "./auth/sms-challenges.js";
 import { createSmsLoginService, isSmsLoginEligible } from "./auth/sms-login.js";
+import { createSmsRegistrationRuntime } from "./auth/sms-registration-runtime.js";
 import { createHumanVerification } from "./auth/human-verification.js";
 import { createEmailProvider } from "./auth/email-provider.js";
 import { createAccountEmailService } from "./auth/account-email.js";
@@ -32,6 +33,8 @@ import { createSystemRouter } from "./routes/system.js";
 import { createSubmissionAssetsRouter } from "./routes/submission-assets.js";
 import { createMembershipsRouter } from "./routes/memberships.js";
 import { createAccountSecurityRouter } from "./routes/account-security.js";
+import { createSmsRegistrationRouter } from "./routes/sms-registration.js";
+import { createApiErrorHandler } from "./middleware/api-error-handler.js";
 import { startSubmissionSessionExpiryCleanup } from "./services/submission-assets.js";
 import { registrationContext } from "./services/events.js";
 import { replayFileCleanupJournal } from "./services/organizations.js";
@@ -48,6 +51,7 @@ import { expireContentImportBatches } from "./services/site-content-imports.js";
 import { requireRegistrationIdentityEncryptionKey } from "./security/registration-identities.js";
 
 requireRegistrationIdentityEncryptionKey(process.env);
+const sessionSecret = requireSessionSecret(process.env);
 const PORT = Number(process.env.PORT || 4300);
 const dataStore = createDataStore();
 const mutationAsyncRoute = createMutationAsyncRoute(dataStore);
@@ -69,7 +73,7 @@ const accountEmailService = createAccountEmailService({
   tokenStore: accountEmailTokenStore,
   authState: dataStore.authState,
   emailProvider,
-  secret: process.env.SESSION_SECRET || "test-session-secret-32-characters",
+  secret: sessionSecret,
   publicAppUrl: process.env.PUBLIC_APP_URL || process.env.VITE_PUBLIC_SITE_URL || "https://aerogp.cn",
   verifyHuman: (input) => humanVerification.verify(input)
 });
@@ -83,13 +87,20 @@ function requireTemporaryPasswordVault() {
   if (!temporaryPasswordVault) throw temporaryPasswordKeyUnavailable();
   return temporaryPasswordVault;
 }
-const smsPasswordResetChallenge = createSmsChallengeService({
-  purpose: SMS_PURPOSES.passwordReset,
-  secret: process.env.SESSION_SECRET || "test-session-secret-32-characters",
+const { smsRegistration } = createSmsRegistrationRuntime({
+  sessionSecret,
   readDb,
   smsProvider,
   authState: dataStore.authState,
-  resolveEligibleUser: (db, phone) => db.users.find((item) => normalizePhone(item.phone) === phone && item.status === "active"),
+  verifyHuman: (input) => humanVerification.verify(input)
+});
+const smsPasswordResetChallenge = createSmsChallengeService({
+  purpose: SMS_PURPOSES.passwordReset,
+  secret: sessionSecret,
+  readDb,
+  smsProvider,
+  authState: dataStore.authState,
+  resolveEligibleTarget: (db, phone) => db.users.find((item) => normalizePhone(item.phone) === phone && item.status === "active"),
   verifyHuman: (input) => humanVerification.verify(input)
 });
 const smsPasswordReset = createSmsPasswordResetService({
@@ -101,11 +112,11 @@ const smsPasswordReset = createSmsPasswordResetService({
 });
 const smsLoginChallenge = createSmsChallengeService({
   purpose: SMS_PURPOSES.login,
-  secret: process.env.SESSION_SECRET || "test-session-secret-32-characters",
+  secret: sessionSecret,
   readDb,
   smsProvider,
   authState: dataStore.authState,
-  resolveEligibleUser: (db, phone) => {
+  resolveEligibleTarget: (db, phone) => {
     const user = db.users.find((item) => normalizePhone(item.phone) === phone);
     return isSmsLoginEligible(db, user) ? user : null;
   },
@@ -232,7 +243,7 @@ function validateRegistration(input, existingRows, project, eventId, ignoreId = 
 }
 
 const app = express();
-app.set("trust proxy", 1);
+app.set("trust proxy", 2);
 app.use(cors());
 app.use(express.json({ limit: "5mb", strict: false }));
 app.use((req, res, next) => {
@@ -243,7 +254,7 @@ app.use((req, res, next) => {
   next();
 });
 app.use("/api", createSystemRouter({ releaseSha: process.env.RELEASE_SHA }));
-app.use(createSessionMiddleware({ env: process.env, dataStore }));
+app.use(createSessionMiddleware({ secret: sessionSecret, dataStore }));
 app.use(asyncRoute(async (req, _res, next) => {
   if (req.session.userId) {
     const db = await readDb();
@@ -256,6 +267,7 @@ app.use(asyncRoute(async (req, _res, next) => {
   next();
 }));
 app.use("/api", createAccountSecurityRouter({ service: accountEmailService, requireUser, asyncRoute }));
+app.use("/api", createSmsRegistrationRouter({ smsRegistration }));
 app.use("/api", createOrganizationsRouter({
   store: dataStore,
   requireUser,
@@ -264,6 +276,7 @@ app.use("/api", createOrganizationsRouter({
   asyncRoute: mutationAsyncRoute,
   hashPassword,
   validatePassword,
+  verifyPhoneRegistration: smsRegistration.verify,
   makeId: id,
   now,
   publicUser
@@ -414,6 +427,7 @@ app.use("/api", createPublicSiteRouter({
 app.get("/api/public/features", (_req, res) => {
   const captchaConfig = humanVerification.publicConfig;
   res.json({
+    smsRegistrationEnabled: smsRegistration.enabled,
     smsLoginEnabled: smsLogin.enabled,
     smsPasswordResetEnabled: smsPasswordReset.enabled,
     emailPasswordResetEnabled: Boolean(emailProvider),
@@ -422,6 +436,7 @@ app.get("/api/public/features", (_req, res) => {
       region: captchaConfig.region,
       prefix: captchaConfig.prefix,
       scenes: {
+        smsRegistration: captchaConfig.scenes[SMS_PURPOSES.registration] || "",
         smsLogin: captchaConfig.scenes[SMS_PURPOSES.login] || "",
         smsPasswordReset: captchaConfig.scenes[SMS_PURPOSES.passwordReset] || "",
         emailPasswordReset: captchaConfig.scenes["email-password-reset"] || ""
@@ -437,27 +452,6 @@ async function establishLoginSession(req, res, db, user) {
   await new Promise((resolve, reject) => req.session.save((error) => error ? reject(error) : resolve()));
   return res.json({ user: publicUser(user), organizations: userOrganizations(db, user.id) });
 }
-
-app.post("/api/auth/register", mutationAsyncRoute(async (req, res) => {
-  const db = await readDb();
-  const { name, phone, password, type = "ordinary" } = req.body;
-  if (!name || !phone || !password) return res.status(422).json({ error: "姓名、手机号和密码不能为空" });
-  if (type === "organization") return res.status(422).json({ error: "组织注册请使用资质上传接口" });
-  if (type !== "ordinary") return res.status(422).json({ error: "账号类型不合法" });
-  const passwordError = validatePassword(password);
-  if (passwordError) return res.status(422).json({ error: passwordError });
-  const normalizedPhone = normalizePhone(phone);
-  if (db.users.some((user) => normalizePhone(user.phone) === normalizedPhone)) return res.status(409).json({ error: "该手机号已注册" });
-
-  const user = {
-    id: id("U"), name, phone: normalizedPhone, password: await hashPassword(password), type, status: "active",
-    sessionVersion: 0, mustChangePassword: false, createdAt: now()
-  };
-  db.users.push(user);
-
-  await writeDb(db);
-  res.status(201).json({ user: publicUser(user), organization: null });
-}));
 
 app.post("/api/auth/login", asyncRoute(async (req, res) => {
   const phone = normalizePhone(req.body.phone);
@@ -710,28 +704,7 @@ app.get("/api/me/:userId", requireUser, requirePasswordReady, asyncRoute(async (
   });
 }));
 
-app.use((error, req, res, next) => {
-  if (res.headersSent) return next(error);
-  const status = Number.isInteger(error.status) ? error.status : 500;
-  if (status === 500) {
-    console.error("Unhandled API request error", {
-      method: req.method,
-      path: req.originalUrl,
-      message: error?.message || "Unknown error",
-      stack: error?.stack || ""
-    });
-  }
-  const contentRange = error?.headers?.["Content-Range"];
-  if (typeof contentRange === "string" && /^bytes \*\/\d+$/.test(contentRange)) {
-    res.setHeader("Content-Range", contentRange);
-  }
-  res.status(status).json({
-    error: status === 500 ? "服务器内部错误" : error.message,
-    ...(error.code ? { code: error.code } : {}),
-    ...(error.relation ? { relation: error.relation } : {}),
-    ...(error.details ? { details: error.details } : {})
-  });
-});
+app.use(createApiErrorHandler());
 
 await dataStore.initialize();
 await importLeaderCleanupFallbackJournal({ store: dataStore });
