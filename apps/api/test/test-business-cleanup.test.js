@@ -6,6 +6,7 @@ import test from "node:test";
 import { newDb } from "pg-mem";
 
 import { createPostgresStore } from "../src/data/postgres-store.js";
+import { PROJECT_GROUPS, PROJECTS } from "../src/data/seed.js";
 import {
   executeTestBusinessCleanup,
   previewTestBusinessCleanup
@@ -78,8 +79,8 @@ test("cleanup removes test business data and preserves public event configuratio
     const preview = await previewTestBusinessCleanup(pool);
     assert.deepEqual(preview.preserved, {
       events: 1,
-      projects: 11,
-      projectGroups: 44,
+      projects: PROJECTS.length,
+      projectGroups: PROJECT_GROUPS.length,
       siteSettings: 1,
       eventPublicProfiles: 0,
       contentPosts: 0,
@@ -93,7 +94,7 @@ test("cleanup removes test business data and preserves public event configuratio
     const result = await executeTestBusinessCleanup(pool, uploadRoot);
     assert.equal(result.deleted.users, 3);
     assert.equal((await pool.query("SELECT COUNT(*)::int count FROM events")).rows[0].count, 1);
-    assert.equal((await pool.query("SELECT COUNT(*)::int count FROM projects")).rows[0].count, 11);
+    assert.equal((await pool.query("SELECT COUNT(*)::int count FROM projects")).rows[0].count, PROJECTS.length);
     assert.equal((await pool.query("SELECT COUNT(*)::int count FROM users")).rows[0].count, 0);
     assert.equal(await fs.stat(siteMediaPath).then(() => true, () => false), true);
     assert.equal(await fs.stat(certificatePath).then(() => true, () => false), false);

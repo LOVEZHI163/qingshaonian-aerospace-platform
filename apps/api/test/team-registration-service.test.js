@@ -226,6 +226,28 @@ function individualRegistrationDb() {
   };
 }
 
+test("团队赛配置要求指导老师时拒绝空白指导老师", () => {
+  process.env.REGISTRATION_ID_ENCRYPTION_KEY = testKey;
+  const db = individualRegistrationDb();
+  db.projects = [{
+    id: "P-TEAM", eventId: "E1", name: "AI 短片团队赛", type: "team", enabled: true,
+    instructorRequired: true, allowedGroups: ["小学高段"], teamMinMembers: 1, teamMaxMembers: 8
+  }];
+
+  assert.throws(() => createOrMergeRegistration(db, {
+    eventId: "E1",
+    projectId: "P-TEAM",
+    registrationSource: "organization_proxy",
+    participants: [participant()],
+    instructor: "   "
+  }, { id: "OWNER1", type: "organization" }, "organization", {
+    makeId: () => "R-TEAM-INSTRUCTOR",
+    now: () => "2026-08-31T00:00:00.000Z",
+    clock: () => new Date("2026-08-31T00:00:00.000Z")
+  }), /指导老师不能为空/);
+  assert.deepEqual(db.registrations, []);
+});
+
 test("每届最多 is enforced by individual registration creation and released by cancellation", () => {
   process.env.REGISTRATION_ID_ENCRYPTION_KEY = testKey;
   const db = individualRegistrationDb();

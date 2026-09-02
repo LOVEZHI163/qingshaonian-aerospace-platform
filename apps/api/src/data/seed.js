@@ -20,6 +20,16 @@ export const PROJECTS = [
   { id: "air-robot-patrol", name: "空中机器人定点巡查比赛", type: "team", category: "青少年旋翼机编程比赛" },
   { id: "rotor-programming", name: "旋翼机编程任务比赛", type: "team", category: "青少年旋翼机编程比赛" },
   { id: "ai-short-film", name: "“航天梦·强国梦”青少年AI短片创意创作比赛", type: "individual", category: "青少年航空航天创意创作比赛" },
+  {
+    id: "ai-short-film-team",
+    name: "“航天梦·强国梦”青少年AI短片创意创作团队赛",
+    type: "team",
+    category: "青少年航空航天创意创作比赛",
+    instructorRequired: true,
+    submissionMode: "image_video",
+    teamMinMembers: 1,
+    teamMaxMembers: 8
+  },
   { id: "aviation-painting", name: "青少年航空绘画比赛", type: "individual", category: "青少年航空航天创意创作比赛" },
   { id: "drone-football", name: "多轴无人机足球比赛", type: "team", category: "多轴无人机足球比赛" }
 ];
@@ -90,15 +100,13 @@ Object.assign(EVENT, {
 });
 
 for (const [displayOrder, project] of PROJECTS.entries()) {
-  Object.assign(project, {
-    eventId: EVENT.id,
-    enabled: true,
-    instructorRequired: false,
-    displayOrder,
-    allowedGroups: [...APPROVED_GROUP_NAMES],
-    teamMinMembers: 1,
-    teamMaxMembers: 8
-  });
+  project.eventId ??= EVENT.id;
+  project.enabled ??= true;
+  project.instructorRequired ??= false;
+  project.displayOrder ??= displayOrder;
+  project.allowedGroups ??= [...APPROVED_GROUP_NAMES];
+  project.teamMinMembers ??= 1;
+  project.teamMaxMembers ??= 8;
 }
 
 export const PROJECT_GROUPS = PROJECTS.flatMap((project) =>

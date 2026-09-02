@@ -25,6 +25,7 @@ const teamProject = {
   allowedGroups: ["小学高段"],
   teamMinMembers: 1,
   teamMaxMembers: 8,
+  instructorRequired: true,
   submissionMode: "none"
 };
 
@@ -62,6 +63,12 @@ describe("team organization registration form", () => {
       if (path === "/api/organization/events/E1/registrations") return { row: { id: "R1", teamCode: "O1-P-TEAM-01" } };
       return {};
     });
+  });
+
+  it("marks the instructor field required when the project requires one", async () => {
+    const wrapper = await mountTeamForm();
+    expect(wrapper.get('[data-field="instructor"]').attributes("required")).toBeDefined();
+    wrapper.unmount();
   });
 
   it("adds a second person and submits one organization-proxy team payload", async () => {
