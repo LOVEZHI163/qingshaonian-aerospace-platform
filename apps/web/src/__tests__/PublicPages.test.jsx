@@ -393,7 +393,7 @@ describe("public event information page", () => {
     expect(document.querySelector(".event-information-hero-media")).toBeNull();
   });
 
-  it("renders the complete current-event rules inline with only the original DOC download", async () => {
+  it("renders the complete current-event rules inline with a downloadable Word file", async () => {
     window.history.replaceState({}, "", "/rules?event=wz-aerospace-2026");
     const selectedEvent = event({ id: "WZ-2026", slug: "wz-aerospace-2026" });
     installApi({
@@ -408,11 +408,11 @@ describe("public event information page", () => {
     expect(screen.queryByRole("link", { name: "在线查看章程" })).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: "下载章程原文件" })).toHaveAttribute(
       "download",
-      "2026年温州市青少年航空航天创新比赛大赛章程.doc"
+      "2026年温州市青少年航空航天创新比赛大赛章程.docx"
     );
     expect(screen.getByRole("link", { name: "下载章程原文件" })).toHaveAttribute(
       "href",
-      "/documents/wz-aerospace-2026-rules.doc"
+      "/documents/wz-aerospace-2026-rules.docx"
     );
     [
       "第一章 总则",

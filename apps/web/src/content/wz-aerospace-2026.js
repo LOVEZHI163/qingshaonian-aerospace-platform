@@ -1,8 +1,8 @@
 export const WZ_AEROSPACE_2026_COPY = {
   rulesDocument: {
     title: "2026年温州市青少年航空航天创新比赛大赛章程",
-    downloadUrl: "/documents/wz-aerospace-2026-rules.doc",
-    downloadName: "2026年温州市青少年航空航天创新比赛大赛章程.doc",
+    downloadUrl: "/documents/wz-aerospace-2026-rules.docx",
+    downloadName: "2026年温州市青少年航空航天创新比赛大赛章程.docx",
     chapters: [
       {
         heading: "第一章 总则",
