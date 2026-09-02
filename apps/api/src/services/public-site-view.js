@@ -295,10 +295,10 @@ function servicesFor(event, mode) {
     },
     {
       key: "guide",
-      label: "参赛指南",
+      label: "参赛流程",
       eventId,
       available: Boolean(eventSlug),
-      href: eventSlug ? `/events/${encodeURIComponent(eventSlug)}` : "/history"
+      href: eventSlug ? "/registration-guide" : "/history"
     },
     {
       key: "results",

@@ -10,7 +10,7 @@ async function withStore(fn) {
   const memory = newDb({ autoCreateForeignKeyIndices: true });
   const { Pool } = memory.adapters.createPg();
   const pool = new Pool();
-  const store = createPostgresStore(pool);
+  const store = createPostgresStore(pool, { testOnlyPgMemCompatibility: true });
 
   try {
     await store.initialize();
@@ -28,8 +28,16 @@ test("PostgreSQL store creates normalized tables and seeds an empty database", a
       WHERE table_schema = 'public'
     `);
     const tables = new Set(tableRows.rows.map((row) => row.table_name));
-    for (const name of ["users", "organizations", "memberships", "events", "projects", "project_groups", "registrations", "results", "certificates", "certificate_import_batches", "certificate_import_errors", "audit_logs", "auth_rate_buckets", "password_reset_challenges"]) {
+    for (const name of ["users", "organizations", "memberships", "events", "projects", "project_groups", "registrations", "results", "certificates", "certificate_import_batches", "certificate_import_errors", "audit_logs", "auth_rate_buckets", "password_reset_challenges", "account_email_tokens"]) {
       assert.equal(tables.has(name), true, `missing table ${name}`);
+    }
+
+    const userColumns = await pool.query(`
+      SELECT column_name FROM information_schema.columns WHERE table_name = 'users'
+    `);
+    const userNames = new Set(userColumns.rows.map((row) => row.column_name));
+    for (const name of ["email", "email_verified_at", "email_updated_at"]) {
+      assert.equal(userNames.has(name), true, `missing users.${name}`);
     }
 
     const eventColumns = await pool.query(`
@@ -47,7 +55,132 @@ test("PostgreSQL store creates normalized tables and seeds an empty database", a
     assert.equal(data.events.filter((event) => event.isCurrent).length, 1);
     assert.equal(data.registrations.every((row) => row.eventId), true);
     assert.equal(data.projects.every((project) => project.allowedGroups.length === 4), true);
+
+    await store.initialize();
+    assert.equal((await pool.query("SELECT 1 FROM schema_migrations WHERE name = '019-team-registration.sql' ")).rowCount, 1);
   });
+});
+
+test("PostgreSQL store round-trips team roster participants and certificate targets", async () => {
+  await withStore(async (store) => {
+    const db = await store.readDb();
+    const registration = db.registrations.find((row) => row.createdVia === "organization");
+    const now = "2026-08-31T00:00:00.000Z";
+
+    registration.teamCode = "ORG-PROJECT-01";
+    db.registrationParticipants.push(
+      { id: "RP-team-1", registrationId: registration.id, displayOrder: 1, name: "队员甲", school: "温州市实验小学", grade: "五年级", phone: "13800000001", createdAt: now, updatedAt: now },
+      { id: "RP-team-2", registrationId: registration.id, displayOrder: 2, name: "队员乙", school: "温州市实验小学", grade: "五年级", phone: "13800000002", createdAt: now, updatedAt: now }
+    );
+    db.registrationParticipantIdentities.push(
+      { participantId: "RP-team-1", ciphertext: "ciphertext-1", iv: "iv-1", authTag: "tag-1", keyVersion: 1, idFingerprint: "fingerprint-1", createdAt: now, updatedAt: now },
+      { participantId: "RP-team-2", ciphertext: "ciphertext-2", iv: "iv-2", authTag: "tag-2", keyVersion: 1, idFingerprint: "fingerprint-2", createdAt: now, updatedAt: now }
+    );
+    db.certificates.push({
+      id: "C-team-1", registrationId: registration.id, participantId: "RP-team-1", slot: 1,
+      title: "获奖证书", fileName: "team.pdf", storedName: "team.pdf", filePath: "/data/certificates/team.pdf",
+      awardName: "一等奖", rank: "1", score: "99", status: "published", source: "manual",
+      importBatchId: null, uploadedAt: now, publishedAt: now, cleanedAt: null
+    });
+
+    await store.writeDb(db);
+    const reloaded = await store.readDb();
+
+    assert.deepEqual(reloaded.projects[0].teamMinMembers, 1);
+    assert.deepEqual(reloaded.projects[0].teamMaxMembers, 8);
+    assert.equal(reloaded.registrations.find((row) => row.id === registration.id).teamCode, "ORG-PROJECT-01");
+    assert.equal(reloaded.registrationParticipants.length, 2);
+    assert.equal(reloaded.registrationParticipantIdentities.length, 2);
+    assert.equal(reloaded.certificates.find((row) => row.id === "C-team-1").participantId, reloaded.registrationParticipants[0].id);
+  });
+});
+
+test("PostgreSQL store persists distinct identity fingerprints with identical athlete metadata", async () => {
+  await withStore(async (store) => {
+    const db = await store.readDb();
+    const source = db.registrations[0];
+    const first = {
+      ...source,
+      id: "R-same-metadata-1",
+      athlete: { name: "同名队员", school: "同一学校", grade: "五年级", phone: "13800000001" },
+      athleteKey: "同名队员|同一学校|五年级|13800000001"
+    };
+    const second = { ...first, id: "R-same-metadata-2" };
+    db.registrations.push(first, second);
+    db.registrationIdentities.push(
+      { registrationId: first.id, ciphertext: "cipher-1", iv: "iv-1", authTag: "tag-1", keyVersion: 1, idFingerprint: "fingerprint-1", createdAt: first.createdAt, updatedAt: first.updatedAt },
+      { registrationId: second.id, ciphertext: "cipher-2", iv: "iv-2", authTag: "tag-2", keyVersion: 1, idFingerprint: "fingerprint-2", createdAt: second.createdAt, updatedAt: second.updatedAt }
+    );
+
+    await store.writeDb(db);
+
+    const reloaded = await store.readDb();
+    assert.deepEqual(
+      reloaded.registrations.filter((row) => row.athleteKey === first.athleteKey).map((row) => row.id).sort(),
+      [first.id, second.id]
+    );
+  });
+});
+
+test("PostgreSQL store rejects duplicate participant display orders before writing", async () => {
+  await withStore(async (store) => {
+    const db = await store.readDb();
+    const registration = db.registrations[0];
+    const now = "2026-08-31T00:00:00.000Z";
+    db.registrationParticipants.push(
+      { id: "RP-duplicate-1", registrationId: registration.id, displayOrder: 1, name: "队员甲", school: "温州市实验小学", grade: "五年级", phone: "13800000001", createdAt: now, updatedAt: now },
+      { id: "RP-duplicate-2", registrationId: registration.id, displayOrder: 1, name: "队员乙", school: "温州市实验小学", grade: "五年级", phone: "13800000002", createdAt: now, updatedAt: now }
+    );
+
+    await assert.rejects(store.writeDb(db), /Duplicate registration participant display order/);
+    assert.equal((await store.readDb()).registrationParticipants.length, 0);
+  });
+});
+
+test("PostgreSQL store rejects a certificate participant from another registration before writing", async () => {
+  await withStore(async (store) => {
+    const db = await store.readDb();
+    const [registration, otherRegistration] = db.registrations;
+    const now = "2026-08-31T00:00:00.000Z";
+    db.registrationParticipants.push({
+      id: "RP-wrong-registration", registrationId: registration.id, displayOrder: 1,
+      name: "队员甲", school: "温州市实验小学", grade: "五年级", phone: "13800000001", createdAt: now, updatedAt: now
+    });
+    db.certificates.push({
+      id: "C-wrong-registration", registrationId: otherRegistration.id, participantId: "RP-wrong-registration", slot: 1,
+      title: "获奖证书", fileName: "team.pdf", storedName: "team.pdf", filePath: "/data/certificates/team.pdf",
+      awardName: "一等奖", rank: "1", score: "99", status: "published", source: "manual",
+      importBatchId: null, uploadedAt: now, publishedAt: now, cleanedAt: null
+    });
+
+    await assert.rejects(store.writeDb(db), /Certificate participant must belong to its registration/);
+    const reloaded = await store.readDb();
+    assert.equal(reloaded.registrationParticipants.length, 0);
+    assert.equal(reloaded.certificates.length, 0);
+  });
+});
+
+test("PostgreSQL store does not probe PL/pgSQL without the explicit test-only capability", async () => {
+  const memory = newDb({ autoCreateForeignKeyIndices: true });
+  const { Pool } = memory.adapters.createPg();
+  const pool = new Pool();
+  const query = pool.query.bind(pool);
+  let plpgsqlProbeCount = 0;
+  pool.query = async (...args) => {
+    if (String(args[0]).includes("DO $$ BEGIN END $$;")) {
+      plpgsqlProbeCount += 1;
+      throw new Error("unexpected PL/pgSQL probe");
+    }
+    return query(...args);
+  };
+  const store = createPostgresStore(pool, { seedOnEmpty: false });
+
+  try {
+    await assert.rejects(store.initialize(), /Unkonwn language "plpgsql"/);
+    assert.equal(plpgsqlProbeCount, 0);
+  } finally {
+    await store.close();
+  }
 });
 
 test("PostgreSQL store round-trips temporary-password fields", async () => {
@@ -68,6 +201,30 @@ test("PostgreSQL store round-trips temporary-password fields", async () => {
       ...user,
       ...fields
     });
+  });
+});
+
+test("PostgreSQL store round-trips verified emails and account email tokens", async () => {
+  await withStore(async (store) => {
+    const db = await store.readDb();
+    const user = db.users[0];
+    Object.assign(user, {
+      email: "owner@example.com",
+      emailVerifiedAt: "2026-08-17T10:00:00.000Z",
+      emailUpdatedAt: "2026-08-17T10:00:00.000Z"
+    });
+    db.accountEmailTokens.push({
+      id: "ET1", userId: user.id, purpose: "reset_password",
+      targetEmail: "owner@example.com", digest: "a".repeat(64),
+      expiresAt: "2026-08-17T10:10:00.000Z", usedAt: null,
+      requestIp: "127.0.0.1", createdAt: "2026-08-17T10:00:00.000Z"
+    });
+
+    await store.writeDb(db);
+    const restored = await store.readDb();
+
+    assert.equal(restored.users.find((row) => row.id === user.id).email, "owner@example.com");
+    assert.deepEqual(restored.accountEmailTokens, db.accountEmailTokens);
   });
 });
 
@@ -301,7 +458,7 @@ test("multi-event account schema constrains ownership and registration identity"
 test("PostgreSQL store leaves production empty databases unseeded", async () => {
   const memory = newDb({ autoCreateForeignKeyIndices: true });
   const { Pool } = memory.adapters.createPg();
-  const store = createPostgresStore(new Pool(), { seedOnEmpty: false });
+  const store = createPostgresStore(new Pool(), { seedOnEmpty: false, testOnlyPgMemCompatibility: true });
 
   try {
     await store.initialize();
@@ -584,7 +741,7 @@ test("PostgreSQL content posts reject stale versioned snapshots", async () => {
 
 test("PostgreSQL site settings reject an interleaved same-version write after its stale read", async () => {
   await withStore(async (store, pool) => {
-    const peer = createPostgresStore(pool);
+    const peer = createPostgresStore(pool, { testOnlyPgMemCompatibility: true });
     const stale = await store.readDb();
     const first = structuredClone(stale);
     const second = structuredClone(stale);
@@ -782,7 +939,7 @@ test("PostgreSQL store removes events omitted by a committed snapshot", async ()
 test("PostgreSQL restart preserves an administrator-selected project group subset", async () => {
   const memory = newDb({ autoCreateForeignKeyIndices: true });
   const { Pool } = memory.adapters.createPg();
-  const first = createPostgresStore(new Pool());
+  const first = createPostgresStore(new Pool(), { testOnlyPgMemCompatibility: true });
   let second;
 
   try {
@@ -795,7 +952,7 @@ test("PostgreSQL restart preserves an administrator-selected project group subse
     await first.writeDb(data);
     await first.close();
 
-    second = createPostgresStore(new Pool());
+    second = createPostgresStore(new Pool(), { testOnlyPgMemCompatibility: true });
     await second.initialize();
     await second.initialize();
     const restarted = await second.readDb();
@@ -888,16 +1045,61 @@ test("PostgreSQL auth state atomically enforces limits and consumes challenges o
     const emptyBuckets = await pool.query("SELECT key FROM auth_rate_buckets WHERE key = $1", ["login:ip:127.0.0.1"]);
     assert.equal(emptyBuckets.rowCount, 0);
 
-    await store.authState.saveChallenge({ phone: "13800000001", digest: "b".repeat(64), expiresAt: now + 300_000 });
+    await store.authState.saveChallenge({ purpose: "sms-password-reset", phone: "13800000001", digest: "b".repeat(64), expiresAt: now + 300_000 });
     const consumed = await Promise.all(states.map((state) => state.consumeChallenge({
-      phone: "13800000001", digest: "b".repeat(64), now, maxAttempts: 5
+      purpose: "sms-password-reset", phone: "13800000001", digest: "b".repeat(64), now, maxAttempts: 5
     })));
     assert.equal(consumed.filter(Boolean).length, 1);
 
-    await peer.saveChallenge({ phone: "13800000002", digest: "c".repeat(64), expiresAt: now + 1 });
-    await store.authState.consumeChallenge({ phone: "13800000003", digest: "d".repeat(64), now: now + 2, maxAttempts: 5 });
+    await peer.saveChallenge({ purpose: "sms-password-reset", phone: "13800000002", digest: "c".repeat(64), expiresAt: now + 1 });
+    await store.authState.consumeChallenge({ purpose: "sms-password-reset", phone: "13800000003", digest: "d".repeat(64), now: now + 2, maxAttempts: 5 });
     const expired = await pool.query("SELECT phone FROM password_reset_challenges WHERE phone = $1", ["13800000002"]);
     assert.equal(expired.rowCount, 0);
+  });
+});
+
+test("PostgreSQL auth challenge purposes are isolated and conditionally delete only the expected digest", async () => {
+  await withStore(async (store) => {
+    const now = Date.parse("2026-08-18T00:00:00.000Z");
+    const phone = "13800000009";
+    const loginDigest = "1".repeat(64);
+    const resetDigest = "2".repeat(64);
+    const oldDigest = "3".repeat(64);
+    const newDigest = "4".repeat(64);
+    const deliveredDigest = "5".repeat(64);
+
+    await store.authState.saveChallenge({
+      purpose: "sms-login", phone, digest: loginDigest, expiresAt: now + 300_000, attempts: 0
+    });
+    await store.authState.saveChallenge({
+      purpose: "sms-password-reset", phone, digest: resetDigest, expiresAt: now + 300_000, attempts: 0
+    });
+    assert.equal(await store.authState.consumeChallenge({
+      purpose: "sms-login", phone, digest: resetDigest, now, maxAttempts: 5
+    }), false);
+    assert.equal(await store.authState.consumeChallenge({
+      purpose: "sms-password-reset", phone, digest: resetDigest, now, maxAttempts: 5
+    }), true);
+    assert.equal(await store.authState.consumeChallenge({
+      purpose: "sms-login", phone, digest: loginDigest, now, maxAttempts: 5
+    }), true);
+
+    await store.authState.saveChallenge({
+      purpose: "sms-login", phone, digest: oldDigest, expiresAt: now + 300_000, attempts: 0
+    });
+    await store.authState.saveChallenge({
+      purpose: "sms-login", phone, digest: newDigest, expiresAt: now + 300_000, attempts: 0
+    });
+    assert.equal(await store.authState.saveChallenge({
+      purpose: "sms-login", phone, digest: oldDigest, expiresAt: now + 300_000, attempts: 0
+    }, { expectedDigest: oldDigest }), false);
+    assert.equal(await store.authState.saveChallenge({
+      purpose: "sms-login", phone, digest: deliveredDigest, expiresAt: now + 300_000, attempts: 0
+    }, { expectedDigest: newDigest }), true);
+    await store.authState.deleteChallenge({ purpose: "sms-login", phone, digest: oldDigest });
+    assert.equal(await store.authState.consumeChallenge({
+      purpose: "sms-login", phone, digest: deliveredDigest, now, maxAttempts: 5
+    }), true);
   });
 });
 
@@ -967,7 +1169,7 @@ test("PostgreSQL store upgrades a legacy schema without losing existing records"
   const memory = newDb({ autoCreateForeignKeyIndices: true });
   const { Pool } = memory.adapters.createPg();
   const pool = new Pool();
-  const store = createPostgresStore(pool);
+  const store = createPostgresStore(pool, { testOnlyPgMemCompatibility: true });
 
   assert.equal(store.pool, pool);
   assert.equal(Object.getOwnPropertyDescriptor(store, "pool").writable, false);

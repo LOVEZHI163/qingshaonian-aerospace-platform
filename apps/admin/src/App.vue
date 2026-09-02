@@ -43,6 +43,7 @@ const certificateRegistrationId = ref("");
 const DEEP_LINK_VIEWS = new Set(["overview", "events", "siteContent", "organizations", "leaders", "registration", "registrationRecords", "organizationRecords", "records", "certificates", "users", "organization", "eventCenter", "organizationWorkspace", "myOrganization", "password", "passwordSettings"]);
 const SAFE_EVENT_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 const initialParams = new URLSearchParams(window.location.search);
+const accountEmailActionActive = ref(["resetPassword", "verifyEmail"].includes(initialParams.get("view")) && Boolean(initialParams.get("token")));
 const requestedView = DEEP_LINK_VIEWS.has(initialParams.get("view")) ? initialParams.get("view") : "";
 const initialView = requestedView === "records" ? "registrationRecords" : requestedView;
 let initialRoutePending = Boolean(initialView);
@@ -338,10 +339,10 @@ async function verifyRelease() {
   }
 }
 
-async function login(credentials) {
+async function completeLogin(loginAction, credentials) {
   invalidateAdminEventContextRequests({ clearMessages: true });
   try {
-    const user = await session.login(credentials);
+    const user = await loginAction(credentials);
     invalidateAdminEventContextRequests({ clearMessages: true });
     await loadAccountEvents();
     await loadAdminEventsSafely();
@@ -349,6 +350,14 @@ async function login(credentials) {
   } catch (error) {
     loginMessage.value = error?.message || "登录失败，请稍后重试";
   }
+}
+
+async function login(credentials) {
+  await completeLogin(session.login, credentials);
+}
+
+async function smsLogin(credentials) {
+  await completeLogin(session.loginWithSms, credentials);
 }
 
 async function passwordChanged(user) {
@@ -565,10 +574,10 @@ onMounted(async () => {
 
   <div v-else-if="restoring" class="app-loading">正在恢复登录状态…</div>
 
-  <AuthPage v-else-if="!currentUser" :event-name="eventData.event.name" :login-error="loginMessage" @login="login" @clear-message="loginMessage = ''" />
+  <AuthPage v-else-if="accountEmailActionActive || !currentUser" :event-name="eventData.event.name" :login-error="loginMessage" @login="login" @sms-login="smsLogin" @clear-message="loginMessage = ''" @account-email-action-complete="accountEmailActionActive = false" />
 
   <section v-else-if="currentUser.mustChangePassword" class="auth-shell force-password-shell">
-    <PasswordSettingsPage forced @changed="passwordChanged" @logout="logout" />
+    <PasswordSettingsPage forced :user="currentUser" @changed="passwordChanged" @logout="logout" />
   </section>
 
   <AdminShell v-else-if="currentUser.type === 'admin'" :active="adminActive" @navigate="navigateAdmin">
@@ -612,7 +621,7 @@ onMounted(async () => {
       <OrganizationRegistrationRecordsPage v-else-if="currentView === 'organizationRecords'" @back-to-events="navigateUser('eventCenter')" @access-denied="handleOrganizationBusinessError" />
       <OrganizationConsolePage v-else-if="currentView === 'organization'" @error="handleOrganizationBusinessError" />
       <OrganizationLeadersPage v-else-if="currentUser.type === 'organization' && currentView === 'leaders'" />
-      <PasswordSettingsPage v-else-if="['password', 'passwordSettings'].includes(currentView)" @changed="passwordChanged" />
+      <PasswordSettingsPage v-else-if="['password', 'passwordSettings'].includes(currentView)" :user="currentUser" @changed="passwordChanged" />
     </main>
   </div>
 </template>

@@ -220,7 +220,7 @@ test("delete organization account endpoint is platform-admin only and persists a
 test("organization account lifecycle round-trips retained history through PostgreSQL", async () => {
   const memory = newDb({ autoCreateForeignKeyIndices: true });
   const { Pool } = memory.adapters.createPg();
-  const store = createPostgresStore(new Pool());
+  const store = createPostgresStore(new Pool(), { testOnlyPgMemCompatibility: true });
   try {
     await store.initialize();
     const initial = await store.readDb();
@@ -273,7 +273,7 @@ test("PostgreSQL migration upgrades legacy organization-deletion references with
   const memory = newDb({ autoCreateForeignKeyIndices: true });
   const { Pool } = memory.adapters.createPg();
   const pool = new Pool();
-  const store = createPostgresStore(pool);
+  const store = createPostgresStore(pool, { testOnlyPgMemCompatibility: true });
   try {
     await store.initialize();
     await pool.query("ALTER TABLE registrations DROP COLUMN organization_deleted");
@@ -349,6 +349,7 @@ test("delete organization account leaves persisted data unchanged when its atomi
     asyncRoute: createMutationAsyncRoute(store),
     hashPassword: async (value) => value,
     validatePassword: () => {},
+    verifyPhoneRegistration: async () => true,
     makeId: (prefix) => `${prefix}-WRITE-FAILURE`,
     now: () => deletedAt,
     publicUser: (user) => user

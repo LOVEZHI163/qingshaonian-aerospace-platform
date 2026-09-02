@@ -26,11 +26,15 @@ function uploadCertificate(baseUrl, cookie, registrationId, slot, {
   buffer = ONE_PIXEL_PNG,
   fileName = `slot-${slot}.png`,
   mimeType = "image/png",
-  title = `证书 ${slot}`
+  title = `证书 ${slot}`,
+  participantId
 } = {}) {
   return fetch(`${baseUrl}/api/admin/events/wz-aerospace-2026/registrations/${registrationId}/certificates/${slot}`, withSession(cookie, {
     method: "POST",
-    body: certificateForm(buffer, fileName, mimeType, { title })
+    body: certificateForm(buffer, fileName, mimeType, {
+      title,
+      ...(participantId !== undefined ? { participantId } : {})
+    })
   }));
 }
 
@@ -299,6 +303,76 @@ test("manual certificate management uploads both slots, edits, replaces, deletes
   }, { prefix: "manual-certificate-management-crud-" });
 });
 
+test("manual team certificate upload requires an owned participant and keeps same slots in participant-safe paths", async () => {
+  await withTestServer(async ({ baseUrl, dbPath, tempDir }) => {
+    const db = JSON.parse(await fs.readFile(dbPath, "utf8"));
+    db.registrations.push({
+      ...db.registrations[0],
+      id: "R-TEAM-MANUAL",
+      projectType: "team",
+      teamCode: "O1001-PTEAM-01",
+      status: "approved",
+      personalUserId: null
+    });
+    db.registrationParticipants.push(
+      { id: "RP-MANUAL-1", registrationId: "R-TEAM-MANUAL", displayOrder: 1, name: "队员甲", school: "甲学校", grade: "五年级", phone: "13800000001" },
+      { id: "RP-MANUAL-2", registrationId: "R-TEAM-MANUAL", displayOrder: 2, name: "队员乙", school: "乙学校", grade: "六年级", phone: "13800000002" }
+    );
+    db.registrations[0].status = "approved";
+    await fs.writeFile(dbPath, JSON.stringify(db));
+    const admin = await loginAs(baseUrl, "13900000000", "admin123");
+
+    assert.equal((await uploadCertificate(baseUrl, admin.cookie, "R-TEAM-MANUAL", 1)).status, 422);
+    assert.equal((await uploadCertificate(baseUrl, admin.cookie, "R-TEAM-MANUAL", 1, { participantId: "RP-FOREIGN" })).status, 422);
+    assert.equal((await uploadCertificate(baseUrl, admin.cookie, db.registrations[0].id, 1, { participantId: "RP-MANUAL-1" })).status, 422);
+
+    const first = await uploadCertificate(baseUrl, admin.cookie, "R-TEAM-MANUAL", 1, { participantId: "RP-MANUAL-1", title: "甲证书" });
+    const second = await uploadCertificate(baseUrl, admin.cookie, "R-TEAM-MANUAL", 1, { participantId: "RP-MANUAL-2", title: "乙证书" });
+    assert.equal(first.status, 201);
+    assert.equal(second.status, 201);
+    assert.deepEqual([(await responseJson(first)).row.participantId, (await responseJson(second)).row.participantId], ["RP-MANUAL-1", "RP-MANUAL-2"]);
+
+    const persisted = JSON.parse(await fs.readFile(dbPath, "utf8"));
+    const teamCertificates = persisted.certificates.filter((row) => row.registrationId === "R-TEAM-MANUAL");
+    assert.equal(teamCertificates.length, 2);
+    const participantList = await fetch(`${baseUrl}/api/admin/events/wz-aerospace-2026/certificates?registrationId=R-TEAM-MANUAL&participantId=RP-MANUAL-2`, withSession(admin.cookie));
+    assert.deepEqual((await responseJson(participantList)).rows.map((row) => row.participantId), ["RP-MANUAL-2"]);
+    for (const certificate of teamCertificates) {
+      const expectedRoot = path.join(tempDir, "uploads", "certificates", "R-TEAM-MANUAL", certificate.participantId, "1");
+      assert.equal(path.dirname(certificate.filePath), expectedRoot);
+    }
+  }, { prefix: "manual-team-certificate-participant-" });
+});
+
+test("manual certificate upload preserves the legacy target for a historical team with no participants", async () => {
+  await withTestServer(async ({ baseUrl, dbPath, tempDir }) => {
+    const db = JSON.parse(await fs.readFile(dbPath, "utf8"));
+    db.registrations.push({
+      ...db.registrations[0],
+      id: "R-TEAM-HISTORICAL",
+      projectType: "team",
+      teamCode: "O1001-PTEAM-HISTORICAL",
+      status: "approved",
+      personalUserId: null,
+      athlete: { name: "历史团队", school: "历史学校", grade: "五年级" }
+    });
+    await fs.writeFile(dbPath, JSON.stringify(db));
+    const admin = await loginAs(baseUrl, "13900000000", "admin123");
+
+    const response = await uploadCertificate(baseUrl, admin.cookie, "R-TEAM-HISTORICAL", 1, { title: "历史团队证书" });
+
+    assert.equal(response.status, 201);
+    const row = (await responseJson(response)).row;
+    assert.equal(row.participantId, null);
+    const persisted = JSON.parse(await fs.readFile(dbPath, "utf8"));
+    const certificate = persisted.certificates.find((item) => item.registrationId === "R-TEAM-HISTORICAL");
+    assert.equal(certificate.participantId, null);
+    assert.equal(path.dirname(certificate.filePath), path.join(
+      tempDir, "uploads", "certificates", "R-TEAM-HISTORICAL", "registration", "1"
+    ));
+  }, { prefix: "manual-historical-team-certificate-" });
+});
+
 test("certificate bulk audit preserves long normal target IDs and redacts only identity-shaped IDs", async () => {
   await withTestServer(async ({ baseUrl, dbPath }) => {
     const admin = await loginAs(baseUrl, "13900000000", "admin123");
@@ -455,15 +529,18 @@ test("manual certificate upload rechecks approval inside the mutation lock befor
 });
 
 test("manual certificate management applies the same file authorization to preview and download", async () => {
-  await withTestServer(async ({ baseUrl, dbPath }) => {
+  await withTestServer(async ({ baseUrl, dbPath, phoneVerificationToken }) => {
     const admin = await loginAs(baseUrl, "13900000000", "admin123");
     await approveRegistration(dbPath);
     const athleteOwner = await loginAs(baseUrl, "13800000001", "123456");
     const organizationOwner = await loginAs(baseUrl, "13800000011", "123456");
-    const outsiderRegistration = await fetch(`${baseUrl}/api/auth/register`, {
+    const outsiderRegistration = await fetch(`${baseUrl}/api/auth/register/ordinary`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: "无关用户", phone: "13600007777", password: "Strong123" })
+      body: JSON.stringify({
+        name: "无关用户", phone: "13600007777", password: "Strong123",
+        phoneVerificationToken: phoneVerificationToken("13600007777")
+      })
     });
     assert.equal(outsiderRegistration.status, 201);
     const outsider = await loginAs(baseUrl, "13600007777", "Strong123");

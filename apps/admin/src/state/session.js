@@ -60,6 +60,15 @@ async function login(credentials) {
   return payload.user;
 }
 
+async function loginWithSms(credentials) {
+  const payload = await api("/api/auth/sms-login/confirm", {
+    method: "POST",
+    body: JSON.stringify(credentials)
+  });
+  setUser(payload.user, payload.organizations);
+  return payload.user;
+}
+
 async function logout() {
   try {
     await api("/api/auth/logout", { method: "POST" });
@@ -71,5 +80,5 @@ async function logout() {
 }
 
 export function useSession() {
-  return { user, organizations, organizationAccess, accountEvents, restoring, restore, login, logout, setUser, clear, loadAccountEvents };
+  return { user, organizations, organizationAccess, accountEvents, restoring, restore, login, loginWithSms, logout, setUser, clear, loadAccountEvents };
 }

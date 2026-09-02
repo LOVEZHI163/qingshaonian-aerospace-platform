@@ -8,6 +8,13 @@ async function withServer(fn) {
   await withTestServer(fn, { prefix: "aerogp-auth-" });
 }
 
+function forwardedHeaders(clientIp) {
+  return {
+    "X-Forwarded-For": `${clientIp}, 172.18.0.20`,
+    "X-Forwarded-Proto": "https"
+  };
+}
+
 test("login upgrades a legacy password and restores the user from a session", async () => {
   await withServer(async ({ baseUrl, dbPath }) => {
     const login = await fetch(`${baseUrl}/api/auth/login`, {
@@ -42,11 +49,14 @@ test("login upgrades a legacy password and restores the user from a session", as
 });
 
 test("registration and admin creation persist hashes", async () => {
-  await withServer(async ({ baseUrl, dbPath }) => {
-    const register = await fetch(`${baseUrl}/api/auth/register`, {
+  await withServer(async ({ baseUrl, dbPath, phoneVerificationToken }) => {
+    const register = await fetch(`${baseUrl}/api/auth/register/ordinary`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: "新用户", phone: "13700000001", password: "Secret123" })
+      body: JSON.stringify({
+        name: "新用户", phone: "13700000001", password: "Secret123",
+        phoneVerificationToken: phoneVerificationToken("13700000001")
+      })
     });
     assert.equal(register.status, 201);
     assert.equal("password" in (await register.json()).user, false);
@@ -78,25 +88,33 @@ test("registration and admin creation persist hashes", async () => {
   });
 });
 
-test("public registration rejects administrator and unknown account types", async () => {
-  await withServer(async ({ baseUrl }) => {
+test("public ordinary registration never honors requested elevated or unknown account types", async () => {
+  await withServer(async ({ baseUrl, phoneVerificationToken }) => {
     for (const type of ["admin", "unknown"]) {
-      const response = await fetch(`${baseUrl}/api/auth/register`, {
+      const phone = type === "admin" ? "13700000003" : "13700000004";
+      const response = await fetch(`${baseUrl}/api/auth/register/ordinary`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: "越权用户", phone: type === "admin" ? "13700000003" : "13700000004", password: "secret5", type })
+        body: JSON.stringify({
+          name: "越权用户", phone, password: "Strong123", type,
+          phoneVerificationToken: phoneVerificationToken(phone)
+        })
       });
-      assert.equal(response.status, 422);
+      assert.equal(response.status, 201);
+      assert.equal((await response.json()).user.type, "ordinary");
     }
   });
 });
 
 test("login regenerates the session identifier", async () => {
-  await withServer(async ({ baseUrl }) => {
-    const register = await fetch(`${baseUrl}/api/auth/register`, {
+  await withServer(async ({ baseUrl, phoneVerificationToken }) => {
+    const register = await fetch(`${baseUrl}/api/auth/register/ordinary`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: "切换用户", phone: "13700000005", password: "Secret678" })
+      body: JSON.stringify({
+        name: "切换用户", phone: "13700000005", password: "Secret678",
+        phoneVerificationToken: phoneVerificationToken("13700000005")
+      })
     });
     assert.equal(register.status, 201);
 
@@ -151,11 +169,11 @@ test("logout is idempotent without an existing session", async () => {
   });
 });
 
-test("proxy HTTPS marks the session cookie Secure while HTTP does not", async () => {
+test("production two-hop proxy HTTPS marks the login session cookie Secure while HTTP does not", async () => {
   await withServer(async ({ baseUrl }) => {
     const secureLogin = await fetch(`${baseUrl}/api/auth/login`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "X-Forwarded-Proto": "https" },
+      headers: { "Content-Type": "application/json", ...forwardedHeaders("203.0.113.10") },
       body: JSON.stringify({ phone: "13900000000", password: "admin123" })
     });
     assert.match(secureLogin.headers.get("set-cookie") || "", /; Secure(?:;|$)/);
@@ -166,6 +184,61 @@ test("proxy HTTPS marks the session cookie Secure while HTTP does not", async ()
       body: JSON.stringify({ phone: "13800000001", password: "123456" })
     });
     assert.doesNotMatch(plainLogin.headers.get("set-cookie") || "", /; Secure(?:;|$)/);
+  });
+});
+
+test("two clients behind the same edge proxy do not share the password-login IP bucket", async () => {
+  await withServer(async ({ baseUrl }) => {
+    for (let index = 0; index < 20; index += 1) {
+      const failure = await fetch(`${baseUrl}/api/auth/login`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...forwardedHeaders("203.0.113.20")
+        },
+        body: JSON.stringify({ phone: `137${String(index).padStart(8, "0")}`, password: "wrong" })
+      });
+      assert.equal(failure.status, 401);
+    }
+
+    const independentClient = await fetch(`${baseUrl}/api/auth/login`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...forwardedHeaders("198.51.100.30")
+      },
+      body: JSON.stringify({ phone: "13900000000", password: "admin123" })
+    });
+    assert.equal(independentClient.status, 200);
+  });
+});
+
+test("two clients behind the same edge proxy do not share the SMS IP bucket", async () => {
+  await withTestServer(async ({ baseUrl }) => {
+    for (let index = 0; index < 20; index += 1) {
+      const accepted = await fetch(`${baseUrl}/api/auth/sms-login/request`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...forwardedHeaders("203.0.113.40")
+        },
+        body: JSON.stringify({ phone: `136${String(index).padStart(8, "0")}` })
+      });
+      assert.equal(accepted.status, 200);
+    }
+
+    const independentClient = await fetch(`${baseUrl}/api/auth/sms-login/request`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...forwardedHeaders("198.51.100.50")
+      },
+      body: JSON.stringify({ phone: "13800000001" })
+    });
+    assert.equal(independentClient.status, 200);
+  }, {
+    prefix: "aerogp-auth-sms-proxy-",
+    env: { ALIYUN_SMS_LOGIN_TEMPLATE_CODE: "SMS_LOGIN_TEST" }
   });
 });
 

@@ -2,10 +2,12 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
+import { newDb } from "pg-mem";
 
 import { withTestServer } from "../test-support/server.js";
 import { loginAs, withSession } from "./helpers/api-client.js";
-import { cleanupArchivedEventResources } from "../src/services/resource-cleanup.js";
+import { createPostgresStore } from "../src/data/postgres-store.js";
+import { cleanupArchivedEventResources, deleteArchivedEvent } from "../src/services/resource-cleanup.js";
 
 function jsonRequest(method, body, cookie) {
   return withSession(cookie, {
@@ -73,6 +75,14 @@ async function writeFixture(dbPath, tempDir) {
   db.registrationIdentities.push(
     { registrationId: "R-OLD", ciphertext: "old-ciphertext", iv: "old-iv", authTag: "old-tag", keyVersion: 1, idFingerprint: "old-fingerprint", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" },
     { registrationId: "R-OTHER", ciphertext: "other-ciphertext", iv: "other-iv", authTag: "other-tag", keyVersion: 1, idFingerprint: "other-fingerprint", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" }
+  );
+  db.registrationParticipants.push(
+    { id: "RP-OLD", registrationId: "R-OLD", displayOrder: 1, name: "旧赛事团队选手", school: "旧学校", grade: "三年级", phone: "", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" },
+    { id: "RP-OTHER", registrationId: "R-OTHER", displayOrder: 1, name: "其他赛事团队选手", school: "其他学校", grade: "三年级", phone: "", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" }
+  );
+  db.registrationParticipantIdentities.push(
+    { participantId: "RP-OLD", ciphertext: "old-participant-ciphertext", iv: "old-participant-iv", authTag: "old-participant-tag", keyVersion: 1, idFingerprint: "old-participant-fingerprint", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" },
+    { participantId: "RP-OTHER", ciphertext: "other-participant-ciphertext", iv: "other-participant-iv", authTag: "other-participant-tag", keyVersion: 1, idFingerprint: "other-participant-fingerprint", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" }
   );
   db.certificates.push(
     { id: "C-OLD", registrationId: "R-OLD", slot: 1, title: "旧赛事证书", fileName: "old.png", storedName: "old.png", filePath: paths.targetCertificate, status: "draft", source: "manual", importBatchId: null, uploadedAt: "2026-01-01T00:00:00.000Z", publishedAt: "", cleanedAt: "" },
@@ -247,6 +257,10 @@ test("resource cleanup thoroughly deletes only a confirmed non-current archived 
     assert.equal(persisted.registrations.some((row) => row.eventId === "E-OLD"), false);
     assert.equal(persisted.registrationIdentities.some((row) => row.registrationId === "R-OLD"), false);
     assert.equal(persisted.registrationIdentities.some((row) => row.registrationId === "R-OTHER"), true);
+    assert.equal(persisted.registrationParticipants.some((row) => row.registrationId === "R-OLD"), false);
+    assert.equal(persisted.registrationParticipants.some((row) => row.registrationId === "R-OTHER"), true);
+    assert.equal(persisted.registrationParticipantIdentities.some((row) => row.participantId === "RP-OLD"), false);
+    assert.equal(persisted.registrationParticipantIdentities.some((row) => row.participantId === "RP-OTHER"), true);
     assert.equal(persisted.certificates.some((row) => row.id === "C-OLD"), false);
     assert.equal(persisted.certificateImportBatches.some((row) => row.eventId === "E-OLD"), false);
     assert.equal(persisted.registrationUploadSessions.some((row) => row.eventId === "E-OLD"), false);
@@ -256,6 +270,77 @@ test("resource cleanup thoroughly deletes only a confirmed non-current archived 
     assert.equal(persisted.memberships.length, fixture.before.memberships);
     assert.ok(persisted.auditLogs.some((row) => row.action === "event.delete" && row.targetId === "E-OLD"));
   }, { prefix: "resource-cleanup-delete-" });
+});
+
+test("resource cleanup deletes a team registration through PostgreSQL without foreign-key failures", async () => {
+  const memory = newDb({ autoCreateForeignKeyIndices: true });
+  const { Pool } = memory.adapters.createPg();
+  const pool = new Pool();
+  const store = createPostgresStore(pool, { testOnlyPgMemCompatibility: true });
+  const now = "2026-09-01T12:00:00.000Z";
+
+  try {
+    await store.initialize();
+    const db = await store.readDb();
+    const sourceEvent = db.events[0];
+    const sourceProject = db.projects.find((row) => row.eventId === sourceEvent.id);
+    const sourceRegistration = db.registrations[0];
+    const eventId = "E-PG-TEAM-CLEANUP";
+    const projectId = "P-PG-TEAM-CLEANUP";
+    const registrationId = "R-PG-TEAM-CLEANUP";
+    const participantId = "RP-PG-TEAM-CLEANUP";
+    const eventName = "PostgreSQL 团队清理回归赛事";
+
+    db.events.push({
+      ...sourceEvent, id: eventId, name: eventName, status: "archived", isCurrent: false,
+      archivedAt: now, createdAt: now, updatedAt: now
+    });
+    db.projects.push({
+      ...sourceProject, id: projectId, eventId, name: "PostgreSQL 团队清理赛项", type: "team",
+      instructorRequired: true, teamMinMembers: 1, teamMaxMembers: 8
+    });
+    db.projectGroups.push(...db.projectGroups
+      .filter((row) => row.projectId === sourceProject.id)
+      .map((row) => ({ ...row, projectId })));
+    db.registrations.push({
+      ...sourceRegistration, id: registrationId, eventId, projectId,
+      projectName: "PostgreSQL 团队清理赛项", projectType: "team", teamCode: "PG-CLEANUP-1",
+      createdAt: now, updatedAt: now
+    });
+    db.registrationIdentities.push({
+      registrationId, ciphertext: "registration-ciphertext", iv: "registration-iv",
+      authTag: "registration-tag", keyVersion: 1, idFingerprint: "registration-fingerprint",
+      createdAt: now, updatedAt: now
+    });
+    db.registrationParticipants.push({
+      id: participantId, registrationId, displayOrder: 1, name: "团队清理队员", school: "测试学校",
+      grade: "三年级", phone: "", createdAt: now, updatedAt: now
+    });
+    db.registrationParticipantIdentities.push({
+      participantId, ciphertext: "participant-ciphertext", iv: "participant-iv",
+      authTag: "participant-tag", keyVersion: 1, idFingerprint: "participant-fingerprint",
+      createdAt: now, updatedAt: now
+    });
+    await store.writeDb(db);
+
+    const result = await deleteArchivedEvent({
+      store, eventId, confirmName: eventName, actor: { id: "U9001", name: "管理员" },
+      makeId: (prefix) => `${prefix}-PG-CLEANUP`, now: () => now, removeFile: async () => {}
+    });
+    assert.equal(result.deletedEventId, eventId);
+
+    for (const [table, column, id] of [
+      ["registration_participant_identities", "participant_id", participantId],
+      ["registration_participants", "id", participantId],
+      ["registration_identities", "registration_id", registrationId],
+      ["registrations", "id", registrationId]
+    ]) {
+      const rows = await pool.query(`SELECT 1 FROM ${table} WHERE ${column} = $1`, [id]);
+      assert.equal(rows.rowCount, 0, `${table} retained the deleted event fixture`);
+    }
+  } finally {
+    await store.close();
+  }
 });
 
 test("resource cleanup journals physical failures, audits them, and retries on the next cleanup", async () => {

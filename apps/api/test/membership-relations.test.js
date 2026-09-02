@@ -13,8 +13,11 @@ function jsonOptions(method, body, cookie) {
   });
 }
 
-async function registerAndLoginOrdinary(baseUrl, input) {
-  const response = await fetch(`${baseUrl}/api/auth/register/ordinary`, jsonOptions("POST", input));
+async function registerAndLoginOrdinary(baseUrl, input, phoneVerificationToken) {
+  const response = await fetch(`${baseUrl}/api/auth/register/ordinary`, jsonOptions("POST", {
+    ...input,
+    phoneVerificationToken: phoneVerificationToken(input.phone)
+  }));
   assert.equal(response.status, 201);
   return loginAs(baseUrl, input.phone, input.password);
 }
@@ -60,11 +63,11 @@ test("fix round 1 organization business reads and writes use stable centralized 
 });
 
 test("organization invitation requires personal acceptance and repeated invitation is idempotent and audited", async () => {
-  await withTestServer(async ({ baseUrl, dbPath }) => {
+  await withTestServer(async ({ baseUrl, dbPath, phoneVerificationToken }) => {
     const owner = await loginAs(baseUrl, "13800000011", "123456");
     const ordinary = await registerAndLoginOrdinary(baseUrl, {
       name: "受邀用户", phone: "13700000021", password: "Member21"
-    });
+    }, phoneVerificationToken);
 
     assert.equal((await fetch(
       `${baseUrl}/api/organization/member-candidate?phone=137-0000-0021`,
@@ -121,12 +124,12 @@ test("organization invitation requires personal acceptance and repeated invitati
 });
 
 test("ordinary request is approved by its owner and compatibility URLs use the same transition rules", async () => {
-  await withTestServer(async ({ baseUrl }) => {
+  await withTestServer(async ({ baseUrl, phoneVerificationToken }) => {
     const owner = await loginAs(baseUrl, "13800000011", "123456");
     const otherOwner = await loginAs(baseUrl, "13800000012", "123456");
     const ordinary = await registerAndLoginOrdinary(baseUrl, {
       name: "申请用户", phone: "13700000022", password: "Member22"
-    });
+    }, phoneVerificationToken);
 
     const search = await fetch(`${baseUrl}/api/organizations/search?q=WZ-SYXX`, withSession(ordinary.cookie));
     assert.equal(search.status, 200);
@@ -175,10 +178,10 @@ test("ordinary request is approved by its owner and compatibility URLs use the s
 });
 
 test("concurrent personal accepts leave exactly one active relation and audit the winner", async () => {
-  await withTestServer(async ({ baseUrl, dbPath }) => {
+  await withTestServer(async ({ baseUrl, dbPath, phoneVerificationToken }) => {
     const owner = await loginAs(baseUrl, "13800000011", "123456");
     const otherOwner = await loginAs(baseUrl, "13800000012", "123456");
-    const ordinary = await registerAndLoginOrdinary(baseUrl, { name: "并发成员", phone: "13700000101", password: "Member101" });
+    const ordinary = await registerAndLoginOrdinary(baseUrl, { name: "并发成员", phone: "13700000101", password: "Member101" }, phoneVerificationToken);
     const first = await responseJson(await fetch(`${baseUrl}/api/organization/invitations`, jsonOptions("POST", { phone: "13700000101" }, owner.cookie)));
     const second = await responseJson(await fetch(`${baseUrl}/api/organization/invitations`, jsonOptions("POST", { phone: "13700000101" }, otherOwner.cookie)));
     const responses = await Promise.all([first, second].map((relation) => fetch(
@@ -205,12 +208,12 @@ test("legacy membership PATCH derives a personal leave from the authenticated me
 });
 
 test("owner approval audits every other pending relation it automatically rejects", async () => {
-  await withTestServer(async ({ baseUrl, dbPath }) => {
+  await withTestServer(async ({ baseUrl, dbPath, phoneVerificationToken }) => {
     const owner = await loginAs(baseUrl, "13800000011", "123456");
     const otherOwner = await loginAs(baseUrl, "13800000012", "123456");
     const ordinary = await registerAndLoginOrdinary(baseUrl, {
       name: "审批审计用户", phone: "13700000026", password: "Member26"
-    });
+    }, phoneVerificationToken);
 
     const invitationResponse = await fetch(`${baseUrl}/api/organization/invitations`, jsonOptions(
       "POST", { phone: "13700000026" }, otherOwner.cookie
@@ -251,11 +254,11 @@ test("owner approval audits every other pending relation it automatically reject
 });
 
 test("legacy membership GET preserves its rows-only envelope and explicit invitation fields", async () => {
-  await withTestServer(async ({ baseUrl }) => {
+  await withTestServer(async ({ baseUrl, phoneVerificationToken }) => {
     const owner = await loginAs(baseUrl, "13800000011", "123456");
     const ordinary = await registerAndLoginOrdinary(baseUrl, {
       name: "旧查询用户", phone: "13700000027", password: "Member27"
-    });
+    }, phoneVerificationToken);
     const invitationResponse = await fetch(`${baseUrl}/api/organization/invitations`, jsonOptions(
       "POST", { phone: "13700000027", note: "旧查询兼容" }, owner.cookie
     ));
@@ -282,11 +285,11 @@ test("legacy membership GET preserves its rows-only envelope and explicit invita
 });
 
 test("legacy membership PATCH preserves its row-only envelope and explicit invitation fields", async () => {
-  await withTestServer(async ({ baseUrl }) => {
+  await withTestServer(async ({ baseUrl, phoneVerificationToken }) => {
     const owner = await loginAs(baseUrl, "13800000011", "123456");
     const ordinary = await registerAndLoginOrdinary(baseUrl, {
       name: "旧更新用户", phone: "13700000028", password: "Member28"
-    });
+    }, phoneVerificationToken);
     const invitationResponse = await fetch(`${baseUrl}/api/organization/invitations`, jsonOptions(
       "POST", { phone: "13700000028", note: "旧更新兼容" }, owner.cookie
     ));
@@ -315,11 +318,11 @@ test("legacy membership PATCH preserves its row-only envelope and explicit invit
 });
 
 test("both sides can reject or end only the transitions assigned to them", async () => {
-  await withTestServer(async ({ baseUrl }) => {
+  await withTestServer(async ({ baseUrl, phoneVerificationToken }) => {
     const owner = await loginAs(baseUrl, "13800000011", "123456");
     const ordinary = await registerAndLoginOrdinary(baseUrl, {
       name: "状态用户", phone: "13700000023", password: "Member23"
-    });
+    }, phoneVerificationToken);
 
     const requestRelation = async () => {
       const response = await fetch(`${baseUrl}/api/me/organization-requests`, jsonOptions(
@@ -365,15 +368,15 @@ test("both sides can reject or end only the transitions assigned to them", async
 });
 
 test("accepting one organization rejects and audits other pending relations while a second activation conflicts", async () => {
-  await withTestServer(async ({ baseUrl, dbPath }) => {
+  await withTestServer(async ({ baseUrl, dbPath, phoneVerificationToken }) => {
     const owner = await loginAs(baseUrl, "13800000011", "123456");
     const otherOwner = await loginAs(baseUrl, "13800000012", "123456");
     const ordinary = await registerAndLoginOrdinary(baseUrl, {
       name: "单组织用户", phone: "13700000024", password: "Member24"
-    });
+    }, phoneVerificationToken);
     const stranger = await registerAndLoginOrdinary(baseUrl, {
       name: "其他用户", phone: "13700000025", password: "Member25"
-    });
+    }, phoneVerificationToken);
 
     const firstResponse = await fetch(`${baseUrl}/api/organization/invitations`, jsonOptions(
       "POST", { phone: "13700000024" }, owner.cookie

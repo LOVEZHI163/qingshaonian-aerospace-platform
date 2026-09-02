@@ -8,6 +8,7 @@ import { withSession } from "./helpers/api-client.js";
 
 const passwordResetModule = await import("../src/auth/password-reset.js").catch(() => ({}));
 const smsModule = await import("../src/auth/sms.js").catch(() => ({}));
+const smsChallengesModule = await import("../src/auth/sms-challenges.js").catch(() => ({}));
 
 async function withServer(fn) {
   await withTestServer(fn, { prefix: "aerogp-password-reset-" });
@@ -128,16 +129,16 @@ test("temporary password endpoints fail closed when the encryption key is unavai
   }
 });
 
-function serviceHarness({ sendCode, logger } = {}) {
+function serviceHarness({ sendCode, logger, database } = {}) {
   let currentTime = Date.parse("2026-07-17T00:00:00.000Z");
-  let db = {
+  let db = structuredClone(database || {
     users: [{
       id: "U1", name: "短信用户", phone: "13800000001", password: "OldPass1", type: "ordinary",
       status: "active", sessionVersion: 3, mustChangePassword: true,
       temporaryPasswordCiphertext: "sealed", temporaryPasswordIv: "iv", temporaryPasswordTag: "tag",
       temporaryPasswordCreatedAt: "2026-01-02T00:00:00.000Z", createdAt: "2026-01-01T00:00:00.000Z"
     }]
-  };
+  });
   const sent = [];
   const challengeStore = new Map();
   let challengePreparations = 0;
@@ -156,38 +157,51 @@ function serviceHarness({ sendCode, logger } = {}) {
       }
       return allowed;
     },
-    async saveChallenge(challenge, { enabled = true } = {}) {
+    async saveChallenge(challenge, { enabled = true, expectedDigest } = {}) {
       challengePreparations += 1;
-      if (enabled) challengeStore.set(challenge.phone, structuredClone(challenge));
+      const key = `${challenge.purpose}:${challenge.phone}`;
+      if (expectedDigest && challengeStore.get(key)?.digest !== expectedDigest) return false;
+      if (enabled) challengeStore.set(key, structuredClone(challenge));
+      else challengeStore.delete(key);
+      return true;
     },
-    async deleteChallenge(phone, digest) {
-      if (!digest || challengeStore.get(phone)?.digest === digest) challengeStore.delete(phone);
+    async deleteChallenge({ purpose, phone, digest }) {
+      const key = `${purpose}:${phone}`;
+      if (!digest || challengeStore.get(key)?.digest === digest) challengeStore.delete(key);
     },
-    async consumeChallenge({ phone, digest, now, maxAttempts }) {
-      const challenge = challengeStore.get(phone);
+    async consumeChallenge({ purpose, phone, digest, now, maxAttempts }) {
+      const key = `${purpose}:${phone}`;
+      const challenge = challengeStore.get(key);
       if (!challenge || challenge.expiresAt <= now) {
-        challengeStore.delete(phone);
+        challengeStore.delete(key);
         return false;
       }
       if (challenge.digest !== digest) {
         challenge.attempts += 1;
-        if (challenge.attempts >= maxAttempts) challengeStore.delete(phone);
+        if (challenge.attempts >= maxAttempts) challengeStore.delete(key);
         return false;
       }
-      challengeStore.delete(phone);
+      challengeStore.delete(key);
       return true;
     }
   };
   const smsProvider = { sendCode: sendCode || (async (payload) => { sent.push(payload); }) };
-  const service = passwordResetModule.createSmsPasswordResetService?.({
+  smsProvider.enabled = (purpose) => purpose === "sms-password-reset";
+  const challengeService = smsChallengesModule.createSmsChallengeService({
+    purpose: smsChallengesModule.SMS_PURPOSES.passwordReset,
     secret: "s".repeat(32),
     readDb: async () => structuredClone(db),
-    writeDb: async (next) => { db = structuredClone(next); },
     smsProvider,
     authState,
-    logger: logger || { warn() {}, error() {} },
+    resolveEligibleTarget: (database, phone) => database.users.find((user) => user.phone === phone && user.status === "active"),
     clock: () => currentTime,
     generateCode: () => "123456",
+    logger: logger || { warn() {}, error() {} }
+  });
+  const service = passwordResetModule.createSmsPasswordResetService?.({
+    challengeService,
+    readDb: async () => structuredClone(db),
+    writeDb: async (next) => { db = structuredClone(next); },
     clearTemporaryPassword: (user) => {
       user.temporaryPasswordCiphertext = null;
       user.temporaryPasswordIv = null;
@@ -209,11 +223,12 @@ test("SMS reset request is uniform and stores only a code digest", async () => {
   const known = await harness.service.request({ phone: "13800000001", ip: "127.0.0.1" });
   harness.advance(61_000);
   const unknown = await harness.service.request({ phone: "13800000002", ip: "127.0.0.1" });
+  await new Promise((resolve) => setImmediate(resolve));
 
   assert.deepEqual(known, unknown);
-  assert.equal(harness.challengePreparations(), 2);
-  assert.deepEqual(harness.sent, [{ phone: "13800000001", code: "123456" }]);
-  const stored = harness.challengeStore.get("13800000001");
+  assert.equal(harness.challengePreparations(), 3);
+  assert.deepEqual(harness.sent, [{ purpose: "sms-password-reset", phone: "13800000001", code: "123456" }]);
+  const stored = harness.challengeStore.get("sms-password-reset:13800000001");
   assert.equal(stored.digest.length, 64);
   assert.equal(JSON.stringify(stored).includes("123456"), false);
   assert.equal(stored.expiresAt - Date.parse("2026-07-17T00:00:00.000Z"), 5 * 60 * 1000);
@@ -225,7 +240,7 @@ test("SMS provider failures keep the request response uniform and store no chall
   const response = await harness.service.request({ phone: "13800000001", ip: "127.0.0.1" });
   await new Promise((resolve) => setImmediate(resolve));
   assert.deepEqual(response, { ok: true, message: "如果该手机号已注册，验证码将发送到该号码" });
-  assert.equal(harness.challengeStore.has("13800000001"), false);
+  assert.equal(harness.challengeStore.has("sms-password-reset:13800000001"), false);
 });
 
 test("SMS dispatch failures remain handled even when the logger throws", async () => {
@@ -239,7 +254,7 @@ test("SMS dispatch failures remain handled even when the logger throws", async (
     });
     await harness.service.request({ phone: "13800000001", ip: "127.0.0.1" });
     await new Promise((resolve) => setImmediate(resolve));
-    assert.equal(harness.challengeStore.has("13800000001"), false);
+    assert.equal(harness.challengeStore.has("sms-password-reset:13800000001"), false);
     assert.deepEqual(unhandled, []);
   } finally {
     process.removeListener("unhandledRejection", onUnhandled);
@@ -256,8 +271,10 @@ test("SMS reset response does not synchronously wait for the provider", async ()
     harness.service.request({ phone: "13800000001", ip: "127.0.0.1" }),
     new Promise((_, reject) => setTimeout(() => reject(new Error("request waited for SMS")), 100))
   ]);
-  assert.equal(dispatched, true);
+  assert.equal(dispatched, false);
   assert.equal(response.ok, true);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(dispatched, true);
 });
 
 test("SMS reset enforces cooldown, hourly phone and IP limits", async () => {
@@ -292,6 +309,7 @@ test("SMS reset confirms once, changes the password, and increments session vers
   assert.equal(typeof passwordResetModule.createSmsPasswordResetService, "function");
   const harness = serviceHarness();
   await harness.service.request({ phone: "13800000001", ip: "127.0.0.1" });
+  await new Promise((resolve) => setImmediate(resolve));
   const result = await harness.service.confirm({ phone: "13800000001", code: "123456", password: "NextPass2" });
 
   assert.deepEqual(result, { ok: true });
@@ -302,27 +320,62 @@ test("SMS reset confirms once, changes the password, and increments session vers
   assert.equal(harness.db().users[0].temporaryPasswordIv, null);
   assert.equal(harness.db().users[0].temporaryPasswordTag, null);
   assert.equal(harness.db().users[0].temporaryPasswordCreatedAt, null);
-  assert.equal(harness.challengeStore.has("13800000001"), false);
+  assert.equal(harness.challengeStore.has("sms-password-reset:13800000001"), false);
+});
+
+test("active ordinary, organization, and administrator accounts retain SMS reset and session invalidation semantics", async () => {
+  const database = {
+    users: [
+      { id: "U1", phone: "13800000001", type: "ordinary", status: "active", password: "OldPass1", sessionVersion: 1, mustChangePassword: true, temporaryPasswordCiphertext: "sealed", temporaryPasswordIv: "iv", temporaryPasswordTag: "tag", temporaryPasswordCreatedAt: "2026-01-01T00:00:00.000Z" },
+      { id: "U2", phone: "13800000002", type: "admin", status: "active", password: "OldPass1", sessionVersion: 4, mustChangePassword: true, temporaryPasswordCiphertext: "sealed", temporaryPasswordIv: "iv", temporaryPasswordTag: "tag", temporaryPasswordCreatedAt: "2026-01-01T00:00:00.000Z" },
+      { id: "U3", phone: "13800000003", type: "organization", status: "active", password: "OldPass1", sessionVersion: 2, mustChangePassword: true, temporaryPasswordCiphertext: "sealed", temporaryPasswordIv: "iv", temporaryPasswordTag: "tag", temporaryPasswordCreatedAt: "2026-01-01T00:00:00.000Z" },
+      { id: "U4", phone: "13800000004", type: "organization", status: "active", password: "OldPass1", sessionVersion: 3, mustChangePassword: true, temporaryPasswordCiphertext: "sealed", temporaryPasswordIv: "iv", temporaryPasswordTag: "tag", temporaryPasswordCreatedAt: "2026-01-01T00:00:00.000Z" },
+      { id: "U5", phone: "13800000005", type: "organization", status: "active", password: "OldPass1", sessionVersion: 5, mustChangePassword: true, temporaryPasswordCiphertext: "sealed", temporaryPasswordIv: "iv", temporaryPasswordTag: "tag", temporaryPasswordCreatedAt: "2026-01-01T00:00:00.000Z" }
+    ],
+    organizations: [
+      { id: "O3", ownerUserId: "U3", reviewStatus: "approved", status: "active" },
+      { id: "O4", ownerUserId: "U4", reviewStatus: "pending", status: "active" },
+      { id: "O5", ownerUserId: "U5", reviewStatus: "rejected", status: "active" }
+    ]
+  };
+  const initialVersions = new Map(database.users.map((user) => [user.phone, user.sessionVersion]));
+  const harness = serviceHarness({ database });
+
+  for (const phone of initialVersions.keys()) {
+    await harness.service.request({ phone, ip: "127.0.0.1" });
+    await new Promise((resolve) => setImmediate(resolve));
+    await harness.service.confirm({ phone, code: "123456", password: "NextPass2" });
+    const user = harness.db().users.find((row) => row.phone === phone);
+    assert.equal(user.sessionVersion, initialVersions.get(phone) + 1, phone);
+    assert.equal(user.mustChangePassword, false, phone);
+    assert.equal(user.temporaryPasswordCiphertext, null, phone);
+    assert.equal(user.temporaryPasswordIv, null, phone);
+    assert.equal(user.temporaryPasswordTag, null, phone);
+    assert.equal(user.temporaryPasswordCreatedAt, null, phone);
+    assert.equal(await verifyPassword("NextPass2", user.password), true, phone);
+  }
 });
 
 test("SMS reset expires after five minutes and allows at most five checks", async () => {
   assert.equal(typeof passwordResetModule.createSmsPasswordResetService, "function");
   const expired = serviceHarness();
   await expired.service.request({ phone: "13800000001", ip: "127.0.0.1" });
+  await new Promise((resolve) => setImmediate(resolve));
   expired.advance(5 * 60 * 1000);
   await assert.rejects(expired.service.confirm({ phone: "13800000001", code: "123456", password: "NextPass2" }), (error) => error.statusCode === 422);
 
   const attempts = serviceHarness();
   await attempts.service.request({ phone: "13800000001", ip: "127.0.0.1" });
+  await new Promise((resolve) => setImmediate(resolve));
   for (let index = 0; index < 5; index += 1) {
     await assert.rejects(attempts.service.confirm({ phone: "13800000001", code: "000000", password: "NextPass2" }), (error) => error.statusCode === 422);
   }
-  assert.equal(attempts.challengeStore.has("13800000001"), false);
+  assert.equal(attempts.challengeStore.has("sms-password-reset:13800000001"), false);
 });
 
 test("Aliyun SMS provider is disabled without config and maps code to the official request", async () => {
   assert.equal(typeof smsModule.createAliyunSmsProvider, "function");
-  assert.equal(smsModule.createAliyunSmsProvider({}), null);
+  assert.equal(smsModule.createAliyunSmsProvider({}).enabled("sms-password-reset"), false);
 
   const requests = [];
   const client = { sendSms: async (request) => { requests.push(request); return { body: { code: "OK" } }; } };
@@ -330,9 +383,9 @@ test("Aliyun SMS provider is disabled without config and maps code to the offici
     ALIBABA_CLOUD_ACCESS_KEY_ID: "id",
     ALIBABA_CLOUD_ACCESS_KEY_SECRET: "secret",
     ALIYUN_SMS_SIGN_NAME: "航空赛事",
-    ALIYUN_SMS_TEMPLATE_CODE: "SMS_123"
+    ALIYUN_SMS_RESET_TEMPLATE_CODE: "SMS_123"
   }, { client });
-  await provider.sendCode({ phone: "13800000001", code: "123456" });
+  await provider.sendCode({ purpose: "sms-password-reset", phone: "13800000001", code: "123456" });
 
   assert.equal(requests[0].phoneNumbers, "13800000001");
   assert.equal(requests[0].signName, "航空赛事");
@@ -344,16 +397,27 @@ test("Aliyun SMS provider is disabled without config and maps code to the offici
     ALIBABA_CLOUD_ACCESS_KEY_ID: "id",
     ALIBABA_CLOUD_ACCESS_KEY_SECRET: "secret",
     ALIYUN_SMS_SIGN_NAME: "test",
-    ALIYUN_SMS_TEMPLATE_CODE: "SMS_123"
+    ALIYUN_SMS_RESET_TEMPLATE_CODE: "SMS_123"
   }, { client: { sendSms: async () => ({ body: {} }) } });
-  await assert.rejects(rejected.sendCode({ phone: "13800000001", code: "123456" }), /delivery failed/);
+  await assert.rejects(rejected.sendCode({ purpose: "sms-password-reset", phone: "13800000001", code: "123456" }), /delivery failed/);
 });
 
 test("public features reports SMS reset disabled when Aliyun is not configured", async () => {
-  await withServer(async ({ baseUrl }) => {
+  await withTestServer(async ({ baseUrl }) => {
     const features = await fetch(`${baseUrl}/api/public/features`);
     assert.equal(features.status, 200);
-    assert.deepEqual(await features.json(), { smsPasswordResetEnabled: false });
+    assert.deepEqual(await features.json(), {
+      smsRegistrationEnabled: false,
+      smsLoginEnabled: false,
+      smsPasswordResetEnabled: false,
+      emailPasswordResetEnabled: false,
+      captcha: {
+        enabled: false,
+        region: "cn",
+        prefix: "",
+        scenes: { smsRegistration: "", smsLogin: "", smsPasswordReset: "", emailPasswordReset: "" }
+      }
+    });
 
     const request = await fetch(`${baseUrl}/api/auth/password-reset/sms/request`, {
       method: "POST",
@@ -361,5 +425,5 @@ test("public features reports SMS reset disabled when Aliyun is not configured",
       body: JSON.stringify({ phone: "13800000001" })
     });
     assert.equal(request.status, 503);
-  });
+  }, { prefix: "aerogp-password-reset-disabled-", smsRegistrationEnabled: false });
 });

@@ -23,6 +23,7 @@ function Require-NoMatch([string]$content, [string]$pattern, [string]$message) {
 $apiDockerfile = Read-RequiredFile "Dockerfile.api"
 $webDockerfile = Read-RequiredFile "Dockerfile.web"
 $nginx = Read-RequiredFile "deploy/nginx.conf"
+$caddy = Read-RequiredFile "deploy/Caddyfile"
 $dockerIgnore = Read-RequiredFile ".dockerignore"
 $compose = Read-RequiredFile "compose.yaml"
 $backup = Read-RequiredFile "deploy/backup-postgres.sh"
@@ -31,7 +32,9 @@ $verifyUploadsBackup = Read-RequiredFile "deploy/verify-uploads-backup.sh"
 $preflightUpgrade = Read-RequiredFile "deploy/preflight-admin-upgrade.sh"
 $restore = Read-RequiredFile "deploy/restore-postgres.sh"
 $bootstrapSecrets = Read-RequiredFile "deploy/bootstrap-secrets.sh"
+$verifyRelease = Read-RequiredFile "deploy/verify-release.sh"
 $remoteSmoke = Read-RequiredFile "deploy/remote-smoke-test.sh"
+$smokeCredentials = Read-RequiredFile "deploy/smoke-credentials.sh"
 $envExample = Read-RequiredFile ".env.example"
 
 Require-Match $apiDockerfile '(?m)^USER\s+node\s*$' "API image must run as the node user"
@@ -45,6 +48,10 @@ Require-Match $nginx 'location\s+/api/\s*\{' "Nginx must proxy /api/"
 Require-Match $nginx 'resolver\s+127\.0\.0\.11\s+valid=10s\s+ipv6=off\s*;' "Nginx must use Docker DNS for dynamic API discovery"
 Require-Match $nginx 'server\s+api:4300\s+resolve\s*;' "Nginx upstream must re-resolve the API container"
 Require-Match $nginx 'proxy_pass\s+http://api_backend\s*;' "Nginx must preserve the /api/ prefix when proxying"
+Require-NoMatch $nginx 'proxy_set_header\s+X-Forwarded-Proto\s+\$scheme\s*;' "Nginx must not replace the trusted original HTTPS scheme"
+if (($nginx | Select-String -AllMatches 'proxy_set_header\s+X-Forwarded-Proto\s+\$http_x_forwarded_proto\s*;').Matches.Count -ne 3) {
+  $failures.Add("Nginx must preserve the trusted original scheme on all three API proxy locations")
+}
 Require-NoMatch $nginx '(?m)^\s*auth_basic(?:_user_file)?\b' "Nginx must not require Basic Auth"
 Require-NoMatch $webDockerfile 'entrypoint-web\.sh|check-aerogp-auth' "Web image must not require the Basic Auth entrypoint"
 Require-Match $webDockerfile '(?m)^ARG VITE_PUBLIC_SITE_URL\s*$' "Web image must accept the canonical public origin"
@@ -57,6 +64,9 @@ foreach ($content in @($apiDockerfile, $webDockerfile)) {
 }
 
 Require-Match $compose '(?ms)^\s*caddy:\s*.*?^\s*ports:\s*\r?\n\s*-\s*"80:80"\s*\r?\n\s*-\s*"443:443"' "Caddy must publish HTTPS ports 80 and 443"
+Require-Match $caddy 'header_up\s+X-Forwarded-For\s+\{remote_host\}' "Caddy must replace untrusted client forwarding chains"
+Require-Match $caddy 'header_up\s+X-Forwarded-Proto\s+\{scheme\}' "Caddy must forward the trusted original request scheme"
+Require-Match $caddy 'Strict-Transport-Security\s+"max-age=31536000; includeSubDomains"' "Caddy must enforce HTTPS with HSTS"
 Require-NoMatch $compose '(?ms)^\s{2}web:\s*$(?:(?!^\s{2}\S).)*^\s{4}ports:' "Web must remain internal behind Caddy"
 if ($compose -match '(?m)["''](?:4300|5432):') { $failures.Add("API and PostgreSQL ports must not be published") }
 Require-Match $compose 'postgres_data:/var/lib/postgresql/data' "PostgreSQL data must use a named volume"
@@ -102,6 +112,34 @@ Require-Match $remoteSmoke 'ADMIN_TEST_PASSWORD' "Remote smoke tests must receiv
 Require-Match $remoteSmoke 'cookie' "Remote smoke tests must preserve the authenticated session with a cookie jar"
 Require-Match $remoteSmoke '--data-binary\s+@-' "Remote smoke tests must send login credentials through curl stdin"
 Require-NoMatch $remoteSmoke '(?m)^\s*-d\s+"\$login_payload"' "Remote smoke tests must not put login credentials in curl argv"
+foreach ($name in @(
+  'EXPECTED_SMS_REGISTRATION_ENABLED',
+  'EXPECTED_SMS_LOGIN_ENABLED',
+  'EXPECTED_SMS_PASSWORD_RESET_ENABLED'
+)) {
+  Require-Match $verifyRelease "\`$\{$name`:``?" "Release verification must require $name"
+}
+Require-Match $verifyRelease 'command\s+-v\s+node' "Release verification must require Node JSON parsing"
+Require-Match $verifyRelease 'seenKeys\.has' "Release verification must reject duplicate top-level feature keys"
+foreach ($feature in @('smsRegistrationEnabled', 'smsLoginEnabled', 'smsPasswordResetEnabled')) {
+  Require-Match $verifyRelease $feature "Release verification must check $feature"
+  Require-Match $remoteSmoke $feature "Remote smoke tests must inspect $feature"
+}
+foreach ($path in @(
+  '/api/auth/register/sms/request',
+  '/api/auth/sms-login/request',
+  '/api/auth/password-reset/sms/request'
+)) {
+  if (-not $remoteSmoke.Contains($path)) { $failures.Add("Remote smoke tests must safely gate $path") }
+}
+Require-Match $smokeCredentials 'createPhoneRegistrationToken' "Organization smoke tokens must use the production token helper"
+Require-Match $smokeCredentials 'process\.env\.SESSION_SECRET' "Organization smoke tokens must use the API container session secret"
+Require-Match $smokeCredentials 'chmod\s+600\s+"\$smoke_registration_token_tmp"' "Organization smoke token files must be private"
+Require-Match $smokeCredentials 'writeFileSync' "Organization smoke tokens must use a container file channel"
+Require-Match $smokeCredentials 'docker\s+compose\s+cp' "Organization smoke tokens must copy without stdout"
+Require-Match $smokeCredentials 'smoke_cleanup_phone_registration_token' "Organization smoke tokens must clean container and host files"
+Require-NoMatch $smokeCredentials 'process\.stdout\.write\(issued\.phoneVerificationToken\)' "Organization smoke tokens must never write the token to stdout"
+Require-Match $remoteSmoke 'phoneVerificationToken=<\$smoke_organization_token_file' "Organization smoke registration must submit a signed phone token"
 foreach ($path in @('/healthz', '/api/public/home', '/api/public/content', '/api/public/sitemap.xml', '/brand/mark.svg', '/brand/wordmark.svg', '/api/admin/site-settings')) {
   if (-not $remoteSmoke.Contains($path)) { $failures.Add("Remote smoke tests must check $path") }
 }
@@ -113,6 +151,26 @@ Require-Match $nginx 'max-age=31536000, immutable' "Hashed assets must be cached
 Require-Match $nginx 'Cache-Control\s+"no-store"' "HTML must not be cached"
 Require-Match $envExample '(?m)^POSTGRES_PASSWORD=' ".env.example must document POSTGRES_PASSWORD"
 Require-NoMatch $envExample '(?m)^BASIC_AUTH_' ".env.example must not document removed Basic Auth variables"
+foreach ($name in @(
+  'ALIYUN_SMS_REGISTRATION_TEMPLATE_CODE',
+  'ALIYUN_SMS_LOGIN_TEMPLATE_CODE',
+  'ALIYUN_SMS_RESET_TEMPLATE_CODE',
+  'ALIYUN_CAPTCHA_ENABLED',
+  'ALIYUN_CAPTCHA_REGION',
+  'ALIYUN_CAPTCHA_PREFIX',
+  'ALIYUN_CAPTCHA_SMS_REGISTRATION_SCENE_ID',
+  'ALIYUN_CAPTCHA_LOGIN_SCENE_ID',
+  'ALIYUN_CAPTCHA_SMS_RESET_SCENE_ID',
+  'ALIYUN_CAPTCHA_EMAIL_RESET_SCENE_ID'
+)) {
+  Require-Match $envExample "(?m)^$name=" ".env.example must document $name"
+  Require-Match $compose "$name`:\s*\`$\{$name`:-" "Compose must pass $name to the API"
+}
+Require-Match $envExample '(?m)^ALIYUN_CAPTCHA_ENABLED=false\r?$' "Aliyun captcha must default to disabled"
+Require-NoMatch $envExample '(?m)^ALIYUN_SMS_TEMPLATE_CODE=' "The legacy shared SMS template must not be documented"
+Require-NoMatch $compose 'ALIYUN_SMS_TEMPLATE_CODE:' "Compose must not pass the legacy shared SMS template"
+Require-Match $compose 'ALIBABA_CLOUD_ACCESS_KEY_ID:\s*\$\{ALIBABA_CLOUD_ACCESS_KEY_ID:-\}' "Compose must inject the Alibaba Cloud access key id from the environment"
+Require-Match $compose 'ALIBABA_CLOUD_ACCESS_KEY_SECRET:\s*\$\{ALIBABA_CLOUD_ACCESS_KEY_SECRET:-\}' "Compose must inject the Alibaba Cloud access key secret from the environment"
 if ([regex]::Matches($compose, 'image:\s+m\.daocloud\.io/docker\.io/library/postgres:16-alpine').Count -lt 2) {
   $failures.Add("PostgreSQL services must use the project-scoped mainland mirror")
 }
@@ -122,13 +180,23 @@ foreach ($entry in @(
   @{ Name = "uploads backup"; Content = $backupUploads },
   @{ Name = "uploads backup verifier"; Content = $verifyUploadsBackup },
   @{ Name = "upgrade preflight"; Content = $preflightUpgrade },
+  @{ Name = "release verifier"; Content = $verifyRelease },
   @{ Name = "remote smoke test"; Content = $remoteSmoke }
 )) {
   Require-Match $entry.Content '(?m)^set -eu\s*$' "$($entry.Name) script must fail fast"
   Require-NoMatch $entry.Content '(?m)^\s*set\s+-[^\r\n]*x' "$($entry.Name) script must not enable shell tracing"
   Require-NoMatch $entry.Content '(?i)(?:cat|sed|awk|grep|head|tail|less|more)\s+[^\r\n]*\.env' "$($entry.Name) script must not print the environment file"
   Require-NoMatch $entry.Content '(?im)^(?![^\r\n]*(?:\||>))[^\r\n]*(?:echo|printf)\s+[^\r\n]*(?:PASSWORD|PGPASSWORD|SESSION_SECRET)' "$($entry.Name) script must not print passwords or session secrets"
+  Require-NoMatch $entry.Content '47\.99\.181\.222|(?im)\b(?:ssh|scp)\s+aerogp(?:\s|:)' "$($entry.Name) must not target the retired server"
+  Require-NoMatch $entry.Content '(?im)docker\s+compose\s+down\s+-v\b' "$($entry.Name) must not delete named volumes"
+  Require-NoMatch $entry.Content 'LTAI[A-Za-z0-9]+|ALIBABA_CLOUD_ACCESS_KEY_(?:ID|SECRET)=[^\s"'']+' "$($entry.Name) must not contain Alibaba Cloud credentials"
+  Require-NoMatch $entry.Content '\$\{ALIYUN_SMS_TEMPLATE_CODE' "$($entry.Name) must not use the legacy shared SMS template as fallback"
 }
+Require-NoMatch $smokeCredentials '(?m)^\s*set\s+-[^\r\n]*x' "Smoke credential helpers must not enable shell tracing"
+Require-NoMatch $smokeCredentials '(?im)^(?![^\r\n]*(?:\||>))[^\r\n]*(?:echo|printf)\s+[^\r\n]*(?:PASSWORD|SESSION_SECRET)' "Smoke credential helpers must not print passwords or session secrets"
+Require-NoMatch $smokeCredentials '47\.99\.181\.222|(?im)\b(?:ssh|scp)\s+aerogp(?:\s|:)' "Smoke credential helpers must not target the retired server"
+Require-NoMatch $smokeCredentials '(?im)docker\s+compose\s+down\s+-v\b' "Smoke credential helpers must not delete named volumes"
+Require-NoMatch $smokeCredentials 'LTAI[A-Za-z0-9]+|ALIBABA_CLOUD_ACCESS_KEY_(?:ID|SECRET)=[^\s"'']+' "Smoke credential helpers must not contain Alibaba Cloud credentials"
 
 if ($failures.Count -gt 0) {
   $failures | ForEach-Object { Write-Error $_ }

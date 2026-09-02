@@ -5,7 +5,7 @@ export const MAX_CERTIFICATE_ROWS = 5_000;
 export const MAX_CERTIFICATE_IMAGES = 10_000;
 export const MAX_CERTIFICATE_WORKBOOK_BYTES = 25 * 1024 * 1024;
 
-const IMAGE_COLUMN_TO_SLOT = new Map([[13, 1], [15, 2]]);
+const IMAGE_COLUMN_TO_SLOT = new Map([[14, 1], [16, 2]]);
 const ALLOWED_IMAGE_TYPES = new Map([
   ["png", "image/png"],
   ["jpg", "image/jpeg"]
@@ -37,9 +37,16 @@ function cellText(cell) {
   return valueToString(cell.value, cell.text);
 }
 
-function hasExistingSlot(registration, slot) {
+function targetKey(registrationId, participantId) {
+  return `${registrationId}:${participantId || "legacy"}`;
+}
+
+function hasExistingSlot(registration, participantId, slot) {
   return Array.isArray(registration.certificates)
-    && registration.certificates.some((certificate) => Number(certificate.slot) === slot);
+    && registration.certificates.some((certificate) => (
+      (certificate.participantId || null) === (participantId || null)
+      && Number(certificate.slot) === slot
+    ));
 }
 
 function workbookBuffer(input) {
@@ -75,6 +82,20 @@ export async function parseCertificateWorkbook(input, registrations) {
   }
 
   const registrationsById = new Map((registrations || []).map((registration) => [String(registration.id), registration]));
+  const targetsByKey = new Map();
+  for (const registration of registrations || []) {
+    if (registration.projectType === "team") {
+      const participants = registration.participants || [];
+      for (const participant of participants) {
+        targetsByKey.set(targetKey(registration.id, participant.id), { registration, participantId: participant.id });
+      }
+      if (participants.length === 0) {
+        targetsByKey.set(targetKey(registration.id, null), { registration, participantId: null });
+      }
+    } else {
+      targetsByKey.set(targetKey(registration.id, null), { registration, participantId: null });
+    }
+  }
   const imagesByCell = new Map();
   const errors = [];
   const invalidRows = new Set();
@@ -104,14 +125,15 @@ export async function parseCertificateWorkbook(input, registrations) {
   const candidates = [];
   for (let rowNumber = 2; rowNumber <= lastRow; rowNumber += 1) {
     const registrationId = cellText(sheet.getCell(rowNumber, 1));
+    const participantId = cellText(sheet.getCell(rowNumber, 2));
     const result = {
-      awardName: cellText(sheet.getCell(rowNumber, 9)),
-      rank: cellText(sheet.getCell(rowNumber, 10)),
-      score: cellText(sheet.getCell(rowNumber, 11))
+      awardName: cellText(sheet.getCell(rowNumber, 10)),
+      rank: cellText(sheet.getCell(rowNumber, 11)),
+      score: cellText(sheet.getCell(rowNumber, 12))
     };
     const titles = new Map([
-      [1, cellText(sheet.getCell(rowNumber, 12))],
-      [2, cellText(sheet.getCell(rowNumber, 14))]
+      [1, cellText(sheet.getCell(rowNumber, 13))],
+      [2, cellText(sheet.getCell(rowNumber, 15))]
     ]);
     const hasEditableContent = Object.values(result).some(Boolean)
       || [...titles.values()].some(Boolean)
@@ -126,6 +148,11 @@ export async function parseCertificateWorkbook(input, registrations) {
     const registration = registrationsById.get(registrationId);
     if (!registration) {
       pushError({ rowNumber, registrationId, message: "报名编号不存在" });
+      continue;
+    }
+    const target = targetsByKey.get(targetKey(registrationId, participantId));
+    if (!target) {
+      pushError({ rowNumber, registrationId, message: "证书对象不属于该报名" });
       continue;
     }
     if (registration.status !== "approved") {
@@ -156,12 +183,12 @@ export async function parseCertificateWorkbook(input, registrations) {
         extension: detectedType.ext,
         mimeType,
         buffer: imageBuffer,
-        replacing: hasExistingSlot(registration, slot)
+        replacing: hasExistingSlot(registration, target.participantId, slot)
       });
     }
 
     if (invalidRows.has(rowNumber)) continue;
-    candidates.push({ rowNumber, registrationId, result, certificates });
+    candidates.push({ rowNumber, registrationId, participantId: target.participantId, result, certificates });
   }
 
   return { candidates, errors };

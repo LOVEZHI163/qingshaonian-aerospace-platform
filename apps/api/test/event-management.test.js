@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { withTestServer } from "../test-support/server.js";
+import { copyEvent, createProject, updateProject } from "../src/services/events.js";
 import { loginAs, withSession } from "./helpers/api-client.js";
 
 async function withServer(fn) {
@@ -30,6 +31,81 @@ const eventInput = {
   registrationEndAt: "2027-09-20T15:59:59.000Z",
   registrationMode: "automatic"
 };
+
+test("team member bounds default, validate, and reset individual projects", () => {
+  const db = {
+    events: [{ id: "E1", status: "published", archivedAt: null }],
+    projects: [],
+    projectGroups: [],
+    registrations: []
+  };
+  const validProject = {
+    name: "团队飞行",
+    type: "team",
+    category: "航空创新",
+    enabled: true,
+    instructorRequired: false,
+    displayOrder: 0,
+    allowedGroups: ["小学低段"]
+  };
+  const deps = { makeId: () => "P1" };
+
+  const defaults = createProject(db, "E1", validProject, deps);
+  assert.equal(defaults.teamMinMembers, 1);
+  assert.equal(defaults.teamMaxMembers, 8);
+  assert.throws(() => updateProject(db, defaults.id, { teamMinMembers: 9 }), /1 至 8/);
+  assert.throws(() => updateProject(db, defaults.id, { teamMaxMembers: 9 }), /1 至 8/);
+  assert.throws(() => updateProject(db, defaults.id, { teamMaxMembers: 0 }), /1 至 8/);
+
+  const team = updateProject(db, defaults.id, { teamMinMembers: 2, teamMaxMembers: 6 });
+  assert.equal(team.teamMinMembers, 2);
+  assert.equal(team.teamMaxMembers, 6);
+  assert.throws(() => updateProject(db, team.id, { teamMinMembers: 0 }), /1 至 8/);
+  assert.throws(() => updateProject(db, team.id, { teamMinMembers: 7, teamMaxMembers: 6 }), /最少人数不能大于最多人数/);
+
+  const individual = updateProject(db, team.id, { type: "individual" });
+  assert.equal(individual.teamMinMembers, 1);
+  assert.equal(individual.teamMaxMembers, 1);
+});
+
+test("copy event canonicalizes legacy individual and team member bounds", () => {
+  const db = {
+    events: [{ id: "E1", name: "源赛事", status: "published", isCurrent: true, archivedAt: null }],
+    projects: [
+      {
+        id: "P-INDIVIDUAL", eventId: "E1", name: "个人赛", type: "individual", category: "飞行",
+        enabled: true, instructorRequired: false, displayOrder: 1, allowedGroups: ["小学低段"],
+        submissionMode: "none", teamMinMembers: 1, teamMaxMembers: 8
+      },
+      {
+        id: "P-TEAM", eventId: "E1", name: "团队赛", type: "team", category: "飞行",
+        enabled: false, instructorRequired: true, displayOrder: 2, allowedGroups: ["中学组"],
+        submissionMode: "image_video"
+      }
+    ],
+    projectGroups: [],
+    registrations: [],
+    eventPublicProfiles: []
+  };
+  let nextId = 1;
+
+  const { event, projects } = copyEvent(db, "E1", { name: "复制赛事" }, {
+    makeId: (prefix) => `${prefix}-${nextId++}`,
+    clock: () => new Date("2027-01-01T00:00:00.000Z")
+  });
+  const individual = projects.find((project) => project.name === "个人赛");
+  const team = projects.find((project) => project.name === "团队赛");
+
+  assert.equal(event.id, "E-1");
+  assert.deepEqual(
+    { id: individual.id, eventId: individual.eventId, type: individual.type, teamMinMembers: individual.teamMinMembers, teamMaxMembers: individual.teamMaxMembers },
+    { id: "P-2", eventId: event.id, type: "individual", teamMinMembers: 1, teamMaxMembers: 1 }
+  );
+  assert.deepEqual(
+    { id: team.id, eventId: team.eventId, enabled: team.enabled, instructorRequired: team.instructorRequired, submissionMode: team.submissionMode, teamMinMembers: team.teamMinMembers, teamMaxMembers: team.teamMaxMembers },
+    { id: "P-3", eventId: event.id, enabled: false, instructorRequired: true, submissionMode: "image_video", teamMinMembers: 1, teamMaxMembers: 8 }
+  );
+});
 
 test("event management routes enforce admin sessions and temporary-password readiness", async () => {
   await withServer(async (baseUrl) => {

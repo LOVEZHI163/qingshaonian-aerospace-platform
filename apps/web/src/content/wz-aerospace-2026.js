@@ -110,7 +110,7 @@ export const WZ_AEROSPACE_2026_COPY = {
     { heading: "费用说明", paragraphs: ["赛事坚持公益原则，不向参赛者收取报名费。"] }
   ],
   contact: [
-    { heading: "赛事联系", contact: { name: "吴老师", phones: ["88968723", "15858799111"] } },
+    { heading: "赛事联系", contact: { name: "吴老师、干老师", phones: ["88968723", "15858799111"] } },
     { heading: "比赛地点", paragraphs: ["浙江东方职业技术学院文成校区（文成县南田镇伯温北路1号）。"] }
   ]
 };

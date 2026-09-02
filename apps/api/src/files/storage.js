@@ -87,7 +87,22 @@ async function assertRealPathInsideRoot(root, target, fileSystem) {
 
 async function prepareManagedDirectory(root, directory, fileSystem) {
   await fileSystem.mkdir(root, { recursive: true });
-  await fileSystem.mkdir(directory, { recursive: true });
+  if ((await fileSystem.lstat(root)).isSymbolicLink()) {
+    throw new Error("Managed upload path contains a symbolic link");
+  }
+  const relative = assertInside(root, directory, "Managed upload path escapes upload root");
+  let current = root;
+  for (const component of relative.split(path.sep).filter(Boolean)) {
+    current = path.join(current, component);
+    try {
+      const stats = await fileSystem.lstat(current);
+      if (stats.isSymbolicLink()) throw new Error("Managed upload path contains a symbolic link");
+      if (!stats.isDirectory()) throw new Error("Managed upload path component is not a directory");
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+      await fileSystem.mkdir(current, { recursive: false });
+    }
+  }
   await assertNoLinkedComponents(root, directory, fileSystem);
   await assertRealPathInsideRoot(root, directory, fileSystem);
 }
@@ -342,13 +357,14 @@ export async function removeImportStagingBatch(batchId, fileSystem = fs) {
   await fileSystem.rm(directory, { recursive: true, force: true });
 }
 
-export async function saveCertificateImportFile({ registrationId, slot, extension, buffer, fileSystem = fs }) {
+export async function saveCertificateImportFile({ registrationId, participantId = null, slot, extension, buffer, fileSystem = fs }) {
   const safeExtension = certificateExtension(extension);
   const safeRegistrationId = safePathComponent(registrationId, "registration");
+  const safeTargetId = participantId ? safePathComponent(participantId, "participant") : "registration";
   if (![1, 2].includes(slot)) throw new Error("Invalid certificate slot");
   const root = uploadRoot();
   const storedName = `${crypto.randomUUID()}.${safeExtension}`;
-  const filePath = path.resolve(root, "certificates", storedName);
+  const filePath = path.resolve(root, "certificates", safeRegistrationId, safeTargetId, String(slot), storedName);
   assertInside(root, filePath, "Certificate file path escapes upload root");
   await prepareManagedDirectory(root, path.dirname(filePath), fileSystem);
   try {
@@ -357,7 +373,7 @@ export async function saveCertificateImportFile({ registrationId, slot, extensio
     if (error?.code === "EEXIST") throw error;
     try { await fileSystem.unlink(filePath); } catch (cleanupError) {
       if (cleanupError?.code !== "ENOENT") {
-        const fileName = `${safeRegistrationId}-certificate-${slot}.${safeExtension}`;
+        const fileName = `${safeRegistrationId}-${safeTargetId}-certificate-${slot}.${safeExtension}`;
         error.cleanupError = cleanupError;
         error.cleanupTarget = { storedName, filePath, fileName, category: "certificate-import-new", cleanupAttempts: 1 };
       }
@@ -367,17 +383,18 @@ export async function saveCertificateImportFile({ registrationId, slot, extensio
   return {
     storedName,
     filePath,
-    fileName: `${safeRegistrationId}-certificate-${slot}.${safeExtension}`
+    fileName: `${safeRegistrationId}-${safeTargetId}-certificate-${slot}.${safeExtension}`
   };
 }
 
-export async function saveCertificateFile({ registrationId, slot, file, fileSystem = fs }) {
+export async function saveCertificateFile({ registrationId, participantId = null, slot, file, fileSystem = fs }) {
   const safeRegistrationId = safePathComponent(registrationId, "registration");
+  const safeTargetId = participantId ? safePathComponent(participantId, "participant") : "registration";
   if (![1, 2].includes(slot)) throw new Error("Invalid certificate slot");
   const detected = await validateUpload(file, CERTIFICATE_POLICY);
   const root = uploadRoot();
   const storedName = `${crypto.randomUUID()}.${detected.ext}`;
-  const filePath = path.resolve(root, "certificates", storedName);
+  const filePath = path.resolve(root, "certificates", safeRegistrationId, safeTargetId, String(slot), storedName);
   assertInside(root, filePath, "Certificate file path escapes upload root");
   await prepareManagedDirectory(root, path.dirname(filePath), fileSystem);
   try {
@@ -390,7 +407,7 @@ export async function saveCertificateFile({ registrationId, slot, file, fileSyst
         error.cleanupTarget = {
           storedName,
           filePath,
-          fileName: `${safeRegistrationId}-certificate-${slot}.${detected.ext}`,
+          fileName: `${safeRegistrationId}-${safeTargetId}-certificate-${slot}.${detected.ext}`,
           category: "certificate-manual-new",
           cleanupAttempts: 1
         };
@@ -401,7 +418,7 @@ export async function saveCertificateFile({ registrationId, slot, file, fileSyst
   return {
     storedName,
     filePath,
-    fileName: `${safeRegistrationId}-certificate-${slot}.${detected.ext}`,
+    fileName: `${safeRegistrationId}-${safeTargetId}-certificate-${slot}.${detected.ext}`,
     originalName: safeOriginalName(file.originalname),
     mimeType: detected.mime,
     size: file.buffer.length,

@@ -161,8 +161,7 @@
 .content-card p { margin: var(--space-1) 0 0; color: var(--color-text-muted); line-height: 1.65; }
 
 .history-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); border-top: 0; gap: var(--space-2); }
-.history-list li { display: grid; grid-template-columns: auto 1fr; gap: var(--space-2); padding: var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-white); }
-.history-year { color: var(--color-brand); font-size: 1.5rem; font-weight: 900; }
+.history-list li { padding: var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-white); }
 .history-list h3 { margin: 0; color: var(--color-brand-ink); }
 .history-list h3 a { text-decoration: none; }
 .history-list p { margin: var(--space-1) 0 0; color: var(--color-text-muted); }

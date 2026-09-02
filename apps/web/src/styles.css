@@ -89,10 +89,13 @@ a:focus-visible, button:focus-visible { outline: none; box-shadow: var(--focus-r
 .site-footer strong { color: var(--color-white); font-size: 18px; }
 .site-footer p { max-width: 560px; line-height: 1.7; }
 .site-footer dl { margin: 0; }
-.site-footer dl div { display: grid; grid-template-columns: 80px 1fr; gap: 12px; margin-bottom: 10px; }
+.site-footer dl div { display: grid; grid-template-columns: max-content 1fr; gap: 12px; margin-bottom: 10px; }
 .site-footer dt { color: #91b9e7; }
 .site-footer dd { margin: 0; }
+.site-footer dd a { color: var(--color-white); }
 .site-footer > a { color: var(--color-white); }
+.site-footer-legal { grid-column: 1 / -1; padding-top: 20px; border-top: 1px solid rgb(255 255 255 / 22%); text-align: center; }
+.site-footer-legal a { color: var(--color-white); }
 
 @keyframes spin { to { transform: rotate(360deg); } }
 

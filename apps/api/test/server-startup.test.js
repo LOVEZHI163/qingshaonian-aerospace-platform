@@ -8,7 +8,10 @@ import test from "node:test";
 const rootDir = path.resolve(import.meta.dirname, "../../..");
 const serverPath = path.resolve(import.meta.dirname, "../src/server.js");
 
-async function startWithIdentityKey(value) {
+async function startWithIdentityKey(value, options = {}) {
+  const sessionSecret = Object.hasOwn(options, "sessionSecret")
+    ? options.sessionSecret
+    : "startup-session-secret-32-characters";
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "aerogp-startup-key-"));
   const env = {
     ...process.env,
@@ -20,6 +23,8 @@ async function startWithIdentityKey(value) {
   };
   if (value === undefined) delete env.REGISTRATION_ID_ENCRYPTION_KEY;
   else env.REGISTRATION_ID_ENCRYPTION_KEY = value;
+  if (sessionSecret === undefined) delete env.SESSION_SECRET;
+  else env.SESSION_SECRET = sessionSecret;
 
   const child = spawn(process.execPath, [serverPath], {
     cwd: rootDir,
@@ -70,4 +75,11 @@ test("API startup rejects missing and invalid registration identity keys before 
     assert.notEqual(result.code, 0);
     assert.match(result.stderr, expectedError);
   }
+});
+
+test("API startup rejects a missing session secret instead of using a public test fallback", async () => {
+  const result = await startWithIdentityKey(Buffer.alloc(32, 8).toString("base64"), { sessionSecret: undefined });
+  assert.equal(result.listened, false);
+  assert.notEqual(result.code, 0);
+  assert.match(result.stderr, /SESSION_SECRET is required/);
 });

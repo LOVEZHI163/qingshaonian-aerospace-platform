@@ -58,6 +58,24 @@ describe("OrganizationCertificatesPage", () => {
     expect(wrapper.get("tbody").text()).toContain("往届赛事");
   });
 
+  it("shows the team code and certificate participant instead of the legacy athlete summary", async () => {
+    apiMock.mockResolvedValue({ rows: [{
+      ...rows[0],
+      id: "C-TEAM",
+      participantId: "RP-2",
+      participantName: "队员乙",
+      teamCode: "O1-P1-01",
+      athlete: { name: "队员乙", school: "乙学校", grade: "六年级" },
+      registration: { projectType: "team", teamCode: "O1-P1-01", athlete: { name: "兼容姓名" } }
+    }] });
+    const wrapper = mount(OrganizationCertificatesPage);
+    await flushPromises();
+
+    expect(wrapper.get("tbody").text()).toContain("O1-P1-01");
+    expect(wrapper.get("tbody").text()).toContain("队员乙");
+    expect(wrapper.get("tbody").text()).not.toContain("兼容姓名");
+  });
+
   it("opens a placeholder synchronously, then navigates it only after the preview blob resolves", async () => {
     const pending = deferred();
     const popup = { location: { href: "about:blank" }, close: vi.fn(), opener: {} };

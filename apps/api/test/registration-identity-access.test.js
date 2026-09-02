@@ -140,7 +140,7 @@ test("a new identity is encrypted once and visible only to the owner, its organi
   });
 });
 
-test("legacy retries stay identity-less while identified retries must match", async () => {
+test("identity-less legacy rows stay editable but verified submissions create identified rows", async () => {
   await withTestServer(async ({ baseUrl, dbPath }) => {
     const personal = await loginAs(baseUrl, "13800000001", "123456");
     const admin = await loginAs(baseUrl, "13900000000", "admin123");
@@ -167,38 +167,23 @@ test("legacy retries stay identity-less while identified retries must match", as
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ projectId: "rotor-race", athlete, studentIdNumber: validId })
     }));
-    assert.equal(legacyRetry.status, 200);
-    assert.equal((await readJson(legacyRetry)).row.studentIdNumber, null);
+    assert.equal(legacyRetry.status, 201);
+    const identified = await readJson(legacyRetry);
+    assert.notEqual(identified.row.id, "R-legacy-identity");
+    assert.equal(identified.row.studentIdNumber, validId);
     let stored = JSON.parse(await fs.readFile(dbPath, "utf8"));
     assert.equal(stored.registrationIdentities.some((row) => row.registrationId === "R-legacy-identity"), false);
+    assert.equal(stored.registrationIdentities.some((row) => row.registrationId === identified.row.id), true);
 
     const legacyPatch = await fetch(`${baseUrl}/api/me/events/${eventId}/registrations/R-legacy-identity`, withSession(personal.cookie, {
       method: "PATCH", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ instructor: "Legacy remains editable", studentIdNumber: validId })
+      body: JSON.stringify({ instructor: "Legacy remains editable" })
     }));
     assert.equal(legacyPatch.status, 200);
     assert.equal((await readJson(legacyPatch)).row.studentIdNumber, null);
     stored = JSON.parse(await fs.readFile(dbPath, "utf8"));
     assert.equal(stored.registrationIdentities.some((row) => row.registrationId === "R-legacy-identity"), false);
 
-    const createResponse = await fetch(`${baseUrl}/api/me/events/${eventId}/registrations`, withSession(personal.cookie, {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(registrationBody(personal.user, { projectId: "rocket-duration", studentIdNumber: validId }))
-    }));
-    assert.equal(createResponse.status, 201);
-    const created = await readJson(createResponse);
-    const matchingRetry = await fetch(`${baseUrl}/api/me/events/${eventId}/registrations`, withSession(personal.cookie, {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(registrationBody(personal.user, { projectId: "rocket-duration", studentIdNumber: validId }))
-    }));
-    assert.equal(matchingRetry.status, 200);
-    assert.equal((await readJson(matchingRetry)).row.id, created.row.id);
-    const conflict = await fetch(`${baseUrl}/api/me/events/${eventId}/registrations`, withSession(personal.cookie, {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(registrationBody(personal.user, { projectId: "rocket-duration", studentIdNumber: otherValidId }))
-    }));
-    assert.equal(conflict.status, 409);
-    assert.equal((await readJson(conflict)).code, "REGISTRATION_IDENTITY_CONFLICT");
   });
 });
 
@@ -301,7 +286,7 @@ test("registration write boundaries reject top-level and nested identity aliases
   });
 });
 
-test("existing identity retries fail closed when ciphertext, authentication tag, or fingerprint is inconsistent", async () => {
+test("matching identity retries fail closed when ciphertext or authentication tag is inconsistent", async () => {
   await withTestServer(async ({ baseUrl, dbPath }) => {
     const personal = await loginAs(baseUrl, "13800000001", "123456");
     const admin = await loginAs(baseUrl, "13900000000", "admin123");
@@ -317,8 +302,7 @@ test("existing identity retries fail closed when ciphertext, authentication tag,
 
     for (const tamper of [
       (row) => { row.ciphertext = Buffer.from("tampered ciphertext").toString("base64"); },
-      (row) => { row.authTag = Buffer.alloc(16, 4).toString("base64"); },
-      (row) => { row.idFingerprint = "tampered-fingerprint"; }
+      (row) => { row.authTag = Buffer.alloc(16, 4).toString("base64"); }
     ]) {
       await mutateDb(dbPath, (db) => {
         const identity = db.registrationIdentities.find((row) => row.registrationId === registrationId);

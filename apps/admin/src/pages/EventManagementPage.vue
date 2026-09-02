@@ -12,7 +12,7 @@ const props = defineProps({
 });
 const GROUPS = ["小学低段", "小学高段", "中学组", "职高/高中组"];
 const EVENT_FIELDS = ["name", "theme", "dateLabel", "venue", "contact", "registrationStartAt", "registrationEndAt", "registrationMode"];
-const PROJECT_FIELDS = ["name", "type", "category", "enabled", "instructorRequired", "displayOrder", "allowedGroups", "submissionMode"];
+const PROJECT_FIELDS = ["name", "type", "category", "enabled", "instructorRequired", "displayOrder", "allowedGroups", "submissionMode", "teamMinMembers", "teamMaxMembers"];
 
 const events = ref([]);
 const projects = ref([]);
@@ -87,7 +87,9 @@ function emptyProject() {
     instructorRequired: false,
     displayOrder: 0,
     allowedGroups: [...GROUPS],
-    submissionMode: "none"
+    submissionMode: "none",
+    teamMinMembers: 1,
+    teamMaxMembers: 1
   };
 }
 
@@ -306,12 +308,20 @@ function editProject(row) {
   if (selectedArchived.value) return;
   Object.assign(projectForm, emptyProject(), row, {
     allowedGroups: [...(row.allowedGroups || [])],
-    submissionMode: row.submissionMode || "none"
+    submissionMode: row.submissionMode || "none",
+    teamMinMembers: row.teamMinMembers ?? 1,
+    teamMaxMembers: row.teamMaxMembers ?? (row.type === "team" ? 8 : 1)
   });
 }
 
 function projectPayload() {
-  const raw = { ...projectForm, displayOrder: Number(projectForm.displayOrder), allowedGroups: [...projectForm.allowedGroups] };
+  const raw = {
+    ...projectForm,
+    displayOrder: Number(projectForm.displayOrder),
+    allowedGroups: [...projectForm.allowedGroups],
+    teamMinMembers: Number(projectForm.teamMinMembers),
+    teamMaxMembers: Number(projectForm.teamMaxMembers)
+  };
   return Object.fromEntries(PROJECT_FIELDS.map((field) => [field, raw[field]]));
 }
 
@@ -519,6 +529,10 @@ onMounted(() => {
             <div class="two">
               <label>类型<select v-model="projectForm.type" :disabled="selectedArchived"><option value="individual">个人赛</option><option value="team">团体赛</option></select></label>
               <label>显示顺序<input v-model.number="projectForm.displayOrder" type="number" min="0" :disabled="selectedArchived" /></label>
+            </div>
+            <div v-if="projectForm.type === 'team'" class="two" data-team-member-bounds>
+              <label>最少队员人数<input v-model.number="projectForm.teamMinMembers" type="number" min="1" max="8" required /></label>
+              <label>最多队员人数<input v-model.number="projectForm.teamMaxMembers" type="number" min="1" max="8" required /></label>
             </div>
             <label>作品提交<select v-model="projectForm.submissionMode" data-field="submission-mode" :disabled="selectedArchived"><option value="none">无需上传</option><option value="image_video">图像视频作品</option></select></label>
             <div class="checkbox-row">

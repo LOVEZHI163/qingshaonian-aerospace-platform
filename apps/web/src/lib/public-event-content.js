@@ -88,8 +88,7 @@ function contactSection(heading, value) {
 function dynamicFacts(event) {
   return [
     ["比赛时间", event.dateLabel],
-    ["比赛地点", event.venue],
-    ["报名截止", event.registrationEndAt ? new Date(event.registrationEndAt).toLocaleString("zh-CN", { hour12: false }) : ""]
+    ["比赛地点", event.venue]
   ].filter(([, value]) => text(value)).map(([label, value]) => ({ label, value }));
 }
 

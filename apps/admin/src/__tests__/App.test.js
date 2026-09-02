@@ -18,6 +18,7 @@ vi.mock("../state/session.js", async () => {
     restoring: ref(false),
     restore: vi.fn(async () => {}),
     login: vi.fn(),
+    loginWithSms: vi.fn(),
     logout: vi.fn(),
     setUser: vi.fn((user) => { sessionUser.value = user; }),
     clear: vi.fn(() => { sessionUser.value = null; }),
@@ -32,6 +33,8 @@ vi.mock("../state/session.js", async () => {
 
 import App from "../App.vue";
 import appSource from "../App.vue?raw";
+import OrganizationRegistrationRecordsPage from "../pages/OrganizationRegistrationRecordsPage.vue";
+import RegistrationManagementPage from "../pages/RegistrationManagementPage.vue";
 import { testSession as session } from "../state/session.js";
 
 const sessionUser = session.user;
@@ -41,6 +44,19 @@ enableAutoUnmount(afterEach);
 
 function publicData() {
   return { event: { name: "测试赛事" }, projects: [], grades: [] };
+}
+
+function teamRegistration() {
+  return {
+    id: "R-TEAM", eventId: "E1", eventName: "团队赛", organizationId: "O1", organization: "实验学校",
+    source: "organization_proxy", projectId: "P-TEAM", projectName: "协同飞行", projectType: "team",
+    teamCode: "O1-P-TEAM-01", participantCount: 2, group: "小学高段", instructor: "林老师", status: "pending",
+    athlete: { name: "张同学", school: "实验学校", grade: "五年级", phone: "13800000001" },
+    participants: [
+      { id: "RP1", displayOrder: 1, name: "张同学", school: "实验学校", grade: "五年级", phone: "13800000001", studentIdNumber: "11010520140101123X" },
+      { id: "RP2", displayOrder: 2, name: "李同学", school: "实验学校", grade: "五年级", phone: "13800000002", studentIdNumber: "110105201401021234" }
+    ]
+  };
 }
 
 describe("App session integration", () => {
@@ -57,6 +73,7 @@ describe("App session integration", () => {
     session.loadAccountEvents.mockClear();
     session.accountEvents.value = [];
     session.login.mockReset();
+    session.loginWithSms.mockReset();
     session.logout.mockReset();
     session.setUser.mockClear();
     session.clear.mockClear();
@@ -67,6 +84,11 @@ describe("App session integration", () => {
       if (path === "/api/users") return { rows: [] };
       return { rows: [] };
     });
+  });
+
+  it("releases the email action gate after the deep-link flow completes", () => {
+    expect(appSource).toMatch(/const accountEmailActionActive = ref/);
+    expect(appSource).toContain('@account-email-action-complete="accountEmailActionActive = false"');
   });
 
   it("shows a non-skippable password change before application views", async () => {
@@ -102,6 +124,58 @@ describe("App session integration", () => {
     await flushPromises();
 
     expect(wrapper.get('[data-testid="login-error"]').text()).toContain("手机号或密码错误");
+  });
+
+  it("routes a successful SMS login through the same post-login flow", async () => {
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/public/event") return publicData();
+      if (path === "/api/public/features") return {
+        smsLoginEnabled: true,
+        smsPasswordResetEnabled: false,
+        humanVerification: { enabled: false, region: "cn", prefix: "", scenes: {} }
+      };
+      if (path === "/api/me/events") return { rows: [] };
+      return { rows: [] };
+    });
+    session.loginWithSms.mockImplementationOnce(async () => {
+      const user = { id: "U-SMS", type: "ordinary", name: "短信用户", mustChangePassword: false };
+      sessionUser.value = user;
+      return user;
+    });
+    const wrapper = mount(App);
+    await flushPromises();
+
+    await wrapper.get('[data-login-method="sms"]').trigger("click");
+    await wrapper.get('[data-testid="sms-login-phone"]').setValue("13800000001");
+    await wrapper.get('[data-testid="sms-login-code"]').setValue("123456");
+    await wrapper.get('[data-auth-form="sms-login"]').trigger("submit");
+    await flushPromises();
+
+    expect(session.loginWithSms).toHaveBeenCalledWith({ phone: "13800000001", code: "123456" });
+    expect(wrapper.find('[data-testid="event-center-page"]').exists()).toBe(true);
+  });
+
+  it("shows an invalid SMS login message inside the SMS form", async () => {
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/public/event") return publicData();
+      if (path === "/api/public/features") return {
+        smsLoginEnabled: true,
+        smsPasswordResetEnabled: false,
+        captcha: { enabled: false, region: "cn", prefix: "", scenes: {} }
+      };
+      return { rows: [] };
+    });
+    session.loginWithSms.mockRejectedValueOnce(new Error("验证码错误或已过期"));
+    const wrapper = mount(App);
+    await flushPromises();
+
+    await wrapper.get('[data-login-method="sms"]').trigger("click");
+    await wrapper.get('[data-testid="sms-login-phone"]').setValue("13800000001");
+    await wrapper.get('[data-testid="sms-login-code"]').setValue("123456");
+    await wrapper.get('[data-auth-form="sms-login"]').trigger("submit");
+    await flushPromises();
+
+    expect(wrapper.get('[data-testid="login-error"]').text()).toContain("验证码错误或已过期");
   });
 
   it("does not present an event bootstrap failure as a login failure before submission", async () => {
@@ -618,6 +692,186 @@ describe("App session integration", () => {
     expect(appSource).not.toContain("['events', 'projects']");
   });
 
+  it("submits team roster bounds only when the project form is team", async () => {
+    const event = {
+      id: "E1", name: "测试赛事", theme: "飞向未来", status: "draft", isCurrent: false,
+      dateLabel: "2027年10月", venue: "温州", registrationStartAt: "2027-08-01T00:00:00.000Z",
+      registrationEndAt: "2027-09-01T00:00:00.000Z", registrationMode: "automatic"
+    };
+    sessionUser.value = { id: "A1", type: "admin", name: "管理员", mustChangePassword: false };
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/public/event") return publicData();
+      if (path === "/api/public/features") return { smsPasswordResetEnabled: false };
+      if (path === "/api/admin/events") return { rows: [event], projects: [] };
+      if (path.startsWith("/api/admin/events/E1/registrations?")) return { rows: [] };
+      if (path === "/api/admin/events/E1/projects") return { row: { id: "P1", eventId: "E1" } };
+      return { rows: [] };
+    });
+
+    const wrapper = mount(App);
+    await flushPromises();
+    await wrapper.get('[data-nav="events"]').trigger("click");
+    await flushPromises();
+    await wrapper.get('[data-event-card="E1"] [data-action="open-event"]').trigger("click");
+    await flushPromises();
+    await wrapper.get('[data-section="projects"]').trigger("click");
+    await flushPromises();
+
+    const form = wrapper.get("form.project-form");
+    const fields = form.findAll("input");
+    await fields[0].setValue("团队飞行");
+    await fields[1].setValue("航空创新");
+    const type = form.get("select");
+    await type.setValue("team");
+    await flushPromises();
+    const bounds = form.get("[data-team-member-bounds]");
+    const boundInputs = bounds.findAll("input");
+    await boundInputs[0].setValue("2");
+    await boundInputs[1].setValue("6");
+
+    await type.setValue("individual");
+    await flushPromises();
+    expect(form.find("[data-team-member-bounds]").exists()).toBe(false);
+
+    await type.setValue("team");
+    await form.trigger("submit");
+    await flushPromises();
+
+    const call = apiMock.mock.calls.find(([path]) => path === "/api/admin/events/E1/projects");
+    expect(JSON.parse(call[1].body)).toMatchObject({ type: "team", teamMinMembers: 2, teamMaxMembers: 6 });
+  });
+
+  it("shows one expandable complete team roster in the owning organization records", async () => {
+    const team = teamRegistration();
+    apiMock.mockImplementation(async (path) => {
+      if (path.startsWith("/api/organization/registrations?")) {
+        return { rows: [team], total: 1, page: 1, pageSize: 25, filterOptions: { events: [], projects: [] } };
+      }
+      return { rows: [] };
+    });
+
+    const wrapper = mount(OrganizationRegistrationRecordsPage);
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("O1-P-TEAM-01");
+    expect(wrapper.text()).toContain("2 名队员");
+    expect(wrapper.findAll('[data-action^="edit-organization-registration-"]')).toHaveLength(1);
+    expect(wrapper.text().match(/林老师/g)).toHaveLength(1);
+    expect(wrapper.text()).not.toContain("110105201401021234");
+
+    await wrapper.get('[data-action="toggle-roster-R-TEAM"]').trigger("click");
+
+    const roster = wrapper.get('[data-roster="R-TEAM"]');
+    expect(roster.text()).toContain("张同学");
+    expect(roster.text()).toContain("李同学");
+    expect(roster.text()).toContain("13800000002");
+    expect(roster.text()).toContain("110105201401021234");
+  });
+
+  it("confirms and cancels one organization-owned team from registration records", async () => {
+    const team = { ...teamRegistration(), status: "approved" };
+    let cancelled = false;
+    const statusPath = "/api/organization/events/E1/registrations/R-TEAM/status";
+    apiMock.mockImplementation(async (path, options) => {
+      if (path.startsWith("/api/organization/registrations?")) {
+        return {
+          rows: [{ ...team, status: cancelled ? "cancelled" : "approved" }],
+          total: 1, page: 1, pageSize: 25, filterOptions: { events: [], projects: [] }
+        };
+      }
+      if (path === statusPath && options?.method === "PATCH") {
+        cancelled = true;
+        return { row: { ...team, status: "cancelled" } };
+      }
+      return { rows: [] };
+    });
+
+    const wrapper = mount(OrganizationRegistrationRecordsPage);
+    await flushPromises();
+    await wrapper.get('[data-action="cancel-organization-team-R-TEAM"]').trigger("click");
+
+    const dialog = wrapper.get('[data-testid="organization-team-cancellation-dialog"]');
+    expect(dialog.text()).toContain("O1-P-TEAM-01");
+    expect(apiMock.mock.calls.some(([path]) => path === statusPath)).toBe(false);
+    await dialog.get('[data-action="dismiss-organization-team-cancellation"]').trigger("click");
+    expect(wrapper.find('[data-testid="organization-team-cancellation-dialog"]').exists()).toBe(false);
+
+    await wrapper.get('[data-action="cancel-organization-team-R-TEAM"]').trigger("click");
+    await wrapper.get('[data-action="confirm-organization-team-cancellation"]').trigger("click");
+    await flushPromises();
+
+    const request = apiMock.mock.calls.find(([path, options]) => path === statusPath && options?.method === "PATCH");
+    expect(JSON.parse(request[1].body)).toEqual({ status: "cancelled" });
+    expect(wrapper.find('[data-testid="organization-team-cancellation-dialog"]').exists()).toBe(false);
+    expect(wrapper.find('[data-action="cancel-organization-team-R-TEAM"]').exists()).toBe(false);
+    expect(wrapper.text()).toContain("已取消");
+  });
+
+  it("shows one expandable complete team roster in administrator registration management", async () => {
+    const team = teamRegistration();
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/admin/events") return {
+        rows: [{ id: "E1", name: "团队赛" }],
+        projects: [{ id: "P-TEAM", eventId: "E1", name: "协同飞行", type: "team", teamMinMembers: 1, teamMaxMembers: 8, allowedGroups: ["小学高段"] }]
+      };
+      if (path === "/api/admin/organizations") return { rows: [{ id: "O1", name: "实验学校" }] };
+      if (path.startsWith("/api/admin/events/E1/registrations?")) return { rows: [team], total: 1, page: 1, pageSize: 25 };
+      return { row: team };
+    });
+
+    const wrapper = mount(RegistrationManagementPage, { props: { eventId: "E1" } });
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("O1-P-TEAM-01");
+    expect(wrapper.text()).toContain("2 名队员");
+    expect(wrapper.findAll('[data-action^="edit-registration-"]')).toHaveLength(1);
+    expect(wrapper.text().match(/林老师/g)).toHaveLength(1);
+
+    await wrapper.get('[data-action="toggle-roster-R-TEAM"]').trigger("click");
+
+    const roster = wrapper.get('[data-roster="R-TEAM"]');
+    expect(roster.text()).toContain("张同学");
+    expect(roster.text()).toContain("李同学");
+    expect(roster.text()).toContain("13800000002");
+    expect(roster.text()).toContain("110105201401021234");
+  });
+
+  it("submits the complete roster from the administrator team edit dialog", async () => {
+    const team = teamRegistration();
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/admin/events") return {
+        rows: [{ id: "E1", name: "团队赛" }],
+        projects: [{ id: "P-TEAM", eventId: "E1", name: "协同飞行", type: "team", teamMinMembers: 1, teamMaxMembers: 8, allowedGroups: ["小学高段"] }]
+      };
+      if (path === "/api/admin/organizations") return { rows: [{ id: "O1", name: "实验学校" }] };
+      if (path.startsWith("/api/admin/events/E1/registrations?")) return { rows: [team], total: 1, page: 1, pageSize: 25 };
+      return { row: team };
+    });
+    const wrapper = mount(RegistrationManagementPage, { props: { eventId: "E1" } });
+    await flushPromises();
+
+    await wrapper.get('[data-action="edit-registration-R-TEAM"]').trigger("click");
+
+    expect(wrapper.get('[data-field="registration-project"]').attributes("disabled")).toBeDefined();
+    expect(wrapper.get('[data-field="registration-team-code"]').text()).toBe("O1-P-TEAM-01");
+    expect(wrapper.findAll('[data-field="participant-name"]')).toHaveLength(2);
+    expect(wrapper.findAll('[data-field="registration-instructor"]')).toHaveLength(1);
+    await wrapper.findAll('[data-field="participant-name"]')[1].setValue("李同学（更新）");
+    await wrapper.get("form.organization-dialog").trigger("submit");
+    await flushPromises();
+
+    const call = apiMock.mock.calls.find(([path, options]) => (
+      path === "/api/admin/events/E1/registrations/R-TEAM" && options?.method === "PATCH"
+    ));
+    const body = JSON.parse(call[1].body);
+    expect(body.projectId).toBe("P-TEAM");
+    expect(body.instructor).toBe("林老师");
+    expect(body.participants).toHaveLength(2);
+    expect(body.participants[1]).toMatchObject({ id: "RP2", name: "李同学（更新）", studentIdNumber: "110105201401021234" });
+    expect(body).not.toHaveProperty("teamCode");
+    expect(body).not.toHaveProperty("athlete");
+  });
+
   it("opens the complete certificate management page from administrator navigation", async () => {
     sessionUser.value = { id: "A1", type: "admin", name: "管理员", mustChangePassword: false };
     const wrapper = mount(App);
@@ -739,13 +993,24 @@ describe("App session integration", () => {
   it("returns to login after registration instead of creating a fake session", async () => {
     apiMock.mockImplementation(async (path) => {
       if (path === "/api/public/event") return publicData();
-      if (path === "/api/public/features") return { smsPasswordResetEnabled: false };
+      if (path === "/api/public/features") return { smsRegistrationEnabled: true, smsPasswordResetEnabled: false };
+      if (path === "/api/auth/register/sms/request") return { message: "accepted" };
+      if (path === "/api/auth/register/sms/confirm") return {
+        phoneVerificationToken: "signed-registration-token",
+        expiresAt: new Date(Date.now() + 15 * 60 * 1_000).toISOString()
+      };
       if (path === "/api/auth/register/ordinary") return { user: { id: "U2" } };
       return { rows: [], memberships: [] };
     });
     const wrapper = mount(App);
     await flushPromises();
     await wrapper.get('[data-auth-tab="register"]').trigger("click");
+    await wrapper.get('[data-testid="ordinary-phone"]').setValue("13800000001");
+    await wrapper.get('[data-testid="registration-sms-request"]').trigger("click");
+    await flushPromises();
+    await wrapper.get('[data-testid="registration-sms-code"]').setValue("123456");
+    await wrapper.get('[data-testid="registration-sms-confirm"]').trigger("click");
+    await flushPromises();
     await wrapper.get('[data-register="ordinary"]').trigger("submit");
     await flushPromises();
 

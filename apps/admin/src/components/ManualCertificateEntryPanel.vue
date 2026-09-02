@@ -16,6 +16,7 @@ const emit = defineEmits(["changed"]);
 const athleteName = ref("");
 const searchRows = ref([]);
 const selectedRegistrationId = ref("");
+const selectedParticipantId = ref("");
 const selectedCertificates = ref([]);
 const searchLoading = ref(false);
 const certificateLoading = ref(false);
@@ -32,11 +33,14 @@ let resultGeneration = 0;
 
 const selectedRegistration = computed(() => searchRows.value
   .find((row) => row.id === selectedRegistrationId.value) || null);
+const selectedParticipant = computed(() => selectedRegistration.value?.participants
+  ?.find((row) => row.id === selectedParticipantId.value) || null);
 
 function clearSelection() {
   resultGeneration += 1;
   resultLoading.value = false;
   selectedRegistrationId.value = "";
+  selectedParticipantId.value = "";
   selectedCertificates.value = [];
   certificateLoaded.value = false;
   certificateLoadFailed.value = false;
@@ -85,7 +89,7 @@ async function searchByName() {
   }
 }
 
-function certificateListPath(registrationId) {
+function certificateListPath(registrationId, participantId = "") {
   const params = new URLSearchParams({
     registrationId,
     sort: "uploadedAt",
@@ -94,22 +98,23 @@ function certificateListPath(registrationId) {
     pageSize: "2"
   });
   params.set("eventId", props.eventId);
+  if (participantId) params.set("participantId", participantId);
   return `/api/admin/events/${encodeURIComponent(props.eventId)}/certificates?${params}`;
 }
 
-async function loadSelectedCertificates(registrationId) {
+async function loadSelectedCertificates(registrationId, participantId = "") {
   const generation = ++certificateGeneration;
   certificateLoading.value = true;
   certificateLoaded.value = false;
   certificateLoadFailed.value = false;
   try {
-    const payload = await api(certificateListPath(registrationId));
-    if (generation !== certificateGeneration || selectedRegistrationId.value !== registrationId) return false;
+    const payload = await api(certificateListPath(registrationId, participantId));
+    if (generation !== certificateGeneration || selectedRegistrationId.value !== registrationId || selectedParticipantId.value !== participantId) return false;
     selectedCertificates.value = Array.isArray(payload?.rows) ? payload.rows : [];
     certificateLoaded.value = true;
     return true;
   } catch (cause) {
-    if (generation !== certificateGeneration || selectedRegistrationId.value !== registrationId) return false;
+    if (generation !== certificateGeneration || selectedRegistrationId.value !== registrationId || selectedParticipantId.value !== participantId) return false;
     selectedCertificates.value = [];
     certificateLoadFailed.value = true;
     error.value = cause.message || "所选报名的证书加载失败，请稍后重试。";
@@ -123,13 +128,14 @@ async function retrySelectedCertificates() {
   if (!selectedRegistrationId.value) return;
   error.value = "";
   success.value = "";
-  await loadSelectedCertificates(selectedRegistrationId.value);
+  await loadSelectedCertificates(selectedRegistrationId.value, selectedParticipantId.value);
 }
 
 async function selectRegistration(row) {
   resultGeneration += 1;
   resultLoading.value = false;
   selectedRegistrationId.value = row.id;
+  selectedParticipantId.value = "";
   selectedCertificates.value = [];
   error.value = "";
   success.value = "";
@@ -138,7 +144,19 @@ async function selectRegistration(row) {
     rank: row.rank || "",
     score: row.score || ""
   });
-  await loadSelectedCertificates(row.id);
+  if (row.projectType !== "team") await loadSelectedCertificates(row.id);
+}
+
+async function selectParticipant(participant) {
+  const registration = selectedRegistration.value;
+  if (!registration || registration.projectType !== "team") return;
+  selectedParticipantId.value = participant.id;
+  selectedCertificates.value = [];
+  certificateLoaded.value = false;
+  certificateLoadFailed.value = false;
+  error.value = "";
+  success.value = "";
+  await loadSelectedCertificates(registration.id, participant.id);
 }
 
 async function openDirectRegistration() {
@@ -215,9 +233,10 @@ function eventNameFor(row) {
 
 async function afterCertificateChanged(change) {
   const registrationId = selectedRegistrationId.value;
+  const participantId = selectedParticipantId.value;
   if (!registrationId) return;
-  await loadSelectedCertificates(registrationId);
-  if (selectedRegistrationId.value === registrationId) emit("changed", change || { message: "证书操作已完成。" });
+  await loadSelectedCertificates(registrationId, participantId);
+  if (selectedRegistrationId.value === registrationId && selectedParticipantId.value === participantId) emit("changed", change || { message: "证书操作已完成。" });
 }
 
 onMounted(openDirectRegistration);
@@ -253,7 +272,7 @@ onMounted(openDirectRegistration);
     </div>
 
     <section v-if="selectedRegistration" data-manual-selected>
-      <h3>{{ selectedRegistration.athlete?.name || "-" }} · {{ selectedRegistration.id }}</h3>
+      <h3>{{ selectedRegistration.projectType === "team" ? (selectedRegistration.teamCode || "团队报名") : (selectedRegistration.athlete?.name || "-") }} · {{ selectedRegistration.id }}</h3>
       <p>{{ selectedRegistration.athlete?.school || "-" }} · {{ selectedRegistration.group || "-" }} · {{ selectedRegistration.projectName || "-" }}</p>
       <div>
         <label>奖项 / 等级<input v-model="result.awardName" data-result="awardName"></label>
@@ -262,6 +281,18 @@ onMounted(openDirectRegistration);
         <button type="button" class="primary" data-action="save-result" :disabled="resultLoading" @click="saveResult">
           {{ resultLoading ? "正在保存…" : "保存成绩" }}
         </button>
+      </div>
+      <div v-if="selectedRegistration.projectType === 'team'" class="team-certificate-participants">
+        <h4>选择证书队员</h4>
+        <button
+          v-for="participant in selectedRegistration.participants || []"
+          :key="participant.id"
+          type="button"
+          :data-participant-select="participant.id"
+          :class="{ active: selectedParticipantId === participant.id }"
+          @click="selectParticipant(participant)"
+        >{{ participant.name }} · {{ participant.school }} · {{ participant.grade }}</button>
+        <p v-if="selectedParticipant" data-selected-participant>当前队员：{{ selectedParticipant.name }}</p>
       </div>
       <p v-if="certificateLoading">正在加载证书…</p>
       <button
@@ -274,9 +305,10 @@ onMounted(openDirectRegistration);
       </button>
       <CertificateSlotEditor
         v-if="certificateLoaded"
-        :key="selectedRegistration.id"
+        :key="`${selectedRegistration.id}:${selectedParticipantId || 'legacy'}`"
         :registration="selectedRegistration"
         :certificates="selectedCertificates"
+        :participant-id="selectedParticipantId"
         :allow-status-change="false"
         @changed="afterCertificateChanged"
       />

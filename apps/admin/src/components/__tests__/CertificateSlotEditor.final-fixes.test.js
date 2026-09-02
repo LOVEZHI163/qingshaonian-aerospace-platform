@@ -87,6 +87,24 @@ describe("CertificateSlotEditor final fixes", () => {
     expect(wrapper.find('input[placeholder="证书编号"]').exists()).toBe(false);
   });
 
+  it("团队证书上传携带当前选择的证书对象编号", async () => {
+    apiMock.mockResolvedValue({ row: { ...certificates[0], participantId: "RP-2" } });
+    const wrapper = mount(CertificateSlotEditor, {
+      props: { registration: { ...registration, projectType: "team" }, certificates: [], participantId: "RP-2" }
+    });
+    const input = wrapper.get('[data-slot-file="1"]');
+    Object.defineProperty(input.element, "files", {
+      configurable: true,
+      value: [new File(["pdf"], "队员乙.pdf", { type: "application/pdf" })]
+    });
+    await input.trigger("change");
+    await wrapper.get('[data-action="save-slot-1"]').trigger("click");
+    await flushPromises();
+
+    const upload = apiMock.mock.calls.find(([path, options]) => path.endsWith("/registrations/R1/certificates/1") && options?.method === "POST");
+    expect(upload?.[1].body.get("participantId")).toBe("RP-2");
+  });
+
   it("删除使用页面内确认，失败时保留错误且不调用 window.confirm", async () => {
     apiMock.mockRejectedValue(new Error("删除失败，请稍后重试"));
     const nativeConfirm = vi.spyOn(window, "confirm");

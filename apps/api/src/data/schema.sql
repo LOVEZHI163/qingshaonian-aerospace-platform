@@ -3,6 +3,9 @@ CREATE TABLE IF NOT EXISTS users (
   name TEXT NOT NULL,
   phone TEXT NOT NULL UNIQUE,
   password TEXT NOT NULL,
+  email TEXT,
+  email_verified_at TIMESTAMPTZ,
+  email_updated_at TIMESTAMPTZ,
   type TEXT NOT NULL,
   status TEXT NOT NULL,
   session_version INTEGER NOT NULL DEFAULT 0,
@@ -13,6 +16,25 @@ CREATE TABLE IF NOT EXISTS users (
   temporary_password_created_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS users_email_unique_idx
+  ON users (LOWER(email))
+  WHERE email IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS account_email_tokens (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  purpose TEXT NOT NULL CHECK (purpose IN ('verify_email', 'reset_password')),
+  target_email TEXT NOT NULL,
+  digest TEXT NOT NULL UNIQUE,
+  expires_at TIMESTAMPTZ NOT NULL,
+  used_at TIMESTAMPTZ,
+  request_ip TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS account_email_tokens_user_purpose_idx
+  ON account_email_tokens (user_id, purpose, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS audit_logs (
   id TEXT PRIMARY KEY,
@@ -116,7 +138,14 @@ CREATE TABLE IF NOT EXISTS projects (
   enabled BOOLEAN NOT NULL DEFAULT TRUE,
   instructor_required BOOLEAN NOT NULL DEFAULT FALSE,
   display_order INTEGER NOT NULL DEFAULT 0,
-  submission_mode TEXT NOT NULL DEFAULT 'none' CHECK (submission_mode IN ('none', 'image_video'))
+  submission_mode TEXT NOT NULL DEFAULT 'none' CHECK (submission_mode IN ('none', 'image_video')),
+  team_min_members SMALLINT NOT NULL DEFAULT 1,
+  team_max_members SMALLINT NOT NULL DEFAULT 8,
+  CONSTRAINT projects_team_member_bounds_check CHECK (
+    team_min_members BETWEEN 1 AND 8
+    AND team_max_members BETWEEN 1 AND 8
+    AND team_min_members <= team_max_members
+  )
 );
 
 CREATE TABLE IF NOT EXISTS project_groups (
@@ -142,16 +171,41 @@ CREATE TABLE IF NOT EXISTS registrations (
   project_name TEXT NOT NULL,
   project_type TEXT NOT NULL,
   instructor TEXT NOT NULL DEFAULT '',
+  team_code TEXT NOT NULL DEFAULT '',
   status TEXT NOT NULL,
   reject_reason TEXT NOT NULL DEFAULT '',
   created_at TIMESTAMPTZ NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL,
-  CHECK (personal_user_id IS NOT NULL OR organization_id IS NOT NULL OR organization_name <> ''),
-  UNIQUE (event_id, project_id, athlete_key)
+  CHECK (personal_user_id IS NOT NULL OR organization_id IS NOT NULL OR organization_name <> '')
 );
 
 CREATE TABLE IF NOT EXISTS registration_identities (
   registration_id TEXT PRIMARY KEY REFERENCES registrations(id) ON DELETE CASCADE,
+  ciphertext TEXT NOT NULL,
+  iv TEXT NOT NULL,
+  auth_tag TEXT NOT NULL,
+  key_version INTEGER NOT NULL DEFAULT 1,
+  id_fingerprint TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS registration_participants (
+  id TEXT PRIMARY KEY,
+  registration_id TEXT NOT NULL REFERENCES registrations(id) ON DELETE CASCADE,
+  display_order SMALLINT NOT NULL CHECK (display_order BETWEEN 1 AND 8),
+  name TEXT NOT NULL,
+  school TEXT NOT NULL,
+  grade TEXT NOT NULL,
+  phone TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL,
+  UNIQUE (registration_id, display_order),
+  UNIQUE (id, registration_id)
+);
+
+CREATE TABLE IF NOT EXISTS registration_participant_identities (
+  participant_id TEXT PRIMARY KEY REFERENCES registration_participants(id) ON DELETE CASCADE,
   ciphertext TEXT NOT NULL,
   iv TEXT NOT NULL,
   auth_tag TEXT NOT NULL,
@@ -271,6 +325,7 @@ CREATE TABLE IF NOT EXISTS certificate_import_batches (
 CREATE TABLE IF NOT EXISTS certificates (
   id TEXT PRIMARY KEY,
   registration_id TEXT NOT NULL REFERENCES registrations(id) ON DELETE CASCADE,
+  participant_id TEXT,
   certificate_no TEXT,
   slot SMALLINT NOT NULL DEFAULT 1 CONSTRAINT certificates_slot_check CHECK (slot IN (1, 2)),
   title TEXT NOT NULL DEFAULT '获奖证书',
@@ -286,7 +341,9 @@ CREATE TABLE IF NOT EXISTS certificates (
   uploaded_at TIMESTAMPTZ NOT NULL,
   published_at TIMESTAMPTZ,
   cleaned_at TIMESTAMPTZ,
-  UNIQUE (registration_id, slot)
+  CONSTRAINT certificates_participant_registration_fkey
+    FOREIGN KEY (participant_id, registration_id)
+    REFERENCES registration_participants(id, registration_id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS certificate_import_errors (
@@ -328,6 +385,9 @@ CREATE INDEX IF NOT EXISTS organization_event_participations_event_id_idx ON org
 CREATE INDEX IF NOT EXISTS registration_upload_sessions_owner_expires_at_idx ON registration_upload_sessions(owner_user_id, expires_at);
 CREATE INDEX IF NOT EXISTS registration_submission_assets_registration_id_idx ON registration_submission_assets(registration_id);
 CREATE INDEX IF NOT EXISTS registration_submission_assets_upload_session_id_idx ON registration_submission_assets(upload_session_id);
+CREATE INDEX IF NOT EXISTS registration_participant_identity_fingerprint_idx ON registration_participant_identities(id_fingerprint);
+CREATE UNIQUE INDEX IF NOT EXISTS certificates_registration_slot_legacy_key ON certificates(registration_id, slot) WHERE participant_id IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS certificates_participant_slot_key ON certificates(registration_id, participant_id, slot) WHERE participant_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS site_settings (
   id TEXT PRIMARY KEY CHECK (id = 'default'),

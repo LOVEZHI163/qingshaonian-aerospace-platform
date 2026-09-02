@@ -44,6 +44,18 @@ const sameNameProjectTwo = {
   group: "小学高段"
 };
 
+const teamRegistration = {
+  ...sameNameProjectOne,
+  id: "R-TEAM",
+  projectType: "team",
+  teamCode: "O1-P1-01",
+  athlete: { name: "兼容姓名", school: "兼容学校", grade: "五年级" },
+  participants: [
+    { id: "RP-1", name: "队员甲", school: "甲学校", grade: "五年级" },
+    { id: "RP-2", name: "队员乙", school: "乙学校", grade: "六年级" }
+  ]
+};
+
 const certificateOne = {
   id: "C1",
   registrationId: "R1",
@@ -123,6 +135,28 @@ describe("ManualCertificateEntryPanel", () => {
     await rows[1].trigger("click");
     await flushPromises();
     expect(apiMock).toHaveBeenCalledWith(expect.stringContaining("registrationId=R2"));
+  });
+
+  it("selects a team participant before loading and editing that participant's two slots", async () => {
+    loadAdminRegistrationsMock.mockResolvedValue([teamRegistration]);
+    apiMock.mockResolvedValue({ rows: [{ ...certificateOne, registrationId: "R-TEAM", participantId: "RP-2" }] });
+    const wrapper = mount(ManualCertificateEntryPanel, { props: { events, initialEventId: "E1" } });
+    await wrapper.get("[data-manual-name]").setValue("队员");
+    await wrapper.get("form").trigger("submit");
+    await flushPromises();
+    await wrapper.get("[data-manual-result]").trigger("click");
+    await flushPromises();
+
+    expect(wrapper.findAll("[data-participant-select]")).toHaveLength(2);
+    expect(wrapper.text()).toContain("O1-P1-01");
+    expect(wrapper.findComponent(CertificateSlotEditor).exists()).toBe(false);
+    expect(apiMock).not.toHaveBeenCalled();
+
+    await wrapper.get('[data-participant-select="RP-2"]').trigger("click");
+    await flushPromises();
+    expect(apiMock).toHaveBeenCalledWith(expect.stringMatching(/registrationId=R-TEAM.*participantId=RP-2/));
+    expect(wrapper.getComponent(CertificateSlotEditor).props("participantId")).toBe("RP-2");
+    expect(wrapper.get("[data-selected-participant]").text()).toContain("队员乙");
   });
 
   it("does not render an independent event selector", async () => {

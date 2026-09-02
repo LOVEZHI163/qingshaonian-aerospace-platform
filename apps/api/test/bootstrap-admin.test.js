@@ -10,7 +10,7 @@ async function withEmptyDatabase(fn) {
   const memory = newDb({ autoCreateForeignKeyIndices: true });
   const { Pool } = memory.adapters.createPg();
   const pool = new Pool();
-  const store = createPostgresStore(pool, { seedOnEmpty: false });
+  const store = createPostgresStore(pool, { seedOnEmpty: false, testOnlyPgMemCompatibility: true });
   try {
     await store.initialize();
     await fn(pool);

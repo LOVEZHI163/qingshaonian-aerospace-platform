@@ -19,6 +19,7 @@ const editingRegistration = ref(null);
 const editingWorkspace = ref(null);
 const editingLoading = ref(false);
 const editingError = ref("");
+const expandedId = ref("");
 const replacingRegistration = ref(null);
 const replacementSession = ref(null);
 const replacementLoading = ref(false);
@@ -26,6 +27,9 @@ const replacementComplete = ref(false);
 const replacementCompletedKinds = ref(new Set());
 const replacementError = ref("");
 const replacementResult = ref("");
+const cancellationTarget = ref(null);
+const cancellationLoading = ref(false);
+const cancellationError = ref("");
 const materialError = ref("");
 const lastDownload = ref(null);
 const downloads = createBlobDownloadManager();
@@ -116,6 +120,14 @@ function canReplaceMaterials(row) {
   return !isArchived(row) && row.submission?.required && ["pending", "approved", "rejected"].includes(row.status);
 }
 
+function canEditRegistration(row) {
+  return !isArchived(row) && row.status !== "cancelled";
+}
+
+function canCancelTeam(row) {
+  return !isArchived(row) && row.projectType === "team" && ["pending", "approved"].includes(row.status);
+}
+
 async function loadRecords() {
   const currentRequest = ++requestId;
   loading.value = true;
@@ -155,6 +167,10 @@ function nextPage() {
   if (filters.page * filters.pageSize >= total.value) return;
   filters.page += 1;
   void loadRecords();
+}
+
+function toggleRoster(registrationId) {
+  expandedId.value = expandedId.value === registrationId ? "" : registrationId;
 }
 
 async function downloadSubmissionAsset(row, kind, asset) {
@@ -217,6 +233,38 @@ async function savedRegistration() {
   const currentRequest = editRequestId;
   await loadRecords();
   if (currentRequest === editRequestId && editingRegistration.value?.id === registrationId) cancelEditing();
+}
+
+function openTeamCancellation(row) {
+  if (!canCancelTeam(row)) return;
+  cancellationTarget.value = row;
+  cancellationError.value = "";
+}
+
+function dismissTeamCancellation() {
+  if (cancellationLoading.value) return;
+  cancellationTarget.value = null;
+  cancellationError.value = "";
+}
+
+async function confirmTeamCancellation() {
+  const row = cancellationTarget.value;
+  if (!row || !canCancelTeam(row) || cancellationLoading.value) return;
+  cancellationLoading.value = true;
+  cancellationError.value = "";
+  try {
+    await api(`/api/organization/events/${encodeURIComponent(row.eventId)}/registrations/${encodeURIComponent(row.id)}/status`, {
+      method: "PATCH",
+      body: JSON.stringify({ status: "cancelled" })
+    });
+    await loadRecords();
+    if (cancellationTarget.value?.id === row.id) cancellationTarget.value = null;
+  } catch (cancelError) {
+    reportAccessDenied(cancelError);
+    cancellationError.value = safeMessage(cancelError, "团队报名取消失败，请重试");
+  } finally {
+    cancellationLoading.value = false;
+  }
 }
 
 function cancelReplacement({ keepResult = false } = {}) {
@@ -318,7 +366,7 @@ onBeforeUnmount(() => {
     <p v-if="materialError" class="message" role="alert">{{ materialError }} <button type="button" class="mini" data-action="retry-organization-material-download" @click="retryDownload">重试</button> <button type="button" class="mini" data-action="dismiss-organization-material-error" @click="dismissMaterialError">关闭</button></p>
 
     <section v-if="editingRegistration" class="organization-registration-record-editor" aria-label="编辑组织报名">
-      <div class="panel-title"><h4>编辑 {{ editingRegistration.athlete?.name || "报名记录" }}</h4><button type="button" class="mini" data-action="return-organization-records" @click="cancelEditing">返回报名记录</button></div>
+      <div class="panel-title"><h4>编辑 {{ editingRegistration.projectType === "team" ? editingRegistration.teamCode : editingRegistration.athlete?.name || "报名记录" }}</h4><button type="button" class="mini" data-action="return-organization-records" @click="cancelEditing">返回报名记录</button></div>
       <p v-if="editingLoading" class="hint">正在加载赛事工作台…</p>
       <p v-else-if="editingError" class="message" role="alert">{{ editingError }} <button type="button" class="mini" :data-action="`retry-organization-edit-${editingRegistration.id}`" @click="editRegistration(editingRegistration)">重试</button> <button type="button" class="mini" data-action="return-organization-records" @click="cancelEditing">返回报名记录</button></p>
       <OrganizationAthleteRegistrationForm v-else-if="editingWorkspace" :event-id="editingRegistration.eventId" :projects="editingWorkspace.projects || []" :grades="editingWorkspace.grades || []" :members="editingWorkspace.members || []" :default-school="editingWorkspace.organization?.name || ''" :registration="editingRegistration" @registered="savedRegistration" @error="handleEditingError" />
@@ -337,8 +385,17 @@ onBeforeUnmount(() => {
     <p v-if="replacementResult" class="message" role="status">{{ replacementResult }}</p>
 
     <div v-if="!loading && !error" class="table-wrap"><table class="registration-record-table"><thead><tr><th>赛事</th><th>编号</th><th>报名来源</th><th>姓名</th><th>学生身份证号</th><th>学校/年级</th><th>赛项</th><th>指导老师</th><th>作品材料</th><th>审核状态</th><th>成绩/奖项</th><th>操作</th></tr></thead><tbody>
-      <tr v-for="row in rows" :key="row.id"><td>{{ row.eventName || row.eventId || "-" }}</td><td>{{ row.id }}</td><td>{{ sourceText[row.source] || row.source || "-" }}</td><td>{{ row.athlete?.name || "-" }}</td><td class="registration-identity-value">{{ row.studentIdNumber || "—（历史报名）" }}</td><td>{{ row.athlete?.school || "-" }}<br /><span>{{ row.athlete?.grade || "-" }}</span></td><td>{{ row.projectName || "-" }}</td><td>{{ row.instructor || "-" }}</td><td class="organization-record-materials"><template v-if="row.submission?.required"><div v-for="kind in materialKinds" :key="kind" :data-asset-kind="kind"><span>{{ materialLabels[kind] }}</span><template v-if="assetAvailable(row.submission.assets?.[kind])"><img v-if="kind === 'artwork_image'" class="submission-artwork-preview" :src="apiUrl(organizationAssetPath(row, kind))" :alt="`${row.submission.assets[kind].originalName} 预览`" /><video v-else class="submission-video-preview" :src="apiUrl(organizationAssetPath(row, kind))" controls preload="metadata"></video><button type="button" class="mini" :data-action="`download-organization-${kind}-${row.id}`" @click="downloadSubmissionAsset(row, kind, row.submission.assets[kind])">下载</button></template><span v-else class="hint">不可用</span></div><button v-if="canReplaceMaterials(row)" type="button" class="mini" :data-action="`replace-organization-materials-${row.id}`" @click="createReplacementSession(row)">替换材料</button></template><span v-else>无需作品材料</span></td><td><em :class="row.status">{{ statusText[row.status] || row.status || "-" }}</em></td><td>{{ row.awardName || "未录入" }}<br /><span>名次 {{ row.rank || "-" }} · 成绩 {{ row.score || "-" }}</span></td><td><button v-if="!isArchived(row)" type="button" class="mini" :data-action="`edit-organization-registration-${row.id}`" @click="editRegistration(row)">编辑</button></td></tr>
+      <tr v-for="row in rows" :key="row.id"><td>{{ row.eventName || row.eventId || "-" }}</td><td>{{ row.id }}</td><td>{{ sourceText[row.source] || row.source || "-" }}</td><td class="team-roster-cell"><template v-if="row.projectType === 'team'"><strong data-team-code>{{ row.teamCode }}</strong><button type="button" class="link-button" :data-action="`toggle-roster-${row.id}`" @click="toggleRoster(row.id)">{{ row.participantCount }} 名队员</button><ul v-if="expandedId === row.id" class="team-roster-list" :data-roster="row.id"><li v-for="person in row.participants" :key="person.id"><strong>{{ person.name }}</strong><span>{{ person.school }} · {{ person.grade }}</span><span>{{ person.phone }} · {{ person.studentIdNumber || "—（历史报名）" }}</span></li></ul></template><template v-else>{{ row.athlete?.name || "-" }}</template></td><td class="registration-identity-value">{{ row.projectType === "team" ? "见队员名单" : row.studentIdNumber || "—（历史报名）" }}</td><td><template v-if="row.projectType === 'team'">见队员名单</template><template v-else>{{ row.athlete?.school || "-" }}<br /><span>{{ row.athlete?.grade || "-" }}</span></template></td><td>{{ row.projectName || "-" }}</td><td>{{ row.instructor || "-" }}</td><td class="organization-record-materials"><template v-if="row.submission?.required"><div v-for="kind in materialKinds" :key="kind" :data-asset-kind="kind"><span>{{ materialLabels[kind] }}</span><template v-if="assetAvailable(row.submission.assets?.[kind])"><img v-if="kind === 'artwork_image'" class="submission-artwork-preview" :src="apiUrl(organizationAssetPath(row, kind))" :alt="`${row.submission.assets[kind].originalName} 预览`" /><video v-else class="submission-video-preview" :src="apiUrl(organizationAssetPath(row, kind))" controls preload="metadata"></video><button type="button" class="mini" :data-action="`download-organization-${kind}-${row.id}`" @click="downloadSubmissionAsset(row, kind, row.submission.assets[kind])">下载</button></template><span v-else class="hint">不可用</span></div><button v-if="canReplaceMaterials(row)" type="button" class="mini" :data-action="`replace-organization-materials-${row.id}`" @click="createReplacementSession(row)">替换材料</button></template><span v-else>无需作品材料</span></td><td><em :class="row.status">{{ statusText[row.status] || row.status || "-" }}</em></td><td>{{ row.awardName || "未录入" }}<br /><span>名次 {{ row.rank || "-" }} · 成绩 {{ row.score || "-" }}</span></td><td><button v-if="canEditRegistration(row)" type="button" class="mini" :data-action="`edit-organization-registration-${row.id}`" @click="editRegistration(row)">编辑</button><button v-if="canCancelTeam(row)" type="button" class="mini reject" :data-action="`cancel-organization-team-${row.id}`" @click="openTeamCancellation(row)">取消团队报名</button></td></tr>
     </tbody></table><p v-if="rows.length === 0" class="hint empty-state">暂无报名记录。</p></div>
+
+    <div v-if="cancellationTarget" class="dialog-backdrop" @click.self="dismissTeamCancellation">
+      <section class="panel organization-dialog" data-testid="organization-team-cancellation-dialog" role="dialog" aria-modal="true" aria-labelledby="organization-team-cancellation-title">
+        <h3 id="organization-team-cancellation-title">确认取消团队报名</h3>
+        <p>将取消队伍 <strong>{{ cancellationTarget.teamCode || cancellationTarget.id }}</strong> 的本次报名，并释放队员在本届赛事的团队赛名额。此操作不批量影响其他队伍。</p>
+        <p v-if="cancellationError" class="message" role="alert">{{ cancellationError }}</p>
+        <div class="form-actions"><button type="button" class="reject" data-action="confirm-organization-team-cancellation" :disabled="cancellationLoading" @click="confirmTeamCancellation">{{ cancellationLoading ? "正在取消…" : "确认取消" }}</button><button type="button" data-action="dismiss-organization-team-cancellation" :disabled="cancellationLoading" @click="dismissTeamCancellation">返回</button></div>
+      </section>
+    </div>
 
     <div class="pagination"><button type="button" class="mini" data-action="organization-records-previous" :disabled="loading || filters.page <= 1" @click="previousPage">上一页</button><span>第 {{ filters.page }} 页</span><button type="button" class="mini" data-action="organization-records-next" :disabled="loading || filters.page * filters.pageSize >= total" @click="nextPage">下一页</button></div>
   </section>

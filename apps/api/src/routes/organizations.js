@@ -90,10 +90,10 @@ function respondError(error, res, next) {
   return next(error);
 }
 
-export function createOrganizationsRouter({ store, requireUser, requireAdmin, requirePasswordReady, asyncRoute, hashPassword, validatePassword, makeId, now, publicUser }) {
+export function createOrganizationsRouter({ store, requireUser, requireAdmin, requirePasswordReady, asyncRoute, hashPassword, validatePassword, verifyPhoneRegistration, makeId, now, publicUser }) {
   const router = express.Router();
   const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
-  const deps = { readDb: () => store.readDb(), writeDb: (db) => store.writeDb(db), hashPassword, validatePassword, makeId, now };
+  const deps = { readDb: () => store.readDb(), writeDb: (db) => store.writeDb(db), hashPassword, validatePassword, verifyPhoneRegistration, makeId, now };
   const uploadCredential = (req, res, next) => upload.single("credential")(req, res, (error) => {
     if (!error) return next();
     return res.status(422).json({

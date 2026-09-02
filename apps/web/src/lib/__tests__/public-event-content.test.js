@@ -92,7 +92,7 @@ describe("public event content", () => {
     });
 
     expect(approved.sections[0].contact).toEqual({
-      name: "吴老师",
+      name: "吴老师、干老师",
       phones: [
         { label: "88968723", href: "tel:88968723" },
         { label: "15858799111", href: "tel:15858799111" }
@@ -105,6 +105,23 @@ describe("public event content", () => {
         { label: "138 0013 8000", href: "tel:13800138000" }
       ]
     });
+  });
+
+  it("shows only the competition time and venue in event information fact cards", () => {
+    const model = buildPublicEventContent("contact", {
+      event: {
+        ...current,
+        dateLabel: "2026年11月下旬",
+        registrationEndAt: "2026-11-01T15:59:00.000Z"
+      },
+      detail: null,
+      site: {}
+    });
+
+    expect(model.facts).toEqual([
+      { label: "比赛时间", value: "2026年11月下旬" },
+      { label: "比赛地点", value: "温州市文成县东方职业技术学院" }
+    ]);
   });
 
   it("keeps whitespace-separated phone numbers as distinct dial links", () => {

@@ -1,8 +1,13 @@
 aerogp.cn {
 	encode zstd gzip
-	reverse_proxy web:80
+	header Strict-Transport-Security "max-age=31536000; includeSubDomains"
+	reverse_proxy web:80 {
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Forwarded-Proto {scheme}
+	}
 }
 
 www.aerogp.cn {
+	header Strict-Transport-Security "max-age=31536000; includeSubDomains"
 	redir https://aerogp.cn{uri} permanent
 }

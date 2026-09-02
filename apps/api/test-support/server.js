@@ -3,6 +3,8 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
+import { createPhoneRegistrationToken } from "../src/auth/sms-registration.js";
+
 const rootDir = path.resolve(import.meta.dirname, "../../..");
 const serverPath = path.resolve(import.meta.dirname, "../src/server.js");
 
@@ -30,10 +32,18 @@ function waitForAddress(child) {
 export async function withTestServer(fn, {
   prefix = "aerogp-api-",
   env = {},
-  approvedOrganizationLeaders = true
+  approvedOrganizationLeaders = true,
+  smsRegistrationEnabled = true
 } = {}) {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
   const dbPath = path.join(tempDir, "db.json");
+  const sessionSecret = env.SESSION_SECRET || "test-session-secret-32-characters";
+  const phoneVerificationToken = (phone) => createPhoneRegistrationToken({
+    phone,
+    secret: sessionSecret,
+    now: Date.now(),
+    nonce: `test-${String(phone).replace(/\D/g, "")}`
+  }).phoneVerificationToken;
   const child = spawn(process.execPath, [serverPath], {
     cwd: rootDir,
     env: {
@@ -44,6 +54,13 @@ export async function withTestServer(fn, {
       UPLOAD_ROOT: path.join(tempDir, "uploads"),
       TEMP_PASSWORD_ENCRYPTION_KEY: Buffer.alloc(32, 7).toString("base64"),
       REGISTRATION_ID_ENCRYPTION_KEY: Buffer.alloc(32, 8).toString("base64"),
+      SESSION_SECRET: sessionSecret,
+      ...(smsRegistrationEnabled ? {
+        ALIBABA_CLOUD_ACCESS_KEY_ID: "test-sms-access-key-id",
+        ALIBABA_CLOUD_ACCESS_KEY_SECRET: "test-sms-access-key-secret",
+        ALIYUN_SMS_SIGN_NAME: "测试签名",
+        ALIYUN_SMS_REGISTRATION_TEMPLATE_CODE: "SMS_REGISTER_TEST"
+      } : {}),
       ...env
     },
     stdio: ["ignore", "pipe", "pipe"]
@@ -72,7 +89,7 @@ export async function withTestServer(fn, {
       }));
       await fs.writeFile(dbPath, JSON.stringify(db, null, 2), "utf8");
     }
-    await fn({ baseUrl, dbPath, tempDir });
+    await fn({ baseUrl, dbPath, tempDir, phoneVerificationToken });
   } finally {
     if (child.exitCode === null) {
       child.kill();

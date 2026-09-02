@@ -81,6 +81,22 @@ test("public view builders preserve homepage, event and content shapes", () => {
   assert.equal(buildContentDetailView(source, "news-one", current).row.slug, "news-one");
 });
 
+test("homepage links the participation process service to the existing flow module", () => {
+  const source = seededPublicSiteDb();
+  const view = buildHomeView(source, new Date("2026-07-20T00:00:00.000Z"));
+
+  assert.deepEqual(
+    view.services.find((service) => service.key === "guide"),
+    {
+      key: "guide",
+      label: "参赛流程",
+      eventId: "CURRENT-EVENT",
+      available: true,
+      href: "/registration-guide"
+    }
+  );
+});
+
 test("public content detail exposes only a safe original-source DTO", () => {
   const source = seededPublicSiteDb();
   Object.assign(source.contentPosts[0], {

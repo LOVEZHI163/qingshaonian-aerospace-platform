@@ -6,11 +6,23 @@ script_dir="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 
 base_url="${BASE_URL:-http://127.0.0.1}"
 admin_phone="${ADMIN_TEST_PHONE:-13900000000}"
+remote_smoke_auth_only="${REMOTE_SMOKE_AUTH_ONLY:-false}"
+case "$remote_smoke_auth_only" in
+  true|false) ;;
+  *) echo "REMOTE_SMOKE_AUTH_ONLY must be true or false" >&2; exit 1 ;;
+esac
 umask 077
 work_dir=
 
 cleanup() {
   cleanup_failed=0
+  if [ -n "${smoke_registration_container_file:-}" ]; then
+    if smoke_remove_container_registration_token "$smoke_registration_container_file"; then
+      smoke_registration_container_file=
+    else
+      cleanup_failed=1
+    fi
+  fi
   if command -v cleanup_submission_smoke >/dev/null 2>&1; then
     cleanup_submission_smoke || cleanup_failed=1
   fi
@@ -163,6 +175,52 @@ assert_status "home" 200 "$base_url/"
 assert_status "admin" 200 "$base_url/admin/"
 assert_status "public-home" 200 "$base_url/api/public/home"
 
+assert_status "public-features" 200 "$base_url/api/public/features"
+assert_json_response "public-features"
+sms_feature_state="$work_dir/sms-feature-state"
+if ! json_path 'let input="";process.stdin.on("data",chunk=>input+=chunk).on("end",()=>{const data=JSON.parse(input);for(const name of ["smsRegistrationEnabled","smsLoginEnabled","smsPasswordResetEnabled"]){if(typeof data[name]!=="boolean")process.exit(2);process.stdout.write(String(data[name])+"\n");}});' > "$sms_feature_state"; then
+  echo "public-features did not return three boolean SMS feature flags" >&2
+  exit 1
+fi
+sms_registration_enabled="$(sed -n '1p' "$sms_feature_state")"
+sms_login_enabled="$(sed -n '2p' "$sms_feature_state")"
+sms_password_reset_enabled="$(sed -n '3p' "$sms_feature_state")"
+
+check_sms_request_when_disabled() {
+  label="$1"
+  feature_enabled="$2"
+  endpoint="$3"
+  case "$feature_enabled" in
+    true)
+      echo "$label=enabled-no-send"
+      ;;
+    false)
+      printf '%s' '{"phone":"13800000001","captchaVerifyParam":""}' | \
+      assert_status "$label-disabled" 503 \
+        -H 'Content-Type: application/json' --data-binary @- \
+        "$base_url$endpoint"
+      assert_json_error "$label-disabled"
+      ;;
+    *)
+      echo "$label feature flag was not boolean" >&2
+      exit 1
+      ;;
+  esac
+}
+
+check_sms_request_when_disabled \
+  "sms-registration" "$sms_registration_enabled" "/api/auth/register/sms/request"
+check_sms_request_when_disabled \
+  "sms-login" "$sms_login_enabled" "/api/auth/sms-login/request"
+check_sms_request_when_disabled \
+  "sms-reset" "$sms_password_reset_enabled" "/api/auth/password-reset/sms/request"
+
+printf '%s' '{"email":"nobody-smoke@example.invalid","captchaVerifyParam":""}' | \
+assert_status "email-reset-request" 200 \
+  -H 'Content-Type: application/json' --data-binary @- \
+  "$base_url/api/auth/password-reset/email/request"
+assert_json_response "email-reset-request"
+
 event_path="$(json_path 'let input="";process.stdin.on("data",chunk=>input+=chunk).on("end",()=>{const data=JSON.parse(input);const event=data.featuredEvent||(data.concurrentEvents||[])[0];if(event&&event.slug)process.stdout.write("/api/public/events/"+encodeURIComponent(event.slug));});')"
 if test -n "$event_path"; then
   assert_status "public-event" 200 "$base_url$event_path"
@@ -303,6 +361,15 @@ assert_status "authenticated-site-content" 200 \
   "$base_url/api/admin/content"
 assert_status "unauthenticated-site-settings" 401 \
   "$base_url/api/admin/site-settings"
+
+if test "$remote_smoke_auth_only" = true; then
+  echo "remote-smoke=PARTIAL-auth-only-test-contract" >&2
+  exit 3
+fi
+if test "$sms_registration_enabled" = false; then
+  echo "registration-dependent-smoke=skipped-feature-disabled"
+  exit 0
+fi
 
 refresh_submission_cleanup_events() {
   cleanup_events_response="$work_dir/cleanup-events.json"
@@ -533,9 +600,24 @@ assert_status "submission-event-copy" 201 \
   "$base_url/api/admin/events/$smoke_source_event_id/copy"
 assert_json_response "submission-event-copy"
 smoke_event_id="$(json_path 'let input="";process.stdin.on("data",chunk=>input+=chunk).on("end",()=>{const data=JSON.parse(input);if(data.event&&data.event.id)process.stdout.write(encodeURIComponent(data.event.id));});')"
-smoke_project_id="$(json_path 'let input="";process.stdin.on("data",chunk=>input+=chunk).on("end",()=>{const data=JSON.parse(input);const project=(data.projects||[])[0];if(project&&project.id)process.stdout.write(encodeURIComponent(project.id));});')"
-if test -z "$smoke_event_id" || test -z "$smoke_project_id"; then
-  echo "Submission smoke fixture creation returned no event or project" >&2
+if test -z "$smoke_event_id"; then
+  echo "Submission smoke fixture creation returned no event" >&2
+  exit 1
+fi
+printf '{"name":"个人冒烟-%s","type":"individual","category":"发布冒烟","enabled":true,"instructorRequired":false,"displayOrder":9000,"allowedGroups":["小学低段"],"submissionMode":"none","teamMinMembers":1,"teamMaxMembers":1}' "$submission_token" | \
+assert_status "submission-individual-project-create" 201 \
+  -b "$cookie_jar" -H 'Content-Type: application/json' --data-binary @- \
+  "$base_url/api/admin/events/$smoke_event_id/projects"
+assert_json_response "submission-individual-project-create"
+smoke_project_id="$(json_path 'let input="";process.stdin.on("data",chunk=>input+=chunk).on("end",()=>{const data=JSON.parse(input);if(data.row&&data.row.id)process.stdout.write(encodeURIComponent(data.row.id));});')"
+printf '{"name":"团队冒烟-%s","type":"team","category":"发布冒烟","enabled":true,"instructorRequired":true,"displayOrder":9001,"allowedGroups":["小学低段"],"submissionMode":"none","teamMinMembers":1,"teamMaxMembers":8}' "$submission_token" | \
+assert_status "submission-team-project-create" 201 \
+  -b "$cookie_jar" -H 'Content-Type: application/json' --data-binary @- \
+  "$base_url/api/admin/events/$smoke_event_id/projects"
+assert_json_response "submission-team-project-create"
+smoke_team_project_id="$(json_path 'let input="";process.stdin.on("data",chunk=>input+=chunk).on("end",()=>{const data=JSON.parse(input);if(data.row&&data.row.id)process.stdout.write(encodeURIComponent(data.row.id));});')"
+if test -z "$smoke_project_id" || test -z "$smoke_team_project_id"; then
+  echo "Submission smoke fixture creation returned no explicit individual/team project pair" >&2
   exit 1
 fi
 refresh_submission_cleanup_events
@@ -551,17 +633,21 @@ assert_status "submission-event-registration-open" 200 \
 smoke_organization_token="$(date +%s)-$$"
 smoke_organization_name="组织冒烟-$smoke_organization_token"
 smoke_foreign_organization_name="外部组织冒烟-$smoke_organization_token"
-smoke_organization_phone="1$(printf '%s' "owner-$smoke_organization_token" | cksum | awk '{printf "%010d", $1}')"
-smoke_foreign_organization_phone="1$(printf '%s' "foreign-$smoke_organization_token" | cksum | awk '{printf "%010d", $1}')"
+smoke_organization_phone="138$(printf '%s' "owner-$smoke_organization_token" | cksum | awk '{printf "%08d", $1 % 100000000}')"
+smoke_foreign_organization_phone="139$(printf '%s' "foreign-$smoke_organization_token" | cksum | awk '{printf "%08d", $1 % 100000000}')"
 smoke_organization_credit_code="91330300$(printf '%s' "owner-$smoke_organization_token" | cksum | awk '{printf "%010d", $1}')"
 smoke_foreign_organization_credit_code="91330300$(printf '%s' "foreign-$smoke_organization_token" | cksum | awk '{printf "%010d", $1}')"
 smoke_organization_password="Smoke-${smoke_organization_token}!o"
 smoke_foreign_organization_password="Smoke-${smoke_organization_token}!f"
 smoke_organization_password_file="$work_dir/organization-owner.password"
 smoke_foreign_organization_password_file="$work_dir/organization-foreign.password"
+smoke_organization_token_file="$work_dir/organization-owner.registration-token"
+smoke_foreign_organization_token_file="$work_dir/organization-foreign.registration-token"
 printf '%s' "$smoke_organization_password" > "$smoke_organization_password_file"
 printf '%s' "$smoke_foreign_organization_password" > "$smoke_foreign_organization_password_file"
 unset smoke_organization_password smoke_foreign_organization_password
+smoke_issue_phone_registration_token "$smoke_organization_phone" "$smoke_organization_token_file"
+smoke_issue_phone_registration_token "$smoke_foreign_organization_phone" "$smoke_foreign_organization_token_file"
 organization_expected_grades='["一年级","二年级","三年级","四年级","五年级","六年级","初一","初二","初三","高一","高二","高三","职高一年级","职高二年级","职高三年级"]'
 organization_credential_file="$work_dir/organization-credential.pdf"
 printf '%s' '%PDF-1.7
@@ -576,6 +662,7 @@ assert_status "organization-owner-register" 201 \
   -F "name=组织冒烟负责人" \
   -F "phone=$smoke_organization_phone" \
   -F "password=<$smoke_organization_password_file" \
+  -F "phoneVerificationToken=<$smoke_organization_token_file" \
   -F "organizationName=$smoke_organization_name" \
   -F "creditCode=$smoke_organization_credit_code" \
   -F 'documentType=business_license' \
@@ -644,11 +731,23 @@ if test -z "$organization_registration_id"; then
   exit 1
 fi
 
+printf '{"registrationSource":"organization_proxy","projectId":"%s","instructor":"团队冒烟指导老师","participants":[{"name":"组织冒烟选手","school":"%s","grade":"三年级","phone":"%s","studentIdNumber":"11010519491231002X"}]}' \
+  "$smoke_team_project_id" "$smoke_organization_name" "$smoke_organization_phone" | \
+assert_status "organization-team-registration-create" 201 \
+  -b "$smoke_organization_cookie_jar" -H 'Content-Type: application/json' --data-binary @- \
+  "$base_url/api/organization/events/$smoke_event_id/registrations"
+assert_json_response "organization-team-registration-create"
+if ! docker compose exec -T api node -e 'let input="";process.stdin.on("data",chunk=>input+=chunk).on("end",()=>{const data=JSON.parse(input);if(data.row?.projectType!=="team"||data.row?.instructor!=="团队冒烟指导老师"||!Array.isArray(data.row?.participants)||data.row.participants.length!==1)process.exit(2);});' < "$response_file" >/dev/null; then
+  echo "organization-team-registration-create did not return one complete team" >&2
+  exit 1
+fi
+
 smoke_foreign_organization_cleanup_pending=1
 assert_status "organization-foreign-register" 201 \
   -F "name=外部组织负责人" \
   -F "phone=$smoke_foreign_organization_phone" \
   -F "password=<$smoke_foreign_organization_password_file" \
+  -F "phoneVerificationToken=<$smoke_foreign_organization_token_file" \
   -F "organizationName=$smoke_foreign_organization_name" \
   -F "creditCode=$smoke_foreign_organization_credit_code" \
   -F 'documentType=business_license' \
@@ -764,7 +863,7 @@ assert_status "submission-user-force-password-change" 200 \
   "$base_url/api/auth/change-password"
 assert_json_response "submission-user-force-password-change"
 
-printf '{"projectId":"%s","athlete":{"name":"未入组织冒烟选手","school":"未入组织冒烟学校","grade":"五年级","phone":"%s"}}' \
+printf '{"projectId":"%s","athlete":{"name":"未入组织冒烟选手","school":"未入组织冒烟学校","grade":"三年级","phone":"%s"}}' \
   "$smoke_project_id" "$smoke_user_phone" | add_student_id "110105201401011231" | \
 assert_status "submission-registration-unaffiliated" 403 \
   -b "$smoke_cookie_jar" -H 'Content-Type: application/json' --data-binary @- \
@@ -812,7 +911,7 @@ assert_status "submission-video-upload" 201 \
   "$base_url/api/upload-sessions/$submission_session_id/creation-video"
 assert_json_response "submission-video-upload"
 
-printf '{"projectId":"%s","athlete":{"name":"上传冒烟选手","school":"上传冒烟学校","grade":"五年级","phone":"%s"},"uploadSessionId":"%s"}' \
+printf '{"projectId":"%s","athlete":{"name":"上传冒烟选手","school":"上传冒烟学校","grade":"三年级","phone":"%s"},"uploadSessionId":"%s"}' \
   "$smoke_project_id" "$smoke_phone" "$submission_session_id" | add_student_id "110105201401011231" | \
 assert_status "submission-registration-bind" 201 \
   -b "$smoke_cookie_jar" -H 'Content-Type: application/json' --data-binary @- \

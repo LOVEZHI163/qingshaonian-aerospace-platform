@@ -103,11 +103,24 @@ async function finishCommittedCleanup({ store, db, marker, file, storage, now })
   try { await store.writeDb(db); } catch { /* the committed marker remains safe to replay */ }
 }
 
-function certificatePayload(certificate, registration) {
+function participantForCertificate(db, certificate, registration) {
+  if (!certificate?.participantId) return null;
+  return (registration?.participants || []).find((row) => row.id === certificate.participantId)
+    || (db?.registrationParticipants || []).find((row) => (
+      row.id === certificate.participantId && row.registrationId === certificate.registrationId
+    ))
+    || null;
+}
+
+function certificatePayload(certificate, registration, db) {
   const registrationPayload = registration ? { ...registration, ...organizationHistoryFields(registration) } : registration;
+  const participant = participantForCertificate(db, certificate, registration);
   const payload = {
     id: certificate.id,
     registrationId: certificate.registrationId,
+    participantId: certificate.participantId || null,
+    participantName: participant?.name || registration?.athlete?.name || "",
+    teamCode: registration?.teamCode || "",
     slot: certificate.slot,
     title: certificate.title,
     fileName: certificate.fileName,
@@ -122,7 +135,7 @@ function certificatePayload(certificate, registration) {
     cleanedAt: certificate.cleanedAt,
     updatedAt: certificate.updatedAt,
     registration: registrationPayload,
-    athlete: registration?.athlete,
+    athlete: participant || registration?.athlete,
     projectName: registration?.projectName,
     organization: registrationPayload?.organization || ""
   };
@@ -175,7 +188,7 @@ function queryPositiveInteger(value, fallback, name, maximum = Number.POSITIVE_I
 }
 
 function certificateSortValue(certificate, registration, sort) {
-  if (sort === "name") return queryText(registration?.athlete?.name).toLocaleLowerCase();
+  if (sort === "name") return queryText(certificate.participantName || registration?.athlete?.name).toLocaleLowerCase();
   if (sort === "title") return queryText(certificate.title).toLocaleLowerCase();
   if (sort === "status") return queryText(certificate.status);
   return queryText(certificate.uploadedAt);
@@ -185,6 +198,7 @@ function listAdminCertificateRows(db, eventId, query) {
   const pageSize = queryPositiveInteger(query.pageSize, 50, "pageSize", 100);
   const requestedPage = queryPositiveInteger(query.page, 1, "page");
   const registrationId = queryText(query.registrationId);
+  const participantId = queryText(query.participantId);
   const status = queryText(query.status);
   const group = queryText(query.group);
   const projectId = queryText(query.projectId);
@@ -199,6 +213,7 @@ function listAdminCertificateRows(db, eventId, query) {
     .filter(({ certificate, registration }) => {
       if (registration?.eventId !== eventId) return false;
       if (registrationId && certificate.registrationId !== registrationId) return false;
+      if (participantId && certificate.participantId !== participantId) return false;
       if (status && certificate.status !== status) return false;
       if (group && registration?.group !== group) return false;
       if (projectId && registration?.projectId !== projectId) return false;
@@ -238,6 +253,24 @@ function approvedManualCertificateRegistration(db, eventId, registrationId) {
   return registration;
 }
 
+function participantIdForManualUpload(db, registration, value) {
+  const participantId = String(value || "").trim() || null;
+  if (registration.projectType === "team") {
+    const participants = (db.registrationParticipants || []).filter((row) => row.registrationId === registration.id);
+    if (!participantId) {
+      if (participants.length === 0) return null;
+      throw new CertificateError(422, "团队证书必须选择队员");
+    }
+    const belongs = participants.some((row) => (
+      row.id === participantId && row.registrationId === registration.id
+    ));
+    if (!belongs) throw new CertificateError(422, "证书对象不属于该报名");
+    return participantId;
+  }
+  if (participantId) throw new CertificateError(422, "个人报名不能指定证书对象");
+  return null;
+}
+
 export function createCertificatesRouter({
   store,
   requireUser,
@@ -273,16 +306,22 @@ export function createCertificatesRouter({
     requireWritableEvent(db, eventOrError(db, req.params.eventId).id);
     const registration = approvedManualCertificateRegistration(db, req.params.eventId, req.params.id);
     if (!req.file) throw new CertificateError(422, "证书文件不能为空");
+    const participantId = participantIdForManualUpload(db, registration, req.body.participantId);
 
     const slot = Number(req.params.slot);
     if (![1, 2].includes(slot)) throw new CertificateError(422, "证书位置只能为 1 或 2");
-    const previous = db.certificates.find((row) => row.registrationId === registration.id && Number(row.slot) === slot);
+    const previous = db.certificates.find((row) => (
+      row.registrationId === registration.id
+      && (row.participantId || null) === participantId
+      && Number(row.slot) === slot
+    ));
     const previousFile = previous?.filePath ? { filePath: previous.filePath } : null;
     let stored;
     try {
-      stored = await storage.saveFile({ registrationId: registration.id, slot, file: req.file });
+      stored = await storage.saveFile({ registrationId: registration.id, participantId, slot, file: req.file });
       const certificate = upsertCertificate(db, {
         registration,
+        participantId,
         slot,
         title: req.body.title,
         storedFile: stored,
@@ -296,7 +335,7 @@ export function createCertificatesRouter({
       }
       await store.writeDb(db);
       await finishCommittedCleanup({ store, db, marker, file: previousFile, storage, now });
-      res.status(201).json({ row: certificatePayload(certificate, registration) });
+      res.status(201).json({ row: certificatePayload(certificate, registration, db) });
     } catch (error) {
       const orphan = stored || error.cleanupTarget;
       if (orphan?.filePath) {
@@ -329,7 +368,7 @@ export function createCertificatesRouter({
     });
     await store.writeDb(db);
     const registration = db.registrations.find((row) => row.id === certificate.registrationId);
-    res.json({ row: certificatePayload(certificate, registration) });
+    res.json({ row: certificatePayload(certificate, registration, db) });
   }));
 
   router.delete("/admin/events/:eventId/certificates/:id", ...admin, mutationAsyncRoute(async (req, res) => {
@@ -369,7 +408,8 @@ export function createCertificatesRouter({
     res.json({
       rows: rows.map((certificate) => certificatePayload(
         certificate,
-        db.registrations.find((row) => row.id === certificate.registrationId)
+        db.registrations.find((row) => row.id === certificate.registrationId),
+        db
       ))
     });
   }));
@@ -379,7 +419,7 @@ export function createCertificatesRouter({
     eventOrError(db, req.params.eventId);
     const page = listAdminCertificateRows(db, req.params.eventId, req.query);
     const rows = page.rows
-      .map(({ certificate, registration }) => certificatePayload(certificate, registration));
+      .map(({ certificate, registration }) => certificatePayload(certificate, registration, db));
     res.json({ ...page, rows });
   }));
 
@@ -398,7 +438,7 @@ export function createCertificatesRouter({
         const registration = registrationsById.get(certificate.registrationId);
         const event = eventsById.get(registration?.eventId);
         return {
-          ...certificatePayload(certificate, registration),
+          ...certificatePayload(certificate, registration, db),
           eventId: registration?.eventId || "",
           eventName: event?.name || registration?.eventId || "",
           eventStatus: event?.status || ""
@@ -417,7 +457,7 @@ export function createCertificatesRouter({
         const registration = db.registrations.find((row) => row.id === certificate.registrationId);
         return registration?.personalUserId === req.user.id && registration.eventId === eventId;
       })
-      .map((certificate) => certificatePayload(certificate, db.registrations.find((row) => row.id === certificate.registrationId)));
+      .map((certificate) => certificatePayload(certificate, db.registrations.find((row) => row.id === certificate.registrationId), db));
     res.json({ rows });
   }));
 
@@ -435,7 +475,7 @@ export function createCertificatesRouter({
         const registration = registrationsById.get(certificate.registrationId);
         const event = eventsById.get(registration?.eventId);
         return {
-          ...certificatePayload(certificate, registration),
+          ...certificatePayload(certificate, registration, db),
           eventId: registration?.eventId || "",
           eventName: event?.name || registration?.eventId || "",
           eventStatus: event?.status || ""
@@ -455,7 +495,7 @@ export function createCertificatesRouter({
       .map((row) => row.id));
     const rows = db.certificates
       .filter((certificate) => certificate.status === "published" && registrationIds.has(certificate.registrationId))
-      .map((certificate) => certificatePayload(certificate, db.registrations.find((row) => row.id === certificate.registrationId)));
+      .map((certificate) => certificatePayload(certificate, db.registrations.find((row) => row.id === certificate.registrationId), db));
     res.json({ rows });
   }));
 
@@ -476,7 +516,8 @@ export function createCertificatesRouter({
       if (fileNotFoundError(error)) throw new CertificateError(404, "证书文件不存在");
       throw error;
     }
-    const downloadName = `${registration.athlete?.name || "运动员"}_${registration.projectName}_${certificate.title}.${extension}`;
+    const participant = participantForCertificate(db, certificate, registration);
+    const downloadName = `${participant?.name || registration.athlete?.name || "运动员"}_${registration.projectName}_${certificate.title}.${extension}`;
     const disposition = ["1", "true"].includes(String(req.query.download || "").toLowerCase()) ? "attachment" : "inline";
     res
       .type(mimeType)

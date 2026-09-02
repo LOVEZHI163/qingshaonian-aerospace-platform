@@ -61,4 +61,21 @@ describe("PasswordSettingsPage", () => {
     await wrapper.get('[data-action="password-logout"]').trigger("click");
     expect(wrapper.emitted("logout")).toHaveLength(1);
   });
+
+  it("shows account security and sends an email verification request", async () => {
+    apiMock.mockResolvedValue({ ok: true });
+    const wrapper = mount(PasswordSettingsPage, { props: { user: { phone: "13800000001", email: null, emailVerified: false } } });
+    expect(wrapper.text()).toContain("账号安全");
+    expect(wrapper.get('[name="phone"]').element.value).toBe("13800000001");
+    expect(wrapper.text()).toContain("尚未绑定邮箱");
+    await wrapper.get('[name="email"]').setValue("user@example.com");
+    await wrapper.get('[name="emailCurrentPassword"]').setValue("OldPass1");
+    await wrapper.get('[data-action="bind-email"]').trigger("submit");
+    await flushPromises();
+    expect(apiMock).toHaveBeenCalledWith("/api/auth/email/verification/request", {
+      method: "POST",
+      body: JSON.stringify({ email: "user@example.com", currentPassword: "OldPass1" })
+    });
+    expect(wrapper.text()).toContain("验证邮件已发送");
+  });
 });

@@ -4,10 +4,10 @@ export const EVENT = {
   id: "wz-aerospace-2026",
   name: "2026年温州市青少年航空航天创新比赛",
   theme: "瓯越少年、星耀未来",
-  date: "2026年11月21-22日",
+  date: "2026年11月下旬",
   venue: "温州市文成县东方职业技术学院",
   registrationDeadline: "2026-11-01",
-  contact: "吴老师 88968723 / 15858799111"
+  contact: "吴老师、干老师 88968723 / 15858799111"
 };
 
 export const PROJECTS = [
@@ -68,8 +68,8 @@ export const DEFAULT_SITE_SETTINGS = {
   featuredEventId: null,
   platformIntro: "",
   organizers: [],
-  contact: "",
-  icp: "",
+  contact: "113120601@qq.com",
+  icp: "浙ICP备2025146227号-2",
   seoTitle: "温州市青少年航空航天创新比赛",
   seoDescription: "",
   defaultHeroMediaId: null,
@@ -95,7 +95,9 @@ for (const [displayOrder, project] of PROJECTS.entries()) {
     enabled: true,
     instructorRequired: false,
     displayOrder,
-    allowedGroups: [...APPROVED_GROUP_NAMES]
+    allowedGroups: [...APPROVED_GROUP_NAMES],
+    teamMinMembers: 1,
+    teamMaxMembers: 8
   });
 }
 
@@ -107,10 +109,10 @@ export const GRADES = ["小学低组（1-3年级）", "小学中高组（4-6年�
 
 export const seedDb = {
   users: [
-    { id: "U1001", name: "陈宇航家长", phone: "13800000001", password: "123456", type: "ordinary", status: "active", sessionVersion: 0, mustChangePassword: false, temporaryPasswordCiphertext: null, temporaryPasswordIv: null, temporaryPasswordTag: null, temporaryPasswordCreatedAt: null, createdAt: "2026-06-27T06:30:00.000Z" },
-    { id: "U2001", name: "林老师", phone: "13800000011", password: "123456", type: "organization", status: "active", sessionVersion: 0, mustChangePassword: false, temporaryPasswordCiphertext: null, temporaryPasswordIv: null, temporaryPasswordTag: null, temporaryPasswordCreatedAt: null, createdAt: "2026-06-27T06:31:00.000Z" },
-    { id: "U2002", name: "王老师", phone: "13800000012", password: "123456", type: "organization", status: "active", sessionVersion: 0, mustChangePassword: false, temporaryPasswordCiphertext: null, temporaryPasswordIv: null, temporaryPasswordTag: null, temporaryPasswordCreatedAt: null, createdAt: "2026-06-27T06:31:30.000Z" },
-    { id: "U9001", name: "赛事管理员", phone: "13900000000", password: "admin123", type: "admin", status: "active", sessionVersion: 0, mustChangePassword: false, temporaryPasswordCiphertext: null, temporaryPasswordIv: null, temporaryPasswordTag: null, temporaryPasswordCreatedAt: null, createdAt: "2026-06-27T06:32:00.000Z" }
+    { id: "U1001", name: "陈宇航家长", phone: "13800000001", password: "123456", email: null, emailVerifiedAt: null, emailUpdatedAt: null, type: "ordinary", status: "active", sessionVersion: 0, mustChangePassword: false, temporaryPasswordCiphertext: null, temporaryPasswordIv: null, temporaryPasswordTag: null, temporaryPasswordCreatedAt: null, createdAt: "2026-06-27T06:30:00.000Z" },
+    { id: "U2001", name: "林老师", phone: "13800000011", password: "123456", email: null, emailVerifiedAt: null, emailUpdatedAt: null, type: "organization", status: "active", sessionVersion: 0, mustChangePassword: false, temporaryPasswordCiphertext: null, temporaryPasswordIv: null, temporaryPasswordTag: null, temporaryPasswordCreatedAt: null, createdAt: "2026-06-27T06:31:00.000Z" },
+    { id: "U2002", name: "王老师", phone: "13800000012", password: "123456", email: null, emailVerifiedAt: null, emailUpdatedAt: null, type: "organization", status: "active", sessionVersion: 0, mustChangePassword: false, temporaryPasswordCiphertext: null, temporaryPasswordIv: null, temporaryPasswordTag: null, temporaryPasswordCreatedAt: null, createdAt: "2026-06-27T06:31:30.000Z" },
+    { id: "U9001", name: "赛事管理员", phone: "13900000000", password: "admin123", email: null, emailVerifiedAt: null, emailUpdatedAt: null, type: "admin", status: "active", sessionVersion: 0, mustChangePassword: false, temporaryPasswordCiphertext: null, temporaryPasswordIv: null, temporaryPasswordTag: null, temporaryPasswordCreatedAt: null, createdAt: "2026-06-27T06:32:00.000Z" }
   ],
   organizations: [
     { id: "O1001", name: "温州市实验小学", code: "WZ-SYXX", ownerUserId: "U2001", contactName: "林老师", contactPhone: "13800000011", status: "active", createdAt: "2026-06-27T06:31:00.000Z" },
@@ -173,6 +175,7 @@ export const seedDb = {
   certificateImportBatches: [],
   certificateImportErrors: [],
   organizationEventParticipations: [],
+  accountEmailTokens: [],
   auditLogs: []
 };
 
@@ -191,6 +194,8 @@ Object.assign(seedDb, {
   registrationUploadSessions: [],
   registrationSubmissionAssets: [],
   registrationIdentities: [],
+  registrationParticipants: [],
+  registrationParticipantIdentities: [],
   organizationLeaders: [],
   organizationLeaderDocuments: [],
   organizationLeaderReviews: []
@@ -210,6 +215,7 @@ for (const project of seedDb.projects) project.submissionMode ||= "none";
 for (const row of seedDb.registrations) {
   row.eventId = EVENT.id;
   row.organizationDeleted = false;
+  row.teamCode = "";
 }
 
 export function ensureDbShape(db) {
@@ -243,6 +249,8 @@ export function ensureDbShape(db) {
   db.registrationSubmissionAssets ||= [];
   for (const asset of db.registrationSubmissionAssets) asset.warnings = normalizeSubmissionWarnings(asset.warnings);
   db.registrationIdentities ||= [];
+  db.registrationParticipants ||= [];
+  db.registrationParticipantIdentities ||= [];
   db.organizationLeaders ||= [];
   db.organizationLeaderDocuments ||= [];
   db.organizationLeaderReviews ||= [];
@@ -253,6 +261,9 @@ export function ensureDbShape(db) {
   }
   db.users ||= [];
   for (const user of db.users) {
+    user.email ??= null;
+    user.emailVerifiedAt ??= null;
+    user.emailUpdatedAt ??= null;
     user.sessionVersion ??= 0;
     user.mustChangePassword ??= false;
     user.temporaryPasswordCiphertext ??= null;
@@ -260,6 +271,7 @@ export function ensureDbShape(db) {
     user.temporaryPasswordTag ??= null;
     user.temporaryPasswordCreatedAt ??= null;
   }
+  db.accountEmailTokens ||= [];
   db.organizations ||= [];
   const isLegacyOrganizationShape = !Array.isArray(db.organizationDocuments);
   db.organizationDocuments ||= [];
@@ -302,12 +314,19 @@ export function ensureDbShape(db) {
   }
   db.events ||= structuredClone([EVENT]);
   db.projects ||= structuredClone(PROJECTS);
-  for (const project of db.projects) project.submissionMode ||= "none";
+  for (const project of db.projects) {
+    project.submissionMode ||= "none";
+    project.teamMinMembers = Number(project.teamMinMembers || 1);
+    project.teamMaxMembers = Number(project.teamMaxMembers || 8);
+  }
   db.projectGroups ||= db.projects.flatMap((project) =>
     (project.allowedGroups || APPROVED_GROUP_NAMES).map((groupName) => ({ projectId: project.id, groupName }))
   );
   db.registrations ||= [];
-  for (const registration of db.registrations) registration.organizationDeleted ??= false;
+  for (const registration of db.registrations) {
+    registration.organizationDeleted ??= false;
+    registration.teamCode ||= "";
+  }
   db.organizationEventParticipations ||= [];
   db.certificates ||= [];
   db.certificateImportBatches ||= [];
@@ -360,6 +379,7 @@ export function ensureDbShape(db) {
     row.resultRecordedAt ||= "";
   }
   for (const certificate of db.certificates) {
+    certificate.participantId ||= null;
     const legacyNumberKey = ["certificate", "No"].join("");
     certificate.slot = certificate.slot === 2 ? 2 : 1;
     certificate.title ||= certificate.awardName || "获奖证书";

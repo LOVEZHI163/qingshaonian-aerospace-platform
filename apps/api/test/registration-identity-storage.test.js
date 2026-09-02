@@ -8,7 +8,7 @@ import { ensureDbShape, seedDb } from "../src/data/seed.js";
 async function withStore(fn) {
   const memory = newDb({ autoCreateForeignKeyIndices: true });
   const { Pool } = memory.adapters.createPg();
-  const store = createPostgresStore(new Pool());
+  const store = createPostgresStore(new Pool(), { testOnlyPgMemCompatibility: true });
 
   try {
     await store.initialize();

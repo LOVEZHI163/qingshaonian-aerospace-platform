@@ -220,6 +220,9 @@ export async function deleteArchivedEvent({ store, eventId, confirmName, actor, 
   const resources = eventResources(db, eventId, CLEANUP_CATEGORIES, { includeSubmissionAssets: true });
   const entries = stageCleanupFiles(db, resources.files, { makeId, now }, `event-delete:${event.id}`);
   const registrationIds = new Set(db.registrations.filter((row) => row.eventId === eventId).map((row) => row.id));
+  const participantIds = new Set((db.registrationParticipants || [])
+    .filter((row) => registrationIds.has(row.registrationId))
+    .map((row) => row.id));
   const sessionIds = new Set((db.registrationUploadSessions || []).filter((row) => row.eventId === eventId).map((row) => row.id));
   const projectIds = new Set(db.projects.filter((row) => row.eventId === eventId).map((row) => row.id));
   const batchIds = new Set(db.certificateImportBatches.filter((row) => row.eventId === eventId).map((row) => row.id));
@@ -229,6 +232,10 @@ export async function deleteArchivedEvent({ store, eventId, confirmName, actor, 
     !registrationIds.has(row.registrationId) && !sessionIds.has(row.uploadSessionId)
   ));
   db.registrationUploadSessions = (db.registrationUploadSessions || []).filter((row) => row.eventId !== eventId);
+  db.registrationParticipantIdentities = (db.registrationParticipantIdentities || [])
+    .filter((row) => !participantIds.has(row.participantId));
+  db.registrationParticipants = (db.registrationParticipants || [])
+    .filter((row) => !registrationIds.has(row.registrationId));
   db.registrationIdentities = (db.registrationIdentities || []).filter((row) => !registrationIds.has(row.registrationId));
   db.registrations = db.registrations.filter((row) => row.eventId !== eventId);
   db.organizationEventParticipations = (db.organizationEventParticipations || []).filter((row) => row.eventId !== eventId);

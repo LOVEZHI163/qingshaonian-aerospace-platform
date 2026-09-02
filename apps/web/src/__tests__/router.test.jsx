@@ -176,8 +176,8 @@ describe("public site router", () => {
         platformName: "温州航空赛事",
         platformIntro: "面向青少年的航空航天创新平台",
         organizers: ["主办甲", "主办乙"],
-        contact: "0577-12345678",
-        icp: "浙ICP备测试号"
+        contact: "113120601@qq.com",
+        icp: "浙ICP备2025146227号-2"
       }
     }));
     render(<App />);
@@ -185,8 +185,12 @@ describe("public site router", () => {
     expect(await screen.findByText("温州航空赛事")).toBeInTheDocument();
     expect(screen.getByText("面向青少年的航空航天创新平台")).toBeInTheDocument();
     expect(screen.getByText("主办甲、主办乙")).toBeInTheDocument();
-    expect(screen.getByText("0577-12345678")).toBeInTheDocument();
-    expect(screen.getByText("浙ICP备测试号")).toBeInTheDocument();
+    const footer = screen.getByRole("contentinfo");
+    expect(within(footer).getByText("温州市少航科创中心")).toBeInTheDocument();
+    expect(within(footer).getByRole("link", { name: "113120601@qq.com" })).toHaveAttribute("href", "mailto:113120601@qq.com");
+    expect(within(footer).getByRole("link", { name: "aerogp.cn" })).toHaveAttribute("href", "https://aerogp.cn/");
+    expect(within(footer).getByRole("link", { name: "浙ICP备2025146227号-2" })).toHaveAttribute("href", "https://beian.miit.gov.cn/");
+    expect(within(footer).getByLabelText("网站备案信息")).toHaveClass("site-footer-legal");
   });
 
   it("only intercepts unmodified same-origin primary-link navigation", () => {
