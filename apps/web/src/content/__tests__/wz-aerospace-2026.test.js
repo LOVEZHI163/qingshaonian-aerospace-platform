@@ -41,5 +41,7 @@ describe("2026 温州赛事章程", () => {
 
     expect(downloadedRulesText).toContain("AI 短片创意创作个人赛");
     expect(downloadedRulesText).toContain("AI 短片创意创作团队赛");
+    expect(downloadedRulesText.indexOf("（一）青少年航模比赛"))
+      .toBeLessThan(downloadedRulesText.indexOf("比赛设小学低年级组"));
   });
 });

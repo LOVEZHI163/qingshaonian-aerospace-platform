@@ -124,18 +124,24 @@ def build_document(rules: dict, output_path: Path) -> None:
 
     for chapter in rules["chapters"]:
         add_chapter_heading(document, chapter["heading"])
-        for paragraph_text in chapter.get("paragraphs", []):
-            no_indent = paragraph_text.startswith(("主办单位：", "承办单位：", "协办单位：", "支持单位："))
-            add_body_paragraph(document, paragraph_text, indent=not no_indent)
-        for item_text in chapter.get("items", []):
-            add_body_paragraph(document, item_text, indent=False)
-        for signature_text in chapter.get("signature", []):
-            paragraph = document.add_paragraph()
-            paragraph.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-            paragraph.paragraph_format.space_before = Pt(0)
-            paragraph.paragraph_format.space_after = Pt(4)
-            run = paragraph.add_run(signature_text)
-            set_run_font(run, size=11, east_asia_font=BODY_EAST_ASIA_FONT)
+        for content_kind, content_values in chapter.items():
+            if content_kind == "paragraphs":
+                for paragraph_text in content_values:
+                    no_indent = paragraph_text.startswith(
+                        ("主办单位：", "承办单位：", "协办单位：", "支持单位：")
+                    )
+                    add_body_paragraph(document, paragraph_text, indent=not no_indent)
+            elif content_kind == "items":
+                for item_text in content_values:
+                    add_body_paragraph(document, item_text, indent=False)
+            elif content_kind == "signature":
+                for signature_text in content_values:
+                    paragraph = document.add_paragraph()
+                    paragraph.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+                    paragraph.paragraph_format.space_before = Pt(0)
+                    paragraph.paragraph_format.space_after = Pt(4)
+                    run = paragraph.add_run(signature_text)
+                    set_run_font(run, size=11, east_asia_font=BODY_EAST_ASIA_FONT)
 
     footer = section.footer.paragraphs[0]
     footer.alignment = WD_ALIGN_PARAGRAPH.CENTER
