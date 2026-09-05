@@ -86,7 +86,7 @@ export default function HistoryPage({ location = window.location.href }) {
             <div className="public-content-list">
               {recaps.map((row) => (
                 <article key={row.id || row.slug}>
-                  <div><span>赛事回顾</span>{row.publishAt ? <time dateTime={row.publishAt}>{new Date(row.publishAt).getFullYear()}</time> : null}</div>
+                  <div><span>赛事回顾</span></div>
                   <h3>{row.slug ? <a href={`/content/${encodeURIComponent(row.slug)}`}>{row.title}</a> : row.title}</h3>
                   {row.summary ? <p>{row.summary}</p> : null}
                   {row.eventSlug ? <a className="content-event-link" href={`/events/${encodeURIComponent(row.eventSlug)}`}>查看关联赛事</a> : null}

@@ -6,6 +6,7 @@ import SubmissionAssetUploader from "../components/SubmissionAssetUploader.vue";
 import { api } from "../lib/api.js";
 import { accessMessage } from "../state/access.js";
 import { useUnsavedForm } from "../state/unsaved-form.js";
+import { registrationSuccessMessage } from "../state/registration-feedback.js";
 
 const { markDirty, markSaved } = useUnsavedForm();
 
@@ -137,14 +138,14 @@ async function submit() {
       instructor: form.instructor
     };
     if (requiresSubmission.value) payload.uploadSessionId = uploadSession.value.id;
-    await api(`/api/me/events/${encodeURIComponent(props.eventId)}/registrations`, { method: "POST", body: JSON.stringify(payload) });
+    const result = await api(`/api/me/events/${encodeURIComponent(props.eventId)}/registrations`, { method: "POST", body: JSON.stringify(payload) });
     Object.assign(form.athlete, { name: "", school: eligibleOrganization.value?.name || "", grade: "", phone: "" });
     form.studentIdNumber = "";
     form.instructor = "";
     form.projectId = "";
     clearUploadSession();
     markSaved();
-    submitFeedback.value = { tone: "success", message: "报名已提交，可在“报名记录”中查看" };
+    submitFeedback.value = { tone: "success", message: registrationSuccessMessage(result) };
     emit("registered");
   } catch (error) {
     const message = accessMessage(error);
@@ -210,6 +211,7 @@ onMounted(async () => {
       </section>
     <p class="hint registration-identity-notice">学生身份证号是报名资料，将用于名单导出和证书信息核对，请本人或监护人确认填写正确。</p>
     <button class="primary" :disabled="submitDisabled">{{ submitting ? "正在提交…" : "提交报名" }}</button>
-    <p v-if="submitFeedback" class="message" :class="submitFeedback.tone === 'error' ? 'danger-message' : ''" :role="submitFeedback.tone === 'error' ? 'alert' : 'status'" data-testid="ordinary-registration-feedback">{{ submitFeedback.message }}</p>
+    <p v-if="submitFeedback" class="message" :class="submitFeedback.tone === 'error' ? 'danger-message' : 'success-message'" :role="submitFeedback.tone === 'error' ? 'alert' : 'status'" data-testid="ordinary-registration-feedback">{{ submitFeedback.message }}</p>
+    <button v-if="submitFeedback?.tone === 'success'" type="button" class="mini" data-action="view-registration-records" @click="emit('navigate', 'registrationRecords')">查看报名记录</button>
   </form></section>
 </template>

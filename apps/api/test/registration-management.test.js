@@ -33,6 +33,41 @@ async function openRegistration(baseUrl, cookie) {
   assert.equal(response.status, 200);
 }
 
+test("personal edits cannot change identity fields after results or certificates exist", async () => {
+  await withServer(async (baseUrl, dbPath) => {
+    const ordinary = await loginAs(baseUrl, "13800000001", "123456");
+    for (const artifact of ["certificate", "result"]) {
+      await mutateDb(dbPath, db => {
+        db.events[0].registrationMode = "force_open";
+        const row = db.registrations.find(item => item.id === "R20260627001");
+        row.status = "approved";
+        row.score = artifact === "result" ? "99" : "";
+        db.certificates = artifact === "certificate" ? [{ id: "C-LOCK", registrationId: row.id, status: "published", slot: 1 }] : [];
+      });
+      const before = JSON.parse(await fs.readFile(dbPath, "utf8"));
+      const row = before.registrations.find(item => item.id === "R20260627001");
+      const changes = [
+        { athlete: { ...row.athlete, name: "更改姓名" } },
+        { athlete: { ...row.athlete, school: "更改学校" } },
+        { athlete: { ...row.athlete, grade: "六年级" } },
+        { athlete: { ...row.athlete, phone: "13800009999" } },
+        { studentIdNumber: validStudentIdNumber }
+      ];
+      for (const input of changes) {
+        const response = await fetch(`${baseUrl}/api/me/events/wz-aerospace-2026/registrations/${row.id}`, withSession(ordinary.cookie, {
+          method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input)
+        }));
+        assert.equal(response.status, 409, artifact);
+        assert.equal((await response.json()).code, "REGISTRATION_ROSTER_LOCKED");
+        const after = JSON.parse(await fs.readFile(dbPath, "utf8"));
+        assert.deepEqual(after.registrations, before.registrations);
+        assert.deepEqual(after.registrationIdentities, before.registrationIdentities);
+        assert.deepEqual(after.certificates, before.certificates);
+      }
+    }
+  });
+});
+
 test("registration context defaults exactly one active organization and school search deduplicates approved sources", async () => {
   await withServer(async (baseUrl) => {
     const ordinary = await loginAs(baseUrl, "13800000001", "123456");

@@ -622,12 +622,12 @@ onMounted(async () => {
       </header>
       <p v-if="message" class="message">{{ message }}</p>
       <EventCenterPage v-if="currentView === 'eventCenter'" :account-type="currentUser.type" @open-event="openAccountEvent" @access-denied="handleOrganizationBusinessError" />
-      <RegistrationPage v-else-if="currentUser.type === 'ordinary' && currentView === 'registration'" :event-id="registrationEventId" :account-type="currentUser.type" :registration-state="selectedAccountEvent?.registrationState || ''" :fallback-context="{ projects: eventData.projects }" @context="useRegistrationEvent" @registered="message = '报名已提交，等待审核'" @navigate="navigateUser" @error="handleError" />
+      <RegistrationPage v-else-if="currentUser.type === 'ordinary' && currentView === 'registration'" :event-id="registrationEventId" :account-type="currentUser.type" :registration-state="selectedAccountEvent?.registrationState || ''" :fallback-context="{ projects: eventData.projects }" @context="useRegistrationEvent" @registered="message = ''" @navigate="navigateUser" @error="handleError" />
       <MyOrganizationPage v-else-if="currentView === 'myOrganization'" @organization-changed="refreshPersonalOrganization" @error="handleError" />
       <RegistrationRecordsPage :key="`records:${recordsEventId}`" v-else-if="currentView === 'registrationRecords'" :event-id="recordsEventId" @error="handleError" />
       <OrganizationCertificatesPage v-else-if="currentUser.type === 'organization' && currentView === 'certificates'" @access-denied="handleOrganizationBusinessError" />
       <MyCertificatesPage :key="`certificates:${certificateEventId}`" v-else-if="currentView === 'certificates'" :event-id="certificateEventId" @event-id="setCertificateEventId" @error="handleError" />
-      <OrganizationEventWorkspacePage v-else-if="currentView === 'organizationWorkspace'" :event-id="selectedEventId" @back-to-events="navigateUser('eventCenter')" @context="useRegistrationEvent" @access-denied="handleOrganizationBusinessError" @error="handleOrganizationBusinessError" />
+      <OrganizationEventWorkspacePage v-else-if="currentView === 'organizationWorkspace'" :event-id="selectedEventId" @view-records="navigateUser('organizationRecords')" @back-to-events="navigateUser('eventCenter')" @context="useRegistrationEvent" @access-denied="handleOrganizationBusinessError" @error="handleOrganizationBusinessError" />
       <OrganizationRegistrationRecordsPage v-else-if="currentView === 'organizationRecords'" @back-to-events="navigateUser('eventCenter')" @access-denied="handleOrganizationBusinessError" />
       <OrganizationConsolePage v-else-if="currentView === 'organization'" @error="handleOrganizationBusinessError" />
       <OrganizationLeadersPage v-else-if="currentUser.type === 'organization' && currentView === 'leaders'" />

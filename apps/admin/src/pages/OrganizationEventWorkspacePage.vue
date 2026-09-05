@@ -3,10 +3,11 @@ import { computed, onMounted, ref } from "vue";
 
 import OrganizationAthleteRegistrationForm from "../components/OrganizationAthleteRegistrationForm.vue";
 import { api } from "../lib/api.js";
+import { registrationSuccessMessage } from "../state/registration-feedback.js";
 import { accessMessage, isOrganizationRestrictionError } from "../state/access.js";
 
 const props = defineProps({ eventId: { type: String, default: "" } });
-const emit = defineEmits(["error", "context", "access-denied", "back-to-events"]);
+const emit = defineEmits(["error", "context", "access-denied", "back-to-events", "view-records"]);
 const registrationFeedback = ref(null);
 
 function reportError(error, fallback = "赛事工作台加载失败") {
@@ -45,7 +46,7 @@ async function loadWorkspace() {
 function registered(payload) {
   registrationFeedback.value = {
     tone: "success",
-    message: payload?.merged ? "已与现有个人报名合并，未重复创建" : "组织报名已提交，可在“报名记录”中查看"
+    message: registrationSuccessMessage(payload)
   };
   void loadWorkspace();
 }
@@ -80,7 +81,8 @@ onMounted(loadWorkspace);
       </section>
 
       <section class="organization-registration-card">
-        <p v-if="registrationFeedback" class="message" :class="registrationFeedback.tone === 'error' ? 'danger-message' : ''" :role="registrationFeedback.tone === 'error' ? 'alert' : 'status'" data-testid="organization-registration-feedback">{{ registrationFeedback.message }}</p>
+        <p v-if="registrationFeedback" class="message" :class="registrationFeedback.tone === 'error' ? 'danger-message' : 'success-message'" :role="registrationFeedback.tone === 'error' ? 'alert' : 'status'" data-testid="organization-registration-feedback">{{ registrationFeedback.message }}</p>
+        <button v-if="registrationFeedback?.tone === 'success'" type="button" class="mini" data-action="view-registration-records" @click="emit('view-records')">查看报名记录</button>
         <OrganizationAthleteRegistrationForm v-if="!archived" :event-id="props.eventId" :projects="workspace.projects || []" :grades="workspace.grades || []" :members="workspace.members || []" :default-school="workspace.organization?.name || ''" @registered="registered" @error="reportError($event, '组织报名提交失败')" />
         <div v-else class="panel event-context-empty"><h3>归档赛事不可新增报名</h3><p class="hint">请在报名记录、成绩和证书页面查看历史信息。</p></div>
       </section>

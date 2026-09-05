@@ -786,6 +786,7 @@ describe("public content lists", () => {
     expect(await screen.findByRole("link", { name: "2025航空航天创新赛" })).toHaveAttribute("href", "/events/old-event");
     expect(screen.getByRole("link", { name: "recap-R1 标题" })).toHaveAttribute("href", "/content/recap-r1");
     expect(document.querySelector('a[href="/events/null"]')).toBeNull();
+    expect(document.querySelector('.history-recaps time')).toBeNull();
   });
 
   it("loads a paginated public history event list even while another event is active", async () => {

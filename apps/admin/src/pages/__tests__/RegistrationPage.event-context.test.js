@@ -41,6 +41,29 @@ function context() {
 }
 
 describe("RegistrationPage selected event context", () => {
+  it.each([['pending', '等待审核'], ['approved', '审核通过'], ['rejected', '审核未通过']])("shows the server-returned %s review state and a records action after submission", async (status, label) => {
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/me/registration-context?eventId=E2") return context();
+      if (path.startsWith("/api/schools")) return { rows: [] };
+      return { row: { id: "R2", status } };
+    });
+    const wrapper = mount(RegistrationPage, { props: { eventId: "E2", accountType: "ordinary" } });
+    try {
+      await flushPromises();
+      const inputs = wrapper.findAll("form.form-panel input");
+      await inputs[0].setValue("张三");
+      await inputs[1].setValue("实验小学");
+      await inputs[2].setValue("二年级");
+      await inputs[3].setValue("13600005001");
+      await wrapper.get('[data-field="student-id-number"]').setValue("11010520140101123X");
+      await wrapper.get("form.form-panel").trigger("submit");
+      await flushPromises();
+      expect(wrapper.get('[data-testid="ordinary-registration-feedback"]').text()).toContain(label);
+      await wrapper.get('[data-action="view-registration-records"]').trigger("click");
+      expect(wrapper.emitted("navigate")).toEqual([["registrationRecords"]]);
+    } finally { wrapper.unmount(); }
+  });
+
   it("guards edited registration data and releases the guard after a successful submit", async () => {
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
     const wrapper = mount(RegistrationPage, { props: { eventId: "E2", accountType: "ordinary" } });

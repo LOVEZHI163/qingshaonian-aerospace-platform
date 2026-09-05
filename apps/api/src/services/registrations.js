@@ -500,6 +500,9 @@ export function prepareOrdinaryRegistrationUpdate(db, row, input, userId) {
   assertRegistrationProjectImmutable(row, input);
   assertRegistrationWindowOpen(db, row.eventId);
   const athlete = safeRegistrationAthlete(input, row.athlete);
+  const rosterChanged = ATHLETE_FIELDS.some(field => athlete[field] !== row.athlete?.[field])
+    || submittedOrStoredFingerprint(db, row, input) !== (registrationIdentityFingerprints(db, row)[0] || null);
+  assertRegistrationRosterMutable(db, row, rosterChanged);
   requireText(athlete.name, "姓名");
   requireText(athlete.school, "学校");
   requireText(athlete.grade, "年级");

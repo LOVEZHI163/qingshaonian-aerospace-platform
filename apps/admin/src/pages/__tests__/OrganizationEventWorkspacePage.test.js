@@ -141,7 +141,9 @@ describe("OrganizationEventWorkspacePage", () => {
     }));
     const feedback = wrapper.get('[data-testid="organization-registration-feedback"]');
     expect(feedback.attributes("role")).toBe("status");
-    expect(feedback.text()).toContain("组织报名已提交");
+    expect(feedback.text()).toContain("提交成功");
+    await wrapper.get('[data-action="view-registration-records"]').trigger("click");
+    expect(wrapper.emitted("view-records")).toEqual([[]]);
   });
 
   it("explains the national-standard validation failure and preserves its stable error code", async () => {

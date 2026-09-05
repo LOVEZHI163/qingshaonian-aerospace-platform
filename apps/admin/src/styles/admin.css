@@ -1895,6 +1895,12 @@ select:focus {
   background: #fff6f5;
 }
 
+.message.success-message {
+  color: #166534;
+  border-color: #bbdfc9;
+  background: #f0fdf4;
+}
+
 .duplicate {
   display: grid;
   gap: 5px;
