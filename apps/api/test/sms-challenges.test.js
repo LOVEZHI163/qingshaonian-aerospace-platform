@@ -318,6 +318,37 @@ test("registration limits an IP address to twenty requests per hour", async () =
   );
 });
 
+test("a simulated school burst accepts twenty of fifty distinct phones and recovers after an hour", async () => {
+  const users = Array.from({ length: 50 }, (_, index) => ({
+    id: `TEST-${index}`, phone: `1380000${String(index).padStart(4, "0")}`, status: "active"
+  }));
+  const registration = challengeHarness({ purpose: PURPOSES.registration, readDb: async () => ({ users }) });
+  const results = await Promise.allSettled(users.map(({ phone }) => registration.service.request({ phone, ip: "203.0.113.50" })));
+  assert.equal(results.filter(result => result.status === "fulfilled").length, 20);
+  const denied = results.filter(result => result.status === "rejected");
+  assert.equal(denied.length, 30);
+  assert.ok(denied.every(result => result.reason.statusCode === 429));
+  while (registration.scheduled.length) await registration.runNext();
+  assert.equal(registration.sent.length, 20);
+  assert.equal(new Set(registration.sent.map(row => row.phone)).size, 20);
+  registration.advance(3_600_001);
+  await registration.service.request({ phone: users[49].phone, ip: "203.0.113.50" });
+  await registration.runNext();
+  assert.equal(registration.sent.length, 21);
+});
+
+test("school IP allowance is shared by registration, login and reset, but another school is independent", async () => {
+  const shared = {};
+  const services = Object.values(PURPOSES).map(purpose => challengeHarness({ purpose, shared }));
+  for (let index = 0; index < 20; index++) {
+    await services[index % 3].service.request({ phone: `1380000${String(index).padStart(4, "0")}`, ip: "203.0.113.51" });
+  }
+  for (const service of services) {
+    await assert.rejects(service.service.request({ phone: "13900000099", ip: "203.0.113.51" }), error => error.statusCode === 429);
+  }
+  await services[0].service.request({ phone: "13900000099", ip: "203.0.113.52" });
+});
+
 test("registration deletes a challenge after five incorrect codes", async () => {
   const registration = challengeHarness({ purpose: PURPOSES.registration });
   await registration.service.request({ phone: "13800000001", ip: "127.0.0.1" });
