@@ -2341,8 +2341,6 @@ em.invited {
   font-weight: 900;
 }
 
-.user-shell > .user-sidebar nav .user-logout-button { margin-top: auto; }
-
 .user-sidebar nav button.active .user-nav-icon {
   color: #10233f;
   background: #fff;
@@ -2367,6 +2365,9 @@ em.invited {
   margin: 0;
   padding: 11px 13px;
 }
+
+/* Keep the logout hit target fixed when touch activates hover or focus. */
+.user-shell > .user-sidebar nav button.user-logout-button { margin-top: auto; }
 
 .user-sidebar-mobile-trigger,
 .user-sidebar-backdrop { display: none; }
