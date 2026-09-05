@@ -537,8 +537,8 @@ test("public event and registration APIs use the current database event in real 
 
     await fetch(`${baseUrl}/api/admin/events/${current.id}/archive`, jsonOptions("POST", {}, admin.cookie));
     const unavailable = await fetch(`${baseUrl}/api/public/event`);
-    assert.equal(unavailable.status, 503);
-    assert.match((await json(unavailable)).error, /当前赛事/);
+    assert.equal(unavailable.status, 200);
+    assert.deepEqual((await json(unavailable)).event, {});
   });
 });
 

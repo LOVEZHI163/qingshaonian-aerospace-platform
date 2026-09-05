@@ -13,6 +13,7 @@ vi.mock("../../components/SubmissionAssetUploader.vue", () => ({
 
 import RegistrationPage from "../RegistrationPage.vue";
 import RegistrationRecordsPage from "../RegistrationRecordsPage.vue";
+import { confirmUnsavedForms } from "../../state/unsaved-form.js";
 
 function context() {
   return {
@@ -40,6 +41,30 @@ function context() {
 }
 
 describe("RegistrationPage selected event context", () => {
+  it("guards edited registration data and releases the guard after a successful submit", async () => {
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    const wrapper = mount(RegistrationPage, { props: { eventId: "E2", accountType: "ordinary" } });
+    try {
+      await flushPromises();
+      expect(confirmUnsavedForms()).toBe(true);
+      const inputs = wrapper.findAll("form.form-panel input");
+      await inputs[0].setValue("张三");
+      expect(confirmUnsavedForms()).toBe(false);
+      expect(confirm).toHaveBeenCalledOnce();
+      confirm.mockReturnValue(true);
+      expect(confirmUnsavedForms()).toBe(true);
+      await inputs[1].setValue("实验小学");
+      await inputs[2].setValue("二年级");
+      await inputs[3].setValue("13600005001");
+      await wrapper.get('[data-field="student-id-number"]').setValue("11010520140101123X");
+      await wrapper.get("form.form-panel").trigger("submit");
+      await flushPromises();
+      confirm.mockClear().mockReturnValue(false);
+      expect(confirmUnsavedForms()).toBe(true);
+      expect(confirm).not.toHaveBeenCalled();
+    } finally { wrapper.unmount(); confirm.mockRestore(); }
+  });
+
   beforeEach(() => {
     apiMock.mockReset();
     apiMock.mockImplementation(async (path) => {

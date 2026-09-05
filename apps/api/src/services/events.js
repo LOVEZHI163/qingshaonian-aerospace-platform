@@ -1,5 +1,6 @@
 import { isRegistrationOpen } from "../domain/registration-window.js";
 import { APPROVED_GROUP_NAMES, REGISTRATION_MODES } from "../data/seed.js";
+import { selectHomeEvents } from "./public-site.js";
 
 const EVENT_EDITABLE_FIELDS = [
   "name",
@@ -335,7 +336,14 @@ function shanghaiDate(value) {
 }
 
 export function publicEventPayload(db, clock = () => new Date()) {
-  const event = currentPublishedEvent(db);
+  const selection = selectHomeEvents(db, clock);
+  // Preserve older installations whose current event predates public profiles.
+  const legacyCurrent = db.events.filter(row => row.isCurrent && row.status === "published" && !row.archivedAt);
+  const event = selection.featuredEvent || selection.fallbackEvent || (legacyCurrent.length === 1 ? legacyCurrent[0] : null);
+  if (!event) return {
+    event: {}, projects: [], groups: [...APPROVED_GROUP_NAMES], grades: [...APPROVED_GROUP_NAMES],
+    registrationWindow: { open: false, reason: "暂无公开赛事" }
+  };
   const projects = db.projects
     .filter((row) => row.eventId === event.id && row.enabled)
     .sort((left, right) => left.displayOrder - right.displayOrder || left.id.localeCompare(right.id));

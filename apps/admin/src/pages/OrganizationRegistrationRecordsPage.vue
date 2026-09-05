@@ -6,6 +6,7 @@ import SubmissionAssetUploader from "../components/SubmissionAssetUploader.vue";
 import { api, apiBlob, apiUrl } from "../lib/api.js";
 import { createBlobDownloadManager } from "../lib/download.js";
 import { isOrganizationRestrictionError } from "../state/access.js";
+import { confirmUnsavedForms } from "../state/unsaved-form.js";
 
 const emit = defineEmits(["back-to-events", "access-denied"]);
 
@@ -197,6 +198,7 @@ function dismissMaterialError() {
 }
 
 function cancelEditing() {
+  if (!confirmUnsavedForms()) return;
   editRequestId += 1;
   editingRegistration.value = null;
   editingWorkspace.value = null;
@@ -205,6 +207,7 @@ function cancelEditing() {
 }
 
 async function editRegistration(row) {
+  if (!confirmUnsavedForms()) return;
   if (isArchived(row)) return;
   const currentRequest = ++editRequestId;
   editingRegistration.value = row;

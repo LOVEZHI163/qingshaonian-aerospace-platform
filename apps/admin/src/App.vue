@@ -27,6 +27,7 @@ import SiteContentPage from "./pages/SiteContentPage.vue";
 import UserManagementPage from "./pages/UserManagementPage.vue";
 import { accessMessage, isOrganizationRestrictionError, organizationAccessFor } from "./state/access.js";
 import { useSession } from "./state/session.js";
+import { confirmUnsavedForms } from "./state/unsaved-form.js";
 
 const session = useSession();
 const currentUser = session.user;
@@ -35,6 +36,7 @@ const eventData = ref({ event: {}, projects: [], grades: [] });
 const currentView = ref("login");
 const message = ref("");
 const loginMessage = ref("");
+const loginPending = ref(false);
 const releaseReady = ref(false);
 const releaseBlocked = ref(false);
 const releaseMessage = ref("");
@@ -340,15 +342,20 @@ async function verifyRelease() {
 }
 
 async function completeLogin(loginAction, credentials) {
+  if (loginPending.value) return;
+  loginPending.value = true;
   invalidateAdminEventContextRequests({ clearMessages: true });
   try {
     const user = await loginAction(credentials);
+    userSidebarOpen.value = false;
     invalidateAdminEventContextRequests({ clearMessages: true });
     await loadAccountEvents();
     await loadAdminEventsSafely();
     currentView.value = user.mustChangePassword ? "password" : targetView(user);
   } catch (error) {
     loginMessage.value = error?.message || "登录失败，请稍后重试";
+  } finally {
+    loginPending.value = false;
   }
 }
 
@@ -371,6 +378,7 @@ async function passwordChanged(user) {
 }
 
 async function performLogout() {
+  userSidebarOpen.value = false;
   invalidateAdminEventContextRequests({ clearContext: true, clearMessages: true });
   await session.logout();
   initialRoutePending = false;
@@ -393,6 +401,7 @@ function requestSiteContentLeave(callback) {
 }
 
 function logout() {
+  if (!confirmUnsavedForms()) return;
   if (currentUser.value?.type === "admin") {
     requestSiteContentLeave(() => { void performLogout(); });
     return;
@@ -412,6 +421,7 @@ function navigateAdmin(key, section = "") {
 }
 
 function navigateUser(key) {
+  if (!confirmUnsavedForms()) return;
   userSidebarOpen.value = false;
   message.value = "";
   if (currentUser.value?.type === "organization" && !organizationAccess.value.operational) {
@@ -574,7 +584,7 @@ onMounted(async () => {
 
   <div v-else-if="restoring" class="app-loading">正在恢复登录状态…</div>
 
-  <AuthPage v-else-if="accountEmailActionActive || !currentUser" :event-name="eventData.event.name" :login-error="loginMessage" @login="login" @sms-login="smsLogin" @clear-message="loginMessage = ''" @account-email-action-complete="accountEmailActionActive = false" />
+  <AuthPage v-else-if="accountEmailActionActive || !currentUser" :event-name="eventData.event.name" :login-error="loginMessage" :login-pending="loginPending" @login="login" @sms-login="smsLogin" @clear-message="loginMessage = ''" @account-email-action-complete="accountEmailActionActive = false" />
 
   <section v-else-if="currentUser.mustChangePassword" class="auth-shell force-password-shell">
     <PasswordSettingsPage forced :user="currentUser" @changed="passwordChanged" @logout="logout" />

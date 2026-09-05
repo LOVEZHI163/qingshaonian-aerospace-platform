@@ -60,6 +60,37 @@ function teamRegistration() {
 }
 
 describe("App session integration", () => {
+  it('serializes login attempts and allows retry after failure', async () => {
+    let rejectLogin;
+    session.login.mockImplementationOnce(() => new Promise((resolve, reject) => { rejectLogin = reject; }));
+    const wrapper = mount(App);
+    await flushPromises();
+    await wrapper.get('[data-auth-form="login"]').trigger('submit');
+    await wrapper.get('[data-auth-form="login"]').trigger('submit');
+    expect(session.login).toHaveBeenCalledTimes(1);
+    expect(wrapper.get('.auth-login-primary').attributes('disabled')).toBeDefined();
+    rejectLogin(new Error('登录失败'));
+    await flushPromises();
+    expect(wrapper.get('.auth-login-primary').attributes('disabled')).toBeUndefined();
+  });
+
+  it('closes the mobile sidebar across logout and a new account login', async () => {
+    sessionUser.value = { id: 'U1', type: 'ordinary', name: '用户' };
+    session.logout.mockImplementationOnce(async () => { sessionUser.value = null; });
+    session.login.mockImplementationOnce(async () => {
+      sessionUser.value = { id: 'U2', type: 'ordinary', name: '新用户' };
+      return sessionUser.value;
+    });
+    const wrapper = mount(App);
+    await flushPromises();
+    await wrapper.get('.user-sidebar-mobile-trigger').trigger('click');
+    await wrapper.get('.user-logout-button').trigger('click');
+    await flushPromises();
+    await wrapper.get('[data-auth-form="login"]').trigger('submit');
+    await flushPromises();
+    expect(wrapper.get('.user-shell').classes()).not.toContain('user-sidebar-mobile-open');
+  });
+
   beforeEach(() => {
     vi.unstubAllEnvs();
     window.history.replaceState({}, "", "/");

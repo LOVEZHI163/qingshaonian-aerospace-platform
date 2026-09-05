@@ -5,6 +5,9 @@ import SchoolCombobox from "../components/SchoolCombobox.vue";
 import SubmissionAssetUploader from "../components/SubmissionAssetUploader.vue";
 import { api } from "../lib/api.js";
 import { accessMessage } from "../state/access.js";
+import { useUnsavedForm } from "../state/unsaved-form.js";
+
+const { markDirty, markSaved } = useUnsavedForm();
 
 const props = defineProps({
   eventId: { type: String, default: "" },
@@ -140,6 +143,7 @@ async function submit() {
     form.instructor = "";
     form.projectId = "";
     clearUploadSession();
+    markSaved();
     submitFeedback.value = { tone: "success", message: "报名已提交，可在“报名记录”中查看" };
     emit("registered");
   } catch (error) {
@@ -177,7 +181,7 @@ onMounted(async () => {
   <section v-else-if="!registrationOpen" class="content-grid registration-page"><div class="panel event-context-empty"><h3>当前不可报名</h3><p class="hint">{{ registrationStateMessage }}</p></div></section>
   <section v-else-if="loading" class="content-grid registration-page"><div class="panel event-context-empty"><h3>正在加载报名资料…</h3></div></section>
   <section v-else-if="ordinaryUser && !registrationEligible && !leaderRequired" class="content-grid registration-page"><div class="panel registration-eligibility-card" data-testid="registration-eligibility-guidance"><h3>请先加入组织</h3><p class="hint">{{ eligibilityMessage }}</p><button type="button" class="primary" data-action="open-my-organization" @click="emit('navigate', 'myOrganization')">前往“我的组织”</button></div></section>
-  <section v-else class="content-grid registration-page"><form class="panel form-panel" @submit.prevent="submit">
+  <section v-else class="content-grid registration-page"><form class="panel form-panel" @input.capture="markDirty" @change.capture="markDirty" @submit.prevent="submit">
     <div class="panel-title"><h3>报名端<span v-if="context.event?.name"> · {{ context.event.name }}</span></h3><span v-if="selectedGroup">{{ selectedGroup }}</span></div>
     <div v-if="leaderRequired" class="registration-eligibility-card registration-leader-required" data-testid="registration-eligibility-guidance" role="alert">
       <span class="registration-blocked-label">报名条件未满足</span>

@@ -5,6 +5,9 @@ import SchoolCombobox from "./SchoolCombobox.vue";
 import SubmissionAssetUploader from "./SubmissionAssetUploader.vue";
 import TeamRegistrationFields from "./TeamRegistrationFields.vue";
 import { api } from "../lib/api.js";
+import { useUnsavedForm } from "../state/unsaved-form.js";
+
+const { markDirty, markSaved } = useUnsavedForm();
 
 const props = defineProps({
   eventId: { type: String, required: true },
@@ -245,6 +248,7 @@ async function submit() {
       form.participants = [];
       clearUploadSession();
     }
+    markSaved();
     emit("registered", payload);
   } catch (error) {
     if (error?.code === "ORGANIZATION_LEADER_REQUIRED") {
@@ -275,7 +279,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <form v-if="hasEventContext && !disabled" class="panel form-panel organization-athlete-registration-form" :data-testid="editing ? 'organization-registration-editor' : 'organization-registration-form'" @submit.prevent="submit">
+  <form v-if="hasEventContext && !disabled" class="panel form-panel organization-athlete-registration-form" :data-testid="editing ? 'organization-registration-editor' : 'organization-registration-form'" @input.capture="markDirty" @change.capture="markDirty" @submit.prevent="submit">
     <fieldset v-if="!editing && !isTeam" class="organization-registration-source" aria-label="报名方式">
       <legend>报名方式</legend>
       <label><input v-model="form.registrationSource" type="radio" value="member_registration" data-registration-source="member_registration" required />成员报名</label>
