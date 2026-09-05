@@ -29,6 +29,8 @@
 
 此演练证明所选备份能读取并恢复，但当前较早的附件备份不能完整覆盖较新的数据库引用。也不等于已验证异地灾备或所有历史快照。
 
+后续更新：用户已确认补齐每日附件备份，实施及新备份恢复验收见 `2026-09-05-daily-backup-verification.md`；新的 49 个文件引用全部匹配，缺失 0 个。下方“尚待确认”是前一阶段的历史状态。
+
 ## 线上验收
 
 已部署到 server115，运行版本 `6245bc5c497e4bb5ced83b3841a6cc33fa987819`。API 版本、服务器 `.release` 和环境变量 RELEASE_SHA 一致。API、Web、数据库、备份容器健康。回滚文件保留在 `/root/aerogp-registration-safety-20260905/backup`，旧 API/Web 镜像标签为 `rollback-registration-safety-20260905`。
